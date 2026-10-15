@@ -1,0 +1,66 @@
+/** What a tool made for the chat (odie/media.py): a voice memo, a podcast, a screenshot or a file, drawn under the
+ * reply. It arrives as a live "media" event while the turn runs, and with the reply in history after a reload. */
+import type { Deck } from "./deck";
+
+export type Turn = { host: string; text: string; start: number };
+export type Media = {
+  id: string; kind: "memo" | "podcast" | "screenshot" | "file" | "page" | "link" | "turn" | "tracker" | "picture" | "video" | "audio"; title: string; mime: string; size: number; created: number;
+  duration?: number; peaks?: number[]; transcript?: string | Turn[]; voice?: string; hosts?: { name: string; group: string; voice?: string }[];
+  url?: string; page_title?: string; step?: string;  // a screenshot: the page and the browser step that took it
+  filename?: string;  // a file: its name for the download
+  deck?: Deck;  // a designed deck (odie/decks): its PowerPoint and slide pictures
+  site?: string; tab?: string; why?: string;  // a "your turn" card (signed-in browsing): the site, the browser tab, why
+  state?: "done" | "code" | "failed" | "captcha" | "vault"; auto?: boolean;  // a "your turn" card: where the sign-in stands
+  label?: string;  // a link: its button (a UPI app link's "Pay in your UPI app")
+  tracker_id?: number; page?: string;  // a "check this page signed in?" card (odie/trackers/signed_in.py)
+};
+
+export const mediaUrl = (m: Pick<Media, "id">) => `/api/media/${m.id}`;
+
+export function clock(seconds: number): string {
+  const t = Number.isFinite(seconds) ? Math.max(0, Math.floor(seconds)) : 0;
+  return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, "0")}`;
+}
+
+/** Which waveform bars are played, at `progress` (0 to 1). */
+export function filled(peaks: number[], progress: number): boolean[] {
+  return peaks.map((_, i) => (i + 0.5) / peaks.length <= progress);
+}
+
+/** The podcast turn playing at `t` seconds (-1 before it starts, or for a memo). */
+export function turnAt(m: Media, t: number): number {
+  const turns = Array.isArray(m.transcript) ? m.transcript : [];
+  let at = -1;
+  turns.forEach((x, i) => { if (x.start <= t + 0.05) at = i; });
+  return at;
+}
+
+/** Which host (index into hosts) is speaking at `t`. */
+export function speakingAt(m: Media, t: number): number {
+  const i = turnAt(m, t);
+  const turns = Array.isArray(m.transcript) ? m.transcript : [];
+  return i < 0 ? -1 : (m.hosts ?? []).findIndex((h) => h.name === turns[i].host);
+}
+
+/**
+ * The letter on a host's avatar: the first letter of the label's last word, so the podcast skill's neutral labels
+ * still differ. "Host A" → "A", "Host B" → "B", "Asha" → "A".
+ */
+export function hostInitial(name: string): string {
+  const words = name.trim().split(/\s+/);
+  return (words[words.length - 1] ?? "").slice(0, 1).toUpperCase();
+}
+
+/** The two hosts' colours: solid tokens (a gradient is dropped from rings and text). */
+export const HOST_TONES = ["var(--t-brand)", "var(--t-host-b)"];
+export const HOST_TEXT = ["var(--t-brand-text)", "var(--t-host-b-text)"];
+
+/** The messages with `m` on the reply being written (`at`; else the last reply), unless it's already there. A reminder
+ * can arrive while a reply is written, so Chat names the reply. */
+export function withMedia<T extends { role: string; media?: Media[] }>(msgs: T[], m: Media, at?: (x: T) => boolean): T[] {
+  const i = at ? msgs.findIndex(at) : msgs.map((x) => x.role).lastIndexOf("odie");
+  if (i < 0 || msgs[i].media?.some((x) => x.id === m.id)) return msgs;
+  const out = [...msgs];
+  out[i] = { ...msgs[i], media: [...(msgs[i].media ?? []), m] };
+  return out;
+}

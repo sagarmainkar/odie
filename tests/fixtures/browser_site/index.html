@@ -1,0 +1,21 @@
+<!doctype html>
+<html><head><title>Test Shop</title></head>
+<body>
+<header><div id="search"><label>Search the shop</label></div><nav><a href="/">Home</a> <a href="/cart">Cart</a> <span>Hello, sign in</span></nav></header>
+<main>
+  <h1>Results for airpods</h1>
+  <div class="item"><h2>AirPods Pro 3</h2><p>₹24,930</p></div>
+  <div class="item"><h2>AirPods 5</h2><p>₹17,900</p></div>
+  <p id="more" hidden>AirPods Max: ₹59,900</p>
+  <button onclick="document.getElementById('more').hidden = false">Show more</button>
+  <a href="/page2.html">Next page</a>
+  <form action="/search.html" method="get">
+    <label for="q">Search products</label><input id="q" name="q" type="text">
+    <label for="pw">Password</label><input id="pw" name="pw" type="password">
+  </form>
+  <img src="http://127.0.0.1:{PRIVATE}/probe.png" alt="">
+  <div style="height: 3000px"></div>
+  <p>Bottom of the page</p>
+</main>
+<footer>© Test Shop. Terms. Privacy.</footer>
+</body></html>

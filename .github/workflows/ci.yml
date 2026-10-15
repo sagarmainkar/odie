@@ -1,0 +1,56 @@
+# The checks every pull request and every push to main must pass: the leak scan, the Python tests and the web checks.
+# They run on macOS because Odie is a Mac app (the Keychain, Photos and launchd tests need it).
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    # Free on a public repository. A private copy skips it: macOS minutes are billed there.
+    if: ${{ !github.event.repository.private }}
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      # The private words come from a repository secret. A pull request from a fork gets no secrets, so it is
+      # scanned for key shapes only; the maintainer scans it with the full list while reviewing.
+      - name: Leak scan
+        env:
+          PRIVATE_WORDS: ${{ secrets.ODIE_PRIVATE_WORDS }}
+        run: |
+          if [ -n "$PRIVATE_WORDS" ]; then
+            printf '%s\n' "$PRIVATE_WORDS" > "$RUNNER_TEMP/private-words.txt"
+            ODIE_PRIVATE_WORDS="$RUNNER_TEMP/private-words.txt" scripts/release/scan.sh .
+          else
+            scripts/release/scan.sh . --keys-only
+          fi
+
+      - uses: astral-sh/setup-uv@v5
+      - name: Python tests
+        run: |
+          uv sync --frozen
+          uv run pytest -q
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Web checks
+        working-directory: web
+        run: |
+          npm ci --no-audit --no-fund
+          npm run lint
+          npx vitest run
+          npm run build

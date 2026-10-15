@@ -1,0 +1,26 @@
+name: Something's wrong, or an idea
+description: A bug, a confusing screen, or a change you'd like. For security problems use private reporting instead.
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, or what you'd like
+      description: What you did, what you expected, and what happened instead. For an idea, the problem it solves.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Odie version
+      description: Settings → Odie, or `odie status`.
+  - type: input
+    id: brain
+    attributes:
+      label: The brain (provider and model)
+      placeholder: e.g. LM Studio with gemma-4-26b, or Claude Sonnet
+  - type: textarea
+    id: logs
+    attributes:
+      label: Errors from the log
+      description: "`odie logs -e`. Check it for anything private before you paste."
+      render: text

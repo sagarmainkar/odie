@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Before every push: the leak scan over each commit being pushed, so nothing personal reaches GitHub. With your
+# private words file (~/.config/odie-release/private-words.txt) it checks those words too; without it, key shapes only.
+# Turn it on once per clone:   git config core.hooksPath scripts/hooks
+# Skip it once (you're sure):  git push --no-verify
+set -euo pipefail
+ROOT="$(git rev-parse --show-toplevel)"
+WORDS="${ODIE_PRIVATE_WORDS:-$HOME/.config/odie-release/private-words.txt}"
+NO_COMMIT="0000000000000000000000000000000000000000"
+
+while read -r _local_ref local_sha _remote_ref _remote_sha; do
+  if [ "$local_sha" = "$NO_COMMIT" ]; then
+    continue  # deleting a branch pushes nothing
+  fi
+  copy="$(mktemp -d)"
+  git -C "$ROOT" archive "$local_sha" | tar -x -C "$copy"
+  status=0
+  if [ -s "$WORDS" ]; then
+    "$ROOT/scripts/release/scan.sh" "$copy" || status=$?
+  else
+    "$ROOT/scripts/release/scan.sh" "$copy" --keys-only || status=$?
+  fi
+  rm -rf "$copy"
+  if [ "$status" -ne 0 ]; then
+    echo "The push is stopped: the scan found something above in ${local_sha:0:7}."
+    exit 1
+  fi
+done

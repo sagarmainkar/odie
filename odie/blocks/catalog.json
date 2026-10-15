@@ -1,0 +1,220 @@
+{
+  "about": "Blocks the Odie app draws: a JSON list in a ```odie-blocks fence, drawn in order (photos use their own ```odie-images fence). Unknown kinds and broken items are skipped, never shown as code. Only https image URLs a tool returned.",
+  "containers": "row, section and grid hold blocks in `children`, one level deep: a section may hold a row or grid, nothing deeper (deeper ones are drawn flat).",
+  "atoms": "Small pieces for inside containers (or on their own) when no block above fits.",
+  "inline": "In any block text and in normal reply text: :badge[Best value] draws a pill (:badge[Sold out]{warn}, :badge[Open]{good}; braces hold only good or warn); :icon[plane] draws an icon (names below). Emoji are fine.",
+  "shared_values": "A calculator's input ids work in any text of the same fence: {n} or {round(emi(p, r, n) * n * 12)} shows the live value as sliders move.",
+  "shared_example": [{"type": "calculator", "inputs": [{"id": "m", "label": "Monthly SIP", "min": 1000, "max": 50000, "step": 1000, "value": 10000, "unit": "₹"},
+                                                       {"id": "y", "label": "Years", "min": 1, "max": 30, "step": 1, "value": 10, "unit": "years"}],
+                      "outputs": [{"label": "Worth at 12%", "formula": "sip(m, 12, y)", "unit": "₹"}]},
+                     {"type": "callout", "tone": "tip", "text": "You put in ₹{m * y * 12}; the rest, ₹{round(sip(m, 12, y) - m * y * 12)}, is growth."}],
+  "blocks": [
+    {
+      "kind": "chart",
+      "for": "A trend, a comparison, or parts of a whole.",
+      "use_when": "line: trends. bar: periods or items. pie, donut: parts of a whole (budget split, portfolio mix). stacked: a total and its parts over time. hbar: rankings, long names. area: growth that builds up (a SIP). combo: two related measures (revenue and margin %).",
+      "fields": "kind: line | bar | pie | donut | stacked | hbar | area | combo. title. x: labels. series: [{name, data: numbers (null for a gap)}], 1-3 series (stacked, area: up to 6; pie, donut: 1). combo: bars for the first series, lines for the rest; a line in another unit adds its own unit: \"%\". unit: \"%\", \"₹\", \"₹Cr\", \"$M\", \"pts\" or a short word. source: optional site name.",
+      "example": {"type": "chart", "kind": "bar", "title": "Revenue vs net profit", "x": ["Sep 2025", "Dec 2025", "Mar 2026", "Jun 2026"], "unit": "₹Cr",
+                  "series": [{"name": "Revenue", "data": [65799, 67087, 70698, 72275]}, {"name": "Net profit", "data": [12131, 10720, 13784, 13420]}]},
+      "more_examples": [
+        {"type": "chart", "kind": "pie", "title": "A month on ₹1.2 lakh", "unit": "₹", "x": ["Rent", "SIP", "Home loan EMI", "Groceries", "Savings", "Fun", "Bills"],
+         "series": [{"name": "Budget", "data": [30000, 25000, 20000, 15000, 12000, 10000, 8000]}]},
+        {"type": "chart", "kind": "donut", "title": "Portfolio mix", "unit": "%", "x": ["Equity funds", "Debt funds", "Gold", "Fixed deposits", "Cash"],
+         "series": [{"name": "Share", "data": [54, 22, 10, 9, 5]}]},
+        {"type": "chart", "kind": "stacked", "title": "Spending by month", "unit": "₹", "x": ["Jul", "Aug", "Sep", "Oct"],
+         "series": [{"name": "Rent", "data": [30000, 30000, 30000, 30000]}, {"name": "Food", "data": [14000, 15500, 13200, 16100]},
+                    {"name": "Travel", "data": [4000, 12000, 2500, 6000]}]},
+        {"type": "chart", "kind": "hbar", "title": "Sector returns, 1 year (sample)", "unit": "%",
+         "x": ["Nifty IT", "Nifty Pharma", "Nifty Bank", "Nifty Auto", "Nifty FMCG", "Nifty Realty"],
+         "series": [{"name": "Return", "data": [18.4, 12.1, 9.6, 6.2, -2.3, -7.8]}]},
+        {"type": "chart", "kind": "area", "title": "SIP of ₹10,000 a month at 12%", "unit": "₹", "x": ["Start", "Yr 3", "Yr 6", "Yr 9", "Yr 12", "Yr 15"],
+         "series": [{"name": "Invested", "data": [0, 360000, 720000, 1080000, 1440000, 1800000]},
+                    {"name": "Gains", "data": [0, 75076, 337570, 868215, 1782522, 3245760]}]},
+        {"type": "chart", "kind": "combo", "title": "Revenue and net margin", "unit": "₹Cr", "x": ["Sep 2025", "Dec 2025", "Mar 2026", "Jun 2026"],
+         "series": [{"name": "Revenue", "data": [65799, 67087, 70698, 72275]}, {"name": "Net margin", "unit": "%", "data": [18.4, 16.0, 19.5, 18.6]}]}
+      ]
+    },
+    {
+      "kind": "kpis",
+      "for": "Two to four headline numbers, each with an optional change chip.",
+      "use_when": "The top of a report: revenue and margin, balance and spend.",
+      "fields": "items: [{label, value: a number or short text, unit, change: number (optional), change_unit: \"%\" or \"pt\"}], at most 4.",
+      "example": {"type": "kpis", "items": [{"label": "Revenue", "value": 72275, "unit": "₹Cr", "change": 2.2, "change_unit": "%"},
+                                              {"label": "Net margin", "value": 18.6, "unit": "%", "change": -0.9, "change_unit": "pt"}]}
+    },
+    {
+      "kind": "actions",
+      "for": "Up to three buttons that send a follow-up message straight away.",
+      "use_when": "An obvious next step: Analyze, Book it, Show this week. The run text should read like something the user would say.",
+      "fields": "items: [{label: short, run: the message to send}], at most 3.",
+      "example": {"type": "actions", "items": [{"label": "Analyze", "run": "Analyze Tata Consultancy Services (TCS.NS): last 4 quarters"}]}
+    },
+    {
+      "kind": "source",
+      "for": "One small line saying where the data came from, optionally linked.",
+      "use_when": "Last block of any reply built from outside data.",
+      "fields": "text. url: optional http(s) link.",
+      "example": {"type": "source", "text": "screener.in · TCS.NS · latest quarter Jun 2026", "url": "https://www.screener.in/company/TCS/consolidated/"}
+    },
+    {
+      "kind": "tiles",
+      "for": "Cover cards: a photo or colour wash, an icon, a title and one line.",
+      "use_when": "Choices to explore: places to visit, topics, ideas, options.",
+      "fields": "items: [{title (max 40), subtitle (one line), image: https a tool returned (optional), icon, ask: question put in the composer for the user to send, or run: message sent at once}], 2-8 items.",
+      "example": {"type": "tiles", "items": [
+        {"title": "Fushimi Inari", "subtitle": "Red gates, best at dawn", "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/1/16/KyotoFushimiInariLarge.jpg/960px-KyotoFushimiInariLarge.jpg", "icon": "walk", "ask": "Add Fushimi Inari to day 1"},
+        {"title": "Arashiyama", "subtitle": "Bamboo grove and river views", "icon": "leaf", "ask": "Add Arashiyama to day 2"},
+        {"title": "Nishiki Market", "subtitle": "Kyoto's kitchen, 400 years old", "icon": "food", "ask": "Add Nishiki Market to day 1"},
+        {"title": "Gion at night", "subtitle": "Lantern-lit lanes and tea houses", "icon": "moon", "ask": "Add an evening walk in Gion"}]}
+    },
+    {
+      "kind": "progress",
+      "for": "A milestone track: value toward goal, checkpoints ticked or still locked.",
+      "use_when": "Goals and levels: savings towards a target, a reading challenge, a training plan.",
+      "fields": "title. value: number. goal: number (> 0). unit: short (XP, km, ₹, books). steps: [{label, at: number}] up to 6 checkpoints (optional).",
+      "example": {"type": "progress", "title": "Level 4", "value": 95, "goal": 120, "unit": "XP",
+                  "steps": [{"label": "30 XP", "at": 30}, {"label": "60 XP", "at": 60}, {"label": "90 XP", "at": 90}, {"label": "120 XP", "at": 120}]}
+    },
+    {
+      "kind": "streak",
+      "for": "A big count and the week, each day ticked and today marked.",
+      "use_when": "Habits done day after day: workouts, meditation, journaling, no-spend days.",
+      "fields": "count: number. label (default \"Current streak\"). unit (default \"days\"). days: up to 7 [{label: Mon, date: \"12\", done: true/false, today: true/false}].",
+      "example": {"type": "streak", "count": 3, "days": [
+        {"label": "Mon", "date": "9", "done": true}, {"label": "Tue", "date": "10", "done": true}, {"label": "Wed", "date": "11", "done": true},
+        {"label": "Thu", "date": "12", "today": true}, {"label": "Fri", "date": "13"}, {"label": "Sat", "date": "14"}, {"label": "Sun", "date": "15"}]}
+    },
+    {
+      "kind": "flip",
+      "for": "Flash cards: a question on the front, the answer (and a photo) on the back; a tap turns one.",
+      "use_when": "Quizzes, revision, \"let's play\".",
+      "fields": "title (optional). cards: [{front (max 80), back (max 120), image: https a tool returned}], 2-12.",
+      "example": {"type": "flip", "title": "Asian Games 2026", "cards": [
+        {"front": "Most golds?", "back": "China · 201"}, {"front": "Best swimmer?", "back": "Pan Zhanle · 6 golds"}, {"front": "Host city?", "back": "Nagoya"}]}
+    },
+    {
+      "kind": "heatmap",
+      "for": "Rows by columns, each cell shaded by its value.",
+      "use_when": "Many numbers at once: sectors by quarter, stocks by month, habits by weekday.",
+      "fields": "title. rows, cols: [labels, max 12 each]. values: [[a number per col] per row]. unit (optional). scale: diverging (red to green around 0; the default when a value is negative) or sequential.",
+      "example": {"type": "heatmap", "title": "Finance, 1 year · % change", "rows": ["JPM", "GS", "MS"], "cols": ["Q1", "Q2", "Q3", "Q4"],
+        "values": [[4.1, 2.0, -1.2, 6.3], [7.5, -3.1, 2.2, 9.0], [1.4, 0.8, -4.6, 3.3]], "unit": "%"}
+    },
+    {
+      "kind": "timeline",
+      "for": "A plan, day by day: times down the side, each stop with its place, an icon and a short note.",
+      "use_when": "Itineraries, a day's schedule, an event programme, timed steps.",
+      "fields": "title (optional). groups: [{label: \"Day 1 · Fri 9 Oct\", items: [{time: \"09:00\", title, place, note, icon; all but title optional}]}], up to 14 groups of 12 items.",
+      "example": {"type": "timeline", "title": "Kyoto, 2 days", "groups": [
+        {"label": "Day 1 · Fri 9 Oct", "items": [
+          {"time": "07:00", "title": "Fushimi Inari", "place": "Fushimi", "icon": "walk", "note": "Go before the crowds."},
+          {"time": "12:30", "title": "Lunch at Nishiki Market", "place": "Nakagyo", "icon": "food"}]},
+        {"label": "Day 2 · Sat 10 Oct", "items": [
+          {"time": "08:30", "title": "Arashiyama bamboo grove", "place": "Arashiyama", "icon": "leaf"},
+          {"time": "15:00", "title": "Train back to Osaka", "icon": "ticket"}]}]}
+    },
+    {
+      "kind": "table",
+      "for": "Options compared across the same attributes.",
+      "use_when": "Comparing phones, plans, flights or hotels on price, specs and ratings. A plain ranking is a list, not a table.",
+      "fields": "columns: names, up to 8. rows: one cell per column (text; inline syntax works), up to 30. highlight: {row: n} or {column: n}, from 0, tinted and badged Best (optional). caption (optional).",
+      "example": {"type": "table", "columns": ["Phone", "Price", "Battery", "Camera"], "highlight": {"row": 0},
+                  "rows": [["Pixel 10a", "₹44,999", "4,800 mAh", ":badge[Best]{good}"], ["Galaxy A76", "₹42,999", "5,000 mAh", "Good"], ["Nothing 4", "₹39,999", "5,000 mAh", "OK"]]}
+    },
+    {
+      "kind": "list",
+      "for": "Rich rows: a rank, icon or photo, a title, a line under it, a value on the right.",
+      "use_when": "Rankings, top picks, search results, places nearby.",
+      "fields": "items: [{title, subtitle, value: short, icon or image (https), run: a follow-up the user might ask, which makes the row tappable (give each item one), or url: https}], up to 12. ranked: true numbers them. title (optional).",
+      "example": {"type": "list", "title": "Cafés in Koramangala", "ranked": true, "items": [
+        {"title": "Third Wave Coffee", "subtitle": "80 Feet Road", "value": "4.5★", "run": "Directions to Third Wave Coffee"},
+        {"title": "Dyu Art Café", "subtitle": "Garden seating, quiet", "value": "4.4★", "icon": "leaf", "run": "Is Dyu Art Café open now?"}]}
+    },
+    {
+      "kind": "checklist",
+      "for": "Things to tick off, with \"3 of 9 done\"; ticks are saved.",
+      "use_when": "Packing lists, to-dos, documents to bring, steps to follow.",
+      "fields": "title (optional). items: [text, or {text, group}], up to 40; items of one group sit under its heading. numbered: true for steps in order.",
+      "example": {"type": "checklist", "title": "Ooty packing", "items": [{"text": "Warm jacket", "group": "Clothes"}, {"text": "Woollen socks", "group": "Clothes"},
+                                                                       {"text": "ID card", "group": "Papers"}, {"text": "Toy train tickets", "group": "Papers"}]}
+    },
+    {
+      "kind": "calculator",
+      "for": "Sliders for what-if numbers; results recalculate as the user moves them.",
+      "use_when": "EMI, loan, SIP and pay-off-early questions; budget split, tip, fuel cost. Helpers are exact: never work out EMIs, interest or returns yourself in text.",
+      "fields": "title (optional). inputs: [{id, label, min, max, step, value, unit}], up to 6. outputs: [{label, formula, unit}], up to 6. formula: numbers, input ids, + - * / ^ ( ) < > ==, min, max, round(x, digits), abs, if(cond, a, b), emi(principal, rate_pct, years), sip(monthly, rate_pct, years), pct(part, whole), prepay_years and prepay_interest(principal, rate_pct, years, yearly_extra): EMI plus a yearly lump sum. unit: ₹, % or a word.",
+      "example": {"type": "calculator", "title": "Home loan", "inputs": [
+        {"id": "p", "label": "Loan", "min": 1000000, "max": 10000000, "step": 100000, "value": 4000000, "unit": "₹"},
+        {"id": "r", "label": "Rate", "min": 6, "max": 12, "step": 0.1, "value": 8.5, "unit": "%"},
+        {"id": "n", "label": "Years", "min": 5, "max": 30, "step": 1, "value": 20, "unit": "years"}],
+        "outputs": [{"label": "Monthly EMI", "formula": "emi(p, r, n)", "unit": "₹"}, {"label": "Total interest", "formula": "emi(p, r, n) * n * 12 - p", "unit": "₹"}]}
+    },
+    {
+      "kind": "callout",
+      "for": "A tinted box with an icon: a warning, a tip or the one-line takeaway.",
+      "use_when": "A safety or money warning, a practical tip, the verdict after a comparison. One per reply.",
+      "fields": "tone: info | tip | warn. title (optional). text.",
+      "example": {"type": "callout", "tone": "tip", "text": "Pixel if photos matter most; Nothing if price does."}
+    },
+    {
+      "kind": "images",
+      "fence": "odie-images",
+      "for": "A strip or mosaic of real photos with captions (news cards when they come with headlines).",
+      "use_when": "Showing what a place, product or event looks like.",
+      "fields": "In its own ```odie-images fence: {title, images: [{url: https, caption, source: site name}]}.",
+      "example": {"title": "Kyoto", "images": [{"url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/1/16/KyotoFushimiInariLarge.jpg/960px-KyotoFushimiInariLarge.jpg", "caption": "Fushimi Inari", "source": "Wikimedia"}]}
+    },
+    {
+      "kind": "svg",
+      "fence": "odie-svg",
+      "for": "A drawing you write as SVG: an illustration, an icon, a floor plan, a small animation (SMIL or CSS inside it).",
+      "use_when": "A drawing, sketch, icon or simple animation. Not charts (chart) or flowcharts (mermaid).",
+      "fields": "In its own ```odie-svg fence: the whole SVG, with a viewBox. Scripts, links out and outside files are removed.",
+      "example": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 100 50\"><circle cx=\"25\" cy=\"25\" r=\"12\" fill=\"#ff7430\"><animate attributeName=\"cx\" values=\"25;75;25\" dur=\"3s\" repeatCount=\"indefinite\"/></circle></svg>"
+    },
+    {
+      "kind": "row",
+      "group": "container",
+      "for": "2-3 small blocks side by side; they stack when the screen is narrow.",
+      "use_when": "Two stats next to each other, a badge beside a button.",
+      "fields": "children: 2-3 of stat, kpis, badge, button, image, callout or text.",
+      "example": {"type": "row", "children": [{"type": "stat", "label": "Spent", "value": 18400, "unit": "₹", "change": -6}, {"type": "stat", "label": "Left", "value": 6600, "unit": "₹"}]}
+    },
+    {
+      "kind": "section",
+      "group": "container",
+      "for": "A titled card holding other blocks; collapsed: true makes it an accordion.",
+      "use_when": "A table with its verdict; one card per day or option; details most people skip (collapsed).",
+      "fields": "title. collapsed: true/false. children: any blocks except another section.",
+      "example": {"type": "section", "title": "Getting there", "collapsed": true, "children": [{"type": "text", "text": ":icon[plane] Fly to Coimbatore, then 3 hours by road."}, {"type": "badge", "text": "Toy train sells out", "tone": "warn"}]}
+    },
+    {
+      "kind": "grid",
+      "group": "container",
+      "for": "2-6 small blocks in two columns.",
+      "use_when": "Four stats, a few photos, a set of bars.",
+      "fields": "children: 2-6 small blocks.",
+      "example": {"type": "grid", "children": [{"type": "bar", "label": "Food", "value": 7200, "max": 8000, "unit": "₹"}, {"type": "bar", "label": "Travel", "value": 2100, "max": 4000, "unit": "₹"}]}
+    },
+    {"kind": "heading", "group": "atom", "for": "A title line between blocks.", "use_when": "Labelling a part of the reply.", "fields": "text.",
+     "example": {"type": "heading", "text": "Day 1 · Ooty"}},
+    {"kind": "text", "group": "atom", "for": "A short paragraph.", "use_when": "A line of explanation in a section.", "fields": "text (inline syntax, **bold** and [links](https://…) work).",
+     "example": {"type": "text", "text": "Toy train at 7:10 :badge[Book early]{warn}"}},
+    {"kind": "badge", "group": "atom", "for": "A small pill.", "use_when": "A status or label on its own.", "fields": "text. tone: good | warn (optional).",
+     "example": {"type": "badge", "text": "Open now", "tone": "good"}},
+    {"kind": "button", "group": "atom", "for": "One button.", "use_when": "A single next step inside a container.", "fields": "label. run: message to send, or url: https.",
+     "example": {"type": "button", "label": "Plan day 2", "run": "Plan day 2 of my Ooty trip"}},
+    {"kind": "link", "group": "atom", "for": "A line of linked text.", "use_when": "Pointing to a booking or official page.", "fields": "text. url: https.",
+     "example": {"type": "link", "text": "Book on IRCTC", "url": "https://www.irctc.co.in"}},
+    {"kind": "image", "group": "atom", "for": "One photo with a caption.", "use_when": "Inside a section or grid.", "fields": "url: https a tool returned. caption (optional).",
+     "example": {"type": "image", "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/1/16/KyotoFushimiInariLarge.jpg/960px-KyotoFushimiInariLarge.jpg", "caption": "Fushimi Inari"}},
+    {"kind": "stat", "group": "atom", "for": "One big number with its label and a change chip.", "use_when": "A single figure, or two in a row.", "fields": "label, value, unit, change (optional), change_unit: % or pt.",
+     "example": {"type": "stat", "label": "Saved this month", "value": 12500, "unit": "₹", "change": 8}},
+    {"kind": "bar", "group": "atom", "for": "One progress bar.", "use_when": "Budget used, items packed, a share of a total.", "fields": "label, value, max (default 100), unit (optional).",
+     "example": {"type": "bar", "label": "Budget used", "value": 62}},
+    {"kind": "divider", "group": "atom", "for": "A thin line.", "use_when": "Separating parts of a section.", "fields": "none.",
+     "example": {"type": "divider"}}
+  ],
+  "icons": ["mail", "rupee", "bell", "cal", "check", "clock", "chart", "photo", "spark", "chat", "brain", "sun", "moon", "sunset", "note", "globe", "search",
+            "heart", "plane", "bed", "food", "walk", "pin", "trophy", "lock", "star", "leaf", "flame", "ticket", "info", "alert"]
+}

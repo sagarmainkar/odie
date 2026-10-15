@@ -1,0 +1,151 @@
+"""Reading mail and events through each kind of app, and what changed since the last check."""
+import json
+from datetime import datetime, timedelta, timezone, UTC
+
+import pytest
+
+from odie.store.db import Store
+from odie.watch import fetch, sources
+from tests.test_watch_calls import spec_for
+
+NOW = datetime(2026, 10, 8, 9, 0, tzinfo=UTC)
+ZAP_MAIL = [{"id": "m1", "from": {"email": "xyz@example.com", "name": "Xyz"}, "subject": "The deck", "date": "2026-10-08T08:40:00Z",
+             "body_plain": "Please see the attached PDF." + " more" * 400, "raw": {"headers": "x" * 9000},
+             "all_attachments": [{"file_name": "q3.pdf", "mime_type": "application/pdf", "size": 120000}]},
+            {"id": "m0", "from": "old@example.com", "subject": "Old", "date": "2026-10-07T07:00:00Z", "body_plain": "seen before"}]
+EVENTS = [{"id": "e1", "summary": "Standup", "start": {"dateTime": "2026-10-08T15:00:00+05:30"}, "end": {"dateTime": "2026-10-08T15:15:00+05:30"},
+           "location": "Meet", "attendees": [{"email": "a@example.com"}]}]
+
+
+@pytest.fixture
+def store(isolated_settings, tmp_path):
+    s = Store(tmp_path / "a.db")
+    s.init_schema()
+    return s
+
+
+def test_parsers_know_the_common_shapes():
+    m = fetch.parse_mail(json.dumps({"results": ZAP_MAIL}), "mail:zapier")
+    assert [x.id for x in m] == ["m1", "m0"] and m[0].frm == "Xyz <xyz@example.com>" and m[0].subject == "The deck"
+    assert len(m[0].snippet) <= 300 and m[0].attachments == [{"name": "q3.pdf", "type": "application/pdf", "size": 120000}]
+    assert "raw" not in json.dumps(m[0].brief()) and "x" * 100 not in json.dumps(m[0].brief())
+    comp = fetch.parse_mail(json.dumps({"data": {"messages": [{"messageId": "c1", "sender": "a@b.c", "subject": "S",
+                                                               "messageTimestamp": "2026-10-08T08:00:00Z", "messageText": "t"}]}}), "mail:c")
+    assert comp[0].id == "c1" and comp[0].frm == "a@b.c"
+    e = fetch.parse_events(json.dumps({"events": EVENTS}), "calendar:x")
+    assert e[0].title == "Standup" and e[0].start.startswith("2026-10-08T15:00") and e[0].attendees == ["a@example.com"]
+    assert fetch.parse_mail("not json", "s") == [] and fetch.parse_events("[]", "s") == []
+
+
+async def test_new_mail_through_zapier_since_the_last_check(store, tmp_path):
+    from odie.plugins import mcp
+    mcp.write_config({"zapier": spec_for("zapier", tmp_path, mail=ZAP_MAIL, events=EVENTS)})
+    await sources.detect_and_save(store)
+    f = fetch.Fetcher(store, NOW)
+    got = await f.new_mail()
+    assert [m.id for m in got] == ["m1", "m0"] and "mail:zapier" in f.first
+    calls = [json.loads(line) for line in (tmp_path / "calls.log").read_text().splitlines()]
+    q = next(c for c in calls if c["tool"] == "execute_zapier_read_action" and c["args"]["tool_name"] == "gmail_find_email")
+    assert q["args"]["params"]["query"] == f"after:{int((NOW - timedelta(hours=24)).timestamp())}"  # the first check: 24 h back
+    f.commit()
+    again = fetch.Fetcher(store, NOW + timedelta(minutes=30))
+    assert await again.new_mail() == []  # both seen now
+    assert not again.first and again.statuses["mail:zapier"]["ok"] is True
+
+
+async def test_events_say_what_changed(store, tmp_path):
+    from odie.plugins import mcp
+    data = tmp_path / "mail.json"
+    mcp.write_config({"cal": spec_for("plain", tmp_path, events=EVENTS)})
+    await sources.detect_and_save(store)
+    f = fetch.Fetcher(store, NOW)
+    assert [e.change for e in await f.upcoming_events()] == ["new"]
+    f.commit()
+    moved = [{**EVENTS[0], "start": {"dateTime": "2026-10-08T16:00:00+05:30"}}, {**EVENTS[0], "id": "e2", "summary": "Lunch"}]
+    data.write_text(json.dumps({"mail": [], "events": moved}))
+    f2 = fetch.Fetcher(store, NOW + timedelta(minutes=30))
+    assert {e.id: e.change for e in await f2.upcoming_events()} == {"e1": "moved", "e2": "new"}
+    f2.commit()
+    data.write_text(json.dumps({"mail": [], "events": []}))
+    f3 = fetch.Fetcher(store, NOW + timedelta(minutes=60))
+    got = await f3.upcoming_events()
+    assert {e.id: e.change for e in got} == {"e1": "cancelled"}  # e2 (09:30 UTC) has started: over, not cancelled
+
+
+async def test_a_failing_source_is_recorded_and_the_rest_still_read(store, tmp_path):
+    from odie.plugins import mcp
+    mcp.write_config({"mymail": spec_for("plain", tmp_path, mail=ZAP_MAIL)})
+    await sources.detect_and_save(store)
+    good = sources.saved(store)
+    broken = sources.Source("mail", "gone", "Gone", "plain", "search_emails", {}, query_param="query")
+    store.set_setting(sources.KEY, {**store.get_setting(sources.KEY), "sources": [s.as_dict() for s in [broken, *good]]})
+    mcp.write_config({"mymail": spec_for("plain", tmp_path, mail=ZAP_MAIL), "gone": {"command": str(tmp_path / "missing")}})
+    f = fetch.Fetcher(store, NOW)
+    assert [m.id for m in await f.new_mail()] == ["m1", "m0"]
+    assert f.statuses["mail:gone"]["ok"] is False and f.statuses["mail:gone"]["reason"]
+    f.commit()
+    assert store.get_setting(fetch.STATE)["sources"]["mail:gone"]["fails"] == 1
+
+
+async def test_save_attachment_base64_and_refusal(store, tmp_path):
+    from odie.plugins import mcp
+    mcp.write_config({"mymail": spec_for("plain", tmp_path, mail=ZAP_MAIL)})
+    await sources.detect_and_save(store)
+    f = fetch.Fetcher(store, NOW)
+    await f.new_mail()
+    path = await f.save_attachment("m1", "q3.pdf")
+    assert path.read_bytes() == b"PDF" and path.name == "q3.pdf" and "watch" in str(path)
+    with pytest.raises(fetch.CallError):
+        await f.save_attachment("m1", "../../etc/passwd")
+
+
+
+async def test_zapier_events_send_the_calendar(store, tmp_path):
+    from odie.plugins import mcp
+    mcp.write_config({"zapier": spec_for("zapier", tmp_path, events=EVENTS)})
+    await sources.detect_and_save(store)
+    f = fetch.Fetcher(store, NOW)
+    assert [e.title for e in await f.upcoming_events()] == ["Standup"] and f.statuses["calendar:zapier"]["ok"] is True
+    calls = [json.loads(line) for line in (tmp_path / "calls.log").read_text().splitlines()]
+    q = next(c for c in calls if c["tool"] == "execute_zapier_read_action" and c["args"]["tool_name"] == "google_calendar_find_events")
+    assert q["args"]["params"]["calendarid"] == "me@example.com" and "end_time" in q["args"]["params"]
+
+
+# A line-style calendar server: its calendar wants days ("YYYY-MM-DD") and answers in lines, not JSON. The watch
+# sent no date_from and the card said "MCP error -32602 … received undefined at date_from".
+IST = timezone(timedelta(hours=5, minutes=30))
+GM_NOW = datetime(2026, 10, 9, 18, 0, tzinfo=IST)
+GM_EVENTS = [
+    {"id": "done1", "start": "2026-10-09T09:00:00+05:30", "end": "2026-10-09T09:30:00+05:30", "summary": "Standup"},
+    {"id": "eve1", "start": "2026-10-09T18:30:00+05:30", "end": "2026-10-09T19:00:00+05:30", "summary": "Call with Ravi",
+     "attendees": ["ravi@example.com", "me@example.com"], "location": "Zoom"},
+    {"id": "late1", "start": "2026-10-09T23:30:00+05:30", "end": "2026-10-10T00:30:00+05:30", "summary": "Deploy window"},
+    {"id": "day1", "start": "2026-10-10", "end": "2026-10-11", "allDay": True, "summary": "Diwali shopping"},
+    {"id": "tom1", "start": "2026-10-10T10:00:00+05:30", "end": "2026-10-10T11:00:00+05:30", "summary": "Dentist", "location": "Baner"},
+]
+
+
+async def test_gmail_mcp_calendar_gets_days_and_its_lines_are_read(store, tmp_path):
+    from odie.plugins import mcp
+    mcp.write_config({"gmail-calendar": spec_for("gmailmcp", tmp_path, events=GM_EVENTS)})
+    await sources.detect_and_save(store)
+    f = fetch.Fetcher(store, GM_NOW)
+    got = {e.id: e for e in await f.upcoming_events()}
+    calls = [json.loads(line) for line in (tmp_path / "calls.log").read_text().splitlines()]
+    assert calls[-1] == {"tool": "calendar_list_events", "args": {"date_from": "2026-10-09", "date_to": "2026-10-10"}}
+    assert f.statuses["calendar:gmail-calendar"]["ok"] is True
+    assert set(got) == {"eve1", "late1", "day1", "tom1"}  # the 09:00 standup is over
+    call = got["eve1"]
+    assert (call.title, call.start, call.end) == ("Call with Ravi", "2026-10-09T18:30:00+05:30", "2026-10-09T19:00:00+05:30")
+    assert call.attendees == ["ravi@example.com", "me@example.com"] and call.where == "Zoom"
+    assert got["late1"].end == "2026-10-10T00:30:00+05:30"           # past midnight: the next day
+    assert (got["day1"].start, got["day1"].end) == ("2026-10-10", "")  # all day
+    assert (got["tom1"].start, got["tom1"].where) == ("2026-10-10T10:00:00+05:30", "Baner")  # its day from the "## 2026-10-10" line
+
+
+def test_gmail_mcp_lines_on_one_day_and_none():
+    one = "a1 | 07:00-07:45 | Run @ Park\nb2 | all day 2026-10-09 | Holiday | x@example.com"
+    got = fetch.parse_events(one, "calendar:g", "2026-10-09", IST)
+    assert [(e.id, e.title, e.start, e.where, e.attendees) for e in got] == [
+        ("a1", "Run", "2026-10-09T07:00:00+05:30", "Park", []), ("b2", "Holiday", "2026-10-09", "", ["x@example.com"])]
+    assert fetch.parse_events("No events on 2026-10-09.", "calendar:g", "2026-10-09", IST) == []

@@ -1,0 +1,50 @@
+import { describe, expect, it } from "vitest";
+import { badge, chatAbout, footer, watchRow, type WatchCardData } from "./watch";
+
+const card = (over: Partial<WatchCardData> = {}): WatchCardData => ({
+  checked_at: "2026-10-08T14:30:00+05:30", line: "2 new emails", needs_you: [], events: [], unseen: 0,
+  sources: { "mail:zapier": { ok: true, app: "Zapier", kind: "mail" }, "calendar:zapier": { ok: true, app: "Zapier", kind: "calendar" } }, ...over,
+});
+
+describe("watch", () => {
+  it("says when it checked, through what, and when it checks next", () => {
+    expect(footer(card(), new Date("2026-10-08T14:31:00+05:30"))).toBe("checked 14:30 via Zapier · next 15:00");
+  });
+  it("says what's failing instead", () => {
+    const c = card({ sources: { "mail:zapier": { ok: false, app: "Zapier", kind: "mail", reason: "401 Unauthorized" } } });
+    expect(footer(c, new Date())).toBe("Zapier (mail): 401 Unauthorized");
+  });
+  it("counts up to 9+", () => {
+    expect(badge(0)).toBe("");
+    expect(badge(3)).toBe("3");
+    expect(badge(12)).toBe("9+");
+  });
+  it("opens chat about an item", () => {
+    expect(chatAbout({ ref: "mail:1", title: "Invoice due Friday", why: "", at: "" })).toBe("Tell me about: Invoice due Friday");
+  });
+});
+
+describe("watchRow", () => {
+  const base = { ref: "mail:1", title: "Invoice due Friday", why: "₹2,480 by the 10th", at: "2026-10-08T14:01:00+05:30", when: "2026-10-08T14:00:00+05:30" };
+  it("draws a mail item as the chat's mail row and opens the email on tap", () => {
+    const row = watchRow({ ...base, from: "Priya Nair", subject: "Lease renewal", gist: "Sign by Friday please." }, "2026-10-08");
+    expect(row.title).toBe("Priya Nair · Lease renewal");
+    expect(row.subtitle).toBe(":badge[New]{good} ₹2,480 by the 10th");  // the model's reason; New until Today was opened
+    expect(row.lead).toMatchObject({ kind: "initial", letter: "P" });
+    expect(row.value).toBe("14:00");
+    expect(row.run).toBe("Open the email from Priya Nair about Lease renewal");
+  });
+  it("a seen item loses the pill; a mail from another day shows its day; no reason falls back to the gist", () => {
+    const row = watchRow({ ...base, why: "", from: "CDSL", subject: "Demat alert", gist: "A transaction was reported.", seen: true, when: "2026-10-06T09:00:00+05:30" }, "2026-10-08");
+    expect(row.subtitle).toBe("A transaction was reported.");
+    expect(row.value).toBe("Tue");
+  });
+  it("an older item or an event keeps the model's title and asks about it", () => {
+    const mail = watchRow({ ...base, seen: true }, "2026-10-08");
+    expect(mail.title).toBe("Invoice due Friday");
+    expect(mail.lead).toEqual({ kind: "tile", icon: "mail", color: "blue" });
+    expect(mail.run).toBe("Tell me about: Invoice due Friday");
+    const event = watchRow({ ...base, ref: "event:e1", title: "Standup moved to 3", seen: true }, "2026-10-08");
+    expect(event.lead).toEqual({ kind: "tile", icon: "cal", color: "orange" });
+  });
+});

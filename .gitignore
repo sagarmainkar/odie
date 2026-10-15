@@ -1,0 +1,37 @@
+.venv/
+__pycache__/
+*.pyc
+node_modules/
+web/dist/
+*.db
+*.db-*
+.adk/
+.DS_Store
+.superpowers/
+eval/results/
+.playwright-mcp/
+voice_server/.venv/
+web/public/samples/
+.measure/
+# Your own test chats and their replays (scripts/chat_replay.sh): personal, never committed
+evals/chats/
+
+# Private working notes: never committed. Design specs and plans, decisions, the backlog, research.
+docs/superpowers/
+docs/design/
+docs/research/
+docs/specs/
+docs/plans/
+BACKLOG.md
+DECISIONS.md
+OPEN_QUESTIONS.md
+CLAUDE.local.md
+# Your own add-ons
+addons/personal/
+# A folder for anything of yours (notes, drafts, exports, screenshots): git never sees it
+private/
+# Secrets, wherever they end up
+.env
+.env.*
+*.pem
+*.key

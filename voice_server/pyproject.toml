@@ -1,0 +1,18 @@
+[project]
+name = "odie-voice"
+version = "0.1.0"
+description = "Local text-to-speech for Odie: Kokoro (fast) and Maya1 (expressive), on Apple Silicon via MLX."
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "mlx-audio==0.5.7",
+    "misaki[en]",
+    "fastapi",
+    "uvicorn",
+    "en-core-web-sm",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+en-core-web-sm = { url = "https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl" }

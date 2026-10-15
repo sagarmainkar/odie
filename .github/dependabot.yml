@@ -1,0 +1,24 @@
+# Monthly pull requests for outdated dependencies, grouped so there are few of them. Each one runs CI like any other.
+version: 2
+updates:
+  - package-ecosystem: uv
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      python:
+        patterns: ["*"]
+  - package-ecosystem: npm
+    directory: /web
+    schedule:
+      interval: monthly
+    groups:
+      web:
+        patterns: ["*"]
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns: ["*"]

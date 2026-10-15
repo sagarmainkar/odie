@@ -1,0 +1,42 @@
+[project]
+name = "odie"
+version = "0.1.0"
+description = "Odie: a personal assistant that lives on your own computer (Google ADK)"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "google-adk[extensions,mcp,openai]==2.12.0",
+  "fastapi>=0.115",
+  "uvicorn[standard]>=0.30",
+  "sse-starlette>=2.1",
+  "pywebpush>=2.0",
+  "apscheduler>=3.10,<4",
+  "pyyaml",
+  "httpx",
+  "pillow>=12.3.0",
+  "python-multipart>=0.0.32",
+  "langsmith[otel]>=0.14.4",
+  "wrapt>=2.5.0",
+  "python-pptx>=1.0.2",
+  "python-docx>=1.2.0",
+  "anthropic>=1.12.1",
+  "osxphotos>=0.77",
+]
+
+[tool.uv]
+# photoscript (an osxphotos dependency) pins tenacity below 9 while google-adk needs 9 or later; both only use tenacity's
+# retry decorator, which is the same in 9.
+override-dependencies = ["tenacity>=9"]
+
+[dependency-groups]
+dev = ["pytest>=8", "pytest-asyncio>=0.24", "httpx"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests", "addons"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["odie"]

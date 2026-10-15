@@ -1,0 +1,749 @@
+[
+  {
+    "description": "Attach a file you made in Odie's workspace (with the shell or a skill). A picture (png, jpg, webp, gif, svg)\nis shown under your reply, a video (mp4, webm, mov) or a sound (mp3, m4a, wav) plays there, anything else is\na download card. `path` is inside the workspace: relative to it, or absolute.",
+    "name": "attach_file",
+    "parameters_json_schema": {
+      "properties": {
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "title": {
+          "default": "",
+          "title": "Title",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "title": "attach_fileParams",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Check quarterly results you read from a web page (any company outside the US) and get a ready-made\n```odie-blocks board to paste unchanged. Numbers exactly as the page shows them, in its unit.\nquarters: 5 labels oldest first, like \"Jun 2025\" (the latest 4 plus the one a year before the latest).\ncurrency: a symbol, e.g. ₹ or €. scale: the page's unit, \"Cr\", \"M\" or \"B\". Every list has one value per quarter.\nexpenses/interest/operating_profit: as the table names them (a bank's Financing Profit is operating_profit).\nsource_url: the page you read. filings_url: the exchange filings page if the page links one.\nIf a check fails it says which; re-read the table and call again.",
+    "name": "build_report",
+    "parameters_json_schema": {
+      "properties": {
+        "company": {
+          "title": "Company",
+          "type": "string"
+        },
+        "ticker": {
+          "title": "Ticker",
+          "type": "string"
+        },
+        "currency": {
+          "title": "Currency",
+          "type": "string"
+        },
+        "scale": {
+          "title": "Scale",
+          "type": "string"
+        },
+        "quarters": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Quarters",
+          "type": "array"
+        },
+        "revenue": {
+          "items": {
+            "type": "number"
+          },
+          "title": "Revenue",
+          "type": "array"
+        },
+        "net_profit": {
+          "items": {
+            "type": "number"
+          },
+          "title": "Net Profit",
+          "type": "array"
+        },
+        "expenses": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "number"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Expenses"
+        },
+        "interest": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "number"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Interest"
+        },
+        "operating_profit": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "number"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Operating Profit"
+        },
+        "eps": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "number"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Eps"
+        },
+        "source_url": {
+          "default": "",
+          "title": "Source Url",
+          "type": "string"
+        },
+        "filings_url": {
+          "default": "",
+          "title": "Filings Url",
+          "type": "string"
+        }
+      },
+      "required": [
+        "company",
+        "ticker",
+        "currency",
+        "scale",
+        "quarters",
+        "revenue",
+        "net_profit"
+      ],
+      "title": "build_reportParams",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Write a skill into staging and check it (its code is read, never run). name: lowercase-with-hyphens.\ndescription: one line, what it does and when to use it. instructions: the SKILL.md body in Markdown.\ntools_code: the whole tools.py, or \"\" for an instructions-only skill. blocks: the block kinds it draws.\nReturns \"Ready to install\" or the problems to fix; call again with fixes until it's ready.",
+    "name": "draft_skill",
+    "parameters_json_schema": {
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "description": {
+          "title": "Description",
+          "type": "string"
+        },
+        "instructions": {
+          "title": "Instructions",
+          "type": "string"
+        },
+        "tools_code": {
+          "default": "",
+          "title": "Tools Code",
+          "type": "string"
+        },
+        "blocks": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Blocks"
+        }
+      },
+      "required": [
+        "name",
+        "description",
+        "instructions"
+      ],
+      "title": "draft_skillParams",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Read one remembered entry by its title (as listed in 'What you remember'). Partial titles work when unique.",
+    "name": "fetch_memory",
+    "parameters_json_schema": {
+      "properties": {
+        "title": {
+          "title": "Title",
+          "type": "string"
+        }
+      },
+      "required": [
+        "title"
+      ],
+      "title": "fetch_memoryParams",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Remove one remembered entry by its title, when the user says it's wrong or no longer wanted (\"stop watching\nfor the passport email\", \"forget that\"). Its text is kept in the memory's history.",
+    "name": "forget_memory",
+    "parameters_json_schema": {
+      "properties": {
+        "title": {
+          "title": "Title",
+          "type": "string"
+        }
+      },
+      "required": [
+        "title"
+      ],
+      "title": "forget_memoryParams",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Install a drafted skill that draft_skill said is ready, with the version it gave. The user sees an approval card\nwith the skill's text and code; it installs (and its code is allowed) only when the user taps Approve.",
+    "name": "install_skill",
+    "parameters_json_schema": {
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "version": {
+          "title": "Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "version"
+      ],
+      "title": "install_skillParams",
+      "type": "object"
+    }
+  },
+  {
+    "description": "The user's trackers: what each checks, how often, its status and the latest result.",
+    "name": "list_trackers"
+  },
+  {
+    "description": "Make a Word document from Markdown and attach it to the chat: \"#\" and \"##\" headings, paragraphs with **bold**\nand *italic*, \"- \" and \"1. \" lists, \"| a | b |\" tables, \"---\" for a page break. `title` names the file (else the\nfirst heading).",
+    "name": "make_document",
+    "parameters_json_schema": {
+      "properties": {
+        "markdown": {
+          "title": "Markdown",
+          "type": "string"
+        },
+        "title": {
+          "default": "",
+          "title": "Title",
+          "type": "string"
+        }
+      },
+      "required": [
+        "markdown"
+      ],
+      "title": "make_documentParams",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Make a file for the user from the chat: a spreadsheet (.csv), notes (.md or .txt), a web page (.html), data\n(.json), a calendar event (.ics) or a drawing (.svg, shown right under your reply; for a drawing in the reply\nitself an ```odie-svg block needs no file). `name` is the file name with its extension (\"Goa packing list.csv\");\n`content` is the whole file. The card appears under your reply. For slides (PowerPoint) or a Word document,\nload the documents skill instead.",
+    "name": "make_file",
+    "parameters_json_schema": {
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "content": {
+          "title": "Content",
+          "type": "string"
+        },
+        "title": {
+          "default": "",
+          "title": "Title",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "content"
+      ],
+      "title": "make_fileParams",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Make a designed deck: a PDF and an editable PowerPoint with slide previews, under your reply. \"# Title\" starts\neach slide (the first is the cover). On a slide: \"kicker: …\", \"image: <photo address a tool returned> (credit: …)\",\n\"- **Lead** — rest\" bullets, \"## Name\" cards (with image: and meta: lines), \"1. Step — detail\" steps, \"stat: value —\nlabel\", a ```chart block, \"quote: \"…\" — who\", \"> \" speaker notes, \"| a | b |\" tables. Photos are optional.\ntheme: editorial (dark, great with photos), minimal (clean white: research, business), warm (cream), bold (strong\ncolour: pitches). The documents skill lists the layouts.",
+    "name": "make_slides",
+    "parameters_json_schema": {
+      "properties": {
+        "markdown": {
+          "title": "Markdown",
+          "type": "string"
+        },
+        "title": {
+          "default": "",
+          "title": "Title",
+          "type": "string"
+        },
+        "theme": {
+          "default": "editorial",
+          "title": "Theme",
+          "type": "string"
+        }
+      },
+      "required": [
+        "markdown"
+      ],
+      "title": "make_slidesParams",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Price history for a stock, index, currency or commodity, with a chart. symbol: a name or ticker, e.g. NIFTY,\nSENSEX, BANK NIFTY, RELIANCE, TCS.NS, AAPL, gold, USDINR. period: 1d, 5d, 1mo, 3mo, 6mo, 1y, 2y, 5y or 10y\n(\"last week\" = 5d; any other, like 3y, gets the next longer one).\nReturns a summary and a ```odie-blocks block to paste into the reply unchanged so the app draws the chart.",
+    "name": "market_history",
+    "parameters_json_schema": {
+      "properties": {
+        "symbol": {
+          "title": "Symbol",
+          "type": "string"
+        },
+        "period": {
+          "default": "5d",
+          "title": "Period",
+          "type": "string"
+        }
+      },
+      "required": [
+        "symbol"
+      ],
+      "title": "market_historyParams",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Current date and time in the user's timezone.",
+    "name": "now"
+  },
+  {
+    "description": "Everything Odie can do right now, read live: built-in abilities, skills, connected apps, models and providers,\nvoice, active trackers, what runs on its own, visual blocks, and how to add more.",
+    "name": "odie_features"
+  },
+  {
+    "description": "A US-listed company's last 4 quarters from SEC filings: revenue, margins, profit, cash, with a ready-made\n```odie-blocks board to paste unchanged. company: a name or ticker, e.g. Qualys, QLYS, Tenable, Apple.",
+    "name": "quarterly_financials",
+    "parameters_json_schema": {
+      "properties": {
+        "company": {
+          "title": "Company",
+          "type": "string"
+        }
+      },
+      "required": [
+        "company"
+      ],
+      "title": "quarterly_financialsParams",
+      "type": "object"
+    }
+  },
+  {
+    "description": "The SKILL.md and tools.py of an existing skill: one of the user's (to change it) or a built-in one such as\nstocks (as a worked example).",
+    "name": "read_skill",
+    "parameters_json_schema": {
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "read_skillParams",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Run a shell command on this computer (zsh). The user sees the exact command and directory and approves it first. Use for files, git, scripts, system questions. cwd defaults to their home and must stay under it. Output is capped at 8 KB and 60 seconds.",
+    "name": "run_shell",
+    "parameters_json_schema": {
+      "properties": {
+        "command": {
+          "title": "Command",
+          "type": "string"
+        },
+        "cwd": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cwd"
+        }
+      },
+      "required": [
+        "command"
+      ],
+      "title": "run_shellParams",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Keyword search across everything remembered about the user. Use when the index has no obvious title.",
+    "name": "search_memories",
+    "parameters_json_schema": {
+      "properties": {
+        "query": {
+          "title": "Query",
+          "type": "string"
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "title": "search_memoriesParams",
+      "type": "object"
+    }
+  },
+  {
+    "description": "How to write a Odie skill: the SKILL.md and tools.py rules, the visual blocks and icons the app can draw,\nand the tool names already taken. Call this first when building or changing a skill.",
+    "name": "skill_guide"
+  },
+  {
+    "description": "Read text aloud into audio the user can play right in the chat: the player appears under your reply.\n\nstyle=\"memo\": a voice memo, when the user asks for a voice memo, a voice note, or to hear something. `script`\nis what to say, as plain speech; it's read in the voice chosen in Settings.\nstyle=\"podcast\": a podcast with two hosts. Load the podcast skill first and follow it; `script` is one turn\nper line, \"Host A: what they say\". The first host to speak gets a woman's voice, the second a man's.\n`title` is short (optional). When it works, reply in one short line; don't repeat the script.",
+    "name": "speak",
+    "parameters_json_schema": {
+      "properties": {
+        "script": {
+          "title": "Script",
+          "type": "string"
+        },
+        "title": {
+          "default": "",
+          "title": "Title",
+          "type": "string"
+        },
+        "style": {
+          "default": "memo",
+          "title": "Style",
+          "type": "string"
+        }
+      },
+      "required": [
+        "script"
+      ],
+      "title": "speakParams",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Stop a tracker for good (the user can also pause or stop it on Today).",
+    "name": "stop_tracker",
+    "parameters_json_schema": {
+      "properties": {
+        "tracker_id": {
+          "title": "Tracker Id",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "tracker_id"
+      ],
+      "title": "stop_trackerParams",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Add an open thread to the user's ledger. kind: todo, reminder, followup, waiting. due / next_check: ISO datetime like 2026-10-01T11:00 (today's date from the context; naive times are the user's timezone). A reminder fires in the chat at `due`. source_ref: a message, thread or event id if there is one.",
+    "name": "task_add",
+    "parameters_json_schema": {
+      "properties": {
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "kind": {
+          "default": "todo",
+          "title": "Kind",
+          "type": "string"
+        },
+        "due": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Due"
+        },
+        "next_check": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Next Check"
+        },
+        "source_ref": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Ref"
+        }
+      },
+      "required": [
+        "title"
+      ],
+      "title": "task_addParams",
+      "type": "object"
+    }
+  },
+  {
+    "description": "List ledger tasks. status: open (default), waiting, done, dropped, all.",
+    "name": "task_list",
+    "parameters_json_schema": {
+      "properties": {
+        "status": {
+          "default": "open",
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "title": "task_listParams",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Update a thread. status: done (the user handled it: paid, replied, finished), dropped (not needed), open, waiting. snooze_until: ISO datetime to hide it and remind again then. next_check: ISO datetime for a follow-up.",
+    "name": "task_update",
+    "parameters_json_schema": {
+      "properties": {
+        "task_id": {
+          "title": "Task Id",
+          "type": "integer"
+        },
+        "status": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Status"
+        },
+        "next_check": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Next Check"
+        },
+        "notes": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Notes"
+        },
+        "snooze_until": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Snooze Until"
+        }
+      },
+      "required": [
+        "task_id"
+      ],
+      "title": "task_updateParams",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Start a background tracker: Odie checks `check` on a schedule and tells the user (push + a line in Chat) when it\nmatters. title: short, e.g. \"Arsenal v Spurs\". check: what to look up, in plain words, e.g. \"Arsenal vs Spurs\nlive score and match status\". every: \"5m\", \"15m\", \"2h\", \"1d\", or times like \"09:00\", \"mon 09:00\", \"weekdays 7:30\".\nnotify: \"change\" (default: when the result changes), \"always\", or \"condition\" with condition, e.g. \"price below 3000\".\nuntil: last date (YYYY-MM-DD); default 14 days. A check can also end it (match over, order delivered).\npage: when this chat read a page of the user's own account (their orders), the address of the one page to check;\nthe user then decides whether the tracker may check it signed in.",
+    "name": "track",
+    "parameters_json_schema": {
+      "properties": {
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "check": {
+          "title": "Check",
+          "type": "string"
+        },
+        "every": {
+          "title": "Every",
+          "type": "string"
+        },
+        "notify": {
+          "default": "change",
+          "title": "Notify",
+          "type": "string"
+        },
+        "condition": {
+          "default": "",
+          "title": "Condition",
+          "type": "string"
+        },
+        "until": {
+          "default": "",
+          "title": "Until",
+          "type": "string"
+        },
+        "page": {
+          "default": "",
+          "title": "Page",
+          "type": "string"
+        }
+      },
+      "required": [
+        "title",
+        "check",
+        "every"
+      ],
+      "title": "trackParams",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Save something worth keeping about the user, people, preferences, projects or decisions. Reuse an existing title to update it; topic groups it (Identity, People, Projects, Health, Finance, ...).",
+    "name": "update_memory",
+    "parameters_json_schema": {
+      "properties": {
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "content": {
+          "title": "Content",
+          "type": "string"
+        },
+        "topic": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Topic"
+        }
+      },
+      "required": [
+        "title",
+        "content"
+      ],
+      "title": "update_memoryParams",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Read one web page (article, docs, listing) as text. Use after web_search when the snippet is not enough.",
+    "name": "web_fetch",
+    "parameters_json_schema": {
+      "properties": {
+        "url": {
+          "title": "Url",
+          "type": "string"
+        }
+      },
+      "required": [
+        "url"
+      ],
+      "title": "web_fetchParams",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Search the web for current information: news, prices, weather, facts you are unsure of, anything after your training data. Returns numbered results with URLs (cite them) and real image URLs you can show.",
+    "name": "web_search",
+    "parameters_json_schema": {
+      "properties": {
+        "query": {
+          "title": "Query",
+          "type": "string"
+        },
+        "max_results": {
+          "default": 5,
+          "title": "Max Results",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "title": "web_searchParams",
+      "type": "object"
+    }
+  }
+]

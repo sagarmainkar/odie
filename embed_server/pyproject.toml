@@ -1,0 +1,17 @@
+[project]
+name = "odie-embed"
+version = "0.1.0"
+description = "Odie's own embedding service: EmbeddingGemma 2 on this Mac, for reading notes (and later photos) by meaning."
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "sentence-transformers>=6.1.0",
+    "torch>=2.14.1",
+    "transformers>=5.19.0",
+    "pillow>=12.3.0",  # the Gemma 2 processor imports these even for text
+    "torchvision>=0.29.1",
+    "fastapi",
+    "uvicorn",
+]
+
+[tool.uv]
+package = false
