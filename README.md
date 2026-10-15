@@ -7,8 +7,10 @@
 
 <p align="center"><b>A personal assistant that lives on your own Mac and talks to you on your phone.</b></p>
 
-<!-- DEMO VIDEO: the film goes here. -->
-<p align="center"><i>A short film of Odie in use is coming here.</i></p>
+<p align="center">
+  <a href="docs/media/odie-film.mp4"><img src="docs/media/odie-film-poster.jpg" width="720" alt="The Odie film: a search for the day the dog met the sea finds the photos, a video and a note"></a>
+  <br><a href="docs/media/odie-film.mp4"><b>▶ Watch the film</b></a> (78 seconds, made-up data)
+</p>
 
 ---
 
@@ -64,7 +66,8 @@ Odie is inspired by Muse, but it isn't a copy.
   runs on the Mac's GPU (Apple Silicon). It gives you search over mixed media (notes, pictures and videos together),
   the results are remarkable, and there's a lot of fun to be had with it. The model is about 1.5 GB, downloaded once
   on first use, and unloads itself after 15 idle minutes. You can also use an embedding model from LM Studio or
-  Ollama, or OpenAI's (text only). Without any, search works by words.
+  Ollama, or OpenAI's (text only). Without any, search works by words. EmbeddingGemma 2 is Google's model: Odie
+  doesn't include it. It's downloaded from Hugging Face on first use, under its own licence (Apache 2.0).
 - **Photos and videos.** Odie reads your Photos library (read-only): who is in a picture, where and when, what Photos
   saw in it. Each picture gets one vector from its words and its pixels, so one search covers notes and pictures. A
   video plays in the chat after Odie fetches its original from iCloud.
