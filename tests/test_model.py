@@ -42,7 +42,7 @@ def test_model_for_builds_litellm_with_the_effort_word():
     args = llm._additional_args
     assert args["reasoning_effort"] == "low"
     assert args["drop_params"] is True                 # litellm drops only what a model refuses (top_p on gpt-5, temperature with Claude thinking)
-    assert args["max_tokens"] == REPLY_TOKENS >= 16000
+    assert args["max_tokens"] == 32000                 # Ollama: room for long thinking plus a long answer (reply_tokens_for)
     assert args["api_base"] == "http://localhost:11434/v1" and args["api_key"] == "none"
     assert "thinking" not in args and "extra_headers" not in args
     assert isinstance(llm.llm_client, SavingClient)
@@ -113,3 +113,61 @@ async def test_a_one_shot_call_goes_through_litellm_with_the_same_words():
     req, body = seen[0]
     assert str(req.url) == "http://localhost:11434/v1/chat/completions" and req.headers["authorization"] == "Bearer sk-k"
     assert body["reasoning_effort"] == "low" and body["temperature"] == 0.3 and body["max_tokens"] == 100 and body["model"] == "glm-test"
+
+
+# Room per reply (16 Oct 2026): a thinking model planned an explainer video for ~15k tokens and ran out of its 16k
+# before it wrote the tool call. Models that allow it get 32k; the ceiling follows each model's own limit, looked up
+# in litellm's table (the real one here), and stays at 16k where nothing is known.
+
+def test_room_per_reply_follows_the_models_own_limit():
+    from odie.agent.model import ROOMY_REPLY_TOKENS, reply_tokens_for
+    assert ROOMY_REPLY_TOKENS == 32000
+    assert reply_tokens_for(_sel("lmstudio", "gemma-4-26b-a4b-it-qat", base="http://localhost:1234/v1")) == 32000
+    assert reply_tokens_for(_sel("ollama", "deepseek-v4.1-flash:cloud", base="http://localhost:11434/v1")) == 32000
+    assert reply_tokens_for(_sel("openai", "gpt-4o-mini")) == 16384           # its own limit, below 32k
+    assert reply_tokens_for(_sel("anthropic", "claude-sonnet-4-5")) == 32000   # allows 64k; 32k is plenty
+    assert reply_tokens_for(_sel("gemini", "gemini-2.5-flash")) == 32000
+    assert reply_tokens_for(_sel("openrouter", "someone/unknown-model")) == REPLY_TOKENS == 16000
+    assert reply_tokens_for(_sel("custom-box", "my-model")) == 16000
+
+
+def test_every_request_carries_the_models_room():
+    from odie.agent.model import completion_args
+    assert completion_args(_sel("openai", "gpt-4o-mini"))["max_tokens"] == 16384
+    assert completion_args(_sel("ollama", "deepseek-v4.1-flash:cloud", base="http://localhost:11434/v1"))["max_tokens"] == 32000
+
+
+def test_a_refusal_over_the_reply_room_is_recognised():
+    import litellm
+
+    from odie.agent.model import refused_for_reply_room
+    too_big = litellm.BadRequestError("max_tokens is too large: 32000. This model supports at most 16384 completion tokens",
+                                      model="x", llm_provider="openai")
+    other = litellm.BadRequestError("messages: roles must alternate", model="x", llm_provider="openai")
+    assert refused_for_reply_room(too_big) and not refused_for_reply_room(other)
+    assert not refused_for_reply_room(ValueError("max_tokens is too large"))   # only a provider's refusal counts
+
+
+async def test_a_provider_that_refuses_32k_gets_16k_and_is_remembered():
+    import httpx
+
+    from odie.agent.model import complete
+    bodies = []
+
+    def handler(req):
+        body = json.loads(req.content)
+        bodies.append(body)
+        if body["max_tokens"] > 16000:
+            return httpx.Response(400, json={"error": {"message": "max_tokens is too large: 32000. This model supports at most "
+                                                                  "16000 completion tokens.", "type": "invalid_request_error",
+                                                       "param": "max_tokens", "code": "invalid_value"}})
+        return httpx.Response(200, json={"id": "c1", "object": "chat.completion", "created": 0, "model": "box-model",
+                                         "choices": [{"index": 0, "message": {"role": "assistant", "content": "Hi."},
+                                                      "finish_reason": "stop"}],
+                                         "usage": {"prompt_tokens": 3, "completion_tokens": 2, "total_tokens": 5}})
+    sel = _sel("ollama", "box-model", base="http://localhost:11434/v1")
+    first = await complete(sel, [{"role": "user", "content": "hi"}], transport=httpx.MockTransport(handler))
+    assert first.choices[0].message.content == "Hi."
+    assert [b["max_tokens"] for b in bodies] == [32000, 16000]          # refused, then the retry at 16k
+    await complete(sel, [{"role": "user", "content": "again"}], transport=httpx.MockTransport(handler))
+    assert bodies[-1]["max_tokens"] == 16000 and len(bodies) == 3       # remembered: no second refusal

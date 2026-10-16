@@ -6,6 +6,7 @@ agent makes is saved as litellm got it (SavingClient), for reading the real prom
 from __future__ import annotations
 
 import copy
+import functools
 import json
 import logging
 import os
@@ -20,8 +21,15 @@ from odie import config
 log = logging.getLogger("odie.model")
 
 # Room per reply for a thinking model's reasoning plus a long answer (a trip plan, a report). ADK's default of 4096
-# cut glm-5.3 off mid-answer after ~3k tokens of thinking. Every provider Odie offers accepts 16k.
+# cut glm-5.3 off mid-answer after ~3k tokens of thinking. Every provider Odie offers accepts 16k. A model that allows
+# more gets 32k (reply_tokens_for): DeepSeek planned an explainer video for ~15k tokens and ran out before it wrote the
+# tool call (16 Oct 2026).
 REPLY_TOKENS = 16000
+ROOMY_REPLY_TOKENS = 32000
+# The names litellm's table knows each cloud provider's models by ("openai/gpt-4o-mini"). Not listed: a custom provider.
+LOOKUP_PREFIX = {"openai": "openai/", "anthropic": "anthropic/", "gemini": "gemini/", "openrouter": "openrouter/"}
+# Where a provider refused the roomy reply: model and address -> the room it gets from then on (REPLY_TOKENS).
+_refused_room: dict[str, int] = {}
 TIMEOUT_SECONDS = 180
 
 # Claude signs each thought to the exact conversation it was made in. Sent back after Odie changed the system prompt
@@ -39,6 +47,65 @@ def effort_for(think_harder: bool) -> str:
     if think_harder:
         return "medium"
     return "low"
+
+
+@functools.cache
+def _known_output_limit(name: str) -> int:
+    """The most tokens litellm's table says the model may write in one reply, or 0 when it doesn't know the model."""
+    try:
+        info = _litellm().get_model_info(name)
+    except Exception:  # noqa: BLE001 - litellm raises when the model isn't in its table
+        return 0
+    return int(info.get("max_output_tokens") or 0)
+
+
+def reply_tokens_for(selection) -> int:
+    """How many tokens a reply may use: 32k where the model allows it, its own limit where that's lower, 16k (which
+    every provider accepts) where nothing is known.
+      LM Studio or Ollama (the user's own server, or Ollama's cloud models) -> 32000
+      OpenAI gpt-4o-mini (litellm: at most 16,384)                          -> 16384
+      Claude Sonnet 4.5 (litellm: 64,000)                                   -> 32000
+      a custom provider, or a model litellm doesn't know                     -> 16000"""
+    provider = selection.provider
+    if provider.id in ("lmstudio", "ollama"):
+        return ROOMY_REPLY_TOKENS
+    prefix = LOOKUP_PREFIX.get(provider.id)
+    if prefix is None:
+        return REPLY_TOKENS
+    limit = _known_output_limit(prefix + selection.model)
+    if not limit:
+        return REPLY_TOKENS
+    return min(ROOMY_REPLY_TOKENS, limit)
+
+
+def refused_for_reply_room(error: Exception) -> bool:
+    """Whether a provider refused the request because it asked for more reply room than the model allows.
+      BadRequestError "max_tokens is too large: 32000. This model supports at most 16384 completion tokens" -> True
+      BadRequestError "messages: roles must alternate"                                                   -> False
+      any other kind of error                                                                            -> False"""
+    if not isinstance(error, _litellm().BadRequestError):
+        return False
+    text = str(error).lower()
+    names_the_setting = any(name in text for name in ("max_tokens", "max_completion_tokens", "max_output_tokens"))
+    return names_the_setting or "completion tokens" in text
+
+
+async def with_reply_room(call, kwargs: dict[str, Any]):
+    """call(**kwargs), where a provider that refused the roomy reply once gets REPLY_TOKENS from then on: the first
+    refusal is retried at once with REPLY_TOKENS and remembered for that model and address."""
+    key = f"{kwargs.get('model')}@{kwargs.get('api_base', '')}"
+    asked = kwargs.get("max_tokens") or 0
+    if key in _refused_room and asked > _refused_room[key]:
+        kwargs = {**kwargs, "max_tokens": _refused_room[key]}
+        asked = kwargs["max_tokens"]
+    try:
+        return await call(**kwargs)
+    except Exception as e:
+        if asked <= REPLY_TOKENS or not refused_for_reply_room(e):
+            raise
+        log.warning("%s refused a %s-token reply; asking for %s from now on", kwargs.get("model"), asked, REPLY_TOKENS)
+        _refused_room[key] = REPLY_TOKENS
+        return await call(**{**kwargs, "max_tokens": REPLY_TOKENS})
 
 
 def litellm_model(selection) -> str:
@@ -78,7 +145,7 @@ def completion_args(selection, think_harder: bool = False) -> dict[str, Any]:
         "model": litellm_model(selection),
         **address_of(selection),
         "reasoning_effort": effort_for(think_harder),
-        "max_tokens": REPLY_TOKENS,
+        "max_tokens": reply_tokens_for(selection),
         "timeout": TIMEOUT_SECONDS,
         "drop_params": True,
     }
@@ -112,7 +179,13 @@ class SavingClient(LiteLLMClient):
 
     async def acompletion(self, model, messages, tools, **kwargs):
         save_request({"model": model, "messages": messages, "tools": tools, **kwargs}, config.settings.data_dir / "requests")
-        return await super().acompletion(model, messages, tools, **kwargs)
+        send = super().acompletion
+
+        async def call(**args):
+            args.pop("model")  # named here only so with_reply_room knows which model it is
+            return await send(model, messages, tools, **args)
+
+        return await with_reply_room(call, {"model": model, **kwargs})
 
 
 def _litellm():
@@ -142,7 +215,10 @@ async def complete(selection, messages: list[dict], tools: list[dict] | None = N
         args["tools"] = tools
     if transport is not None:
         args["client"] = _client_over(selection, args, transport)
-    return await _litellm().acompletion(messages=messages, **args)
+    async def call(**request):
+        return await _litellm().acompletion(messages=messages, **request)
+
+    return await with_reply_room(call, args)
 
 
 def _client_over(selection, args: dict[str, Any], transport):
