@@ -331,29 +331,22 @@
     }
   },
   {
-    "description": "Make a narrated, animated explainer video that plays in this chat. Call it once the scenes are planned and the\npage is written, as the explainer-video skill says.\ntitle: the topic, short (\"Speculative decoding\").\nnarration: one string of plain speech per scene, in order; each is spoken in the voice chosen in Settings.\npage_file: the name save_video_page returned for the page (the usual way: save the page first, then call this).\npage: or the HTML body itself: one <script> that calls Video.scenes([...]) with one scene per narration string.\nvoice_name: leave empty; only when the user asks for a voice, one of the Settings engine's voices.\nIt checks everything now and returns at once. {\"error\": …}: fix exactly that and call again. {\"result\": …}: the\nvideo is being made in the background; reply in one or two lines as the result says, and don't repeat the\nscript.",
+    "description": "Make a narrated, animated explainer video that plays in this chat. A separate writer makes the narration and\nthe animation from your brief, in the background; it can't see this chat, the user's notes, memory or the web.\ntopic: what the video is about, short (\"How attention works\").\nminutes: its length, from 1 to 6: the user's length, else 2.\nbrief: everything the writer needs: who it's for and their level, the key points in order, examples, numbers or\nformulas that must appear, and any facts from this chat or the user's notes. Up to 6,000 characters.\nvoice_name: leave empty; only when the user asks for a voice, one of the Settings engine's voices.\nIt returns at once. {\"error\": …}: fix exactly that and call again. {\"result\": …}: the video is being made; reply\nin one or two lines as the result says, and don't repeat the brief.",
     "name": "make_video",
     "parameters_json_schema": {
       "properties": {
-        "title": {
-          "title": "Title",
+        "topic": {
+          "title": "Topic",
           "type": "string"
         },
-        "narration": {
-          "items": {
-            "type": "string"
-          },
-          "title": "Narration",
-          "type": "array"
+        "minutes": {
+          "default": 2,
+          "title": "Minutes",
+          "type": "integer"
         },
-        "page": {
+        "brief": {
           "default": "",
-          "title": "Page",
-          "type": "string"
-        },
-        "page_file": {
-          "default": "",
-          "title": "Page File",
+          "title": "Brief",
           "type": "string"
         },
         "voice_name": {
@@ -363,8 +356,7 @@
         }
       },
       "required": [
-        "title",
-        "narration"
+        "topic"
       ],
       "title": "make_videoParams",
       "type": "object"
@@ -460,23 +452,6 @@
         "command"
       ],
       "title": "run_shellParams",
-      "type": "object"
-    }
-  },
-  {
-    "description": "Save the page of an explainer video, before calling make_video, and get back its name. page: the HTML body (one\n<script> that calls Video.scenes([...])), as the explainer-video skill says. Nothing is shown in the chat. Then\ncall make_video with page_file set to the name this returns.",
-    "name": "save_video_page",
-    "parameters_json_schema": {
-      "properties": {
-        "page": {
-          "title": "Page",
-          "type": "string"
-        }
-      },
-      "required": [
-        "page"
-      ],
-      "title": "save_video_pageParams",
       "type": "object"
     }
   },

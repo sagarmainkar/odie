@@ -2,13 +2,14 @@
 failure said in that chat, and a job that a restart cut off told once."""
 import asyncio
 import json
+from pathlib import Path
 
 import pytest
 
 from odie import voice
 from odie.browser.engine import BrowserError
 from odie.store.db import Store
-from odie.video import encode, jobs
+from odie.video import encode, jobs, writer
 from tests.test_media import make_wav
 from tests.test_video_encode import jpeg
 
@@ -72,6 +73,29 @@ async def stand_in_render(browser, body, timings, folder, fps, tabs, progress=No
 def fast(monkeypatch):
     monkeypatch.setattr(jobs, "narrate", stand_in_narrate)
     monkeypatch.setattr(jobs, "render", stand_in_render)
+
+
+def make_topic_job(slug="attention", title="Attention", session_id="chat-1"):
+    """A job made the new way: only a topic, minutes and brief; the writing step fills in the page."""
+    from odie.agent.tools.files import workspace
+    folder = workspace() / "videos" / slug
+    folder.mkdir(parents=True, exist_ok=True)
+    return jobs.Job(slug=slug, title=title, session_id=session_id, voice_name="", folder=folder,
+                    topic="how attention works", minutes=2, brief="Asha's notes on queries and keys.")
+
+
+@pytest.fixture
+def statuses(monkeypatch):
+    """Every status job.json is given, in order."""
+    seen = []
+    real = jobs.write_job
+
+    def recording(job, status, error=""):
+        seen.append(status)
+        real(job, status, error)
+
+    monkeypatch.setattr(jobs, "write_job", recording)
+    return seen
 
 
 def read_status(job):
@@ -158,6 +182,8 @@ async def test_a_file_without_sound_is_a_failure_not_a_video(world, fast, monkey
 def test_the_one_line_for_the_chat():
     assert jobs.one_line(voice.VoiceUnavailable("Odie's local voice isn't running.")) == "Odie's local voice isn't running"
     assert jobs.one_line(encode.EncodeError("x" * 500)) == "x" * 200
+    assert jobs.one_line(writer.WriterFailed("I couldn't write the video's page (the writer stopped without one).")) == (
+        "I couldn't write the video's page (the writer stopped without one)")
     assert jobs.one_line(ValueError("secret detail")) == "something went wrong (see Odie's log)"
 
 
@@ -177,7 +203,7 @@ async def test_a_second_video_queues(world, monkeypatch):
     started = []
     release = asyncio.Event()
 
-    async def slow_run(job, browser=None, transport=None):
+    async def slow_run(job, browser=None, transport=None, turn=None):
         started.append(job.slug)
         await release.wait()
 
@@ -197,7 +223,7 @@ async def test_a_second_video_queues(world, monkeypatch):
 async def test_one_failing_job_does_not_stop_the_next(world, monkeypatch):
     ran = []
 
-    async def sometimes_broken_run(job, browser=None, transport=None):
+    async def sometimes_broken_run(job, browser=None, transport=None, turn=None):
         ran.append(job.slug)
         if job.slug == "a":
             raise RuntimeError("boom")
@@ -267,3 +293,99 @@ async def test_a_failure_after_rendering_is_told_too(world, fast, monkeypatch):
     assert chat.posts == [("The video about Attention didn't finish: something went wrong (see Odie's log).",
                            "chat-1", None)]
     assert len(pushes) == 1 and read_status(job)["status"] == "failed"
+
+
+async def test_a_job_with_a_topic_writes_its_page_then_renders_it(world, fast, monkeypatch, statuses):
+    chat, pushes, _store = world
+    asked = {}
+
+    async def stand_in_write(topic, minutes, brief, folder, turn, browser):
+        asked.update(topic=topic, minutes=minutes, brief=brief, folder=folder, turn=turn)
+        return writer.Written(title="  How attention works  ", narration=["One.", "Two."], body="<div>x</div>")
+
+    monkeypatch.setattr(jobs.writer, "write", stand_in_write)
+    job = make_topic_job()
+    await jobs.run(job, browser=object(), turn="the turn")
+    assert asked == {"topic": "how attention works", "minutes": 2, "brief": "Asha's notes on queries and keys.",
+                     "folder": job.folder, "turn": "the turn"}
+    assert (job.title, job.narration, job.body) == ("How attention works", ["One.", "Two."], "<div>x</div>")
+    assert statuses == ["writing", "running", "done"]
+    assert chat.posts[0][0] == "The video about How attention works is ready."
+    assert pushes[0]["body"] == chat.posts[0][0]
+    assert read_status(job)["status"] == "done" and read_status(job)["title"] == "How attention works"
+    assert (job.folder / "attention.mp4").exists()
+
+
+async def test_the_writer_uses_the_runners_focused_turn_by_default(world, fast, monkeypatch):
+    chat, _pushes, _store = world
+    chat.focused_turn = object()
+    seen = {}
+
+    async def stand_in_write(topic, minutes, brief, folder, turn, browser):
+        seen["turn"] = turn
+        return writer.Written(title="", narration=["One."], body="<div></div>")
+
+    monkeypatch.setattr(jobs.writer, "write", stand_in_write)
+    job = make_topic_job()
+    await jobs.run(job, browser=object())
+    assert seen["turn"] is chat.focused_turn
+    assert job.title == "how attention works"      # the writer gave no title, so the topic stands in
+
+
+async def test_a_title_falls_back_to_the_topic_then_to_the_job_title():
+    job = jobs.Job(slug="s", title="Given", session_id=None, voice_name="", folder=Path("."), topic="", minutes=2)
+    assert jobs.title_after_writing("  ", job) == "Given"
+    job.topic = "the topic"
+    assert jobs.title_after_writing("  ", job) == "the topic"
+    assert jobs.title_after_writing(" Written title ", job) == "Written title"
+
+
+def test_only_a_job_without_a_page_needs_writing():
+    empty = jobs.Job(slug="s", title="t", session_id=None, voice_name="", folder=Path("."), topic="a topic")
+    assert jobs.needs_writing(empty) is True
+    made_the_old_way = make_job()
+    assert jobs.needs_writing(made_the_old_way) is False
+
+
+async def test_a_page_that_could_not_be_written_is_told_as_it_is(world, fast, monkeypatch, statuses):
+    chat, pushes, _store = world
+
+    async def failing_write(topic, minutes, brief, folder, turn, browser):
+        raise writer.WriterFailed("I couldn't write a page that passed its check: scene 2 has no words")
+
+    monkeypatch.setattr(jobs.writer, "write", failing_write)
+    job = make_topic_job()
+    await jobs.run(job, browser=object(), turn="the turn")
+    assert chat.posts == [("The video about Attention didn't finish: I couldn't write a page that passed its check: "
+                           "scene 2 has no words.", "chat-1", None)]
+    assert pushes[0]["body"] == chat.posts[0][0]
+    assert statuses == ["writing", "failed"] and read_status(job)["status"] == "failed"
+
+
+async def test_a_writer_that_breaks_is_a_plain_sentence(world, fast, monkeypatch):
+    chat, _pushes, _store = world
+
+    async def broken_write(topic, minutes, brief, folder, turn, browser):
+        raise KeyError("/Users/someone/private/path")
+
+    monkeypatch.setattr(jobs.writer, "write", broken_write)
+    await jobs.run(make_topic_job(), browser=object(), turn="the turn")
+    assert chat.posts[0][0] == "The video about Attention didn't finish: something went wrong (see Odie's log)."
+
+
+async def test_job_json_keeps_the_topic_and_minutes_but_not_the_brief(world):
+    job = make_topic_job()
+    jobs.write_job(job, "writing")
+    data = read_status(job)
+    assert data["status"] == "writing" and data["topic"] == "how attention works" and data["minutes"] == 2
+    assert "brief" not in data
+
+
+async def test_a_job_cut_off_while_writing_is_told_once(world):
+    chat, _pushes, _store = world
+    writing = make_job("attention", "Attention")
+    (writing.folder / "job.json").write_text('{"status": "writing", "title": "Attention", "session_id": "chat-1"}')
+    assert await jobs.recover() == 1 and await jobs.recover() == 0
+    assert chat.posts == [("The video about Attention was interrupted (Odie restarted). Ask me again to make it.",
+                           "chat-1", None)]
+    assert read_status(writing)["status"] == "interrupted_told"

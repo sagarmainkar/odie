@@ -1,6 +1,7 @@
-"""The explainer-video skill's tool: make_video checks the request and the page within the chat turn (seconds), then
-puts the video in line to be narrated, rendered and posted to this chat in the background (odie.video.jobs). Plain
-trusted code of a built-in skill: no shell, no approval card."""
+"""The explainer-video skill's tool: make_video checks the request within the chat turn (instantly) and puts the video
+in line (odie.video.jobs). In the background the writer (odie.video.writer) turns the topic, length and brief into the
+narration and the page; then the video is narrated, rendered and posted to this chat. The chat only briefs the video.
+Plain trusted code of a built-in skill: no shell, no approval card."""
 import re
 from pathlib import Path
 
@@ -9,61 +10,23 @@ from google.adk.tools import FunctionTool, ToolContext
 from odie import voice
 from odie.agent.context import session_id_of
 from odie.agent.tools.files import safe_name, workspace
-from odie.browser import find, render_browser
-from odie.browser.engine import BrowserError, BrowserTimeout
+from odie.browser import find
 from odie.video import jobs, timeline
-from odie.video import page as video_page
 
-SCENE_CHARACTERS = 4000  # the most narration one scene may have (one piece of speech)
-MAX_SCENES = 40  # the most scenes a video may have (a 6-minute video needs far fewer)
-MAX_PAGE_KB = 300  # the largest page body, in kilobytes (the worked example is about 3)
 NARRATING_SPEED = 10  # seconds of speech the voice narrates in a second
 JOINING_SECONDS = 10  # joining the segments and the sound into the MP4
-ESTIMATE_SPREAD = 1  # the range told is N to N + 1 minutes, so it isn't a promise
+WRITING_MINUTES = 2  # the writer's turn (live: about 100 s for a 7-scene page, from a ~4.7k-token prompt)
+SCENE_SECONDS = 20  # a scene lasts about this long, for counting the breaths between scenes before there are any
+ESTIMATE_SPREAD = 2  # the range told is N to N + 2 minutes: writing time varies the most
+MIN_MINUTES = 1
+DEFAULT_MINUTES = 2
+MAX_BRIEF_CHARACTERS = 6000
 
 NO_BROWSER = ("An explainer video needs Chrome, Edge, Brave or Chromium on this computer to draw its frames, and none "
               "was found. Tell the user to install one (any of them) and ask again.")
-HANG = "The page didn't finish drawing in time (a loop that never ends?): "
-NO_PAGE = ("Give the page: save it with save_video_page(page) and pass the page_file name it returns "
-           "(or pass the page itself as page).")
-PAGE_NAME = re.compile(r"page-[0-9]{1,4}")  # what save_video_page names a page: page-1, page-2, …
+NO_TOPIC = 'Give the topic: a few words saying what the video is about, like "How attention works".'
 AFTER_THE_ESTIMATE = ("It'll appear in this chat, with a ping on the phone, as soon as it's ready. Tell the user that "
-                      "in one or two lines, and that they can keep chatting meanwhile; don't repeat the script.")
-
-
-def narration_problem(narration: list[str]) -> str | None:
-    """Decides whether the narration can be spoken as it is, before anything is drawn: the first problem as words to
-    act on, or None. In this order: [] -> no narration; 41 strings -> over the 40-scene limit; ["Hi.", "  "] ->
-    scene 2 has no words; ["ok.", 4,001 characters] -> scene 2 is over the 4,000-character limit; seven scenes of 140
-    words (7 minutes of speech) -> over 6 minutes; ["Hi."] -> None."""
-    if not narration:
-        return "There's no narration: give one string of speech per scene, in order."
-    if len(narration) > MAX_SCENES:
-        return (f"There are {len(narration)} scenes; a video can have at most {MAX_SCENES}. Join some scenes "
-                "(and their narration) together.")
-
-    for number, text in enumerate(narration, start=1):
-        if not text.strip():
-            return f"There's no narration for scene {number}: every scene needs words to speak."
-        if len(text) > SCENE_CHARACTERS:
-            return (f"The narration of scene {number} is {len(text):,} characters; one scene can have at most "
-                    f"{SCENE_CHARACTERS:,}. Split it into two scenes (and two scenes on the page) or shorten it.")
-
-    minutes = timeline.spoken_minutes(narration)
-    if minutes > timeline.MAX_MINUTES:
-        return (f"The narration is about {minutes:.1f} minutes of speech; a video can be at most "
-                f"{timeline.MAX_MINUTES} minutes. Shorten it (about {timeline.WORDS_PER_MINUTE} words a minute).")
-    return None
-
-
-def page_problem(page: str) -> str | None:
-    """Decides whether the page is small enough to check and render: a body over 300 KB (in UTF-8) -> the limit, as
-    words to act on; the worked example's 3 KB, or exactly 300,000 bytes -> None."""
-    size = len(page.encode("utf-8"))
-    if size > MAX_PAGE_KB * 1000:
-        return (f"The page is {size / 1000:,.0f} KB; a page can be at most {MAX_PAGE_KB} KB. Draw with code (loops, "
-                "helpers) instead of long lists of data or pasted content.")
-    return None
+                      "in one or two lines, and that they can keep chatting meanwhile.")
 
 
 def slug_of(title: str) -> str:
@@ -99,98 +62,103 @@ def making_seconds(speech_seconds: float, frames: int) -> float:
     return narrating + drawing + JOINING_SECONDS
 
 
-def minutes_to_make(narration: list[str]) -> int:
-    """The low end of the estimate told to the user, in whole minutes (the nearest, at least 1), from the words alone.
-    The first live run (62 s, see making_seconds) -> 1, told as "about 1–2 minutes"; 420 words in 7 scenes (180 s of
-    speech, 183 s of video with the breaths, 5,490 frames) -> 18 + 78.4 + 10 = 106.4 s -> 2, "about 2–3 minutes"."""
-    lengths = video_page.estimated_timings(narration)["lengths"]
-    _starts, total = timeline.scene_starts(lengths)
-    seconds = making_seconds(sum(lengths), timeline.frame_count(total))
-    minutes = round(seconds / 60)
-    return max(1, minutes)
+def minutes_to_make(minutes: int) -> int:
+    """The low end of the estimate told to the user, in whole minutes: 2 minutes of writing, plus making a video of
+    that length (rounded to the nearest minute, at least 1). The scenes aren't written yet, so it counts one scene per
+    20 seconds and a 0.5 s breath between scenes.
+    2 minutes of video: 120 s of speech in 6 scenes, 122.5 s with the 5 breaths, 3,675 frames -> 12 + 52.5 + 10 =
+    74.5 s -> 1 minute of making + 2 of writing -> 3, told as "about 3–5 minutes". 6 minutes: 203.9 s -> 3 + 2 -> 5."""
+    speech_seconds = minutes * 60
+    scenes = max(1, round(speech_seconds / SCENE_SECONDS))
+    breaths = (scenes - 1) * timeline.BREATH
+    frames = timeline.frame_count(speech_seconds + breaths, timeline.FPS)
+    seconds = making_seconds(speech_seconds, frames)
+    making = max(1, round(seconds / 60))
+    return WRITING_MINUTES + making
 
 
 def reply(place: int, low: int) -> str:
     """What the model is told once the video is in line, with low = minutes_to_make. Place 1 (nothing else being
-    made), low 1 -> "Making it now: about 1–2 minutes. …"; place 2 (one rendering already), low 2 -> "It's number 2 in
-    line, about 2–3 minutes after the one before. …". Either way it says the video comes to this chat with a ping, and
-    that the chat stays free."""
+    made), low 3 -> "Making it now: about 3–5 minutes (writing …). …"; place 2 (one being made already), low 3 ->
+    "It's number 2 in line, about 3–5 minutes after the one before. …". Either way it says the video comes to this
+    chat with a ping, and that the chat stays free."""
     high = low + ESTIMATE_SPREAD
     if place <= 1:
-        return f"Making it now: about {low}–{high} minutes. {AFTER_THE_ESTIMATE}"
+        return (f"Making it now: about {low}–{high} minutes (writing the script and the animation, then drawing it). "
+                f"{AFTER_THE_ESTIMATE}")
     return f"It's number {place} in line, about {low}–{high} minutes after the one before. {AFTER_THE_ESTIMATE}"
 
 
-def pages_folder() -> Path:
-    """Where save_video_page keeps pages: <workspace>/videos/pages."""
-    return workspace() / "videos" / "pages"
+def minutes_problem(minutes) -> str | None:
+    """Decides whether the length can be made: a whole number of minutes from 1 to 6 -> None; 0, 7 or 2.5 -> the
+    range, as words to act on ("… from 1 to 6 …, not 7"). True/False are not lengths, though Python counts them as
+    numbers."""
+    is_whole = isinstance(minutes, int) and not isinstance(minutes, bool)
+    if is_whole and MIN_MINUTES <= minutes <= timeline.MAX_MINUTES:
+        return None
+    given = f"not {minutes}"
+    if isinstance(minutes, str):
+        given = f"got the text '{minutes}'"
+    return (f"minutes is the video's length in whole minutes, from {MIN_MINUTES} to {timeline.MAX_MINUTES} (the "
+            f"user's length, else 2), {given}.")
 
 
-def next_page_name(folder: Path) -> str:
-    """The first free page name in the folder: nothing saved yet -> "page-1"; page-1 and page-2 there -> "page-3"."""
-    n = 1
-    while (folder / f"page-{n}.html").exists():
-        n += 1
-    return f"page-{n}"
+def minutes_as_given(minutes):
+    """The length the model meant, before it is checked. Some models send numbers as text or leave an optional
+    argument null: "2" or " 3 " -> 2 or 3; None -> 2 (the default). Anything else is passed on unchanged for
+    minutes_problem to judge: 4 -> 4; "two", "2.5" or "²" (a digit to str.isdigit, but not a number int() reads) ->
+    the same text, refused there as text."""
+    if minutes is None:
+        return DEFAULT_MINUTES
+    if isinstance(minutes, str) and minutes.strip().isdecimal():
+        return int(minutes.strip())
+    return minutes
 
 
-def page_from(page: str, page_file: str) -> tuple[str, str | None]:
-    """The page to check and render, and a problem when there's none to use. A page_file (a name save_video_page gave)
-    wins over page; a name that isn't one of those, or isn't saved, is a problem, so nothing outside the saved pages
-    can be read.
-      page_file "page-1" (saved) -> (its text, None);  page_file "../secret" -> ("", problem);
-      page "<script>…</script>", no page_file -> (that page, None);  neither -> ("", NO_PAGE)"""
-    name = page_file.strip()
-    if not name:
-        if page.strip():
-            return page, None
-        return "", NO_PAGE
-    if not PAGE_NAME.fullmatch(name):
-        return "", f"page_file is the name save_video_page gave (like page-1), not '{name}'. {NO_PAGE}"
-    path = pages_folder() / f"{name}.html"
-    if not path.is_file():
-        return "", f"There's no saved page called {name}. {NO_PAGE}"
-    return path.read_text(encoding="utf-8"), None
+def text_or_empty(value) -> str:
+    """An optional text argument the model may have sent as null: None -> ""; "Michael" -> "Michael"."""
+    if value is None:
+        return ""
+    return value
 
 
-async def save_video_page(page: str) -> dict:
-    """Save the page of an explainer video, before calling make_video, and get back its name. page: the HTML body (one
-    <script> that calls Video.scenes([...])), as the explainer-video skill says. Nothing is shown in the chat. Then
-    call make_video with page_file set to the name this returns."""
-    problem = page_problem(page)
-    if problem:
-        return {"error": problem}
-    folder = pages_folder()
-    folder.mkdir(parents=True, exist_ok=True)
-    name = next_page_name(folder)
-    (folder / f"{name}.html").write_text(page, encoding="utf-8")
-    return {"page_file": name, "result": f'Saved. Now call make_video with page_file="{name}".'}
+def brief_problem(brief: str) -> str | None:
+    """Decides whether the brief is short enough for the writer: up to 6,000 characters -> None; 6,001 -> the limit,
+    as words to act on."""
+    if len(brief) <= MAX_BRIEF_CHARACTERS:
+        return None
+    return (f"The brief is {len(brief):,} characters; it can be at most {MAX_BRIEF_CHARACTERS:,}. Keep only what the "
+            "video needs: who it's for, the key points in order, the examples and the facts it must use.")
 
 
-async def make_video(title: str, narration: list[str], page: str = "", page_file: str = "", voice_name: str = "",
+async def make_video(topic: str, minutes: int = 2, brief: str = "", voice_name: str = "",
                      tool_context: ToolContext | None = None) -> dict:
-    """Make a narrated, animated explainer video that plays in this chat. Call it once the scenes are planned and the
-    page is written, as the explainer-video skill says.
-    title: the topic, short ("Speculative decoding").
-    narration: one string of plain speech per scene, in order; each is spoken in the voice chosen in Settings.
-    page_file: the name save_video_page returned for the page (the usual way: save the page first, then call this).
-    page: or the HTML body itself: one <script> that calls Video.scenes([...]) with one scene per narration string.
+    """Make a narrated, animated explainer video that plays in this chat. A separate writer makes the narration and
+    the animation from your brief, in the background; it can't see this chat, the user's notes, memory or the web.
+    topic: what the video is about, short ("How attention works").
+    minutes: its length, from 1 to 6: the user's length, else 2.
+    brief: everything the writer needs: who it's for and their level, the key points in order, examples, numbers or
+    formulas that must appear, and any facts from this chat or the user's notes. Up to 6,000 characters.
     voice_name: leave empty; only when the user asks for a voice, one of the Settings engine's voices.
-    It checks everything now and returns at once. {"error": …}: fix exactly that and call again. {"result": …}: the
-    video is being made in the background; reply in one or two lines as the result says, and don't repeat the
-    script."""
+    It returns at once. {"error": …}: fix exactly that and call again. {"result": …}: the video is being made; reply
+    in one or two lines as the result says, and don't repeat the brief."""
     if find.browser_binary() is None:
         return {"error": NO_BROWSER}
 
-    problem = narration_problem(narration)
+    topic = text_or_empty(topic)
+    brief = text_or_empty(brief)
+    voice_name = text_or_empty(voice_name)
+    minutes = minutes_as_given(minutes)
+
+    title = topic.strip()
+    if not title:
+        return {"error": NO_TOPIC}
+
+    problem = minutes_problem(minutes)
     if problem:
         return {"error": problem}
 
-    page, problem = page_from(page, page_file)
-    if problem:
-        return {"error": problem}
-
-    problem = page_problem(page)
+    problem = brief_problem(brief)
     if problem:
         return {"error": problem}
 
@@ -201,24 +169,12 @@ async def make_video(title: str, narration: list[str], page: str = "", page_file
         except ValueError as e:
             return {"error": str(e)}
 
-    try:
-        problem = await video_page.check(page, narration, render_browser())
-    except BrowserTimeout as e:
-        return {"error": HANG + str(e)}
-    except BrowserError as e:
-        return {"error": str(e)}  # the browser's own words: "The browser didn't start …"
-    if problem:
-        return {"error": problem}
-
     folder = free_folder(workspace() / "videos", slug_of(title))
     folder.mkdir(parents=True)
-    topic = title.strip()
-    if not topic:
-        topic = "your topic"
-    job = jobs.Job(slug=folder.name, title=topic, session_id=session_id_of(tool_context),
-                   narration=list(narration), body=page, voice_name=voice_id, folder=folder)
+    job = jobs.Job(slug=folder.name, title=title, topic=title, minutes=minutes, brief=brief,
+                   session_id=session_id_of(tool_context), voice_name=voice_id, folder=folder)
     place = jobs.submit(job)
-    return {"result": reply(place, minutes_to_make(narration))}
+    return {"result": reply(place, minutes_to_make(minutes))}
 
 
-TOOLS = [FunctionTool(save_video_page), FunctionTool(make_video)]
+TOOLS = [FunctionTool(make_video)]

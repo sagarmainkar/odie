@@ -1,22 +1,23 @@
-"""make_video, the explainer-video skill's tool: what it refuses before anything is drawn (in the order the spec
-gives), the page checked in a real browser, a folder of its own for every video, and the reply that says how long."""
+"""make_video, the explainer-video skill's chat tool: the chat only briefs the video. What it refuses (in the order the
+spec gives), the job it queues (a topic, a length and a brief; the writer writes the page later, in the job), a folder
+of its own for every video, and the reply that says how long."""
 import importlib.util
+import json
 import re
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
+from google.adk.tools import FunctionTool
 
 from odie import browser as odie_browser
 from odie import voice
 from odie.browser import RENDER_ARGS, find
-from odie.browser.engine import Browser, BrowserError, BrowserTimeout
 from odie.store.db import Store
 from odie.video import jobs, page
 
 SKILL = Path(page.__file__).parent.parent / "skills" / "explainer-video"
-SAMPLE = (Path(page.__file__).parent / "kit" / "sample.html").read_text()
-BIN = find.installed()
-needs_browser = pytest.mark.skipif(BIN is None, reason="no Chrome, Edge, Chromium or Brave here")
+GOLDEN = Path(__file__).parent / "golden" / "tool_declarations.json"
 
 
 def load_tools():
@@ -48,101 +49,111 @@ def world(isolated_settings, tmp_path, monkeypatch):
     return store, submitted
 
 
-@pytest.fixture
-def no_page_check(monkeypatch):
-    """page.check stands in as "the page is fine", and records that it ran."""
-    calls = []
+# The refusals, in order: each one comes back before anything is queued.
 
-    async def fine(body, narration, browser):
-        calls.append(body)  # None: no problem
-
-    monkeypatch.setattr(page, "check", fine)
-    monkeypatch.setattr(odie_browser, "_render", object())  # never start a real browser for these
-    return calls
-
-
-async def test_no_browser_is_said_first(world, monkeypatch):
+async def test_no_browser_is_said_first_even_with_other_problems(world, monkeypatch):
     monkeypatch.setattr(find, "browser_binary", lambda: None)
-    out = await tools.make_video("T", ["Hi."], "<script></script>")
-    assert "needs Chrome, Edge, Brave or Chromium" in out["error"]
+    out = await tools.make_video("", minutes=9, brief="x" * 7000, voice_name="nobody")
+    assert "needs Chrome, Edge, Brave or Chromium" in out["error"] and world[1] == []
 
 
-async def test_too_long_is_refused(world):
-    out = await tools.make_video("T", ["word " * 140] * 7, "<script></script>")
-    assert "6 minutes" in out["error"]
+async def test_an_empty_topic_is_refused(world):
+    out = await tools.make_video("   ", minutes=9)
+    assert "topic" in out["error"] and world[1] == []
 
 
-async def test_a_scene_over_the_speech_limit_is_named(world):
-    out = await tools.make_video("T", ["ok.", "x" * 4001], "<script></script>")
-    assert "scene 2" in out["error"]
+@pytest.mark.parametrize("minutes", [0, 7, -1])
+async def test_minutes_outside_one_to_six_are_refused_with_the_range(world, minutes):
+    out = await tools.make_video("Attention", minutes=minutes)
+    assert "from 1 to 6" in out["error"] and str(minutes) in out["error"] and world[1] == []
 
 
-async def test_no_narration_and_a_silent_scene_are_refused(world):
-    assert "narration" in (await tools.make_video("T", [], "<script></script>"))["error"]
-    assert "scene 2" in (await tools.make_video("T", ["Hi.", "  "], "<script></script>"))["error"]
+async def test_minutes_that_arent_a_whole_number_are_refused(world):
+    out = await tools.make_video("Attention", minutes=2.5)
+    assert "from 1 to 6" in out["error"] and world[1] == []
 
 
-async def test_more_than_40_scenes_are_refused_with_the_limit(world, no_page_check):
-    out = await tools.make_video("T", ["Hi."] * 41, "<script></script>")
-    assert "41 scenes" in out["error"] and "at most 40" in out["error"] and no_page_check == []
-    assert "result" in await tools.make_video("T", ["Hi."] * 40, "<script></script>")
+async def call_as_adk_does(**args) -> dict:
+    """make_video called the way ADK calls it: through its FunctionTool, with the model's arguments as they came."""
+    chat = SimpleNamespace(session=SimpleNamespace(id="chat-7"))
+    return await FunctionTool(tools.make_video).run_async(args=args, tool_context=chat)
 
 
-async def test_a_page_over_300_kb_is_refused_with_the_limit(world, no_page_check):
-    out = await tools.make_video("T", ["Hi."], "<script>" + "x" * 300_000 + "</script>")
-    assert "300 KB" in out["error"] and no_page_check == [] and world[1] == []
-    assert "result" in await tools.make_video("T", ["Hi."], "x" * 300_000)
+@pytest.mark.parametrize("minutes", [2.0, "2", " 2 "])
+async def test_minutes_as_a_whole_float_or_text_are_read_as_the_number(world, minutes):
+    out = await call_as_adk_does(topic="Attention", minutes=minutes)
+    assert "result" in out, out
+    assert world[1][0].minutes == 2 and type(world[1][0].minutes) is int
 
 
-async def test_a_voice_from_the_other_engine_is_refused_before_the_page_is_checked(world, no_page_check):
+@pytest.mark.parametrize("minutes", ["two", "2.5", "²"])  # "²" is a digit to Python, but no number
+async def test_minutes_as_text_that_isnt_a_whole_number_are_refused_naming_the_text(world, minutes):
+    out = await call_as_adk_does(topic="Attention", minutes=minutes)
+    assert "from 1 to 6" in out["error"] and f"got the text '{minutes}'" in out["error"] and world[1] == []
+
+
+async def test_text_minutes_outside_the_range_are_refused_with_the_number(world):
+    out = await call_as_adk_does(topic="Attention", minutes="9")
+    assert "from 1 to 6" in out["error"] and "not 9" in out["error"] and world[1] == []
+
+
+async def test_null_brief_voice_and_minutes_are_read_as_not_given(world):
+    out = await call_as_adk_does(topic="Attention", minutes=None, brief=None, voice_name=None)
+    assert "result" in out, out
+    job = world[1][0]
+    assert (job.minutes, job.brief, job.voice_name) == (2, "", "")
+
+
+async def test_a_null_topic_is_the_topic_refusal(world):
+    out = await call_as_adk_does(topic=None)
+    assert out["error"] == tools.NO_TOPIC and world[1] == []
+
+
+async def test_a_brief_over_6000_characters_is_refused(world):
+    out = await tools.make_video("Attention", brief="x" * 6001, voice_name="nobody")
+    assert "6,001" in out["error"] and "6,000" in out["error"] and world[1] == []
+    assert "result" in await tools.make_video("Attention", brief="x" * 6000)
+
+
+async def test_a_voice_from_the_other_engine_is_refused_and_nothing_is_queued(world):
     store, submitted = world
     voice.set_tts(store, engine="kokoro", voice="af_heart")
-    out = await tools.make_video("T", ["Hi."], "<script></script>", voice_name="cedar")
-    assert "cedar" in out["error"] and "Settings" in out["error"]
-    assert no_page_check == [] and submitted == []
+    out = await tools.make_video("Attention", voice_name="cedar")
+    assert "cedar" in out["error"] and "Settings" in out["error"] and submitted == []
 
 
-async def test_a_voice_of_the_chosen_engine_goes_to_the_job_by_its_id(world, no_page_check):
+async def test_a_voice_of_the_chosen_engine_goes_to_the_job_by_its_id(world):
     store, submitted = world
     voice.set_tts(store, engine="kokoro", voice="af_heart")
-    out = await tools.make_video("T", ["Hi."], "<script></script>", voice_name="Michael")
+    out = await tools.make_video("Attention", voice_name="Michael")
     assert "result" in out and submitted[0].voice_name == "am_michael"
 
 
-async def test_a_page_that_never_finishes_drawing_is_told_as_a_hang(world, monkeypatch):
-    async def hangs(body, narration, browser):
-        raise BrowserTimeout("The page didn't answer within 120 s.")
+# A good call: the job carries what the writer needs, and no page.
 
-    monkeypatch.setattr(page, "check", hangs)
-    monkeypatch.setattr(odie_browser, "_render", object())
-    out = await tools.make_video("T", ["Hi."], "<script>while (true) {}</script>")
-    assert out["error"].startswith("The page didn't finish drawing in time (a loop that never ends?): ")
-
-
-async def test_a_browser_that_fails_otherwise_is_told_in_its_own_words(world, monkeypatch):
-    async def no_start(body, narration, browser):
-        raise BrowserError("The browser didn't start (another copy of Odie's browser may still be running).")
-
-    monkeypatch.setattr(page, "check", no_start)
-    monkeypatch.setattr(odie_browser, "_render", object())
-    out = await tools.make_video("T", ["Hi."], "<script></script>")
-    assert out["error"] == "The browser didn't start (another copy of Odie's browser may still be running)."
-
-
-async def test_a_page_problem_comes_back_to_fix(world, monkeypatch):
-    async def mismatch(body, narration, browser):
-        return "The page has 2 scenes but there are 1 narration parts: one narration per scene."
-
-    monkeypatch.setattr(page, "check", mismatch)
-    monkeypatch.setattr(odie_browser, "_render", object())
-    out = await tools.make_video("T", ["Hi."], SAMPLE)
-    assert "2 scenes" in out["error"] and world[1] == []
-
-
-async def test_the_same_title_twice_gets_two_folders(world, no_page_check):
+async def test_a_good_call_queues_a_job_with_the_topic_minutes_and_brief(world, tmp_path):
     _store, submitted = world
-    await tools.make_video("How Attention Works!", ["Hi."], "<script></script>")
-    await tools.make_video("How Attention Works!", ["Hi."], "<script></script>")
+    chat = SimpleNamespace(session=SimpleNamespace(id="chat-7"))
+    brief = "For Asha, a beginner. 1. Words become vectors. 2. Each word asks every other word how much to listen."
+    out = await tools.make_video(" How attention works ", minutes=3, brief=brief, tool_context=chat)
+    assert "result" in out, out
+    job = submitted[0]
+    assert (job.topic, job.title, job.minutes, job.brief) == ("How attention works", "How attention works", 3, brief)
+    assert job.narration == [] and job.body == "" and job.voice_name == ""
+    assert job.slug == "how-attention-works" and job.session_id == "chat-7"
+    assert job.folder.is_dir() and str(job.folder).startswith(str(tmp_path))
+    assert jobs.needs_writing(job)
+
+
+async def test_the_length_defaults_to_two_minutes(world):
+    await tools.make_video("Attention")
+    assert world[1][0].minutes == 2
+
+
+async def test_the_same_topic_twice_gets_two_folders(world):
+    _store, submitted = world
+    await tools.make_video("How Attention Works!")
+    await tools.make_video("How Attention Works!")
     first, second = submitted
     assert first.folder.name == "how-attention-works" and second.folder.name == "how-attention-works-2"
     assert first.folder.parent == second.folder.parent and first.folder.parent.name == "videos"
@@ -156,33 +167,60 @@ def test_the_slug_is_plain_lower_case_with_hyphens():
     assert tools.slug_of("!!!") == "video"
 
 
-def test_the_estimate_counts_narrating_rendering_and_joining_in_seconds():
+# The estimate and the reply.
+
+def test_the_making_counts_narrating_rendering_and_joining_in_seconds():
     # the first live run: 6 scenes, 96.25 s of speech, a 98.75 s video of 2,963 frames, made in well under a minute
     assert round(tools.making_seconds(96.25, 2963), 1) == 62.0  # 9.6 narrating + 42.3 drawing + 10 joining
-    three_minutes = ["word " * 60] * 7  # 420 words: 180 s of speech, 183 s of video with the breaths, 5,490 frames
-    assert tools.minutes_to_make(three_minutes) == 2  # 18 + 78.4 + 10 = 106.4 s
-    assert tools.minutes_to_make(["Hi."]) == 1  # never less than a minute
 
 
-async def test_the_reply_says_how_long_and_that_the_chat_stays_free(world, no_page_check, monkeypatch):
-    out = await tools.make_video("T", ["word " * 60] * 7, "<script></script>")
-    assert out["result"].startswith("Making it now: about 2–3 minutes.")
-    assert "keep chatting" in out["result"] and "don't repeat the script" in out["result"]
+def test_the_estimate_adds_two_minutes_of_writing_to_the_making():
+    # 2 minutes: 120 s of speech in 6 scenes, 122.5 s of video, 3,675 frames -> 12 + 52.5 + 10 = 74.5 s -> 1, + 2
+    assert tools.minutes_to_make(2) == 3
+    assert tools.minutes_to_make(1) == 3  # 42.1 s of making -> at least 1, + 2
+    assert tools.minutes_to_make(6) == 5  # 203.9 s -> 3, + 2
+
+
+async def test_the_reply_says_how_long_and_that_the_chat_stays_free(world, monkeypatch):
+    out = await tools.make_video("Attention", minutes=2)
+    assert out["result"].startswith("Making it now: about 3–5 minutes (writing the script and the animation, then "
+                                    "drawing it). It'll appear in this chat, with a ping on the phone")
+    assert "keep chatting" in out["result"]
 
     monkeypatch.setattr(jobs, "submit", lambda job: 2)
-    queued = await tools.make_video("T", ["word " * 60] * 7, "<script></script>")
-    assert "number 2 in line, about 2–3 minutes after the one before" in queued["result"]
-    assert re.search(r"about \d+–\d+ minutes", queued["result"])
+    queued = await tools.make_video("Attention", minutes=2)
+    assert queued["result"].startswith("It's number 2 in line, about 3–5 minutes after the one before. It'll appear")
+    assert re.search(r"about \d+–\d+ minutes", queued["result"]) and "keep chatting" in queued["result"]
 
 
-def test_the_skill_offers_the_tool_without_an_approval_card(isolated_settings, tmp_path):
+# What the chat model is offered.
+
+def test_the_skill_offers_only_make_video_without_an_approval_card(isolated_settings, tmp_path):
     from odie.skills.registry import discover
     store = Store(tmp_path / "skills.db")
     store.init_schema()
     entry = {e.name: e for e in discover(store, user_dir=tmp_path / "none")}["explainer-video"]
-    assert entry.status == "ok" and entry.tools == ["save_video_page", "make_video"]
+    assert entry.status == "ok" and entry.tools == ["make_video"]
     assert entry.skill.frontmatter.metadata["title"] == "Explainer videos"
     assert not any(tool._require_confirmation for tool in entry.tool_objs)
+
+
+def test_the_declaration_has_exactly_topic_minutes_brief_and_voice_name():
+    declaration = FunctionTool(tools.make_video)._get_declaration()
+    properties = declaration.parameters_json_schema["properties"]
+    assert sorted(properties) == ["brief", "minutes", "topic", "voice_name"]
+    assert declaration.parameters_json_schema["required"] == ["topic"]
+
+    golden = {d["name"]: d for d in json.loads(GOLDEN.read_text())}
+    assert sorted(golden["make_video"]["parameters_json_schema"]["properties"]) == sorted(properties)
+    assert "save_video_page" not in golden and "submit_video" not in golden  # the writer's tools, never the chat's
+
+
+def test_the_skill_says_how_to_write_the_brief():
+    text = (SKILL / "SKILL.md").read_text()
+    assert "brief" in text and "can't see" in text and "6,000" in text
+    assert "no emojis" in text and "save_video_page" not in text
+    assert len(text.split("---", 2)[2].split()) < 500  # the body is short: the writer has the page contract
 
 
 def test_videos_are_drawn_in_a_browser_cut_off_from_the_network(isolated_settings, monkeypatch):
@@ -191,77 +229,3 @@ def test_videos_are_drawn_in_a_browser_cut_off_from_the_network(isolated_setting
     assert browser.extra_args == RENDER_ARGS
     assert "--proxy-server=socks5://127.0.0.1:9" in browser.extra_args
     assert str(browser.profile).startswith(str(isolated_settings.data_dir))
-
-
-def test_the_skill_states_the_texts_defaults_and_a_reply_without_emojis():
-    skill = (SKILL / "SKILL.md").read_text()
-    kit = (Path(page.__file__).parent / "kit" / "video.js").read_text()
-    assert "x: W / 2, y: H / 2, size: 48, color: colors.text" in kit  # what the kit really does
-    assert "`x` (960), `y` (540), `size` (48), `color` (`s.colors.text`)" in skill
-    assert "y defaults to 540" in skill and "with no emojis" in skill
-
-
-def test_the_skill_carries_the_sample_page_verbatim():
-    assert SAMPLE.strip() in (SKILL / "SKILL.md").read_text()
-
-
-@needs_browser
-async def test_a_good_request_starts_the_job_and_says_how_long(world, tmp_path, monkeypatch):
-    _store, submitted = world
-    real = Browser(tmp_path / "render", BIN, extra_args=RENDER_ARGS)
-    monkeypatch.setattr(odie_browser, "_render", real)
-    try:
-        out = await tools.make_video("Attention", ["word " * 20, "word " * 20], SAMPLE)
-    finally:
-        await real.close()
-    assert out["result"].startswith("Making it now: about "), out
-    job = submitted[0]
-    assert job.title == "Attention" and job.slug == "attention" and job.body == SAMPLE
-    assert job.narration == ["word " * 20, "word " * 20] and job.voice_name == "" and job.session_id is None
-    assert job.folder.is_dir() and str(job.folder).startswith(str(tmp_path))
-
-
-# The page in its own step: save_video_page keeps it in the workspace and gives back a name, so no single reply has to
-# carry the plan, the page and the call together (a model filled its whole reply with planning on 16 Oct 2026).
-
-async def test_a_saved_page_is_used_by_its_name(world, no_page_check):
-    _store, submitted = world
-    saved = await tools.save_video_page(SAMPLE)
-    name = saved["page_file"]
-    assert name == "page-1" and name in saved["result"]
-    out = await tools.make_video("Attention", ["word " * 20, "word " * 20], page_file=name)
-    assert "result" in out, out
-    assert submitted[0].body == SAMPLE and no_page_check == [SAMPLE]
-
-
-async def test_each_saved_page_gets_its_own_name(world):
-    first = await tools.save_video_page("<script>Video.scenes([{draw(){}}])</script>")
-    second = await tools.save_video_page("<script>Video.scenes([{draw(){}}])</script>")
-    assert (first["page_file"], second["page_file"]) == ("page-1", "page-2")
-
-
-async def test_a_page_too_big_to_save_is_refused(world):
-    out = await tools.save_video_page("x" * 300_001)
-    assert "300 KB" in out["error"]
-
-
-async def test_an_unknown_page_name_says_to_save_it_first(world, no_page_check):
-    out = await tools.make_video("Attention", ["word " * 20], page_file="page-9")
-    assert "save_video_page" in out["error"] and no_page_check == []
-
-
-async def test_a_page_name_cant_reach_outside_the_saved_pages(world, no_page_check):
-    for name in ("../secret", "/etc/hosts", "page-1/../../x"):
-        out = await tools.make_video("Attention", ["word " * 20], page_file=name)
-        assert "error" in out and no_page_check == [], name
-
-
-async def test_no_page_at_all_says_how_to_give_one(world, no_page_check):
-    out = await tools.make_video("Attention", ["word " * 20])
-    assert "save_video_page" in out["error"]
-
-
-def test_the_skill_offers_the_page_saver_too(isolated_settings, tmp_path):
-    text = (SKILL / "SKILL.md").read_text()
-    assert "save_video_page" in text and "page_file" in text
-    assert "save_video_page" in text.split("---")[1]  # declared in the frontmatter's tools

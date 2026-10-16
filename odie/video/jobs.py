@@ -1,9 +1,13 @@
 """Explainer videos are made one at a time, in the background, after the chat turn that asked for them has ended. A
 finished video is posted into that chat with a phone push, the way reminders are; a failed one says why in one line; a
-job that a restart cut off is told once. Nothing here uses the model.
+job that a restart cut off is told once. The only model call is the writer's turn (odie.video.writer); the rest is
+narrating, drawing and joining.
 
-Each job has a folder, <data>/workspace/videos/<slug>/, holding page.html (the page as it was drawn), narration.wav,
-the segment files, <slug>.mp4 and job.json (status: queued, running, done, failed or interrupted_told)."""
+Each job has a folder, <data>/workspace/videos/<slug>/, holding pages/ (every page the writer submitted: page-1.html,
+page-2.html, …), page.html (the accepted page as it was drawn, with its timings), narration.wav, the segment files,
+<slug>.mp4 and job.json (status: queued, writing, running, done, failed or interrupted_told). A job starts as a topic,
+a length and a brief; its first step is the writer, which turns them into the title, the narration and the page. The
+brief is kept only in memory, for the writer: it isn't written to job.json or anywhere else in the folder."""
 from __future__ import annotations
 
 import asyncio
@@ -18,7 +22,7 @@ from odie.agent.tools.files import hand_over, workspace
 from odie.browser import render_browser
 from odie.browser.engine import BrowserError
 from odie.push.send import send_to_all
-from odie.video import timeline
+from odie.video import timeline, writer
 from odie.video.encode import EncodeError, mux, probe
 from odie.video.narrate import narrate
 from odie.video.page import assemble
@@ -29,7 +33,8 @@ log = logging.getLogger("odie.video")
 hooks: dict = {}  # runner (posts the messages) and store (the push needs it); set by the runner when it starts
 LINE_LIMIT = 200  # characters of an error kept in the chat
 UNKNOWN_ERROR = "something went wrong (see Odie's log)"
-INTERRUPTED_STATUSES = ("queued", "running")  # the queue lives in memory, so after a restart both mean "cut off"
+# The queue lives in memory, so after a restart a job that was waiting, writing or rendering was "cut off".
+INTERRUPTED_STATUSES = ("queued", "writing", "running")
 
 
 @dataclass
@@ -37,10 +42,13 @@ class Job:
     slug: str
     title: str
     session_id: str | None
-    narration: list[str]
-    body: str
     voice_name: str
     folder: Path
+    topic: str = ""
+    minutes: int = 2
+    brief: str = ""
+    narration: list[str] = field(default_factory=list)  # filled by the writing step
+    body: str = ""  # filled by the writing step
     created: float = field(default_factory=time.time)
 
 
@@ -96,7 +104,7 @@ def save_json(folder: Path, data: dict) -> None:
 
 def write_job(job: Job, status: str, error: str = "") -> None:
     data = {"status": status, "title": job.title, "session_id": job.session_id, "slug": job.slug,
-            "created": job.created}
+            "created": job.created, "topic": job.topic, "minutes": job.minutes}
     if error:
         data["error"] = error
     job.folder.mkdir(parents=True, exist_ok=True)
@@ -105,11 +113,11 @@ def write_job(job: Job, status: str, error: str = "") -> None:
 
 def one_line(error: Exception) -> str:
     """What the chat is told about a failure, in one line of at most 200 characters. Errors whose words are written
-    for the user (the voice isn't running, ffmpeg's complaint, the browser's complaint) keep their first line, without
+    for the user (the voice isn't running, ffmpeg's complaint, the browser's complaint, the writer's) keep their first line, without
     a closing full stop: VoiceUnavailable("Odie's local voice isn't running.") -> "Odie's local voice isn't running".
     Anything else is not shown, because it may hold paths or internals: KeyError("/some/path") -> "something went
     wrong (see Odie's log)"."""
-    if not isinstance(error, (voice.VoiceUnavailable, EncodeError, BrowserError)):
+    if not isinstance(error, (voice.VoiceUnavailable, EncodeError, BrowserError, writer.WriterFailed)):
         return UNKNOWN_ERROR
     lines = str(error).strip().splitlines()
     first = lines[0] if lines else ""
@@ -148,13 +156,42 @@ async def make_video(job: Job, browser, transport) -> Path:
     return mp4
 
 
-async def run(job: Job, browser=None, transport=None) -> None:
-    """Make one video and tell its chat: ready (with the video under the message) or didn't finish (and why).
-    Cancellation (Odie shutting down) is not a failure: it passes through, job.json stays "running" and nothing is
-    posted, so the next start tells the chat the video was interrupted."""
+def needs_writing(job: Job) -> bool:
+    """Decides whether the writer must make this job's page first: a job with a topic and no page yet -> True; a job
+    that already carries its narration and page (made the old way, with the page in hand) -> False, it goes straight
+    to drawing."""
+    has_page = bool(job.narration) and bool(job.body)
+    return not has_page
+
+
+def title_after_writing(written_title: str, job: Job) -> str:
+    """The title the finished video goes by: the writer's own, trimmed ("  How attention works " -> "How attention
+    works"); with none, the job's topic ("" and topic "attention" -> "attention"); with neither, the title the job
+    already had."""
+    title = written_title.strip()
+    if title:
+        return title
+    if job.topic:
+        return job.topic
+    return job.title
+
+
+async def run(job: Job, browser=None, transport=None, turn=None) -> None:
+    """Make one video and tell its chat: ready (with the video under the message) or didn't finish (and why). A job
+    without a page is written first (status "writing"; `turn` is the focused model turn, the runner's by default).
+    Cancellation (Odie shutting down) is not a failure: it passes through, job.json stays "writing" or "running" and
+    nothing is posted, so the next start tells the chat the video was interrupted."""
     try:
         if browser is None:
             browser = render_browser()
+        if needs_writing(job):
+            write_job(job, "writing")
+            if turn is None:
+                turn = hooks["runner"].focused_turn
+            written = await writer.write(job.topic, job.minutes, job.brief, job.folder, turn, browser)
+            job.title = title_after_writing(written.title, job)
+            job.narration = written.narration
+            job.body = written.body
         write_job(job, "running")
         mp4 = await make_video(job, browser, transport)
         handed = hand_over(mp4, job.title)
@@ -195,7 +232,7 @@ async def stop() -> None:
 
 
 async def recover() -> int:
-    """At startup: every job file still saying queued or running was cut off by the restart. Tell its chat once and
+    """At startup: every job file still saying queued, writing or running was cut off by the restart. Tell its chat once and
     mark it interrupted_told, so the next start stays quiet. Returns how many were told."""
     root = workspace() / "videos"
     if not root.is_dir():
@@ -224,6 +261,6 @@ async def recover() -> int:
 
 
 def is_interrupted(data: dict) -> bool:
-    """Was this job cut off by a restart? {"status": "running"} -> yes; {"status": "queued"} -> yes (the line was in
-    memory); {"status": "done"}, "failed" or "interrupted_told" -> no (finished, or already told)."""
+    """Was this job cut off by a restart? {"status": "running"} -> yes; {"status": "writing"} -> yes; {"status": "queued"} -> yes
+    (the line was in memory); {"status": "done"}, "failed" or "interrupted_told" -> no (finished, or already told)."""
     return data.get("status") in INTERRUPTED_STATUSES

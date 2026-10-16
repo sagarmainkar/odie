@@ -10,7 +10,7 @@ import uuid
 
 import json
 from google.adk.events import Event
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import aclosing
 from datetime import UTC, datetime
 from typing import Any
@@ -373,6 +373,16 @@ def reply_key(ev: Any) -> str | None:
     if isinstance(key, str) and key:
         return key
     return None
+
+
+def tool_error_as_result(tool, args, tool_context, error: Exception) -> dict:
+    """Decides what a focused turn's model sees when one of its tools raises: the error as the tool's result, so the model
+    can fix its input and call again, instead of the whole turn aborting. Only the first line of the error, cut to 300
+    characters. Example: a tool raising ValueError("page has no title\nat line 3") -> {"error": "ValueError: page has no
+    title"}. The full exception goes to the log."""
+    log.warning("focused turn: tool %s raised", tool.name, exc_info=error)
+    first_line = str(error).splitlines()[0] if str(error) else ""
+    return {"error": f"{type(error).__name__}: {first_line}"[:300]}
 
 
 class OdieRunner:
@@ -911,6 +921,53 @@ class OdieRunner:
                     await ob._shared.close_tab(sess.id)
                 except Exception:  # noqa: BLE001
                     log.warning("couldn't close a background check's tab", exc_info=True)
+        return "\n".join(out)
+
+    async def focused_turn(self, prompt: str, instruction: str, tools: list, timeout: float = 600,
+                           follow_up: Callable[[], str | None] | None = None) -> str:
+        """One agent turn that sees only what it is handed: the chat's model, `instruction` as its whole system prompt
+        (no Odie prompt, no memory, no chat history), exactly the `tools` given (none of Odie's own), and a fresh
+        in-memory session. Returns the reply text, thoughts left out; a turn over `timeout` seconds (follow-up
+        included) raises asyncio.TimeoutError. Example: the video writer gets its writing guide and its one tool,
+        nothing else. The prompt starts with the date and time, as a background check's does.
+        follow_up: asked once, after the turn; a text it returns is sent as one more message in the same session (the
+        video writer's nudge when it stopped without submitting), None sends nothing."""
+        from google.adk.agents import LlmAgent
+        from google.adk.sessions import InMemorySessionService
+
+        from odie.agent.usage import CACHE
+        s = config.settings
+        model = model_for(resolve_selection(self.store, "chat"), False)
+        now = datetime.now(self.tz).strftime("%A %d %B %Y, %H:%M")
+
+        def as_written(_context) -> str:
+            # Handed as a function, so ADK passes the text on untouched: a plain string would have every {name} in it
+            # read as a session-state value, and the video writer's LaTeX ("\\frac{a}{b}") would fail the turn.
+            return instruction
+
+        agent = LlmAgent(name="odie_writer", model=model, tools=tools, instruction=as_written,
+                         on_tool_error_callback=tool_error_as_result)
+        sessions = InMemorySessionService()
+        sess = await sessions.create_session(app_name="odie_writer", user_id=s.user_id)
+        app = App(name="odie_writer", root_agent=agent, context_cache_config=CACHE)
+        runner = Runner(app=app, session_service=sessions)
+        out: list[str] = []
+
+        async def send(text: str) -> None:
+            message = types.Content(role="user", parts=[types.Part(text=text)])
+            async for ev in runner.run_async(user_id=s.user_id, session_id=sess.id, new_message=message):
+                if ev.content and ev.content.parts and not getattr(ev, "partial", False):
+                    out.extend(p.text for p in ev.content.parts if p.text and not getattr(p, "thought", False))
+
+        async def go():
+            await send(f"It is {now} ({s.timezone}).\n\n{prompt}")
+            if follow_up is None:
+                return
+            more = follow_up()
+            if more is not None:
+                await send(more)
+
+        await asyncio.wait_for(go(), timeout)
         return "\n".join(out)
 
     async def tracker_notify(self, row: dict, summary: str, push: str | None = None, private_site: str | None = None) -> None:
