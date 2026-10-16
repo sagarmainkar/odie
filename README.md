@@ -68,6 +68,8 @@ Odie is inspired by Muse, but it isn't a copy.
   on first use, and unloads itself after 15 idle minutes. You can also use an embedding model from LM Studio or
   Ollama, or OpenAI's (text only). Without any, search works by words. EmbeddingGemma 2 is Google's model: Odie
   doesn't include it. It's downloaded from Hugging Face on first use, under its own licence (Apache 2.0).
+  Explainer videos are encoded with ffmpeg from the imageio-ffmpeg package, installed with Odie and run as a
+  separate program (its bundled ffmpeg is a GPL build); the video kit ships three.js and KaTeX (both MIT).
 - **Photos and videos.** Odie reads your Photos library (read-only): who is in a picture, where and when, what Photos
   saw in it. Each picture gets one vector from its words and its pixels, so one search covers notes and pictures. A
   video plays in the chat after Odie fetches its original from iCloud.
@@ -93,9 +95,9 @@ don't need them. Tools the server marks read-only run at once; anything that wri
   public sites only. Downloads are refused, and it never types into password, card or one-time-code fields.
 - **Your Mac.** Shell commands run as you, after you read the exact command on a card. "Allow for 30 min" covers one
   chat, but deleting, sending data out or touching secrets always asks.
-- **Making things.** Designed decks (PDF and PowerPoint), Word documents, podcasts with two hosts, files. A deck's
-  photos come through Odie's browser, each credited on its slide. The repo ships no photos: credited
-  photos belong to their owners, and a deck that uses them is for your own use.
+- **Making things.** Designed decks (PDF and PowerPoint), Word documents, podcasts with two hosts, narrated
+  explainer videos, files. A deck's photos come through Odie's browser, each credited on its slide. The repo ships
+  no photos: credited photos belong to their owners, and a deck that uses them is for your own use.
 
 ### Voice
 

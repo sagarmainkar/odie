@@ -1,0 +1,46 @@
+<script>
+// A two-scene explainer page against the kit (video.js). Each draw(t, s) is a pure function of t, the seconds into
+// its scene; s.length is that scene's length, set by its narration. Colour means one thing throughout:
+// blue = the vectors (the cube), yellow = what we point at, green = the result.
+Video.scenes([
+  {
+    // Scene 1: a title written in, and a blue cube that grows in and turns half a turn across the scene.
+    setup(s) {
+      const box = new THREE.BoxGeometry(2.4, 2.4, 2.4);
+      const faces = new THREE.MeshStandardMaterial({
+        color: s.colors.blue, roughness: 0.5, transparent: true, opacity: 0.85,
+      });
+      const edges = new THREE.LineBasicMaterial({color: "#d6f3fb"});
+      this.cube = new THREE.Mesh(box, faces);
+      this.cube.add(new THREE.LineSegments(new THREE.EdgesGeometry(box), edges));
+      s.three.scene.add(this.cube);
+    },
+    draw(t, s) {
+      const grow = Math.max(0.001, s.at(t, 0, 0.8));
+      this.cube.scale.setScalar(grow);
+      this.cube.rotation.set(0.45, s.at(t, 0, s.length) * Math.PI - 0.6, 0);
+      this.cube.position.y = -0.3;
+      s.text("title", "How attention works", {
+        y: 150, size: 84, weight: 600, write: s.at(t, 0.2, 1.4), opacity: s.fade(t, 0.2),
+      });
+      s.text("caption", "Each word becomes a vector: a point in space", {
+        y: 940, size: 42, color: s.colors.blue, opacity: s.fade(t, 1.0),
+      });
+    },
+  },
+  {
+    // Scene 2: the attention formula written in, then arrows growing to its two halves from what they mean.
+    draw(t, s) {
+      s.tex("formula", "\\text{softmax}(QK^T/\\sqrt{d})V", {y: 420, size: 96, write: s.at(t, 0, 1.4)});
+      s.text("weights", "how much each word listens", {
+        x: 300, y: 840, size: 44, align: "left", color: s.colors.yellow, opacity: s.fade(t, 1.0),
+      });
+      s.arrow(s.ctx, 560, 800, 860, 545, s.at(t, 1.2, 2.0), s.colors.yellow);
+      s.text("result", "what it hears: a new vector", {
+        x: 1620, y: 840, size: 44, align: "right", color: s.colors.green, opacity: s.fade(t, 1.8),
+      });
+      s.arrow(s.ctx, 1400, 800, 1440, 545, s.at(t, 2.0, 2.6), s.colors.green);
+    },
+  },
+]);
+</script>

@@ -331,6 +331,41 @@
     }
   },
   {
+    "description": "Make a narrated, animated explainer video that plays in this chat. Call it once the scenes are planned and the\npage is written, as the explainer-video skill says.\ntitle: the topic, short (\"Speculative decoding\").\nnarration: one string of plain speech per scene, in order; each is spoken in the voice chosen in Settings.\npage: the HTML body: one <script> that calls Video.scenes([...]) with one scene per narration string.\nvoice_name: leave empty; only when the user asks for a voice, one of the Settings engine's voices.\nIt checks everything now and returns at once. {\"error\": …}: fix exactly that and call again. {\"result\": …}: the\nvideo is being made in the background; reply in one or two lines as the result says, and don't repeat the\nscript.",
+    "name": "make_video",
+    "parameters_json_schema": {
+      "properties": {
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "narration": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Narration",
+          "type": "array"
+        },
+        "page": {
+          "title": "Page",
+          "type": "string"
+        },
+        "voice_name": {
+          "default": "",
+          "title": "Voice Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "title",
+        "narration",
+        "page"
+      ],
+      "title": "make_videoParams",
+      "type": "object"
+    }
+  },
+  {
     "description": "Price history for a stock, index, currency or commodity, with a chart. symbol: a name or ticker, e.g. NIFTY,\nSENSEX, BANK NIFTY, RELIANCE, TCS.NS, AAPL, gold, USDINR. period: 1d, 5d, 1mo, 3mo, 6mo, 1y, 2y, 5y or 10y\n(\"last week\" = 5d; any other, like 3y, gets the next longer one).\nReturns a summary and a ```odie-blocks block to paste into the reply unchanged so the app draws the chart.",
     "name": "market_history",
     "parameters_json_schema": {

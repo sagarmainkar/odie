@@ -23,7 +23,8 @@ import shutil
 import signal
 import subprocess
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -52,6 +53,10 @@ class FencedError(BrowserError):
     """The page was stopped from leaving the sites its tab may visit (the fence)."""
 
 
+class BrowserTimeout(BrowserError):
+    """A sealed page didn't answer in time: most likely its script never ends (a loop with no way out)."""
+
+
 BOT_CHECK_WAIT = 10  # seconds a site's bot check is given to clear (most pass by themselves in a few)
 _BOT_TITLES = ("just a moment", "attention required", "are you a robot", "verify you are human", "access denied")
 _BOT_TEXT = ("performing security verification", "verify you are human", "checking your browser",
@@ -76,6 +81,64 @@ class Page:
     images: list[dict] = field(default_factory=list)  # the page's own photos: [{url, label}] (odie.browser.images)
     login: bool = False  # a visible password field: the page asks someone to sign in
     signin: bool = False  # a sign-in page: a password field, or a username field where the path or title says sign in
+
+
+SEALED_TIMEOUT = 120  # seconds for one command on a sealed page: a heavy frame takes a while, a hung one not forever
+
+
+@dataclass
+class SealedPage:
+    """A page drawn in a sealed render tab (see `Browser.sealed_page`): run script in it, take pictures of it, and read
+    the errors it raised. `errors` fills as they happen: uncaught exceptions and console.error lines, in order."""
+    cdp: CDP
+    session: str
+    errors: list[str] = field(default_factory=list)
+
+    async def eval(self, expression: str):
+        """The value of a JavaScript expression (a promise is awaited first), by value. BrowserError when the page
+        raised an error or went away; BrowserTimeout when it didn't answer within SEALED_TIMEOUT seconds."""
+        params = {"expression": expression, "returnByValue": True, "awaitPromise": True}
+        r = await self._send("Runtime.evaluate", params)
+        details = r.get("exceptionDetails")
+        if details:
+            raise BrowserError(f"The page raised an error: {_error_text(details)}")
+        return r.get("result", {}).get("value")
+
+    async def shot(self, fmt: str = "jpeg", quality: int = 92) -> bytes:
+        """The page as it looks now, as picture bytes (`fmt` is "jpeg" or "png"; `quality` matters for jpeg only)."""
+        params = {"format": fmt, "captureBeyondViewport": False}
+        if fmt == "jpeg":
+            params["quality"] = quality
+        r = await self._send("Page.captureScreenshot", params)
+        return base64.b64decode(r["data"])
+
+    async def _send(self, method: str, params: dict) -> dict:
+        """One command to the page, its failures told in plain words: a timeout as BrowserTimeout, the rest (the tab
+        or the browser gone) as BrowserError."""
+        try:
+            return await self.cdp.send(method, params, session=self.session, timeout=SEALED_TIMEOUT)
+        except TimeoutError:
+            raise BrowserTimeout(f"The page didn't answer within {SEALED_TIMEOUT} s.") from None
+        except (CDPError, ConnectionError) as e:
+            raise BrowserError(f"The page couldn't be drawn ({type(e).__name__}).") from None
+
+
+def _error_text(details: dict) -> str:
+    """One line for an uncaught exception: its description when it has one ("TypeError: x is null"), else its text."""
+    exception = details.get("exception") or {}
+    description = exception.get("description") or details.get("text") or "unknown error"
+    return description.splitlines()[0]
+
+
+def _console_text(args: list[dict]) -> str:
+    """A console call's arguments as one line: console.error("bad", 3) -> "bad 3"."""
+    words = []
+    for arg in args:
+        value = arg.get("value")
+        if value is None:
+            value = arg.get("description", "")
+        words.append(str(value))
+    return " ".join(words)
 
 
 def public_policy(resolve=resolve_host, ttl: float = 300) -> Policy:
@@ -229,8 +292,10 @@ def _short(url: str) -> str:
 
 class Browser:
     def __init__(self, profile: Path, binary: str | None = None, policy: Policy | None = None, idle: float = 600,
-                 ip_ok: Callable[[str], bool] = global_ip, plain_http_ok: bool = False):
+                 ip_ok: Callable[[str], bool] = global_ip, plain_http_ok: bool = False,
+                 extra_args: tuple[str, ...] = ()):
         self.profile = Path(profile)
+        self.extra_args = extra_args  # more browser flags (the render browser's GL flags), before about:blank
         self.binary = binary
         self.policy = policy or public_policy()
         self.ip_ok = ip_ok  # where an answer came from (DNS rebinding); tests on 127.0.0.1 pass their own
@@ -248,7 +313,7 @@ class Browser:
         self._tab_locks: dict[str, asyncio.Lock] = {}
         self._idle_task: asyncio.Task | None = None
         self._busy = 0  # actions under way: the idle countdown starts only once none are
-        self._sealed: set[str] = set()  # render tabs' sessions: every request they make is refused
+        self._sealed: set[str] = set()  # sealed tabs' sessions: every HTTP request they make is refused
         self._sealed_frames: set[str] = set()  # and their frames, for requests paused browser-wide (no session)
         self._contexts: dict[str, str] = {}  # isolated tab -> its own browser context (background work: no cookies)
         self._holds: dict[str, str] = {}  # tab -> who holds it (the user, in the live view): tools wait
@@ -261,6 +326,7 @@ class Browser:
         self._fences: dict[str, set[str]] = {}  # tab -> the only sites its page may go to (a private chat's steps)
         self._main: dict[str, str] = {}  # tab -> its main frame's id (a page's main frame id is its target id)
         self._fenced: dict[str, str] = {}  # tab -> the address its page was stopped from going to
+        self._errors: dict[str, list[str]] = {}  # sealed tab's session -> the errors its page has raised, in order
 
     @property
     def running(self) -> bool:
@@ -301,7 +367,7 @@ class Browser:
         args = [binary, "--headless=new", f"--user-data-dir={self.profile}", "--remote-debugging-port=0", "--no-first-run",
                 "--no-default-browser-check", "--disable-extensions", "--disable-component-extensions-with-background-pages",
                 "--disable-sync", "--disable-background-networking", "--disable-component-update", "--disable-breakpad",
-                "--disable-crash-reporter", "--mute-audio", f"--window-size={VIEW[0]},{VIEW[1]}", "about:blank"]
+                "--disable-crash-reporter", "--mute-audio", f"--window-size={VIEW[0]},{VIEW[1]}", *self.extra_args, "about:blank"]
         self._proc = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
         for _ in range(150):
             if port_file.exists() and len(port_file.read_text().split()) >= 2:
@@ -501,8 +567,18 @@ class Browser:
                                 pass
             elif method == "Page.javascriptDialogOpening":
                 await cdp.send("Page.handleJavaScriptDialog", {"accept": False}, session=session)
+            elif method == "Runtime.exceptionThrown":
+                self._note_error(session, _error_text(params.get("exceptionDetails", {})))
+            elif method == "Runtime.consoleAPICalled" and params.get("type") == "error":
+                self._note_error(session, _console_text(params.get("args", [])))
         except (CDPError, ConnectionError, TimeoutError, KeyError):
             pass  # the tab or the browser went away mid-request
+
+    def _note_error(self, session: str | None, text: str) -> None:
+        """Adds a page's error to its sealed tab's list (a frame's goes to its tab's); other pages' errors aren't kept."""
+        root = self._root.get(session or "", session or "")
+        if root in self._errors:
+            self._errors[root].append(text)
 
     def _tab_of(self, session: str | None) -> str | None:
         root = self._root.get(session or "", session or "")
@@ -1002,8 +1078,8 @@ class Browser:
         return await self._act(tab, False, self._past_bot_check)
 
     async def render(self, html: str, width: int, height: int, pages: int, timeout: float = 60) -> tuple[bytes, list[bytes]]:
-        """A deck's PDF and a JPEG of each page, from HTML that needs nothing from the network: rendered in a tab of
-        its own browser context, sealed so every request it makes is refused."""
+        """A deck's PDF and a JPEG of each page, from HTML that needs nothing from the network: rendered in a sealed
+        tab of its own browser context (see `_sealed_tab` for what that seals)."""
         self._busy += 1
         self._stop_idle()
         try:
@@ -1016,31 +1092,9 @@ class Browser:
                 self._start_idle()
 
     async def _render(self, html: str, width: int, height: int, pages: int) -> tuple[bytes, list[bytes]]:
-        async with self._lock:
-            if not self.running:
-                await self.close()
-                await self._start()
-        cdp = self._cdp
-        assert cdp
-        ctx = (await cdp.send("Target.createBrowserContext", {"disposeOnDetach": True}))["browserContextId"]
-        target = frame = ""
-        s = ""
-        try:
-            target = (await cdp.send("Target.createTarget", {"url": "about:blank", "browserContextId": ctx}))["targetId"]
-            self._sealed_frames.add(target)  # a page's main frame has its target's id: sealed before it runs
-            s = await asyncio.wait_for(self._attached_future(target), 10)
-            self._sealed.add(s)
-            self._root[s] = s
-            await self._guard(s, page=True)
-            await cdp.send("Emulation.setDeviceMetricsOverride", {"width": width, "height": height, "deviceScaleFactor": 1,
-                                                                  "mobile": False}, session=s)
-            await cdp.send("Runtime.runIfWaitingForDebugger", session=s)
-            frame = (await cdp.send("Page.getFrameTree", session=s))["frameTree"]["frame"]["id"]
-            self._sealed_frames.add(frame)
-            await cdp.send("Page.setDocumentContent", {"frameId": frame, "html": html}, session=s, timeout=60)
-            await self._eval(s, "(async () => { await document.fonts.ready; const t = Date.now(); "
-                                "while ([...document.images].some(i => !i.complete) && Date.now() - t < 10000) "
-                                "await new Promise(r => setTimeout(r, 100)); })()")
+        async with self._sealed_tab(html, width, height) as (s, _errors):
+            cdp = self._cdp
+            assert cdp
             shots = []
             for i in range(pages):
                 r = await cdp.send("Page.captureScreenshot", {"format": "jpeg", "quality": 88, "captureBeyondViewport": True,
@@ -1050,9 +1104,77 @@ class Browser:
             pdf = await cdp.send("Page.printToPDF", {"printBackground": True, "preferCSSPageSize": True, "marginTop": 0, "marginBottom": 0,
                                                      "marginLeft": 0, "marginRight": 0}, session=s, timeout=60)
             return base64.b64decode(pdf["data"]), shots
+
+    @asynccontextmanager
+    async def sealed_page(self, html: str, width: int, height: int) -> AsyncIterator[SealedPage]:
+        """A page of HTML that needs nothing from the network, open in a sealed tab of its own browser context (see
+        `_sealed_tab` for what that seals), for script to run in and pictures to be taken of. The tab goes when the
+        block ends."""
+        self._busy += 1
+        self._stop_idle()
+        in_callers_block = False
+        try:
+            async with self._sealed_tab(html, width, height) as (session, errors):
+                assert self._cdp
+                in_callers_block = True
+                yield SealedPage(self._cdp, session, errors)
+                in_callers_block = False
+        except (CDPError, ConnectionError, TimeoutError) as e:
+            if in_callers_block:
+                raise  # the caller's own error (SealedPage's commands raise BrowserError): it goes on as it is
+            if isinstance(e, TimeoutError):
+                raise BrowserTimeout("The page didn't finish loading in time.") from None
+            raise BrowserError(f"The page couldn't be drawn ({type(e).__name__}).") from None
+        finally:
+            self._busy -= 1
+            if not self._busy and self.running:
+                self._start_idle()
+
+    @asynccontextmanager
+    async def _sealed_tab(self, html: str, width: int, height: int) -> AsyncIterator[tuple[str, list[str]]]:
+        """Opens `html` in a sealed tab (its own browser context, its fonts and images loaded) and gives its session and
+        the list its errors collect in; closes the tab and its context afterwards.
+
+        What is sealed, and where:
+        - In any browser, every HTTP request the tab or its frames make is refused, through request interception.
+        - In the render browser (odie.browser.render_browser) nothing gets out at all, WebSockets and workers included:
+          its flags (odie.browser.NO_NETWORK_ARGS) send every connection to a proxy that isn't there.
+        - Known gap, a follow-up: a deck's tab in the shared browser can still open a WebSocket, and so can a worker
+          there. Request interception never sees WebSockets, and the page's WebSocket guard (_WS_GUARD) doesn't run in
+          a page set with Page.setDocumentContent into an about:blank that has already loaded."""
+        async with self._lock:
+            if not self.running:
+                await self.close()
+                await self._start()
+        cdp = self._cdp
+        assert cdp
+        ctx = (await cdp.send("Target.createBrowserContext", {"disposeOnDetach": True}))["browserContextId"]
+        target = frame = ""
+        s = ""
+        errors: list[str] = []
+        try:
+            target = (await cdp.send("Target.createTarget", {"url": "about:blank", "browserContextId": ctx}))["targetId"]
+            self._sealed_frames.add(target)  # a page's main frame has its target's id: sealed before it runs
+            s = await asyncio.wait_for(self._attached_future(target), 10)
+            self._sealed.add(s)
+            self._root[s] = s
+            self._errors[s] = errors
+            await self._guard(s, page=True)
+            await cdp.send("Runtime.enable", session=s)  # its exceptions and console.error lines arrive as events
+            await cdp.send("Emulation.setDeviceMetricsOverride", {"width": width, "height": height, "deviceScaleFactor": 1,
+                                                                  "mobile": False}, session=s)
+            await cdp.send("Runtime.runIfWaitingForDebugger", session=s)
+            frame = (await cdp.send("Page.getFrameTree", session=s))["frameTree"]["frame"]["id"]
+            self._sealed_frames.add(frame)
+            await cdp.send("Page.setDocumentContent", {"frameId": frame, "html": html}, session=s, timeout=60)
+            await self._eval(s, "(async () => { await document.fonts.ready; const t = Date.now(); "
+                                "while ([...document.images].some(i => !i.complete) && Date.now() - t < 10000) "
+                                "await new Promise(r => setTimeout(r, 100)); })()")
+            yield s, errors
         finally:
             self._sealed.discard(s)
             self._root.pop(s, None)
+            self._errors.pop(s, None)
             self._attached.pop(target, None)
             try:
                 if target:
