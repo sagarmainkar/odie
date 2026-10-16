@@ -2,7 +2,7 @@ import { dictate } from "./api";
 import { meter } from "./mic";
 import { listen } from "./voice";
 
-export { levelOf } from "./mic";
+export { levelOf, smoothLevel } from "./mic";
 
 /** How the mic dictates: live text through OpenAI (a transcription-only realtime session), the phone's own speech
  *  recognition without a key, or a clear note when neither works. Never a silent mic. */
@@ -38,19 +38,59 @@ export function textOf(s: Text): string {
   return s.order.map((id) => (s.words[id] ?? "").trim()).filter(Boolean).join(" ");
 }
 
-type Hooks = { onText: (t: string) => void; onLevel: (l: number) => void; onState: (s: "recording" | "transcribing" | "idle") => void; onError: (m: string) => void };
+/**
+ * What the composer holds once the mic has heard more, or null when the mic must leave it alone. The mic owns the
+ * composer only while it still holds what the mic last wrote: once the user sends, clears or types, it's theirs, and
+ * words that arrive late are dropped. `base` is what was typed before the mic started; the words go after it.
+ *   composer "Plan a trip", written "Plan a trip", base "Plan", words "a trip to Goa" -> "Plan a trip to Goa"
+ *   composer "" (sent or cleared), written "Plan a trip", words "a trip to Goa"       -> null (the composer stays "")
+ */
+export function composerWith({ composer, written, base, words }: { composer: string; written: string; base: string; words: string }): string | null {
+  if (composer !== written) return null;
+  if (!base) return words;
+  if (!words) return base;
+  return `${base} ${words}`;
+}
+
+/** What the mic is doing: connecting (live: until OpenAI answers, so nobody talks into a mic that isn't sending yet),
+ *  recording, transcribing (the last words still arriving), or idle. */
+export type MicState = "connecting" | "recording" | "transcribing" | "idle";
+
+type Hooks = { onText: (t: string) => void; onLevel: (l: number) => void; onState: (s: MicState) => void; onError: (m: string) => void };
+
+/** A short-lived key for one live session, from Odie; null when there's none (no OpenAI key: 503, or no network). */
+async function dictationSecret(): Promise<string | null> {
+  try {
+    const r = await fetch("/api/voice/dictation", { method: "POST" });
+    if (!r.ok) return null;
+    const { client_secret } = await r.json();
+    return client_secret ?? null;
+  } catch {
+    return null;
+  }
+}
 
 /** Live: the words appear as the user talks. Falls back to record-then-transcribe if the live session won't start. */
 async function live(h: Hooks): Promise<(() => void) | null> {
+  h.onState("connecting");
+  // The session key and the microphone at the same time: each takes a moment, and the user waits for both.
+  const session = dictationSecret();
   let stream: MediaStream;
-  try { stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } }); } catch { return null; }
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+  } catch {
+    h.onState("idle");
+    return null;
+  }
   const stopMeter = meter(stream, h.onLevel);
   let pc: RTCPeerConnection | null = null;
-  const end = () => { stopMeter(); stream.getTracks().forEach((t) => t.stop()); pc?.close(); pc = null; h.onState("idle"); };
+  // Lets go of the mic and the connection. end() also reports idle; the fallback below doesn't, because recording
+  // carries on there and idle would shut its text off.
+  const release = () => { stopMeter(); stream.getTracks().forEach((t) => t.stop()); pc?.close(); pc = null; };
+  const end = () => { release(); h.onState("idle"); };
   try {
-    const r = await fetch("/api/voice/dictation", { method: "POST" });
-    if (!r.ok) throw new Error(`session ${r.status}`);
-    const { client_secret } = await r.json();
+    const client_secret = await session;
+    if (!client_secret) throw new Error("no session");
     pc = new RTCPeerConnection();
     stream.getTracks().forEach((t) => pc!.addTrack(t, stream));
     const ch = pc.createDataChannel("oai-events");
@@ -66,7 +106,7 @@ async function live(h: Hooks): Promise<(() => void) | null> {
     // Stopping: the mic shows "writing it down" while the last phrase has a moment to arrive, then it's over.
     return () => { h.onState("transcribing"); setTimeout(end, 700); };
   } catch {
-    end();
+    release();
     return recorded(h);  // OpenAI is set up, but the live route failed: record, then transcribe, as before
   }
 }

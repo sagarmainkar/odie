@@ -55,7 +55,7 @@ import { autoplayFor } from "../reminders";
 import { FOCUS_COMPOSER } from "../components/ReminderCurtain";
 import { useProfile } from "../profile";
 import { MicWave } from "../components/MicWave";
-import { phoneSpeech, pickMode, startDictation } from "../dictation";
+import { composerWith, phoneSpeech, pickMode, startDictation } from "../dictation";
 
 // key and sid: the name the server gave a reply (its ADK event id) and the session it is in; its saved ticks hang off them.
 type Msg = { id: number; key?: string; sid?: string; role: "user" | "odie" | "approval"; text: string; tools: Tool[]; error?: string; awaiting?: boolean; ts?: number; live?: boolean; approval?: Approval; images?: string[]; asked?: string; media?: Media[]; autoplay?: string; private?: boolean; usage?: ReplyUsage };  // private: its chat read a signed-in page; usage: the reply's own token counts
@@ -213,6 +213,7 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
   const stopRead = useRef<(() => void) | null>(null);
   const [listening, setListening] = useState(false);
   const [transcribing, setTranscribing] = useState(false);
+  const [connecting, setConnecting] = useState(false);
   const [micNote, setMicNote] = useState("");  // why the mic couldn't write it down, shown under the box
   const micLevel = useRef(0);  // the voice's loudness right now, for the wave
   const [talking, setTalking] = useState(false);
@@ -493,18 +494,33 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
     if (stopDictate.current) { stopDictate.current(); stopDictate.current = null; return; }
     setMicNote("");
     const base = input.trim();
+    // What the mic last put in the composer. Once the composer holds something else (sent, cleared, typed over),
+    // composerWith drops the words that still arrive, so an old phrase can't come back.
+    let written = input;
     const stop = await startDictation(pickMode({ dictation: has(caps, "dictation"), phoneSpeech: phoneSpeech() }), {
-      onText: (t) => setInput(base && t ? `${base} ${t}` : base || t),
+      onText: (words) => setInput((composer) => {
+        const next = composerWith({ composer, written, base, words });
+        if (next === null) return composer;
+        written = next;
+        return next;
+      }),
       onLevel: (l) => { micLevel.current = l; },
       onError: setMicNote,
       onState: (s) => {
-        setListening(s === "recording"); setTranscribing(s === "transcribing");
+        setListening(s === "recording"); setTranscribing(s === "transcribing"); setConnecting(s === "connecting");
         setOrb(s === "recording" ? "listening" : "idle");
         if (s === "idle") stopDictate.current = null;
       },
     });
     if (!stop) { setMicNote((n) => n || "I can't use the microphone here. Allow it in Settings for this app."); return; }
     stopDictate.current = stop;
+  }
+
+  // The user typing in the composer (or clearing it with the keyboard) while the mic listens: their text wins, and the
+  // mic stops, so the wave doesn't keep going over words it won't write.
+  function takeOverComposer(text: string) {
+    setInput(text);
+    if (stopDictate.current) { stopDictate.current(); stopDictate.current = null; }
   }
 
   function say(m: Msg) {
@@ -525,6 +541,10 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
   const ctxText = ctxKnown ? `About ${Math.round(ctx.used / 1000)}k of ${Math.round(ctx.limit / 1000)}k · older turns trimmed at ${Math.round(ctx.limit / 1000)}k` : "";
   const status = ctxNote && ctxText ? ctxText : busy ? (stopping ? "Stopping…" : "Working on it") : orb === "listening" ? "Listening" : orb === "speaking" ? "Speaking" : orb === "approval" ? "Waiting for your tap" : "Here";
   const hasDraft = input.trim().length > 0 || pending.length > 0;
+  let micPlaceholder = `Ask ${name} anything`;
+  if (connecting) micPlaceholder = "Connecting…";
+  if (listening) micPlaceholder = "Listening… tap the mic to finish";
+  if (transcribing) micPlaceholder = "Writing it down…";
   const lastOdie = [...msgs].reverse().find((m) => m.role === "odie");
 
   return (
@@ -711,22 +731,22 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
           )}
           {listening && <MicWave level={micLevel} />}
           <div className="flex items-end gap-1">
-            <textarea id="composer" ref={field} rows={1} value={input} onChange={(e) => setInput(e.target.value)}
+            <textarea id="composer" ref={field} rows={1} value={input} onChange={(e) => takeOverComposer(e.target.value)}
               // Enter is a new line (the user writes multi-line messages on the phone); send with the button, or ⌘/Ctrl+Enter.
               onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && !e.nativeEvent.isComposing) { e.preventDefault(); void send(input); } }}
               enterKeyHint="enter"
               onFocus={() => setTimeout(() => bottom.current?.scrollIntoView({ behavior: "smooth" }), 50)}
-              placeholder={listening ? "Listening… tap the mic to finish" : transcribing ? "Writing it down…" : `Ask ${name} anything`}
-              className={`flex-1 min-w-0 resize-none bg-transparent outline-none text-[16px] leading-[22px] py-1.5 max-h-[114px] ${listening || transcribing ? "placeholder:text-ember-text" : "placeholder:text-muted"}`}
+              placeholder={micPlaceholder}
+              className={`flex-1 min-w-0 resize-none bg-transparent outline-none text-[16px] leading-[22px] py-1.5 max-h-[114px] ${listening || transcribing || connecting ? "placeholder:text-ember-text" : "placeholder:text-muted"}`}
               autoComplete="off" />
-            {input && !listening && !transcribing && (
+            {input && !listening && !transcribing && !connecting && (
               <button type="button" onClick={() => { setInput(""); field.current?.focus(); }} aria-label="Clear" className="shrink-0 w-9 h-9 rounded-full grid place-items-center text-muted active:bg-well">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
               </button>
             )}
-            <button type="button" onClick={() => void toggleMic()} disabled={transcribing} aria-label={listening ? "Finish dictation" : "Dictate"}
+            <button type="button" onClick={() => void toggleMic()} disabled={transcribing || connecting} aria-label={listening ? "Finish dictation" : "Dictate"}
               className={`shrink-0 w-9 h-9 rounded-full grid place-items-center ${listening ? "bg-solid text-on-solid" : "text-muted"}`}>
-              {transcribing ? <span className="spinner" /> : listening ? <span className="w-3.5 h-3.5 rounded-[3px] bg-current" /> : <Glyph name="mic" size={19} />}
+              {transcribing || connecting ? <span className="spinner" /> : listening ? <span className="w-3.5 h-3.5 rounded-[3px] bg-current" /> : <Glyph name="mic" size={19} />}
             </button>
           </div>
           {micNote && <div role="status" className="text-[12.5px] leading-[17px] text-warn mt-1">{micNote}</div>}
