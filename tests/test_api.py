@@ -3,6 +3,7 @@ import json
 import httpx
 import pytest
 
+from odie import update
 from odie.app.main import create_app
 from odie.store.db import Store
 
@@ -42,7 +43,7 @@ async def client(isolated_settings, tmp_path):
 async def test_health(client):
     r = await client.get("/api/health")
     assert r.status_code == 200 and r.json()["model"] and r.json()["name"] == "Odie"
-    assert len(r.json()["version"]) == 7  # the short commit the app watches during an update
+    assert r.json()["version"] == update.version()  # the app watches it change during an update
 
 
 async def test_update_routes(client, monkeypatch):

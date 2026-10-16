@@ -78,12 +78,33 @@ def test_can_update_only_from_the_installed_checkout(monkeypatch, tmp_path):
     assert not update.can_update()  # the server runs other code than the install
 
 
-def test_version_is_a_short_commit_here_and_unknown_without_git(monkeypatch):
+def _git(folder: Path, *args: str) -> str:
+    """git in a scratch repo, with a made-up identity (the tests never use the owner's)."""
+    command = ["git", "-C", str(folder), "-c", "user.name=Asha", "-c", "user.email=asha@example.com", *args]
+    return subprocess.run(command, capture_output=True, text=True, check=True).stdout.strip()
+
+
+def _version_of(folder: Path, monkeypatch) -> str:
     monkeypatch.setattr(update, "_version", None)
-    assert len(update.version()) == 7
-    monkeypatch.setattr(update, "_version", None)
-    monkeypatch.setattr(update, "CODE_DIR", Path("/nowhere"))
-    assert update.version() == "unknown"
+    monkeypatch.setattr(update, "CODE_DIR", folder)
+    return update.version()
+
+
+def test_version_reads_the_code_folders_git(monkeypatch, tmp_path):
+    # Read from a scratch repo, not this checkout: here the answer depends on where main is against the newest tag.
+    _git(tmp_path, "init", "-q")
+    _git(tmp_path, "commit", "-q", "--allow-empty", "-m", "first")
+    first = _git(tmp_path, "rev-parse", "--short=7", "HEAD")
+    assert _version_of(tmp_path, monkeypatch) == first  # before the first release: the short commit
+    _git(tmp_path, "tag", "v0.1.0")
+    assert _version_of(tmp_path, monkeypatch) == "0.1.0"  # on a release
+    _git(tmp_path, "commit", "-q", "--allow-empty", "-m", "second")
+    second = _git(tmp_path, "rev-parse", "--short=7", "HEAD")
+    assert _version_of(tmp_path, monkeypatch) == f"0.1.0+1 ({second})"  # one commit after it
+
+
+def test_version_is_unknown_without_git(monkeypatch):
+    assert _version_of(Path("/nowhere"), monkeypatch) == "unknown"
 
 
 def test_start_runs_the_odie_command_detached(monkeypatch, tmp_path):

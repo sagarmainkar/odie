@@ -93,7 +93,9 @@ don't need them. Tools the server marks read-only run at once; anything that wri
   public sites only. Downloads are refused, and it never types into password, card or one-time-code fields.
 - **Your Mac.** Shell commands run as you, after you read the exact command on a card. "Allow for 30 min" covers one
   chat, but deleting, sending data out or touching secrets always asks.
-- **Making things.** Designed decks (PDF and PowerPoint), Word documents, podcasts with two hosts, files.
+- **Making things.** Designed decks (PDF and PowerPoint), Word documents, podcasts with two hosts, files. A deck's
+  photos come through Odie's browser, each credited on its slide. The repo ships no photos: credited
+  photos belong to their owners, and a deck that uses them is for your own use.
 
 ### Voice
 
