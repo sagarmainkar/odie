@@ -15,8 +15,10 @@ Use this when the user asks Odie to build, make or change a skill, or says yes t
 2. **Read the guide:** call `skill_guide`. To change an existing skill, call `read_skill` first; for a worked
    example with code and blocks, `read_skill("stocks")`.
 3. **Design small.**
-   - Prefer instructions only, using the tools Odie already has: web_search and web_fetch, calendar, tasks,
-     mail, notes, memory, markets.
+   - Build on what Odie already has: the guide's "What Odie has here" lists it live (the voice, the tools and how to
+     use each, the workspace folder, the models and apps). Ask the user only about what isn't there.
+   - Narration uses `speak`, in the voice engine chosen in Settings; never macOS `say` or another speech tool.
+   - Prefer instructions only, using those tools.
    - Add tools.py only for what instructions can't do reliably: an API call, a calculation, or building block JSON
      from data.
    - Choose blocks from the catalogue that fit what the user will look at. Plans and itineraries: timeline.

@@ -223,6 +223,41 @@ def podcast_voices(store: Store) -> list[dict]:
     return [voices[woman], voices[man]]
 
 
+_GROUP_NAMES = {"female": "women", "male": "men", "neutral": "neutral"}
+_WHO = {"female": "a woman", "male": "a man", "neutral": "neutral"}
+
+
+def voice_summary(v: dict) -> str:
+    """One voice as the model reads it: "Heart (American, a woman)"; OpenAI's have no accent: "Cedar (a man)"."""
+    about = [x for x in (v.get("note"), _WHO.get(v["group"])) if x]
+    return f"{v['label']} ({', '.join(about)})"
+
+
+def voices_text(engine: str) -> str:
+    """An engine's voices grouped by who they sound like, with the accent when there is one:
+    "kokoro" -> "women: Heart (American), Bella (American), …; men: Michael (American), …"."""
+    groups: dict[str, list[str]] = {}
+    for v in engine_voices(engine):
+        name = f"{v['label']} ({v['note']})" if v.get("note") else v["label"]
+        groups.setdefault(v["group"], []).append(name)
+    return "; ".join(f"{_GROUP_NAMES[g]}: {', '.join(names)}" for g, names in groups.items())
+
+
+def voice_in_chosen_engine(store: Store, asked: str) -> dict:
+    """The voice the model asked for, by its id or label in any case, only from the engine chosen in Settings: switching
+    engines would send the text to the cloud (Kokoro to OpenAI) or undo the user's choice (OpenAI to Kokoro). Settings
+    are not changed. ValueError, listing the voices it can use, for anything else.
+    Kokoro chosen: "Michael" -> am_michael; " AM_FENRIR " -> am_fenrir; "cedar" (OpenAI's) -> ValueError."""
+    engine, _ = get_tts(store)
+    wanted = (asked or "").strip().lower()
+    for v in engine_voices(engine):
+        if wanted in (v["id"], v["label"].lower()):
+            return v
+    label = ENGINES[engine]["label"]
+    raise ValueError(f"'{asked}' isn't one of {label}'s voices, the engine chosen in Settings. {label}'s voices: "
+                     f"{voices_text(engine)}. Another engine is the user's choice, in Settings > Voice.")
+
+
 class VoiceUnavailable(RuntimeError):
     """A voice that can't speak right now: no OpenAI key, or Odie's local voice isn't running (the message says why)."""
 

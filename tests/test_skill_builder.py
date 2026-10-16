@@ -147,3 +147,23 @@ async def test_install_refuses_a_draft_changed_after_the_card(store):
     await builder.draft("travel-itinerary", "Plans trips.", INSTR, GOOD.replace("DAYS = 3", "DAYS = 4"), [])
     assert "changed" in await builder.install("travel-itinerary", shown)
     assert not (config.settings.config_dir / "skills" / "travel-itinerary").exists()
+
+
+def test_the_guide_says_what_odie_has_here(store):
+    # Odie built a video skill with macOS `say`, not knowing its own voice (16 Oct 2026): the guide carries it, live.
+    from types import SimpleNamespace
+
+    from odie import about
+    about.hooks["runner"] = SimpleNamespace(store=store, plugins={"skills": [], "servers": []},
+                                            _all_tool_names=lambda: {"speak": "Odie", "run_shell": "Odie"})
+    try:
+        text = builder.guide()
+    finally:
+        about.hooks["runner"] = None
+    assert "What Odie has here" in text and "Kokoro, Heart" in text and "speak(" in text and "command -v ffmpeg" in text
+    assert "What Odie has here" not in builder.guide()   # without a running Odie there's nothing live to read
+
+
+def test_the_skill_builder_points_at_the_live_list():
+    text = (builder.BUILTIN_DIR / "skill-builder" / "SKILL.md").read_text()
+    assert "What Odie has here" in text and "never macOS `say`" in text

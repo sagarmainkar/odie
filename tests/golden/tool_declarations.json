@@ -445,7 +445,7 @@
     "name": "skill_guide"
   },
   {
-    "description": "Read text aloud into audio the user can play right in the chat: the player appears under your reply.\n\nstyle=\"memo\": a voice memo, when the user asks for a voice memo, a voice note, or to hear something. `script`\nis what to say, as plain speech; it's read in the voice chosen in Settings.\nstyle=\"podcast\": a podcast with two hosts. Load the podcast skill first and follow it; `script` is one turn\nper line, \"Host A: what they say\". The first host to speak gets a woman's voice, the second a man's.\n`title` is short (optional). When it works, reply in one short line; don't repeat the script.",
+    "description": "Read text aloud into audio the user can play right in the chat: the player appears under your reply.\n\nstyle=\"memo\": a voice memo, when the user asks for a voice memo, a voice note, or to hear something. `script`\nis what to say, as plain speech, at most about 4,000 characters (some 4 minutes; split longer narration into\nseveral memos); it's read in the voice chosen in Settings. `voice_name` (optional) is another\nvoice for this one memo, only when the user asks for one (\"a man's voice\"): a voice of the same engine as the\nSettings voice, by name (\"Michael\"); another engine's voice is refused with the list to pick from.\nstyle=\"podcast\": a podcast with two hosts. Load the podcast skill first and follow it; `script` is one turn\nper line, \"Host A: what they say\". The first host to speak gets a woman's voice, the second a man's.\n`title` is short (optional). The result's `path` is the saved WAV file (kept), for a skill to use, e.g. with\nffmpeg. When it works, reply in one short line; don't repeat the script.",
     "name": "speak",
     "parameters_json_schema": {
       "properties": {
@@ -461,6 +461,11 @@
         "style": {
           "default": "memo",
           "title": "Style",
+          "type": "string"
+        },
+        "voice_name": {
+          "default": "",
+          "title": "Voice Name",
           "type": "string"
         }
       },

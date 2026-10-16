@@ -31,6 +31,34 @@ EXTEND = [
     "Trackers: \"track ... and tell me when ...\"",
 ]
 
+# What a new skill can build on, beyond the built-in abilities above: Odie's own tools, each with how to use it, shown
+# when the tool is present. The skill builder's guide carries them (skill_kit), so a skill uses Odie's voice and files
+# instead of reaching for something else (a video skill once narrated with macOS `say`, 16 Oct 2026).
+SKILL_TOOLS = [
+    (("speak",), ("Narration: speak(script, style=\"memo\") reads plain speech aloud in the voice above, up to about "
+                  "4,000 characters (some 4 minutes) a call; its result's `path` is the saved WAV file, kept, to hand to "
+                  "ffmpeg. voice_name=\"Michael\" picks another voice of the same engine, only when the user asks. "
+                  "style=\"podcast\" is two hosts: load the podcast skill")),
+    (("attach_file",), ("Showing a file: attach_file(path) for a file in the workspace: a picture shows, a video (mp4, "
+                        "webm, mov) or a sound (mp3, m4a, wav) plays under the reply, anything else is a download card; "
+                        "50 MB at most")),
+    (("make_file",), ("Making a file: make_file(name, content) for .csv, .md, .txt, .html, .json, .ics or .svg, as a card "
+                      "under the reply")),
+    (("run_shell",), ("Commands: run_shell(command, cwd) in zsh; the user approves each one, and each stops after 60 "
+                      "seconds with at most 8 KB of output, so split long work into steps. Check a program is there "
+                      "first (command -v ffmpeg) and work in the workspace folder")),
+    (("browser_open",), "A real browser: browser_open(url), then browser_click, browser_type and browser_scroll"),
+    (("find_images",), "Photos for covers and slides: find_images(query), each with the credit to use"),
+    (("market_history",), "Prices: market_history(symbol, period), with a chart block"),
+]
+
+SKILL_RULES = [
+    "Build on what's listed here first, and ask the user only about what isn't listed",
+    ("Narration always uses the voice engine chosen in Settings, in the chosen voice unless the user asks for another, "
+     "and then only one of that engine's voices; never macOS `say` or another speech tool. Another engine is the "
+     "user's choice, in Settings > Voice"),
+]
+
 
 def abilities() -> list[tuple[str, tuple[str, ...], str]]:
     from odie import addons
@@ -72,10 +100,62 @@ def phone_lines(store) -> list[str]:
     return lines
 
 
-def features() -> str:
-    from odie import trackers, voice
-    from odie.blocks import kinds
+def voice_lines(store) -> list[str]:
+    """What speaks, and where: the engine and voice that read-aloud and the speak tool use, whether the words stay on
+    this computer, and that engine's other voices (only that engine's: switching engines is the user's choice)."""
+    from odie import voice
+    engine, vid = voice.get_tts(store)
+    label = voice.ENGINES[engine]["label"]
+    chosen = next(v for v in voice.engine_voices(engine) if v["id"] == vid)
+    where = "on this computer" if voice.ENGINES[engine]["local"] else f"in the cloud: the text goes to {label}"
+    has_key = bool(voice.load_secret("OPENAI_API_KEY"))
+    talk = "Talk (live voice) is available" if engine == "openai" or has_key else "Talk needs an OpenAI key"
+    return [f"Read-aloud and the speak tool: {label}, {voice.voice_summary(chosen)}, {where}",
+            f"{label}'s voices: {voice.voices_text(engine)}",
+            talk]
+
+
+def app_lines(r) -> list[str]:
+    """The connected apps (MCP servers): each one's state, what it is and its tools."""
+    lines = []
+    for e in r.plugins.get("servers", []):
+        state = e.status if e.enabled else "off"
+        tools = f"; tools: {', '.join(e.tools)}" if e.tools else ""
+        lines.append(f"{e.name} ({state}): {e.description or 'no description'}{tools}")
+    return lines
+
+
+def model_lines(store) -> list[str]:
     from odie.models import all_providers, resolve_selection
+    chat = resolve_selection(store, "chat")
+    where = "on this computer" if not chat.leaves_mini else "cloud"
+    return [f"Model: {chat.model} via {chat.provider.name} ({where}), for chat and the background work (brief, memory review, trackers)",
+            "Providers connected: " + ", ".join(p.name for p in all_providers(store))]
+
+
+def skill_kit() -> str:
+    """What Odie has here for a new skill to build on, read live, for the skill builder's guide: the voice, the
+    abilities and tools that are present (each with how to use it), the workspace, the models and apps, and the rules.
+    A tool that isn't present here isn't listed: no make_file -> no "Making a file" line."""
+    from odie.agent.tools.files import workspace
+    r = hooks["runner"]
+    store = r.store
+    names = set(r._all_tool_names())
+    built_in = [f"{label}: {text}" for label, tools, text in abilities() if any(t in names for t in tools)]
+    own_tools = [text for tools, text in SKILL_TOOLS if any(t in names for t in tools)]
+    files = [f"The workspace folder, where a skill's files go and attach_file reads from: {workspace()}"]
+    parts = ["What Odie has here (read live). A skill builds on these:",
+             _section("Voice", voice_lines(store)),
+             _section("Abilities and tools", built_in + own_tools + files),
+             _section("Models", model_lines(store)),
+             _section("Connected apps (MCP)", app_lines(r)),
+             _section("Rules", SKILL_RULES)]
+    return "\n\n".join(parts)
+
+
+def features() -> str:
+    from odie import trackers
+    from odie.blocks import kinds
     r = hooks["runner"]
     store = r.store
     names = set(r._all_tool_names())
@@ -87,18 +167,9 @@ def features() -> str:
         state = "" if e.status == "ok" else f", {e.status}"
         return f"{e.name} ({whose}{state}): {e.description}"
     out.append(_section("Skills (loaded on demand)", [skill_line(e) for e in skills]))
-    servers = r.plugins.get("servers", [])
-    out.append(_section("Connected apps (MCP)", [
-        f"{e.name} ({e.status if e.enabled else 'off'}): {e.description or 'no description'}"
-        + (f"; tools: {', '.join(e.tools)}" if e.tools else "") for e in servers]))
-    chat = resolve_selection(store, "chat")
-    where = lambda s: "on this computer" if not s.leaves_mini else "cloud"  # noqa: E731
-    out.append(_section("Models", [
-        f"Model: {chat.model} via {chat.provider.name} ({where(chat)}), for chat and the background work (brief, memory review, trackers)",
-        "Providers connected: " + ", ".join(p.name for p in all_providers(store))]))
-    engine, v = voice.get_tts(store)
-    talk = "Talk (live voice) is available" if engine == "openai" or voice.load_secret("OPENAI_API_KEY") else "Talk needs an OpenAI key"
-    out.append(_section("Voice", [f"Read-aloud: {voice.ENGINES[engine]['label']} ({v})", talk]))
+    out.append(_section("Connected apps (MCP)", app_lines(r)))
+    out.append(_section("Models", model_lines(store)))
+    out.append(_section("Voice", voice_lines(store)))
     active = [t for t in trackers.listing(store) if t["status"] in ("active", "paused")]
     from odie.trackers.signed_in import shown_summary
     out.append(_section("Trackers", [f"{t['title']} ({t['status']}): {shown_summary(t) or 'no result yet'}" for t in active]))

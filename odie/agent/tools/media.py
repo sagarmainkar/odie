@@ -83,15 +83,24 @@ def _label(eng: str, vid: str) -> str:
     return next((x["label"] for x in voice.engine_voices(eng) if x["id"] == vid), vid)
 
 
+def _path(m: dict) -> str:
+    """Where the saved audio is, for a skill to hand on (ffmpeg): <data>/media/<id>.wav. Media files are kept."""
+    return str(media.media_dir() / f"{m['id']}.{m['ext']}")
+
+
 def make_media_tools(store, transport: httpx.AsyncBaseTransport | None = None) -> list[FunctionTool]:
-    async def speak(script: str, title: str = "", style: str = "memo") -> dict:
+    async def speak(script: str, title: str = "", style: str = "memo", voice_name: str = "") -> dict:
         """Read text aloud into audio the user can play right in the chat: the player appears under your reply.
 
         style="memo": a voice memo, when the user asks for a voice memo, a voice note, or to hear something. `script`
-        is what to say, as plain speech; it's read in the voice chosen in Settings.
+        is what to say, as plain speech, at most about 4,000 characters (some 4 minutes; split longer narration into
+        several memos); it's read in the voice chosen in Settings. `voice_name` (optional) is another
+        voice for this one memo, only when the user asks for one ("a man's voice"): a voice of the same engine as the
+        Settings voice, by name ("Michael"); another engine's voice is refused with the list to pick from.
         style="podcast": a podcast with two hosts. Load the podcast skill first and follow it; `script` is one turn
         per line, "Host A: what they say". The first host to speak gets a woman's voice, the second a man's.
-        `title` is short (optional). When it works, reply in one short line; don't repeat the script."""
+        `title` is short (optional). The result's `path` is the saved WAV file (kept), for a skill to use, e.g. with
+        ffmpeg. When it works, reply in one short line; don't repeat the script."""
         kind = (style or "memo").strip().lower()
         if kind not in ("memo", "podcast"):
             return {"error": "style is memo or podcast."}
@@ -101,10 +110,13 @@ def make_media_tools(store, transport: httpx.AsyncBaseTransport | None = None) -
                 if not text:
                     return {"error": "There's nothing to say: pass the words to speak as script."}
                 eng, vid = voice.get_tts(store)
-                audio = await voice.speak_wav(store, text, transport=transport)
+                if voice_name.strip():
+                    vid = voice.voice_in_chosen_engine(store, voice_name)["id"]
+                audio = await voice.speak_wav(store, text, voice=vid, transport=transport)
                 info = media.wav_info(audio)
                 m = media.save(audio, "memo", "wav", "audio/wav", title or _title(text), {**info, "transcript": text, "voice": _label(eng, vid)})
-                return {"result": f"The voice memo ({info['duration']:g} s) is under your reply, ready to play.", "media": _short(m)}
+                return {"result": f"The voice memo ({info['duration']:g} s) is under your reply, ready to play.", "media": _short(m),
+                        "path": _path(m)}
             turns = parse_script(script)
             woman, man = voice.podcast_voices(store)
             hosts = list(dict.fromkeys(n for n, _ in turns))
@@ -116,7 +128,8 @@ def make_media_tools(store, transport: httpx.AsyncBaseTransport | None = None) -
                     "transcript": [{"host": n, "text": t, "start": s} for (n, t), s in zip(turns, starts)]}
             m = media.save(audio, "podcast", "wav", "audio/wav", title or _title(turns[0][1]), meta)  # no title: the opening line, never the hosts' labels
             mins = max(1, round(info["duration"] / 60))
-            return {"result": f"The podcast (about {mins} min, {len(turns)} turns) is under your reply, ready to play.", "media": _short(m)}
+            return {"result": f"The podcast (about {mins} min, {len(turns)} turns) is under your reply, ready to play.", "media": _short(m),
+                    "path": _path(m)}
         except ValueError as e:
             return {"error": str(e)}
         except voice.VoiceUnavailable as e:

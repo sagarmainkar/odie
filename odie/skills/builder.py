@@ -207,7 +207,11 @@ async def install(name: str, version: str = "") -> str:
 
 
 def guide() -> str:
+    """How to write a skill, then what this Odie has for it to build on (its voice, tools, workspace, models, apps),
+    read live while Odie runs."""
+    from odie import about
     reserved = sorted(hooks["reserved"]()) if hooks.get("reserved") else []
+    live = f"\n{about.skill_kit()}\n" if about.hooks.get("runner") else ""
     return f"""How to write a Odie skill.
 
 A skill is a folder: SKILL.md (instructions) and, only if needed, tools.py (code). Odie sees each skill's
@@ -231,4 +235,4 @@ tools.py rules:
 Visual blocks the app can draw (use only these kinds and icon names):
 
 {catalog_text()}
-"""
+{live}"""

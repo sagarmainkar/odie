@@ -14,7 +14,8 @@ def runner(isolated_settings, tmp_path, monkeypatch):
     skill = SimpleNamespace(name="travel-itinerary", source="user", status="ok", description="Plans trips day by day.")
     app = SimpleNamespace(name="vault", status="ok", enabled=True, description="Obsidian notes", tools=["search_notes", "read_note"])
     r = SimpleNamespace(store=s, plugins={"skills": [skill], "servers": [app]},
-                        _all_tool_names=lambda: {"gmail_search": "Odie", "web_search": "Odie", "life_admin": "Odie", "run_shell": "Odie"})
+                        _all_tool_names=lambda: {"gmail_search": "Odie", "web_search": "Odie", "life_admin": "Odie", "run_shell": "Odie",
+                                                 "speak": "Odie", "attach_file": "Odie"})
     about.hooks["runner"] = r
     yield r
     about.hooks["runner"] = None
@@ -27,7 +28,7 @@ def test_features_reports_what_is_really_there(runner):
     assert "Calendar" not in t and "Tasks and reminders" not in t          # their tools aren't present here
     assert "travel-itinerary (the user's own): Plans trips" in t
     assert "vault (ok): Obsidian notes; tools: search_notes, read_note" in t
-    assert "Model:" in t and "background work" in t and "Jobs" not in t and "LM Studio" in t and "Read-aloud: Kokoro" in t and "Talk needs an OpenAI key" in t
+    assert "Model:" in t and "background work" in t and "Jobs" not in t and "LM Studio" in t and "Read-aloud and the speak tool: Kokoro, Heart (American, a woman), on this computer" in t and "Talk needs an OpenAI key" in t
     assert "Arsenal v Spurs (active)" in t and "timeline" in t and "build one" in t
 
 
@@ -59,3 +60,26 @@ def test_features_say_how_to_use_odie_on_a_phone(runner, monkeypatch):
     assert "Paired devices: 1" in phone and "Tailscale" in phone
     monkeypatch.setattr(config, "settings", dataclasses.replace(config.settings, public_url="http://localhost:8000"))
     assert "no phone address yet" in about.features() and "localhost" not in about.features()
+
+
+def test_the_voice_section_says_what_speak_uses_and_where(runner, monkeypatch):
+    # Odie read "Kokoro" as an app to connect (16 Oct 2026): the section says plainly what speaks, and where.
+    t = about.features()
+    voice_part = t[t.index("## Voice"):t.index("## Trackers")]
+    assert "Kokoro, Heart (American, a woman), on this computer" in voice_part
+    assert "Kokoro's voices: women: Heart (American)" in voice_part and "men: Michael (American)" in voice_part
+    from odie import voice
+    monkeypatch.setattr("odie.voice.load_secret", lambda name: "sk-test-not-real")
+    voice.set_tts(runner.store, engine="openai", voice="cedar")
+    voice_part = about.features()[about.features().index("## Voice"):]
+    assert "OpenAI, Cedar (a man), in the cloud: the text goes to OpenAI" in voice_part
+    assert "Kokoro" not in voice_part.split("## Trackers")[0]   # only the chosen engine's voices
+
+
+def test_the_skill_kit_lists_what_a_skill_can_build_on(runner):
+    kit = about.skill_kit()
+    assert "Kokoro, Heart (American, a woman), on this computer" in kit and "men: Michael (American)" in kit
+    assert "speak(" in kit and "path" in kit and "attach_file(" in kit and "command -v ffmpeg" in kit
+    assert "make_file(" not in kit and "browser_open" not in kit   # not among this setup's tools
+    assert "Web:" in kit and "vault (ok)" in kit and "workspace" in kit
+    assert "never macOS `say`" in kit and "Settings > Voice" in kit and "ask the user only" in kit

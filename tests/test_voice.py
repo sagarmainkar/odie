@@ -1,6 +1,7 @@
 import json
 
 import httpx
+import pytest
 
 from odie import voice
 from odie.store.db import Store
@@ -106,3 +107,26 @@ async def test_a_dictation_session_only_transcribes(tmp_path):
     assert sess["type"] == "transcription" and "tools" not in sess and "instructions" not in sess
     assert sess["audio"]["input"]["transcription"]["model"] == voice.STT_MODEL
     assert sess["audio"]["input"]["turn_detection"]["type"] == "server_vad"  # text arrives phrase by phrase while talking
+
+
+def test_a_voice_is_picked_only_from_the_chosen_engine(isolated_settings, tmp_path, monkeypatch):
+    s = Store(tmp_path / "v.db")
+    s.init_schema()
+    monkeypatch.setattr(voice, "load_secret", lambda name: "sk-test-not-real")
+    assert voice.voice_in_chosen_engine(s, "Michael")["id"] == "am_michael"      # Kokoro by default
+    assert voice.voice_in_chosen_engine(s, " AM_FENRIR ")["id"] == "am_fenrir"
+    with pytest.raises(ValueError) as e:
+        voice.voice_in_chosen_engine(s, "cedar")
+    assert "Kokoro" in str(e.value) and "men: Michael (American)" in str(e.value)
+    voice.set_tts(s, engine="openai", voice="shimmer")
+    assert voice.voice_in_chosen_engine(s, "Cedar")["id"] == "cedar"
+    with pytest.raises(ValueError):
+        voice.voice_in_chosen_engine(s, "Michael")                               # Kokoro's, not OpenAI's
+
+
+def test_voices_are_listed_by_who_they_sound_like():
+    kokoro = voice.voices_text("kokoro")
+    assert kokoro.startswith("women: Heart (American), Bella (American), Emma (British)")
+    assert "; men: Michael (American), Fenrir (American), George (British)" in kokoro
+    assert voice.voices_text("openai") == ("women: Marin, Coral, Sage, Shimmer; men: Cedar, Ash, Ballad, Echo, Verse; "
+                                          "neutral: Alloy")

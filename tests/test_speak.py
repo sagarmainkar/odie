@@ -1,6 +1,7 @@
 """speak: a voice memo (plain speech in the chosen voice) or a podcast (two hosts, a woman first, then a man), made into
 one WAV and handed to the chat as media. The podcast skill tells the model how to write the script."""
 import json
+from pathlib import Path
 
 import httpx
 import pytest
@@ -187,3 +188,35 @@ def test_names_in_any_script():
 async def test_a_host_with_only_links_is_a_plain_error(store):
     out = await _speak(store, kokoro([])).func(script="Asha: Hi there.\nRohan: https://example.com", style="podcast")
     assert "two hosts" in out["error"]
+
+
+async def test_the_result_gives_the_audio_files_path(store):
+    # A video skill hands the narration to ffmpeg: the path comes back, so the model never guesses where it is.
+    memo = await _speak(store, kokoro([], 0.5)).func(script="Hello there.")
+    assert memo["path"] == str(media.media_dir() / f"{memo['media']['id']}.wav")
+    assert Path(memo["path"]).read_bytes()[:4] == b"RIFF"
+    pod = await _speak(store, kokoro([], 0.5)).func(script="Host A: Hi.\nHost B: Hello.", style="podcast")
+    assert pod["path"] == str(media.media_dir() / f"{pod['media']['id']}.wav")
+
+
+async def test_a_memo_in_another_voice_of_the_chosen_engine(store):
+    # Kokoro is chosen (Heart); "a man's voice for this one" -> Michael, by label in any case or by id. Settings stay.
+    seen = []
+    out = await _speak(store, kokoro(seen, 0.5)).func(script="Attention, explained.", voice_name="michael")
+    assert seen[0]["voice"] == "am_michael" and media.get(out["media"]["id"])[1]["voice"] == "Michael"
+    await _speak(store, kokoro(seen, 0.5)).func(script="Again.", voice_name="bm_george")
+    assert seen[1]["voice"] == "bm_george" and seen[1]["lang"] == "b"
+    assert voice.get_tts(store) == ("kokoro", "af_heart")
+
+
+async def test_a_voice_from_another_engine_is_refused_with_the_ones_it_can_use(store):
+    # Kokoro is chosen; "cedar" is OpenAI's: switching engines would send the text to the cloud, so it's an error.
+    seen = []
+    out = await _speak(store, kokoro(seen, 0.5)).func(script="Hello.", voice_name="cedar")
+    assert seen == [] and "media" not in out
+    assert "Kokoro" in out["error"] and "Michael" in out["error"] and "Heart" in out["error"] and "Settings" in out["error"]
+
+
+def test_the_tool_explains_the_voice_choice(store):
+    tool = _speak(store, None)
+    assert "voice_name" in tool.description and "same engine" in tool.description and "path" in tool.description
