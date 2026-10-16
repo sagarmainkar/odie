@@ -4,20 +4,24 @@ description: Make a narrated, animated explainer video (3Blue1Brown style) that 
 metadata:
   title: Explainer videos
   summary: "A narrated, animated explainer of any topic, 3Blue1Brown style; it plays in the chat."
-  adk_additional_tools: [make_video]
+  adk_additional_tools: [save_video_page, make_video]
 ---
 # Explainer videos
 
-You write the narration and one page that draws every scene. `make_video` checks them in seconds, then narrates,
-renders a 1080p MP4 in the background and posts it to this chat.
+You write the narration and one page that draws every scene. `save_video_page` keeps the page, and `make_video` checks
+everything in seconds, then narrates, renders a 1080p MP4 in the background and posts it to this chat.
 
 ## The flow
 
-1. **Plan the scenes.** One idea per scene: what is said, and what is shown while it is said. Search first only if
-   the topic needs current facts. Don't ask questions unless the topic is unclear.
-2. **Write the narration** (one string per scene) **and the page** (one scene per narration string, same order).
-3. **Call** `make_video(title="<the topic, short>", narration=[...], page="<script>…</script>")`.
-4. **`{"error": …}`:** fix exactly that and call again, in this same turn (see the last section).
+1. **Plan the scenes in a few lines:** one idea per scene, what is said and what is shown. Search first only if the
+   topic needs current facts. Don't ask questions unless the topic is unclear. Keep the plan short and **never draft
+   the page in your thinking**: a reply has limited room, and a page drafted there leaves none to send it.
+2. **Save the page:** `save_video_page(page="<script>…</script>")`, one scene per narration string, in order. It
+   returns a name, like `page-1`.
+3. **Make the video:** `make_video(title="<the topic, short>", narration=[...], page_file="page-1")`, one string of
+   narration per scene.
+4. **`{"error": …}`:** fix exactly that and call again, in this same turn (see the last section). A page problem:
+   save the fixed page (it gets a new name) and call `make_video` with that name.
 5. **`{"result": …}`:** reply in one or two lines, with no emojis: it's being made, about how long (the range the
    result gives), it will appear in this chat with a ping on the phone as soon as it's ready, and they can keep
    chatting meanwhile. Never wait silently; never repeat the script or paste the page.
@@ -40,7 +44,7 @@ renders a 1080p MP4 in the background and posts it to this chat.
 
 ## The page contract
 
-`page` is the body of an HTML page: one `<script>` that calls `Video.scenes([...])` once. The kit is already in the
+The page is the body of an HTML page: one `<script>` that calls `Video.scenes([...])` once. The kit is already in the
 page as globals: `THREE` (three.js r158, core only: no addons, loaders, OrbitControls or TextGeometry), `katex`
 and `Video`. Nothing else loads: no `<script src>`, no links, no images, no web fonts (every request is refused).
 
@@ -105,13 +109,15 @@ scene is the same element with new words).
 Two scenes: a title and a turning cube, then the attention formula with two labelled arrows.
 
 ```
+save_video_page(page="""<the whole page below, as one string>""")     ->  {"page_file": "page-1", …}
+
 make_video(
   title="How attention works",
   narration=[
     "Here is how attention works. First, each word in a sentence becomes a vector: a point in space, written as a list of numbers.",
     "Then one formula does the work. Q times K transpose, over the square root of d, then a softmax, says how much each word listens to every other word. Multiplying by V gives what it hears: a new vector.",
   ],
-  page="""<the whole page below, as one string>""",
+  page_file="page-1",
 )
 ```
 
@@ -186,5 +192,6 @@ go, and keep something moving to the end (as the cube's half turn over `s.length
 ## If make_video reports a problem
 
 `{"error": …}` names one problem (scenes count from 1; `t` is seconds into that scene). Fix exactly that, keep the
-rest, and call `make_video` again with the whole narration and page. If it says there's no browser, tell the user
+rest, and call `make_video` again with the whole narration; a page problem: save the fixed page first and pass its
+new name. If it says there's no browser, tell the user
 what it says.

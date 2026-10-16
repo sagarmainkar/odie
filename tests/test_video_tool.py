@@ -180,9 +180,9 @@ def test_the_skill_offers_the_tool_without_an_approval_card(isolated_settings, t
     store = Store(tmp_path / "skills.db")
     store.init_schema()
     entry = {e.name: e for e in discover(store, user_dir=tmp_path / "none")}["explainer-video"]
-    assert entry.status == "ok" and entry.tools == ["make_video"]
+    assert entry.status == "ok" and entry.tools == ["save_video_page", "make_video"]
     assert entry.skill.frontmatter.metadata["title"] == "Explainer videos"
-    assert not entry.tool_objs[0]._require_confirmation
+    assert not any(tool._require_confirmation for tool in entry.tool_objs)
 
 
 def test_videos_are_drawn_in_a_browser_cut_off_from_the_network(isolated_settings, monkeypatch):
@@ -219,3 +219,49 @@ async def test_a_good_request_starts_the_job_and_says_how_long(world, tmp_path, 
     assert job.title == "Attention" and job.slug == "attention" and job.body == SAMPLE
     assert job.narration == ["word " * 20, "word " * 20] and job.voice_name == "" and job.session_id is None
     assert job.folder.is_dir() and str(job.folder).startswith(str(tmp_path))
+
+
+# The page in its own step: save_video_page keeps it in the workspace and gives back a name, so no single reply has to
+# carry the plan, the page and the call together (a model filled its whole reply with planning on 16 Oct 2026).
+
+async def test_a_saved_page_is_used_by_its_name(world, no_page_check):
+    _store, submitted = world
+    saved = await tools.save_video_page(SAMPLE)
+    name = saved["page_file"]
+    assert name == "page-1" and name in saved["result"]
+    out = await tools.make_video("Attention", ["word " * 20, "word " * 20], page_file=name)
+    assert "result" in out, out
+    assert submitted[0].body == SAMPLE and no_page_check == [SAMPLE]
+
+
+async def test_each_saved_page_gets_its_own_name(world):
+    first = await tools.save_video_page("<script>Video.scenes([{draw(){}}])</script>")
+    second = await tools.save_video_page("<script>Video.scenes([{draw(){}}])</script>")
+    assert (first["page_file"], second["page_file"]) == ("page-1", "page-2")
+
+
+async def test_a_page_too_big_to_save_is_refused(world):
+    out = await tools.save_video_page("x" * 300_001)
+    assert "300 KB" in out["error"]
+
+
+async def test_an_unknown_page_name_says_to_save_it_first(world, no_page_check):
+    out = await tools.make_video("Attention", ["word " * 20], page_file="page-9")
+    assert "save_video_page" in out["error"] and no_page_check == []
+
+
+async def test_a_page_name_cant_reach_outside_the_saved_pages(world, no_page_check):
+    for name in ("../secret", "/etc/hosts", "page-1/../../x"):
+        out = await tools.make_video("Attention", ["word " * 20], page_file=name)
+        assert "error" in out and no_page_check == [], name
+
+
+async def test_no_page_at_all_says_how_to_give_one(world, no_page_check):
+    out = await tools.make_video("Attention", ["word " * 20])
+    assert "save_video_page" in out["error"]
+
+
+def test_the_skill_offers_the_page_saver_too(isolated_settings, tmp_path):
+    text = (SKILL / "SKILL.md").read_text()
+    assert "save_video_page" in text and "page_file" in text
+    assert "save_video_page" in text.split("---")[1]  # declared in the frontmatter's tools

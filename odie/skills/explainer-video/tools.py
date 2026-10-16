@@ -24,6 +24,9 @@ ESTIMATE_SPREAD = 1  # the range told is N to N + 1 minutes, so it isn't a promi
 NO_BROWSER = ("An explainer video needs Chrome, Edge, Brave or Chromium on this computer to draw its frames, and none "
               "was found. Tell the user to install one (any of them) and ask again.")
 HANG = "The page didn't finish drawing in time (a loop that never ends?): "
+NO_PAGE = ("Give the page: save it with save_video_page(page) and pass the page_file name it returns "
+           "(or pass the page itself as page).")
+PAGE_NAME = re.compile(r"page-[0-9]{1,4}")  # what save_video_page names a page: page-1, page-2, …
 AFTER_THE_ESTIMATE = ("It'll appear in this chat, with a ping on the phone, as soon as it's ready. Tell the user that "
                       "in one or two lines, and that they can keep chatting meanwhile; don't repeat the script.")
 
@@ -118,13 +121,60 @@ def reply(place: int, low: int) -> str:
     return f"It's number {place} in line, about {low}–{high} minutes after the one before. {AFTER_THE_ESTIMATE}"
 
 
-async def make_video(title: str, narration: list[str], page: str, voice_name: str = "",
+def pages_folder() -> Path:
+    """Where save_video_page keeps pages: <workspace>/videos/pages."""
+    return workspace() / "videos" / "pages"
+
+
+def next_page_name(folder: Path) -> str:
+    """The first free page name in the folder: nothing saved yet -> "page-1"; page-1 and page-2 there -> "page-3"."""
+    n = 1
+    while (folder / f"page-{n}.html").exists():
+        n += 1
+    return f"page-{n}"
+
+
+def page_from(page: str, page_file: str) -> tuple[str, str | None]:
+    """The page to check and render, and a problem when there's none to use. A page_file (a name save_video_page gave)
+    wins over page; a name that isn't one of those, or isn't saved, is a problem, so nothing outside the saved pages
+    can be read.
+      page_file "page-1" (saved) -> (its text, None);  page_file "../secret" -> ("", problem);
+      page "<script>…</script>", no page_file -> (that page, None);  neither -> ("", NO_PAGE)"""
+    name = page_file.strip()
+    if not name:
+        if page.strip():
+            return page, None
+        return "", NO_PAGE
+    if not PAGE_NAME.fullmatch(name):
+        return "", f"page_file is the name save_video_page gave (like page-1), not '{name}'. {NO_PAGE}"
+    path = pages_folder() / f"{name}.html"
+    if not path.is_file():
+        return "", f"There's no saved page called {name}. {NO_PAGE}"
+    return path.read_text(encoding="utf-8"), None
+
+
+async def save_video_page(page: str) -> dict:
+    """Save the page of an explainer video, before calling make_video, and get back its name. page: the HTML body (one
+    <script> that calls Video.scenes([...])), as the explainer-video skill says. Nothing is shown in the chat. Then
+    call make_video with page_file set to the name this returns."""
+    problem = page_problem(page)
+    if problem:
+        return {"error": problem}
+    folder = pages_folder()
+    folder.mkdir(parents=True, exist_ok=True)
+    name = next_page_name(folder)
+    (folder / f"{name}.html").write_text(page, encoding="utf-8")
+    return {"page_file": name, "result": f'Saved. Now call make_video with page_file="{name}".'}
+
+
+async def make_video(title: str, narration: list[str], page: str = "", page_file: str = "", voice_name: str = "",
                      tool_context: ToolContext | None = None) -> dict:
     """Make a narrated, animated explainer video that plays in this chat. Call it once the scenes are planned and the
     page is written, as the explainer-video skill says.
     title: the topic, short ("Speculative decoding").
     narration: one string of plain speech per scene, in order; each is spoken in the voice chosen in Settings.
-    page: the HTML body: one <script> that calls Video.scenes([...]) with one scene per narration string.
+    page_file: the name save_video_page returned for the page (the usual way: save the page first, then call this).
+    page: or the HTML body itself: one <script> that calls Video.scenes([...]) with one scene per narration string.
     voice_name: leave empty; only when the user asks for a voice, one of the Settings engine's voices.
     It checks everything now and returns at once. {"error": …}: fix exactly that and call again. {"result": …}: the
     video is being made in the background; reply in one or two lines as the result says, and don't repeat the
@@ -133,6 +183,10 @@ async def make_video(title: str, narration: list[str], page: str, voice_name: st
         return {"error": NO_BROWSER}
 
     problem = narration_problem(narration)
+    if problem:
+        return {"error": problem}
+
+    page, problem = page_from(page, page_file)
     if problem:
         return {"error": problem}
 
@@ -167,4 +221,4 @@ async def make_video(title: str, narration: list[str], page: str, voice_name: st
     return {"result": reply(place, minutes_to_make(narration))}
 
 
-TOOLS = [FunctionTool(make_video)]
+TOOLS = [FunctionTool(save_video_page), FunctionTool(make_video)]
