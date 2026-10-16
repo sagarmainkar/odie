@@ -78,3 +78,18 @@ describe("the connection check", () => {
     expect(linkCarriesToken("not a link")).toBe(false);
   });
 });
+
+import { ownSkills, type SkillRow } from "./plugins";
+
+describe("ownSkills", () => {
+  const row = (name: string, source: SkillRow["source"]): SkillRow => ({ name, description: "", source, status: "ok", tools: [], reason: "" });
+
+  it("keeps the user's skills and leaves Odie's built-in ones out", () => {
+    const rows = [row("podcast", "builtin"), row("travel-planner", "user"), row("explainer-video", "builtin"), row("habit-log", "user")];
+    expect(ownSkills(rows).map((s) => s.name)).toEqual(["travel-planner", "habit-log"]);
+  });
+
+  it("is empty when there are only built-in skills", () => {
+    expect(ownSkills([row("podcast", "builtin")])).toEqual([]);
+  });
+});

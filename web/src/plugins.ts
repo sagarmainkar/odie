@@ -1,4 +1,11 @@
 export type SkillRow = { name: string; title?: string; summary?: string; description: string; source: "builtin" | "user"; status: string; tools: string[]; reason: string };
+// Which skills Settings lists: only the user's own (built with Odie or added by hand). Odie's built-in skills
+// (podcasts, explainer videos, decks…) are part of Odie, always on, so they stay out of the list.
+//   [podcast (built in), travel-planner (yours)] -> [travel-planner];  only built-in ones -> []
+export function ownSkills(skills: SkillRow[]): SkillRow[] {
+  return skills.filter((s) => s.source === "user");
+}
+
 export type ServerRow = { name: string; spec: Record<string, any>; status: string; tools: string[]; reason: string; alwaysOn: boolean; enabled: boolean; readsFree: boolean };
 export type CheckedTool = { name: string; read_only: boolean; asks: boolean };
 export type Check = { ok: true; tools: CheckedTool[] } | { ok: false; reason: string };

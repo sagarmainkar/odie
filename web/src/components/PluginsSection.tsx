@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { getJSON, postJSON } from "../api";
-import { checkSummary, formFromServer, linkCarriesToken, serverTitle, specFromForm, statusLabel, toolLabel, type Check, type Preset, type ServerForm, type ServerRow, type SkillRow } from "../plugins";
+import { checkSummary, formFromServer, linkCarriesToken, serverTitle, specFromForm, ownSkills, statusLabel, toolLabel, type Check, type Preset, type ServerForm, type ServerRow, type SkillRow } from "../plugins";
 import { Collapse } from "./Collapse";
 import { Switch } from "./Switch";
 import { Icon, Tile } from "./Tile";
@@ -112,19 +112,20 @@ export function PluginsSection() {
     await load();
   }
   const editingRow = editing ? servers?.find((m) => m.name === editing) : undefined;
+  const mine = skills === null ? null : ownSkills(skills);  // Odie's built-in skills aren't listed
 
   return (
     <>
-      <Group title="Skills" summary={skills ? `${skills.filter((x) => x.status !== "disabled" && x.status !== "error").length} on` : undefined}>
-        {skills === null ? <div className="px-4 py-3.5 text-[14px] text-muted">Loading…</div>
-          : skills.length === 0 ? <div className="px-4 py-3.5 text-[14px] text-muted">No skills yet.</div>
-          : skills.map((s) => (
+      <Group title="Your skills" summary={mine ? `${mine.filter((x) => x.status !== "disabled" && x.status !== "error").length} on` : undefined}>
+        {mine === null ? <div className="px-4 py-3.5 text-[14px] text-muted">Loading…</div>
+          : mine.length === 0 ? <div className="px-4 py-3.5 text-[14px] text-muted">None yet. Ask Odie to build one, like "a skill that plans my week".</div>
+          : mine.map((s) => (
             <div key={s.name} className="flex items-start gap-3 px-4 py-3 border-b border-line last:border-b-0">
-              <Tile icon={s.source === "builtin" ? "spark" : "brain"} color={s.source === "builtin" ? "violet" : "pink"} small />
+              <Tile icon="brain" color="pink" small />
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 flex-wrap"><b className="text-[15px] font-semibold">{s.title || s.name}</b><Chip status={s.status} /></div>
                 <div className="text-[13px] leading-[18px] text-muted mt-0.5 [overflow-wrap:anywhere]">{s.summary || s.description || "—"}</div>
-                <div className="text-[12px] text-dim mt-0.5">{s.source === "builtin" ? "Built in" : "Yours"}{s.tools.length ? ` · ${s.tools.length} tool${s.tools.length > 1 ? "s" : ""}` : ""}</div>
+                <div className="text-[12px] text-dim mt-0.5">{s.tools.length ? `${s.tools.length} tool${s.tools.length > 1 ? "s" : ""}` : "Instructions only"}</div>
                 {s.reason && s.status !== "blocked" && <div className="text-[12.5px] text-warn-ink mt-1 [overflow-wrap:anywhere]">{s.reason}</div>}
                 {s.status === "blocked" && (
                   <button disabled={busy} onClick={() => act(() => postJSON(`/api/skills/${s.name}/trust`, {}))} className="pill pill-solid h-9 text-[13px] shadow-none mt-2">
