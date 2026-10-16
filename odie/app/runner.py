@@ -410,8 +410,8 @@ class OdieRunner:
         trackers.hooks.update(store=store, tz=self.tz)
         from odie import about
         about.hooks.update(runner=self)
-        from odie.video import jobs as video_jobs
-        video_jobs.hooks.update(runner=self, store=store)
+        from odie.making import jobs as making_jobs
+        making_jobs.hooks.update(runner=self, store=store)
         self._plugin_toolsets: list = []  # MCP connections owned by the current plugin set
         self._plugins_lock = asyncio.Lock()  # one reload at a time, each reading the latest config
         self.close_grace = 120.0  # seconds old connections stay open after a reload, for a turn still using them

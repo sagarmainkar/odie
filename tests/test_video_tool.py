@@ -13,8 +13,10 @@ from google.adk.tools import FunctionTool
 from odie import browser as odie_browser
 from odie import voice
 from odie.browser import RENDER_ARGS, find
+from odie.making import chat as making_chat
+from odie.making import jobs
 from odie.store.db import Store
-from odie.video import jobs, page
+from odie.video import kind, page
 
 SKILL = Path(page.__file__).parent.parent / "skills" / "explainer-video"
 GOLDEN = Path(__file__).parent / "golden" / "tool_declarations.json"
@@ -139,10 +141,10 @@ async def test_a_good_call_queues_a_job_with_the_topic_minutes_and_brief(world, 
     assert "result" in out, out
     job = submitted[0]
     assert (job.topic, job.title, job.minutes, job.brief) == ("How attention works", "How attention works", 3, brief)
-    assert job.narration == [] and job.body == "" and job.voice_name == ""
+    assert job.kind == "video" and job.data == {} and job.voice_name == ""
     assert job.slug == "how-attention-works" and job.session_id == "chat-7"
     assert job.folder.is_dir() and str(job.folder).startswith(str(tmp_path))
-    assert jobs.needs_writing(job)
+    assert kind.needs_writing(job)
 
 
 async def test_the_length_defaults_to_two_minutes(world):
@@ -161,10 +163,10 @@ async def test_the_same_topic_twice_gets_two_folders(world):
 
 
 def test_the_slug_is_plain_lower_case_with_hyphens():
-    assert tools.slug_of("Speculative decoding") == "speculative-decoding"
-    assert tools.slug_of("TCP/IP, explained") == "tcp-ip-explained"
-    assert tools.slug_of("¿Qué?") == "qu"
-    assert tools.slug_of("!!!") == "video"
+    assert making_chat.slug_of("Speculative decoding", "video") == "speculative-decoding"
+    assert making_chat.slug_of("TCP/IP, explained", "video") == "tcp-ip-explained"
+    assert making_chat.slug_of("¿Qué?", "video") == "qu"
+    assert making_chat.slug_of("!!!", tools.WORD) == "video"
 
 
 # The estimate and the reply.
