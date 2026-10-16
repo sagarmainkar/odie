@@ -31,8 +31,8 @@ PLACEHOLDERS='(sk-secretvalue|sk-specific|sk-completion|sk-abcdefgh|tvly-dev-Ab|
 # Shapes that are personal whoever the owner is: a real-looking phone number, a Gmail address.
 SHAPES=('\+91[ -]?[0-9]{5}[ -]?[0-9]{5}' '[A-Za-z0-9._%+-]+@gmail\.com')
 # Lines that are fine: the licence's copyright line, .gitignore (it names private files to keep them out), the
-# repository's own address, and the tests' made-up contacts.
-ALLOWED='(^\./LICENSE:[0-9]+:Copyright|^\./\.gitignore:|github\.com/[A-Za-z0-9-]+/odie|asha@gmail\.com|someone@gmail\.com|\+91 98765 43210)'
+# repository's own address (on github.com, and its files on raw.githubusercontent.com), and the tests' made-up contacts.
+ALLOWED='(^\./LICENSE:[0-9]+:Copyright|^\./\.gitignore:|github\.com/[A-Za-z0-9-]+/odie|raw\.githubusercontent\.com/[A-Za-z0-9-]+/odie/|asha@gmail\.com|someone@gmail\.com|\+91 98765 43210)'
 
 cd "$DEST"
 hits=0

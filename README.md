@@ -151,9 +151,21 @@ as words only, without their tool traffic and thinking. There's no summary and n
 
 ## Install
 
-On a Mac: an **Apple Silicon Mac with macOS 14 or newer**, `git`, [`uv`](https://docs.astral.sh/uv/) and Node 20+
-(`brew install git uv node`), and a brain: [LM Studio](https://lmstudio.ai) or [Ollama](https://ollama.com), or a key
-for a cloud model. On Linux, see [Mac first, Linux today](#mac-first-linux-today-more-welcome).
+On an **Apple Silicon Mac with macOS 14 or newer**, with [Homebrew](https://brew.sh):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/sagarmainkar/odie/main/scripts/get.sh | bash
+```
+
+It installs what's missing of `git`, [`uv`](https://docs.astral.sh/uv/) and Node 20+ with Homebrew, puts Odie's own
+copy in `~/.odie/app` at the newest release, adds the `odie` command in `~/.local/bin`, starts a background service and
+opens setup in the browser. Running it again updates Odie; your data stays. [Read the script](scripts/get.sh) first if
+you like.
+
+You'll also want a brain: [LM Studio](https://lmstudio.ai) or [Ollama](https://ollama.com), or a key for a cloud model.
+On Linux, see [Mac first, Linux today](#mac-first-linux-today-more-welcome).
+
+Or by hand, with `git`, `uv` and Node 20+ already there:
 
 ```bash
 git clone https://github.com/sagarmainkar/odie.git && cd odie
