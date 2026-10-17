@@ -516,3 +516,10 @@ def test_the_length_is_a_guide_the_writer_is_told_not_to_count():
     assert "a guide, not a count" in writer.prompt_for("Quantization", 4, "")
     assert "Never count words" in writer.INSTRUCTION and "within about a tenth" not in writer.INSTRUCTION
     assert "don't count words" in writer.LINES.nudge
+
+
+def test_writer_md_tells_how_to_mark_beats_and_draw_on_them():
+    text = WRITER_MD.read_text()
+    assert "### Beats" in text and "`|`" in text and "At most 12 phrases a scene" in text
+    for helper in ("`s.beats`", "`s.beat(t, i)`", "`s.beatAt(t)`"):
+        assert helper in text, helper

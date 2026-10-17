@@ -44,10 +44,10 @@ async def make_video(job: jobs.Job, browser, transport) -> Path:
     folder = job.folder
     narration = job.data["narration"]
     body = job.data["body"]
-    wav, lengths = await narrate(jobs.hooks["store"], narration, job.voice_name, transport=transport)
+    wav, lengths, beats = await narrate(jobs.hooks["store"], narration, job.voice_name, transport=transport)
 
     starts, _total = timeline.scene_starts(lengths, timeline.BREATH)
-    timings = {"starts": starts, "lengths": lengths}
+    timings = {"starts": starts, "lengths": lengths, "beats": beats}
 
     narration_wav = folder / "narration.wav"
     narration_wav.write_bytes(wav)

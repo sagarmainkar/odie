@@ -53,6 +53,14 @@ def test_estimated_timings_from_words():
     assert timings["lengths"][0] == 2.0  # short scenes still get 2 s
     assert timings["lengths"][1] == 30.0  # 70 words at 140 a minute
     assert timings["starts"] == [0.0, 2.5]  # the second scene starts after the first and a breath
+    assert timings["beats"] == [[0.0], [0.0]]  # no marks: one beat a scene
+
+
+def test_estimated_beats_share_the_scene_by_words_and_marks_are_not_words():
+    # 7 words then 21 words, 28 words in all (12 s at 140 a minute): the second phrase starts a quarter in, at 3 s
+    timings = page.estimated_timings(["word " * 7 + "| " + "word " * 21])
+    assert timings["lengths"] == [12.0]
+    assert timings["beats"] == [[0.0, 3.0]]
 
 
 def test_the_first_problem_is_the_one_told():

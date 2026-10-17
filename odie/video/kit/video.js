@@ -1,7 +1,8 @@
 // video.js: the explainer-video kit, exposed as window.Video.
 //
-// How a video is drawn: the tool sets window.__timings = {starts: [...], lengths: [...]} (seconds, measured from the
-// narration), and the page calls Video.scenes([...]) with one {setup(s)?, draw(t, s)} per scene. The server then calls
+// How a video is drawn: the tool sets window.__timings = {starts: [...], lengths: [...], beats: [[...], ...]}
+// (seconds, measured from the narration; beats are where each "|"-marked phrase starts, seconds into its scene), and
+// the page calls Video.scenes([...]) with one {setup(s)?, draw(t, s)} per scene. The server then calls
 // window.__frame(T) for every frame (T = frame / fps) and takes a picture of the 1920x1080 stage.
 //
 // Rules that keep frames deterministic (frame k always draws the same picture, whatever order frames are drawn in):
@@ -83,6 +84,54 @@
       x = (x + Math.imul(x ^ (x >>> 7), 61 | x)) ^ x;
       return ((x ^ (x >>> 14)) >>> 0) / 4294967296;
     };
+  }
+
+  // ---- Beats: where each phrase of a scene's narration starts, so a change lands on the word ----
+
+  // A scene's beat starts from the timings; timings without beats (one phrase a scene) give one beat at 0.
+  // beatsFor({beats: [[0, 1.2]]}, 0) -> [0, 1.2];   beatsFor({starts: [0], lengths: [3]}, 0) -> [0]
+  function beatsFor(timings, i) {
+    if (!timings.beats) {
+      return [0];
+    }
+    return timings.beats[i];
+  }
+
+  // A count of beats in words. beatsInWords(1) -> "1 beat"; beatsInWords(3) -> "3 beats"
+  function beatsInWords(n) {
+    if (n === 1) {
+      return "1 beat";
+    }
+    return n + " beats";
+  }
+
+  // Eased progress of t across beat i: from its start to the next beat's (or to the scene's end, for the last),
+  // 0 before and 1 after. beats [0, 1, 3], length 5: beatProgress(beats, 5, 2, 1) -> 0.5; (beats, 5, 4, 2) -> 0.5;
+  // (beats, 5, 4, 3) -> a RangeError saying the scene has 3 beats, so the page check tells the writer.
+  function beatProgress(beats, length, t, i) {
+    const known = Number.isInteger(i) && i >= 0 && i < beats.length;
+    if (!known) {
+      const last = beats.length - 1;
+      throw new RangeError(`s.beat(t, ${i}): this scene has ${beatsInWords(beats.length)} (0 to ${last}); ` +
+                           "mark one more phrase with '|' in its narration for each beat");
+    }
+    let end = length;
+    if (i + 1 < beats.length) {
+      end = beats[i + 1];
+    }
+    return at(t, beats[i], end);
+  }
+
+  // The index of the beat being spoken at t: the last one whose start has come. beats [0, 1, 3]: t 0.5 -> 0, 1 -> 1,
+  // 4 -> 2
+  function beatIndex(beats, t) {
+    let current = 0;
+    for (let i = 0; i < beats.length; i++) {
+      if (beats[i] <= t) {
+        current = i;
+      }
+    }
+    return current;
   }
 
   // ---- Drawing on the 2D canvas ----
@@ -241,12 +290,20 @@
     return scene;
   }
 
-  // The helpers a scene's setup and draw get; `length` is this scene's length in seconds.
-  function helpersFor(length) {
+  // The helpers a scene's setup and draw get; `length` is this scene's length in seconds and `beats` the seconds into
+  // it at which each phrase starts (the first 0). s.beat(t, 1) is the eased progress across the second phrase;
+  // s.beatAt(t) is the phrase being spoken.
+  function helpersFor(length, beats) {
     return {
       ease: ease, at: at, fade: fade, lerp: lerp, count: count, random: random, arrow: arrow, text: text, tex: tex,
       three: {scene: litScene(), camera: camera, renderer: renderer},
-      ctx: ctx, colors: colors, W: W, H: H, length: length,
+      ctx: ctx, colors: colors, W: W, H: H, length: length, beats: beats,
+      beat: function (t, i) {
+        return beatProgress(beats, length, t, i);
+      },
+      beatAt: function (t) {
+        return beatIndex(beats, t);
+      },
     };
   }
 
@@ -313,7 +370,8 @@
     loadAllFonts();
     placed = [];
     for (let i = 0; i < list.length; i++) {
-      placed.push({scene: list[i], start: timings.starts[i], s: helpersFor(timings.lengths[i])});
+      const s = helpersFor(timings.lengths[i], beatsFor(timings, i));
+      placed.push({scene: list[i], start: timings.starts[i], s: s});
     }
     for (const p of placed) {
       if (p.scene.setup) {

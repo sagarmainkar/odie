@@ -32,6 +32,14 @@ Nobody reads your replies, so don't ask questions; decide.
 - One string per scene, in order. Scene k is on screen while its string is spoken, and the scene lasts exactly as
   long as its speech. Say what is on screen as it appears.
 
+### Beats
+
+When something must happen on a word (a cut, a reveal, a number that must land as it is said), put `|` between the
+phrases of that scene's narration: `"Babur came from Fergana | and won at Panipat in 1526."`. Each phrase is spoken
+on its own and joined with no pause, so the listener never hears the marks, and the page learns when each phrase
+starts (`s.beats`, below). At most 12 phrases a scene, never an empty one (no `|` at the start or end, no `||`). A
+scene without marks is one beat; mark only where a picture must change on the word.
+
 ## The page contract
 
 The page is the body of an HTML page: one `<script>` that calls `Video.scenes([...])` once. The kit is already in the
@@ -51,7 +59,9 @@ Video.scenes([
 - Write `setup(s) {…}` and `draw(t, s) {…}` as methods, not arrow functions, so `this` is the scene: what setup
   keeps on `this` (`this.cube = …`) is there in draw.
 - `s.length` is the scene's spoken length in seconds. Time reveals as parts of it, to match the words:
-  `s.at(t, 0.5 * s.length, 0.6 * s.length)`. After the scene ends (a 0.5 s breath) its last picture holds.
+  `s.at(t, 0.5 * s.length, 0.6 * s.length)`, or, where the narration marks beats, on the phrase itself:
+  `s.beat(t, 1)` grows from 0 to 1 while the second phrase is spoken. After the scene ends (a 0.5 s breath) its last
+  picture holds.
 - **A frame is a pure function of t.** Several tabs draw frames out of order, so:
   - draw sets every property it animates on every frame (position, scale, rotation, opacity, colour), not only
     after some moment;
@@ -80,6 +90,9 @@ or three.js):
 |---|---|
 | `s.at(t, from, to)` | eased progress 0 to 1 across seconds [from, to]; 0 before, 1 after. `s.at(1.5, 1, 2)` is 0.5 |
 | `s.fade(t, inAt, outAt)` | an opacity: fades in over 0.6 s from inAt; if outAt is given, gone again by outAt |
+| `s.beats` | the seconds into the scene at which each phrase (see Beats) starts; the first is 0. A scene without marks: `[0]` |
+| `s.beat(t, i)` | eased progress 0 to 1 across phrase i (0 is the first), from its start to the next phrase's (or the scene's end); 0 before, 1 after. `s.text("year", "1526", {opacity: s.beat(t, 1)})`. A beat the narration doesn't mark is an error |
+| `s.beatAt(t)` | the index of the phrase being spoken at t, for a cut: `if (s.beatAt(t) >= 1) { /* the second picture */ }` |
 | `s.ease(x)` | smooth in-out of x in 0..1 |
 | `s.lerp(a, b, p)` | the value p of the way from a to b: `s.lerp(-3, 3, s.at(t, 0, 2))` |
 | `s.count(from, to, p)` | a whole number between from and to, for counters: `String(s.count(0, 1000, p))` |

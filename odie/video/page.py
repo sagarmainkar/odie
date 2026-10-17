@@ -7,7 +7,7 @@ import re
 from pathlib import Path
 
 from odie.browser.engine import BrowserError, BrowserTimeout
-from odie.video import timeline
+from odie.video import beats, timeline
 
 KIT = Path(__file__).parent / "kit"
 
@@ -61,7 +61,8 @@ def check_offline(body: str) -> None:
 
 def assemble(body: str, timings: dict) -> str:
     """The whole HTML document for a video: KaTeX's CSS, three.js, KaTeX, video.js, then `window.__timings`
-    ({"starts": [...], "lengths": [...]}, in seconds), then `body` (the model's markup and script), in that order."""
+    ({"starts": [...], "lengths": [...], "beats": [[...], ...]}, in seconds, passed through as given), then `body`
+    (the model's markup and script), in that order."""
     check_offline(body)
     kit = _kit()
     head = [
@@ -82,18 +83,36 @@ PROBE_EDGE = 0.05        # seconds after a scene's first moment, where it is fir
 PROBES_PER_SCENE = 3     # just after the start, the middle, the very end
 
 
+def estimated_beats(text: str, length: float) -> list[float]:
+    """A scene's beat starts guessed from its phrases' words, each phrase taking its share of the scene's length:
+    "seven words | twenty-one words" in a 12 s scene -> [0.0, 3.0] (the second phrase starts 7/28 of the way in);
+    no marks -> [0.0]."""
+    word_counts = [len(phrase.split()) for phrase in beats.phrases(text)]
+    total = max(1, sum(word_counts))
+    starts = []
+    words_before = 0
+    for count in word_counts:
+        starts.append(round(length * words_before / total, 3))
+        words_before += count
+    return starts
+
+
 def estimated_timings(narration: list[str]) -> dict:
     """Scene timings guessed from the words alone (the real ones come from the recorded voice later): each scene lasts
     its words at WORDS_PER_MINUTE, but at least 2 s. At 140 words a minute that is 2.33 words a second, so
-    ["one two three", 70 words] -> lengths [2.0, 30.0] (3 words would be 1.29 s, raised to 2.0) and
-    starts [0.0, 2.5] (scene 2 begins after scene 1's 2 s and the 0.5 s breath)."""
+    ["one two three", 70 words] -> lengths [2.0, 30.0] (3 words would be 1.29 s, raised to 2.0),
+    starts [0.0, 2.5] (scene 2 begins after scene 1's 2 s and the 0.5 s breath) and beats [[0.0], [0.0]]. A "|"
+    mark is not a word; it gives the scene one more beat (estimated_beats), as the real narration will."""
     words_per_second = timeline.WORDS_PER_MINUTE / 60
     lengths = []
-    for text in narration:
-        seconds = len(text.split()) / words_per_second
-        lengths.append(round(max(MIN_SCENE_SECONDS, seconds), 3))
+    scene_beats = []
+    for text, said in zip(narration, beats.spoken(narration)):
+        seconds = len(said.split()) / words_per_second
+        length = round(max(MIN_SCENE_SECONDS, seconds), 3)
+        lengths.append(length)
+        scene_beats.append(estimated_beats(text, length))
     starts, _total = timeline.scene_starts(lengths)
-    return {"starts": starts, "lengths": lengths}
+    return {"starts": starts, "lengths": lengths, "beats": scene_beats}
 
 
 def probe_times(timings: dict) -> list[float]:
