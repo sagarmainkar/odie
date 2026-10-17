@@ -523,3 +523,20 @@ def test_writer_md_tells_how_to_mark_beats_and_draw_on_them():
     assert "### Beats" in text and "`|`" in text and "At most 12 phrases a scene" in text
     for helper in ("`s.beats`", "`s.beat(t, i)`", "`s.beatAt(t)`"):
         assert helper in text, helper
+
+
+def test_the_prompt_lists_the_pictures_after_the_brief():
+    listing = "Pictures (use by name with s.photo / s.texture; you cannot add others):\n  img1  1920×1280  landscape  x"
+    prompt = writer.prompt_for("Delhi", 2, "For Asha.", listing)
+    assert f"Brief:\nFor Asha.\n\n{listing}\n\n{writer.PLAN_THEN_WRITE}" in prompt
+    assert writer.prompt_for("Delhi", 2, "For Asha.") == writer.prompt_for("Delhi", 2, "For Asha.", "")
+    assert "Pictures" not in writer.prompt_for("Delhi", 2, "For Asha.")
+
+
+async def test_the_listing_reaches_the_writers_prompt(tmp_path, checks):
+    async def script(turn):
+        await turn.submit()
+
+    turn = Turn(script)
+    await writer.write("Delhi", 2, "For Asha.", tmp_path / "job", turn, BROWSER, listing="Pictures (…):\n  img1  x")
+    assert "For Asha.\n\nPictures (…):\n  img1  x\n\n" in turn.prompt

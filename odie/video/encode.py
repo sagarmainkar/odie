@@ -134,11 +134,14 @@ async def mux(segments: list[Path], narration_wav: Path, out: Path) -> None:
 DURATION = re.compile(r"Duration: (\d+):(\d+):(\d+(?:\.\d+)?)")
 # A video stream's pixel format, after its codec: "Video: h264 (High) (avc1 / 0x31637661), yuv420p(tv, bt709, …), …"
 PIXELS = re.compile(r" Video: [^,]+, (\w+\([^)]*\)|\w+)")
+# A video stream's size, after a comma: "…, yuv420p(tv, progressive), 1280x720, SAR 1:1 …" -> 1280, 720.
+SIZE = re.compile(r" Video: .*?, (\d{2,5})x(\d{2,5})\b")
 
 
 async def probe(path: Path) -> dict:
     """What a media file holds: {"seconds": 3.0, "video": True, "audio": False, "pixels": "yuv420p(tv, bt709,
-    progressive)"} ("pixels" is the video's pixel format and colours, "" without video). Read from `ffmpeg -i PATH`,
+    progressive)", "width": 1280, "height": 720} ("pixels" is the video's pixel format and colours, "" without video;
+    width and height are 0 without video). Read from `ffmpeg -i PATH`,
     which prints the facts on stderr and then exits non-zero because there is no output file: that exit is expected."""
     _, stderr = await run([ffmpeg(), "-hide_banner", "-i", str(path)])
     text = stderr.decode("utf-8", errors="replace")
@@ -151,4 +154,11 @@ async def probe(path: Path) -> dict:
     found_pixels = PIXELS.search(text)
     if found_pixels:
         pixels = found_pixels.group(1)
-    return {"seconds": seconds, "video": " Video:" in text, "audio": " Audio:" in text, "pixels": pixels}
+    width = 0
+    height = 0
+    found_size = SIZE.search(text)
+    if found_size:
+        width = int(found_size.group(1))
+        height = int(found_size.group(2))
+    return {"seconds": seconds, "video": " Video:" in text, "audio": " Audio:" in text, "pixels": pixels,
+            "width": width, "height": height}

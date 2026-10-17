@@ -59,10 +59,11 @@ def check_offline(body: str) -> None:
                          f"the kit (three.js as THREE, KaTeX as katex, video.js as Video); remove {address}.")
 
 
-def assemble(body: str, timings: dict) -> str:
+def assemble(body: str, timings: dict, assets_script: str = "") -> str:
     """The whole HTML document for a video: KaTeX's CSS, three.js, KaTeX, video.js, then `window.__timings`
-    ({"starts": [...], "lengths": [...], "beats": [[...], ...]}, in seconds, passed through as given), then `body`
-    (the model's markup and script), in that order."""
+    ({"starts": [...], "lengths": [...], "beats": [[...], ...]}, in seconds, passed through as given), then the
+    video's pictures and clips (`assets_script`, odie.video.assets.staple's `<script>Video.assets({...})</script>`,
+    when there are any), then `body` (the model's markup and script), in that order."""
     check_offline(body)
     kit = _kit()
     head = [
@@ -73,8 +74,10 @@ def assemble(body: str, timings: dict) -> str:
         f"<script>{kit['katex']}</script>",
         f"<script>{kit['video']}</script>",
         f"<script>window.__timings = {json.dumps(timings)};</script>",
-        "</head><body>",
     ]
+    if assets_script:
+        head.append(assets_script)
+    head.append("</head><body>")
     return "\n".join(head) + "\n" + body + "\n</body></html>\n"
 
 

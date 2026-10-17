@@ -1,6 +1,7 @@
-"""Photos for decks: downloaded once by code (odie.net: public addresses only), decoded, re-encoded to JPEG at most
-2000 px with EXIF dropped, and cached by address in <data>/workspace/images/. A browser screenshot or the user's own
-photo is used by its id. Each photo keeps its credit."""
+"""Photos for decks and videos: downloaded once by code (odie.net: public addresses only), decoded, re-encoded to JPEG
+at most 2000 px with EXIF dropped, and cached by address in <data>/workspace/images/. A browser screenshot or the
+user's upload is used by its id, and a picture in the user's Photos library by photo:<id> (the largest copy Photos
+keeps on this Mac). Each photo keeps its credit; the user's own pictures need none."""
 from __future__ import annotations
 
 import asyncio
@@ -18,6 +19,9 @@ from odie.net import DownloadError, safe_download
 
 MAX_BYTES, MAX_EDGE = 10 * 1024 * 1024, 2000
 MAX_PIXELS = 60_000_000  # a decompression bomb is refused, not decoded
+MIN_LIBRARY_SIDE = 1000  # px on the long side: a library picture with only a smaller copy here is left out
+HEIC_TYPES = (".heic", ".heif")
+PRIVATE_REFUSAL = "not fetched: this chat read a signed-in page, so photos from the web aren't fetched here"
 
 
 class PhotoError(Exception):
@@ -81,15 +85,18 @@ async def fetch(ref: str, credit: str = "", referer: str | None = None) -> Photo
     ref = (ref or "").strip()
     if ref.startswith(("screenshot:", "upload:")):
         return await asyncio.to_thread(_local, ref)
+    if ref.startswith("photo:"):
+        return await asyncio.to_thread(_library, ref)
     if not re.match(r"^https?://", ref, re.I):
-        raise PhotoError("Use a photo address a tool returned (https://…), screenshot:<id> or upload:<id>.")
+        raise PhotoError("Use a photo address a tool returned (https://…), screenshot:<id>, upload:<id> or "
+                         "photo:<id>.")
     credit = credit.strip() or site_name(ref)
     dest = _dest(ref)
     if (hit := await asyncio.to_thread(_cached, dest, ref, credit)) is not None:
         return hit
     from odie.agent import turn
     if turn.private_sites():  # the address could carry what the model read on a signed-in page
-        raise PhotoError("not fetched: this chat read a signed-in page, so photos from the web aren't fetched here")
+        raise PhotoError(PRIVATE_REFUSAL)
     try:
         data, _ = await safe_download(ref, MAX_BYTES, referer=referer)
     except DownloadError as e:
@@ -116,6 +123,59 @@ def _local(ref: str) -> Photo:
     dest = _dest(ref)
     w, h = _encode(data, dest)
     return Photo(ref, dest, w, h, credit)
+
+
+def library_row(uuid: str) -> dict | None:
+    """The index's row for one picture in the user's Photos library (its kind, and in "big" the largest copy on this
+    Mac: odie.photos.library.pick_copies' choice), or None when there's no such picture or photos aren't set up. The
+    store is the one Odie's background jobs use (set by the runner)."""
+    from odie.making import jobs
+    from odie.vault import settings
+    store = jobs.hooks.get("store")
+    if store is None:
+        return None
+    index = settings.index_for(store)
+    if index is None:
+        return None
+    return index.photo(uuid)
+
+
+def long_side(path: Path) -> int | None:
+    """A picture file's longer side in pixels, read from its header, or None when Pillow can't open it (a HEIC
+    without a HEIC reader): a 2048×1536 JPEG -> 2048; a HEIC here -> None."""
+    try:
+        with Image.open(path) as img:
+            return max(img.size)
+    except (UnidentifiedImageError, OSError):
+        return None
+
+
+def _library(ref: str) -> Photo:
+    """photo:<id>: the user's own picture from the Photos library, by the copy the index knows, re-encoded like the
+    others (upright, at most 2000 px, EXIF and its place dropped). It needs no credit and works in a private chat (it
+    never leaves the Mac). Odie never asks iCloud for the full picture: a copy under 1,000 px is refused with what
+    the user can do."""
+    uuid = ref.partition(":")[2].strip()
+    row = library_row(uuid)
+    if row is None:
+        raise PhotoError(f"There's no picture {ref} in the user's Photos library here.")
+    if row["kind"] != "photo":
+        raise PhotoError(f"{ref} is a video; only photos from the library can go in")
+    big = row["big"]
+    if not big or not Path(big).is_file():
+        raise PhotoError(f"{ref} has no copy on this Mac; open it in Photos once so the full picture comes down")
+    path = Path(big)
+    side = long_side(path)
+    if side is None and path.suffix.lower() in HEIC_TYPES:
+        raise PhotoError(f"{ref} is a HEIC Odie can't read here; export it as JPEG from Photos")
+    if side is None:
+        raise PhotoError(f"{ref} isn't a picture Odie can read.")
+    if side < MIN_LIBRARY_SIDE:
+        raise PhotoError(f"{ref} has only a small copy on this Mac ({side} px); open it in Photos once so the full "
+                         "picture comes down")
+    dest = _dest(ref)
+    width, height = _encode(path.read_bytes(), dest)
+    return Photo(ref, dest, width, height, "")
 
 
 async def fetch_all(refs: list[tuple[str, str]]) -> tuple[dict[str, Photo], list[str]]:

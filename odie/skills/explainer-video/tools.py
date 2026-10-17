@@ -1,18 +1,21 @@
 """The explainer-video skill's tool: make_video checks the request within the chat turn (instantly), reads the sources
 the chat named (odie.making.sources: the user's message, a note, a workspace file, word for word) and puts the video in
 Odie's background queue (odie.making.jobs, kind "video" from odie.video.kind) with the brief and the sources as one
-text, the job's brief.md. In the background the writer (odie.video.writer) turns the topic, length and that brief into
-the narration and the page; then the video is narrated, rendered and posted to this chat. The chat only briefs the
-video. Plain trusted code of a built-in skill: no shell, no approval card."""
+text, the job's brief.md. The pictures and clips the chat found (images, clips: "address — what it shows" lines) are
+checked here and go with the job, with the chat's private sites; the job fetches them before the writer runs
+(odie.video.assets). In the background the writer (odie.video.writer) turns the topic, length, that brief and the
+pictures' names into the narration and the page; then the video is narrated, rendered and posted to this chat. The
+chat only briefs the video. Plain trusted code of a built-in skill: no shell, no approval card."""
 from google.adk.tools import FunctionTool, ToolContext
 
 from odie import voice
 from odie.agent.context import session_id_of
 from odie.agent.tools.files import workspace
+from odie.agent.turn import private_sites
 from odie.browser import find
 from odie.making import chat, jobs
 from odie.making import sources as making_sources
-from odie.video import kind, timeline
+from odie.video import assets, kind, timeline
 
 NARRATING_SPEED = 10  # seconds of speech the voice narrates in a second
 JOINING_SECONDS = 10  # joining the segments and the sound into the MP4
@@ -62,7 +65,8 @@ def minutes_to_make(minutes: int) -> int:
 
 
 async def make_video(topic: str, minutes: int = 2, brief: str = "", sources: list[str] | None = None,
-                     voice_name: str = "", tool_context: ToolContext | None = None) -> dict:
+                     images: list[str] | None = None, clips: list[str] | None = None, voice_name: str = "",
+                     tool_context: ToolContext | None = None) -> dict:
     """Make a narrated, animated explainer video that plays in this chat. A separate writer makes the narration and
     the animation from your brief, in the background; it can't see this chat, the user's notes, memory or the web.
     topic: what the video is about, short ("How attention works").
@@ -71,6 +75,10 @@ async def make_video(topic: str, minutes: int = 2, brief: str = "", sources: lis
     that must appear, and any facts you found. Up to 20,000 characters.
     sources: what the user gave, passed to the writer word for word (never retype it): "my message" (the user's
     latest message), a note's name or path in their vault, or a text file's path in Odie's workspace. Up to 5.
+    images: pictures for the film, at most 20, each one line "address — what it shows": the address a tool gave
+    (https://… from find_images, photo:<id>, upload:<id>, screenshot:<id>), then what the picture shows, its mood, its
+    orientation if unusual, and a web picture's credit in brackets at the end. The writer sees only these words.
+    clips: short stock clips, at most 6, the same way, with the https:// address find_clips gave.
     voice_name: leave empty; only when the user asks for a voice, one of the Settings engine's voices.
     It returns at once. {"error": …}: fix exactly that and call again. {"result": …}: the video is being made; reply
     in one or two lines as the result says, and don't repeat the brief."""
@@ -100,6 +108,12 @@ async def make_video(topic: str, minutes: int = 2, brief: str = "", sources: lis
     except making_sources.SourceProblem as e:
         return {"error": str(e)}
 
+    try:
+        assets.parse(images, clips)
+    except assets.AssetProblem as e:
+        return {"error": str(e)}
+    given = {"images": assets.lines_as_given(images, "images"), "clips": assets.lines_as_given(clips, "clips")}
+
     voice_id = ""
     if voice_name.strip():
         try:
@@ -110,8 +124,9 @@ async def make_video(topic: str, minutes: int = 2, brief: str = "", sources: lis
     folder = chat.free_folder(workspace() / kind.FOLDER, chat.slug_of(title, WORD))
     folder.mkdir(parents=True)
     whole_brief = making_sources.brief_with_sources(brief, found)
+    data = {"given": given, "private": sorted(private_sites())}  # the job fetches as this chat would
     job = jobs.Job(kind="video", slug=folder.name, title=title, topic=title, minutes=minutes, brief=whole_brief,
-                   session_id=session_id_of(tool_context), voice_name=voice_id, folder=folder)
+                   session_id=session_id_of(tool_context), voice_name=voice_id, folder=folder, data=data)
     place = jobs.submit(job)
     low = minutes_to_make(minutes)
     high = low + ESTIMATE_SPREAD

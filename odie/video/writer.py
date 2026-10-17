@@ -73,9 +73,10 @@ def keep_page(folder: Path, body: str) -> None:
     (folder / f"{name}.html").write_text(body, encoding="utf-8")
 
 
-def prompt_for(topic: str, minutes: int, brief: str) -> str:
+def prompt_for(topic: str, minutes: int, brief: str, listing: str = "") -> str:
     """The writer's whole message: the topic, the length in minutes and in words (140 a minute: 2 minutes -> about
-    280 words, given as a guide, not a count), the brief, and what to do."""
+    280 words, given as a guide, not a count), the brief, the video's pictures and clips by name (`listing`, from
+    odie.video.assets.listing; nothing when there are none), and what to do."""
     words = minutes * timeline.WORDS_PER_MINUTE
     unit = "minutes"
     if minutes == 1:
@@ -83,9 +84,13 @@ def prompt_for(topic: str, minutes: int, brief: str) -> str:
     brief_text = brief.strip()
     if not brief_text:
         brief_text = "(none: use what you know about the topic)"
+    pictures = ""
+    if listing.strip():
+        pictures = f"{listing.strip()}\n\n"
     return (f"Topic: {topic}\n"
             f"Length: {minutes} {unit}, roughly {words} words of narration (a guide, not a count).\n\n"
             f"Brief:\n{brief_text}\n\n"
+            f"{pictures}"
             f"{PLAN_THEN_WRITE}")
 
 
@@ -159,11 +164,13 @@ def tools_for(desk: Desk, browser) -> list:
     return [harness.submit_tool(desk, "submit_video", SUBMIT_DOC, SUBMIT_FIELDS, check, accept)]
 
 
-async def write(topic: str, minutes: int, brief: str, folder: Path, turn, browser) -> Written:
+async def write(topic: str, minutes: int, brief: str, folder: Path, turn, browser, listing: str = "") -> Written:
     """Writes the video in one focused turn: `turn(prompt, instruction, tools, timeout, follow_up=…)` is
-    runner.focused_turn in Odie, `browser` the one page.check draws in (render_browser()). Every submitted page is kept
-    under folder/pages. Returns the accepted video; raises WriterFailed when there's none, with the video's words
-    (LINES), or the harness's time-limit line (see odie.making.writer.write)."""
+    runner.focused_turn in Odie, `browser` the one page.check draws in (render_browser()), `listing` the pictures and
+    clips the writer may use, by name (see prompt_for). Every submitted page is kept under folder/pages. Returns the
+    accepted video; raises WriterFailed when there's none, with the video's words (LINES), or the harness's time-limit
+    line (see odie.making.writer.write)."""
     desk = Desk(topic=topic, pages=folder / "pages")
     [tool] = tools_for(desk, browser)
-    return await harness.write(desk, prompt_for(topic, minutes, brief), INSTRUCTION, tool, LINES, turn)
+    prompt = prompt_for(topic, minutes, brief, listing)
+    return await harness.write(desk, prompt, INSTRUCTION, tool, LINES, turn)

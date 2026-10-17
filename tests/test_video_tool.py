@@ -189,7 +189,8 @@ async def test_a_good_call_queues_a_job_with_the_topic_minutes_and_brief(world, 
     assert "result" in out, out
     job = submitted[0]
     assert (job.topic, job.title, job.minutes, job.brief) == ("How attention works", "How attention works", 3, brief)
-    assert job.kind == "video" and job.data == {} and job.voice_name == ""
+    assert job.kind == "video" and job.voice_name == ""
+    assert job.data == {"given": {"images": [], "clips": []}, "private": []}  # no page: the writer writes it later
     assert job.slug == "how-attention-works" and job.session_id == "chat-7"
     assert job.folder.is_dir() and str(job.folder).startswith(str(tmp_path))
     assert kind.needs_writing(job)
@@ -261,11 +262,13 @@ def test_the_skill_offers_only_make_video_without_an_approval_card(isolated_sett
     assert not any(tool._require_confirmation for tool in entry.tool_objs)
 
 
-def test_the_declaration_has_exactly_topic_minutes_brief_sources_and_voice_name():
+def test_the_declaration_has_exactly_topic_minutes_brief_sources_images_clips_and_voice_name():
     declaration = FunctionTool(tools.make_video)._get_declaration()
     properties = declaration.parameters_json_schema["properties"]
-    assert sorted(properties) == ["brief", "minutes", "sources", "topic", "voice_name"]
-    assert properties["sources"]["anyOf"][0] == {"items": {"type": "string"}, "type": "array"}  # a list of texts
+    assert list(properties) == ["topic", "minutes", "brief", "sources", "images", "clips", "voice_name"]
+    for name in ("sources", "images", "clips"):
+        assert properties[name]["anyOf"][0] == {"items": {"type": "string"}, "type": "array"}  # a list of texts
+    assert "address — what it shows" in declaration.description and "at most 20" in declaration.description
     assert declaration.parameters_json_schema["required"] == ["topic"]
 
     golden = {d["name"]: d for d in json.loads(GOLDEN.read_text())}
@@ -287,3 +290,52 @@ def test_videos_are_drawn_in_a_browser_cut_off_from_the_network(isolated_setting
     assert browser.extra_args == RENDER_ARGS
     assert "--proxy-server=socks5://127.0.0.1:9" in browser.extra_args
     assert str(browser.profile).startswith(str(isolated_settings.data_dir))
+
+
+# Pictures and clips: lines of "address — words", checked here, fetched later by the job.
+
+PICTURES = ["https://images.unsplash.com/a.jpg — Red Fort, Delhi, at dusk (Photo by A on Unsplash)",
+            "photo:3F2A — Nathula pass, us at the gate, 12 May 2026"]
+CLIPS = ["https://videos.pexels.com/v.mp4 — waves on a Goa beach, slow (Pexels, by B)"]
+
+
+async def test_pictures_and_clips_go_to_the_job_as_given_and_stay_out_of_the_writers_brief(world):
+    _store, submitted = world
+    out = await tools.make_video("Goa", brief="For Asha.", images=[f"  {PICTURES[0]} ", PICTURES[1]], clips=CLIPS)
+    assert "result" in out, out
+    job = submitted[0]
+    assert job.data["given"] == {"images": PICTURES, "clips": CLIPS}
+    assert job.brief == "For Asha."  # the writer reads names and words (the listing), never the addresses
+
+
+async def test_pictures_sent_as_json_text_are_read_as_the_list(world):
+    out = await call_as_adk_does(topic="Goa", images=json.dumps(PICTURES), clips=None)
+    assert "result" in out, out
+    assert world[1][0].data["given"] == {"images": PICTURES, "clips": []}
+
+
+@pytest.mark.parametrize(("images", "clips", "words"), [
+    ({"a": "b"}, None, "images is a list of short texts"),
+    (["https://ex.com/a.jpg - Akbar"], None, "images line 1 has no"),
+    (None, ["photo:3F2A — us"], "a clip is a web address"),
+    ([f"photo:{i} — picture {i}" for i in range(21)], None, "at most 20"),
+    (None, [f"https://ex.com/{i}.mp4 — clip {i}" for i in range(7)], "at most 6"),
+])
+async def test_pictures_that_cant_be_read_are_refused_and_nothing_is_queued(world, images, clips, words):
+    out = await call_as_adk_does(topic="Goa", images=images, clips=clips)
+    assert words in out["error"] and world[1] == []
+    from odie.agent.tools.files import workspace
+    videos = workspace() / "videos"
+    assert not videos.exists() or not any(videos.iterdir())  # no folder made for a refused video
+
+
+async def test_the_chats_private_sites_go_with_the_job(world):
+    from odie.agent import turn
+    _store, submitted = world
+    token = turn.PRIVATE.set({"swiggy.com", "amazon.in"})
+    try:
+        out = await tools.make_video("Goa", images=PICTURES)
+    finally:
+        turn.PRIVATE.reset(token)
+    assert "result" in out, out
+    assert submitted[0].data["private"] == ["amazon.in", "swiggy.com"]

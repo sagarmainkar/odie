@@ -74,3 +74,12 @@ def test_the_first_problem_is_the_one_told():
     problem = page.first_problem(2, 2, [], [(1, 0.05, "first"), (2, 1.95, "second")])
     assert "scene 1" in problem and "first" in problem and "second" not in problem
     assert page.first_problem(2, 2, [], []) is None
+
+
+def test_the_stapled_assets_go_after_the_kit_and_before_the_page():
+    staple = '<script>Video.assets({"img1": {"kind": "image"}})</script>'
+    html = page.assemble("<div id=page></div>", {"starts": [0], "lengths": [1.0]}, staple)
+    assert html.index("<script>window.__timings = ") < html.index(staple) < html.index("<div id=page></div>")
+    plain = page.assemble("<div id=page></div>", {"starts": [0], "lengths": [1.0]})
+    assert plain == page.assemble("<div id=page></div>", {"starts": [0], "lengths": [1.0]}, "")
+    assert "Video.assets({" not in plain.split("<script>window.__timings = ")[1]
