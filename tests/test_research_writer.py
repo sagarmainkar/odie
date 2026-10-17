@@ -150,11 +150,24 @@ async def test_a_report_too_short_is_told_its_length_in_words(store):
 
 
 @pytest.mark.parametrize("sources", [
-    "- https://example.com/a", "- [[Kitchen wishlist]]", "- Kitchen wishlist (a note)",
-    "1. [Review](https://example.com/a)",
+    "- https://example.com/a", "- [[Kitchen wishlist]]", "1. [Review](https://example.com/a)",
+    "- Asha's notes: [[Kitchen wishlist]]",
 ])
-def test_a_link_a_note_or_a_line_under_the_heading_counts_as_a_source(sources):
+def test_a_link_or_a_note_reference_under_the_heading_counts_as_a_source(sources):
     assert writer.submission_problem(f"{FINDINGS}\n\n## Sources\n\n{sources}\n") is None
+
+
+@pytest.mark.parametrize("sources", ["- none", "- Kitchen wishlist (a note)", "- The kettle review I read"])
+def test_a_line_with_no_link_or_note_reference_is_no_source(sources):
+    assert writer.submission_problem(f"{FINDINGS}\n\n## Sources\n\n{sources}\n") == writer.NO_SOURCES_LISTED
+    assert "[[the note's name]]" in writer.NO_SOURCES_LISTED and "link" in writer.NO_SOURCES_LISTED
+
+
+def test_a_sources_heading_inside_a_code_fence_is_no_heading():
+    fenced = f"{FINDINGS}\n\n```\n## Sources\n```\n"
+    assert writer.submission_problem(fenced) == writer.NO_SOURCES_HEADING
+    fenced_link = f"{FINDINGS}\n\n## Sources\n\n```\nhttps://example.com/a\n```\n"
+    assert writer.submission_problem(fenced_link) == writer.NO_SOURCES_LISTED  # a link in a fence isn't listed
 
 
 def test_the_sources_heading_is_found_in_any_case_and_a_later_heading_ends_it():

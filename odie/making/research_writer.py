@@ -29,13 +29,15 @@ VAULT_TOOLS = ("search_everything", "read_note", "related_notes")  # the vault's
 SOURCES_HEADING = re.compile(r"^##\s+sources\s*$", re.IGNORECASE)
 TOP_HEADING = re.compile(r"^#{1,2}\s")  # a heading of the report's own level ends the Sources section
 WORD = re.compile(r"\w")  # a word has a letter or a digit in it: "##" and "-" aren't words
+NOTE_REFERENCE = re.compile(r"\[\[[^\[\]]+\]\]")  # [[Kitchen wishlist]]
+FENCE = "```"
 
 SEARCH_THEN_WRITE = "Search and read first, then call submit_research with the title and the whole report."
-NO_SOURCES_HEADING = ('The report has no "## Sources" heading. End it with "## Sources" and, under it, one per line, '
-                      "the links of the pages you used and the names of the notes you used, then call "
-                      "submit_research again with the whole report.")
-NO_SOURCES_LISTED = ('The "## Sources" section is empty. Under it, one per line, list the links of the pages you used '
-                     "and the names of the notes you used, then call submit_research again with the whole report.")
+CITE_EACH = ("list each source on its own line, as a link (https://…) to the page you used or as [[the note's name]] "
+             "for a note you used, then call submit_research again with the whole report.")
+NO_SOURCES_HEADING = ('The report has no "## Sources" heading (outside code). End it with "## Sources" and, under it, '
+                      f"{CITE_EACH}")
+NO_SOURCES_LISTED = f'The "## Sources" section has no link or note reference. Under it, {CITE_EACH}'
 LINES = harness.Lines(
     nudge=("You haven't called submit_research yet. Stop searching: write the report now from what you have read, "
            "and call submit_research with the title and the whole report."),
@@ -45,7 +47,7 @@ LINES = harness.Lines(
     not_passed="I couldn't write a report that passed its check: {problem}",
 )
 SUBMIT_DOC = ("Submit the whole report at once: title (short, about the topic) and markdown (the report: the short "
-              'answer, the findings, then "## Sources" with the links and note names you used). It checks the '
+              'answer, the findings, then "## Sources" with the links and [[note names]] you used). It checks the '
               "report's length and its sources.\n"
               '{"error": …}: fix exactly that and call submit_research again with the whole fixed report.\n'
               '{"result": "Accepted."}: the report is done.')
@@ -69,15 +71,39 @@ def words_in(markdown: str) -> int:
     return count
 
 
+def outside_fences(markdown: str) -> list[str]:
+    """The report's lines, trimmed, without its code: the ``` fence lines and everything between them left out.
+    "Intro\\n```\\n## Sources\\n```\\nEnd" -> ["Intro", "End"]."""
+    kept = []
+    in_fence = False
+    for line in markdown.splitlines():
+        text = line.strip()
+        if text.startswith(FENCE):
+            in_fence = not in_fence
+            continue
+        if not in_fence:
+            kept.append(text)
+    return kept
+
+
+def is_source(line: str) -> bool:
+    """Decides whether a line under "## Sources" cites something the writer used: a link or a [[note]] reference.
+    "- https://x.org/a" -> True; "1. [Review](https://x.org/a)" -> True; "- [[Kitchen wishlist]]" -> True;
+    "- none" -> False; "- Kitchen wishlist (a note)" -> False (a note is cited as [[Kitchen wishlist]])."""
+    if "http" in line:
+        return True
+    return NOTE_REFERENCE.search(line) is not None
+
+
 def sources_listed(markdown: str) -> list[str] | None:
-    """The lines under the report's "## Sources" heading, up to the next heading of its level, blank lines and
-    sub-headings left out; None when there is no such heading. "…\\n## Sources\\n\\n- https://a.example\\n- [[Kitchen
-    wishlist]]" -> ["- https://a.example", "- [[Kitchen wishlist]]"]; "## Sources\\n\\n## Notes\\n- https://…" -> [];
-    no heading -> None."""
-    lines = markdown.splitlines()
+    """The sources under the report's "## Sources" heading (is_source lines, up to the next heading of its level),
+    code fences left out everywhere; None when there is no such heading outside code. "…\\n## Sources\\n\\n-
+    https://a.example\\n- none\\n- [[Kitchen wishlist]]" -> ["- https://a.example", "- [[Kitchen wishlist]]"];
+    "## Sources\\n\\n## Notes\\n- https://…" -> []; "```\\n## Sources\\n```" -> None."""
+    lines = outside_fences(markdown)
     start = None
     for number, line in enumerate(lines):
-        if SOURCES_HEADING.match(line.strip()):
+        if SOURCES_HEADING.match(line):
             start = number
             break
     if start is None:
@@ -85,19 +111,18 @@ def sources_listed(markdown: str) -> list[str] | None:
 
     listed = []
     for line in lines[start + 1:]:
-        text = line.strip()
-        if TOP_HEADING.match(text):
+        if TOP_HEADING.match(line):
             break
-        if text and not text.startswith("#"):
-            listed.append(text)
+        if is_source(line):
+            listed.append(line)
     return listed
 
 
 def submission_problem(markdown: str) -> str | None:
     """Decides whether a report can be accepted: the first problem as words to fix, or None. Its length first (at
     least 150 words: a 9-word report -> "The report is 9 words; it needs at least 150. …"), then its sources: no
-    "## Sources" heading -> NO_SOURCES_HEADING; the heading with nothing under it -> NO_SOURCES_LISTED; a link, a
-    "[[note]]" or any line under it (a note's name) -> None."""
+    "## Sources" heading outside code -> NO_SOURCES_HEADING; the heading with no link or [[note]] under it ("- none")
+    -> NO_SOURCES_LISTED; "- https://x.org/a" or "- [[Kitchen wishlist]]" under it -> None."""
     words = words_in(markdown)
     if words < MIN_WORDS:
         return (f"The report is {words} words; it needs at least {MIN_WORDS}. Give the findings with their details "

@@ -44,7 +44,7 @@ budget.
 ## Sources
 
 - https://example.com/kettle-review
-- Kitchen wishlist (a note)
+- [[Kitchen wishlist]]
 """)
 ```
 
@@ -52,7 +52,8 @@ budget.
 - **Then the findings:** under headings of your choosing, the details that back the answer: what each source says,
   the numbers, how the options compare (a Markdown table when comparing several). What matters to the user, from the
   brief, comes first.
-- **Then "## Sources":** one per line, the links of the pages you used and the names of the notes you used.
+- **Then "## Sources":** one source per line: a page you used as its link (https://…), a note you used as
+  [[the note's name]]. A line with neither doesn't count as a source.
 - **Every fact traceable to a source:** say where a number or a claim comes from, and only use what you read or what
   the brief gives. When sources disagree or something isn't known, say so plainly; never guess.
 - Plain prose in Markdown, with no emojis. At least 150 words; long enough to answer, no longer.
