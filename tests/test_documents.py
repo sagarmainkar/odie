@@ -6,6 +6,7 @@ from pptx import Presentation
 
 from odie import media
 from odie.agent.tools.files import workspace
+from odie.decks import build as decks
 from odie.skills.documents import build
 from odie.store.db import Store
 
@@ -74,10 +75,11 @@ def _tools():
     return {t.name: t for t in TOOLS}
 
 
-async def test_make_slides_writes_a_real_pptx(store):
-    """Today's Markdown still makes the deck (now designed: odie.decks): titles, bullets with their sub-points,
-    notes and the table, in an editable 16:9 PowerPoint. Without a browser (tests), the card is the PowerPoint."""
-    out = await _tools()["make_slides"].func(markdown=DECK)
+async def test_a_deck_from_markdown_is_a_real_pptx(store):
+    """Today's Markdown still makes the deck (designed: odie.decks, which builds the deck make_deck's writer wrote):
+    titles, bullets with their sub-points, notes and the table, in an editable 16:9 PowerPoint. Without a browser
+    (tests), the card is the PowerPoint."""
+    out = await decks.make_deck(DECK)
     m = out["media"]
     assert m["kind"] == "file" and m["filename"] == "Our podcast idea.pptx" and (workspace() / m["filename"]).is_file()
     prs = Presentation(str(media.get(m["id"])[0]))
@@ -106,16 +108,16 @@ async def test_make_document_writes_a_real_docx(store):
 
 async def test_bad_markdown_is_a_plain_error(store):
     t = _tools()
-    assert "# " in (await t["make_slides"].func(markdown="just some text, no slides"))["error"]
+    assert "# " in (await decks.make_deck("just some text, no slides"))["error"]
     assert "error" in await t["make_document"].func(markdown="   ")
 
 
 def test_documents_skill_is_built_in(store):
     from odie.skills import registry
     [e] = [e for e in registry.discover(store) if e.name == "documents"]
-    assert e.status != "error" and {"make_slides", "make_document"} <= set(e.tools)
+    assert e.status != "error" and {"make_deck", "make_document"} <= set(e.tools) and "make_slides" not in e.tools
     text = (registry.BUILTIN / "documents" / "SKILL.md").read_text()
-    assert "make_slides" in text and "Nous Research" in text
+    assert "make_deck" in text and "Nous Research" in text
 
 
 def test_the_hermes_code_keeps_its_licence():
@@ -140,7 +142,7 @@ async def test_tables_in_any_style_and_size_fit(store):
         [slide] = build.slides_from_markdown(f"# T\n| A | B |\n{sep}\n| 1 | 2 |\n")
         assert slide["tables"][0]["rows"] == [["A", "B"], ["1", "2"]], sep
     rows = "\n".join(f"| item {i} | {i} |" for i in range(20))
-    out = await _tools()["make_slides"].func(markdown=f"# Big\nsub\n\n# Table\n| A | B |\n| --- | --- |\n{rows}\n")
+    out = await decks.make_deck(f"# Big\nsub\n\n# Table\n| A | B |\n| --- | --- |\n{rows}\n")
     prs = Presentation(str(media.get(out["media"]["id"])[0]))
     [table] = [sh for sh in prs.slides[1].shapes if sh.has_table]
     assert table.top + table.height <= prs.slide_height
@@ -160,7 +162,7 @@ def test_slide_separators_and_order():
 
 
 async def test_titles_with_slashes_keep_their_words(store):
-    out = await _tools()["make_slides"].func(markdown="# Pros/Cons of a home server\nsub", title="Pros/Cons of a home server")
+    out = await decks.make_deck("# Pros/Cons of a home server\nsub", "Pros/Cons of a home server")
     assert out["media"]["filename"] == "Pros-Cons of a home server.pptx"
 
 
@@ -196,11 +198,13 @@ def test_files_only_when_the_user_asks(said, deck, doc):
     assert turn.asked_for(said, "deck") is deck and turn.asked_for(said, "document") is doc
 
 
-async def test_make_slides_bounces_to_chat_when_no_file_was_asked(store):
+async def test_make_deck_bounces_to_chat_when_no_file_was_asked(store, monkeypatch):
     from odie.agent import turn
+    from odie.making import jobs
+    monkeypatch.setattr(jobs, "submit", lambda job: 1)  # a deck that is asked for goes in the queue
     token = turn.USER_TEXT.set("Make a itinerary for four with food and stays")
     try:
-        out = await _tools()["make_slides"].func(markdown=DECK)
+        out = await _tools()["make_deck"].func(topic="Our podcast idea")
         doc = await _tools()["make_document"].func(markdown=DOC)
     finally:
         turn.USER_TEXT.reset(token)
@@ -208,10 +212,10 @@ async def test_make_slides_bounces_to_chat_when_no_file_was_asked(store):
     assert "error" in doc and "chat" in doc["error"]
     token = turn.USER_TEXT.set("make it a deck")
     try:
-        assert "media" in await _tools()["make_slides"].func(markdown=DECK)
+        assert "result" in await _tools()["make_deck"].func(topic="Our podcast idea")
     finally:
         turn.USER_TEXT.reset(token)
-    assert "media" in await _tools()["make_slides"].func(markdown=DECK)  # no chat turn (background): allowed
+    assert "result" in await _tools()["make_deck"].func(topic="Our podcast idea")  # no chat turn: allowed
 
 
 def test_stated_facts_are_taken_as_given():

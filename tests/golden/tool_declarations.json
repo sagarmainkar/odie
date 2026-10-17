@@ -255,6 +255,38 @@
     "name": "list_trackers"
   },
   {
+    "description": "Make a designed deck: a PDF and an editable PowerPoint with slide previews, posted to this chat. A separate\nwriter writes the slides from your brief, in the background; it can't see this chat, the user's notes, memory or\nthe web, and can't search for photos.\ntopic: what it's about, short (\"A weekend in Coorg\", \"Nvidia's Q2\").\nbrief: the angle, the slides' points in order, the facts it must use, and the photo addresses with their credits\nthat find_images or the browser gave you (only those can go on the slides). Up to 6,000 characters.\ntheme: editorial (dark, great with photos), minimal (clean white: research, business), warm (cream), bold (strong\ncolour: pitches).\nrevise: to change a deck made earlier, its name (\"Meghalaya Trip Guide\"); the brief then says what to change.\nIt returns at once. {\"error\": …}: fix exactly that and call again. {\"result\": …}: the deck is being made; reply in\none or two lines as the result says, and don't repeat the brief.",
+    "name": "make_deck",
+    "parameters_json_schema": {
+      "properties": {
+        "topic": {
+          "title": "Topic",
+          "type": "string"
+        },
+        "brief": {
+          "default": "",
+          "title": "Brief",
+          "type": "string"
+        },
+        "theme": {
+          "default": "editorial",
+          "title": "Theme",
+          "type": "string"
+        },
+        "revise": {
+          "default": "",
+          "title": "Revise",
+          "type": "string"
+        }
+      },
+      "required": [
+        "topic"
+      ],
+      "title": "make_deckParams",
+      "type": "object"
+    }
+  },
+  {
     "description": "Make a Word document from Markdown and attach it to the chat: \"#\" and \"##\" headings, paragraphs with **bold**\nand *italic*, \"- \" and \"1. \" lists, \"| a | b |\" tables, \"---\" for a page break. `title` names the file (else the\nfirst heading).",
     "name": "make_document",
     "parameters_json_schema": {
@@ -327,33 +359,6 @@
         "topic"
       ],
       "title": "make_podcastParams",
-      "type": "object"
-    }
-  },
-  {
-    "description": "Make a designed deck: a PDF and an editable PowerPoint with slide previews, under your reply. \"# Title\" starts\neach slide (the first is the cover). On a slide: \"kicker: …\", \"image: <photo address a tool returned> (credit: …)\",\n\"- **Lead** — rest\" bullets, \"## Name\" cards (with image: and meta: lines), \"1. Step — detail\" steps, \"stat: value —\nlabel\", a ```chart block, \"quote: \"…\" — who\", \"> \" speaker notes, \"| a | b |\" tables. Photos are optional.\ntheme: editorial (dark, great with photos), minimal (clean white: research, business), warm (cream), bold (strong\ncolour: pitches). The documents skill lists the layouts.",
-    "name": "make_slides",
-    "parameters_json_schema": {
-      "properties": {
-        "markdown": {
-          "title": "Markdown",
-          "type": "string"
-        },
-        "title": {
-          "default": "",
-          "title": "Title",
-          "type": "string"
-        },
-        "theme": {
-          "default": "editorial",
-          "title": "Theme",
-          "type": "string"
-        }
-      },
-      "required": [
-        "markdown"
-      ],
-      "title": "make_slidesParams",
       "type": "object"
     }
   },
