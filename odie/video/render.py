@@ -48,7 +48,8 @@ class Counter:
 
 async def render_range(browser: Browser, html: str, path: Path, fps: int, first: int, end: int,
                        counter: Counter) -> Path:
-    """One tab: its own sealed page, frames first..end-1 drawn in order into one segment."""
+    """One tab: its own sealed page, frames first..end-1 drawn in order into one segment. A frame that draws a clip
+    returns a promise (the clip is seeked first); `page.eval` awaits it, so each picture is of the finished frame."""
     async with browser.sealed_page(html, WIDTH, HEIGHT) as page, Segment(path, fps) as segment:
         for k in range(first, end):
             await page.eval(f"__frame({k / fps})")
