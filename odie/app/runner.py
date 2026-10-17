@@ -26,7 +26,7 @@ from odie import addons, config
 from odie.agent.agent import build_agent, chat_generate_config, memory_file
 from odie.agent.callbacks import OdiePlugin
 from odie.agent.context import parts_of
-from odie.agent.model import model_for
+from odie.agent.model import WRITER_REPLY_TOKENS, model_for
 from odie.models import chat_completion, context_window, history_limit_for, resolve_selection
 from odie.sampling import BACKGROUND_TEMPERATURE
 from odie.agent.prompt import ALL_CAPS, Who, build_static_prompt, build_turn_context, format_open_threads
@@ -937,7 +937,7 @@ class OdieRunner:
 
         from odie.agent.usage import CACHE
         s = config.settings
-        model = model_for(resolve_selection(self.store, "chat"), False)
+        model = model_for(resolve_selection(self.store, "chat"), False, room=WRITER_REPLY_TOKENS)
         now = datetime.now(self.tz).strftime("%A %d %B %Y, %H:%M")
 
         def as_written(_context) -> str:

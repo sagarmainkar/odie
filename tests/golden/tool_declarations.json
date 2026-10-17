@@ -331,7 +331,7 @@
     }
   },
   {
-    "description": "Make a narrated, animated explainer video that plays in this chat. A separate writer makes the narration and\nthe animation from your brief, in the background; it can't see this chat, the user's notes, memory or the web.\ntopic: what the video is about, short (\"How attention works\").\nminutes: its length, from 1 to 6: the user's length, else 2.\nbrief: everything the writer needs: who it's for and their level, the key points in order, examples, numbers or\nformulas that must appear, and any facts from this chat or the user's notes. Up to 6,000 characters.\nvoice_name: leave empty; only when the user asks for a voice, one of the Settings engine's voices.\nIt returns at once. {\"error\": …}: fix exactly that and call again. {\"result\": …}: the video is being made; reply\nin one or two lines as the result says, and don't repeat the brief.",
+    "description": "Make a narrated, animated explainer video that plays in this chat. A separate writer makes the narration and\nthe animation from your brief, in the background; it can't see this chat, the user's notes, memory or the web.\ntopic: what the video is about, short (\"How attention works\").\nminutes: its length, from 1 to 6: the user's length, else 2.\nbrief: the plan: who it's for and their level, the key points in order, the look, examples, numbers or formulas\nthat must appear, and any facts you found. Up to 20,000 characters.\nsources: what the user gave, passed to the writer word for word (never retype it): \"my message\" (the user's\nlatest message), a note's name or path in their vault, or a text file's path in Odie's workspace. Up to 5.\nvoice_name: leave empty; only when the user asks for a voice, one of the Settings engine's voices.\nIt returns at once. {\"error\": …}: fix exactly that and call again. {\"result\": …}: the video is being made; reply\nin one or two lines as the result says, and don't repeat the brief.",
     "name": "make_video",
     "parameters_json_schema": {
       "properties": {
@@ -348,6 +348,21 @@
           "default": "",
           "title": "Brief",
           "type": "string"
+        },
+        "sources": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sources"
         },
         "voice_name": {
           "default": "",

@@ -59,6 +59,23 @@ def _size(n: int) -> str:
     return f"{n} B" if n < 1024 else f"{n / 1024:.0f} KB" if n < 1024 * 1024 else f"{n / 1024 / 1024:.1f} MB"
 
 
+def in_workspace(path: str) -> Path | None:
+    """Where a path the model gave really points, when that is inside Odie's workspace; None when it points outside.
+    Relative paths start at the workspace, and links and ".." are followed first:
+    "notes/tides.txt" -> <workspace>/notes/tides.txt; "../secret.txt", "~/secret.txt", "/etc/hosts", a link that
+    leads out, or a path with a NUL byte in it (no file can have one) -> None."""
+    if "\x00" in path:
+        return None
+    ws = workspace().resolve()
+    given = Path(path).expanduser()
+    if not given.is_absolute():
+        given = ws / given
+    real = given.resolve()
+    if not real.is_relative_to(ws):
+        return None
+    return real
+
+
 def kind_of(ext: str) -> str:
     """How the chat treats a file, by its extension: "logo.svg" / "png" -> picture (shown), "mp4" -> video (played),
     "m4a" -> audio (played), "csv" / "pptx" / anything else -> file (a download card)."""
@@ -112,9 +129,8 @@ def make_file_tools() -> list[FunctionTool]:
         is shown under your reply, a video (mp4, webm, mov) or a sound (mp3, m4a, wav) plays there, anything else is
         a download card. `path` is inside the workspace: relative to it, or absolute."""
         ws = workspace().resolve()
-        p = Path(path).expanduser()
-        real = (p if p.is_absolute() else ws / p).resolve()
-        if not real.is_relative_to(ws):
+        real = in_workspace(path)
+        if real is None:
             return {"error": f"Only files in Odie's workspace ({ws}) can be attached."}
         if not real.is_file():
             return {"error": f"There's no file at {real.relative_to(ws)} in Odie's workspace ({ws}): save it there first."}

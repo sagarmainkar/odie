@@ -21,6 +21,7 @@ class Scripted(BaseLlm):
     """Calls save_note once, then replies "done". Records every request it receives."""
     seen: ClassVar[list] = []
     stall: ClassVar[bool] = False
+    room: ClassVar[int | None] = None
 
     async def generate_content_async(self, llm_request, stream: bool = False):
         Scripted.seen.append(llm_request)
@@ -39,7 +40,13 @@ async def _runner(tmp_path, monkeypatch):
     from odie.app import runner as runner_mod
     Scripted.seen = []
     Scripted.stall = False
-    monkeypatch.setattr(runner_mod, "model_for", lambda selection, thinking: Scripted(model="scripted"))
+    Scripted.room = None
+
+    def scripted_model(selection, thinking, room=None):
+        Scripted.room = room  # the reply room the focused turn asked for
+        return Scripted(model="scripted")
+
+    monkeypatch.setattr(runner_mod, "model_for", scripted_model)
     store = Store(tmp_path / "assistant.db")
     store.init_schema()
     r = runner_mod.OdieRunner(store)
@@ -154,3 +161,11 @@ async def test_a_follow_up_with_nothing_to_say_sends_nothing(isolated_settings, 
 
     assert reply == "done"
     assert len(Scripted.seen) == 2
+
+
+async def test_the_focused_turn_asks_for_the_writers_room(isolated_settings, tmp_path, monkeypatch):
+    from odie.agent.model import WRITER_REPLY_TOKENS
+    r = await _runner(tmp_path, monkeypatch)
+    await r.focused_turn("Write the page about tides.", INSTRUCTION, [])
+    await r.close()
+    assert Scripted.room == WRITER_REPLY_TOKENS

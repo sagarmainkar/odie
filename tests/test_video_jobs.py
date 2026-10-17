@@ -373,6 +373,23 @@ async def test_a_writer_that_breaks_is_a_plain_sentence(world, fast, monkeypatch
     assert chat.posts[0][0] == "The video about Attention didn't finish: something went wrong (see Odie's log)."
 
 
+async def test_the_writing_step_writes_brief_md_and_the_writer_gets_its_text(world, fast, monkeypatch):
+    asked = {}
+
+    async def stand_in_write(topic, minutes, brief, folder, turn, browser):
+        asked["brief"] = brief
+        asked["on_disk"] = (folder / "brief.md").read_text(encoding="utf-8")
+        return writer.Written(title="Tides", narration=["One.", "Two."], body="<div>x</div>")
+
+    monkeypatch.setattr(jobs.writer, "write", stand_in_write)
+    job = make_topic_job()
+    job.brief = "For Asha.\n\n## Source material\n\n### The user's message\n\nAsha's notes on tides: Goa 2.1 m."
+    await jobs.run(job, browser=object(), turn="the turn")
+    assert asked["on_disk"] == job.brief + "\n" and asked["brief"] == job.brief
+    assert (job.folder / "brief.md").read_text(encoding="utf-8") == job.brief + "\n"  # kept, for revisions later
+    assert "brief" not in read_status(job)
+
+
 async def test_job_json_keeps_the_topic_and_minutes_but_not_the_brief(world):
     job = make_topic_job()
     jobs.write_job(job, "writing")
