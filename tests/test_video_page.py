@@ -2,7 +2,12 @@
 of the model's page, and a page that reaches for the network is refused with the reason."""
 import pytest
 
+from odie.browser import RENDER_ARGS, find
+from odie.browser.engine import Browser
 from odie.video import page
+
+BIN = find.installed()
+needs_browser = pytest.mark.skipif(BIN is None, reason="no Chrome, Edge, Chromium or Brave here")
 
 
 def test_assembly_inlines_the_kit_and_the_timings():
@@ -124,3 +129,54 @@ def test_the_credits_go_after_the_pictures_and_before_the_page_so_the_page_ends_
     assert html.index(staple) < html.index(credits) < html.index("<div id=page></div>")
     assert page.assemble("<div id=page></div>", timings, staple) == page.assemble("<div id=page></div>", timings,
                                                                                   staple, "")
+
+
+# ---- The check reads back the sound cues the page placed with Video.sounds ----
+
+async def checked_with_cues(body, narration, tmp_path) -> page.CheckResult:
+    b = Browser(tmp_path / "p", BIN, extra_args=RENDER_ARGS)
+    try:
+        return await page.check_with_cues(body, narration, b)
+    finally:
+        await b.close()
+
+
+@needs_browser
+async def test_the_check_returns_the_cues_the_page_placed(tmp_path):
+    body = ('<script>Video.scenes([{draw(t, s) {}}, {draw(t, s) {}}]);\n'
+            'Video.sounds([{scene: 1, at: 0, name: "rain", seconds: 4}, {scene: 2, beat: 0, name: "whoosh", '
+            'gain: 0.5}]);</script>')
+    result = await checked_with_cues(body, ["word " * 10, "word " * 10], tmp_path)
+    assert result == page.CheckResult(problem=None, cues=[{"scene": 1, "at": 0, "name": "rain", "seconds": 4},
+                                                          {"scene": 2, "beat": 0, "name": "whoosh", "gain": 0.5}])
+
+
+@needs_browser
+async def test_a_page_without_cues_checks_with_none(tmp_path):
+    # Review Focus 5: no Video.sounds call -> no cues
+    body = "<script>Video.scenes([{draw(t, s) {}}]);</script>"
+    assert await checked_with_cues(body, ["word " * 10], tmp_path) == page.CheckResult(problem=None, cues=[])
+
+
+@needs_browser
+async def test_a_page_whose_video_sounds_throws_is_told_the_kits_words(tmp_path):
+    bad = '{scene: 1, at: 0, name: "rain"}, {scene: 1, at: 1, name: "ting"}, {scene: 1, name: "tick"}'
+    after_scenes = f"<script>Video.scenes([{{draw(t, s) {{}}}}]); Video.sounds([{bad}]);</script>"
+    before_scenes = f"<script>Video.sounds([{bad}]); Video.scenes([{{draw(t, s) {{}}}}]);</script>"
+    for body in (after_scenes, before_scenes):
+        result = await checked_with_cues(body, ["word " * 10], tmp_path)
+        assert result.problem is not None and "Video.sounds: item 3 has neither at nor beat" in result.problem, (
+            result.problem)
+        assert result.cues == []
+
+
+@needs_browser
+async def test_check_still_gives_just_the_problem(tmp_path):
+    body = '<script>Video.scenes([{draw(t, s) {}}]); Video.sounds([{scene: 1, at: 0, name: "rain"}]);</script>'
+    b = Browser(tmp_path / "p", BIN, extra_args=RENDER_ARGS)
+    try:
+        assert await page.check(body, ["word " * 10], b) is None
+        assert "2 scenes" in await page.check(body.replace("{draw(t, s) {}}", "{draw(){}}, {draw(){}}"),
+                                              ["word " * 10], b)
+    finally:
+        await b.close()

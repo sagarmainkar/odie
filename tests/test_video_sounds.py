@@ -128,3 +128,97 @@ def test_a_loop_joins_its_end_to_its_start_without_a_jump(name):
     steps_around = [abs(around[index + 1] - around[index]) for index in range(len(around) - 1) if index != WINDOW - 1]
     seam_step = abs(samples[0] - samples[-1])
     assert seam_step <= max(steps_around)
+
+
+# ---- Cues: the writer's Video.sounds([...]) list, checked against the narration before the video is accepted ----
+
+# Seven scenes. At 140 words a minute, 14 words are 6.0 s and 15 words 6.43 s; scene 3 is one phrase, scene 4 two.
+SEVEN = ["word " * 14, "word " * 15, "word " * 14, "word " * 7 + "| " + "word " * 7, "word " * 14, "word " * 14,
+         "word " * 14]
+
+
+def test_good_cues_have_no_problem():
+    cues = [
+        {"scene": 2, "at": 0, "name": "footsteps", "seconds": 20, "gain": 0.4},  # a loop longer than its scene is cut
+        {"scene": 4, "beat": 1, "name": "whoosh"},
+        {"scene": 2, "at": 6.4, "name": "ting", "gain": 0.6},  # just inside the 6.43 s scene
+        {"scene": 7, "beat": 0, "name": "applause-short"},
+    ]
+    assert sounds.cue_problem(cues, SEVEN) is None
+    assert sounds.cue_problem([], SEVEN) is None
+
+
+def test_an_unknown_name_is_told_with_the_names_of_the_set():
+    cues = [{"scene": 1, "at": 0, "name": "rain"}, {"scene": 2, "at": 1, "name": "wooosh"}]
+    problem = sounds.cue_problem(cues, SEVEN)
+    names = ", ".join(sounds.SOUNDS)
+    assert problem == f"Video.sounds: cue 2: there is no sound called 'wooosh'; the sounds are: {names}."
+    assert "fast air sweep" not in problem  # the names, not the whole listing
+
+
+def test_a_scene_the_video_doesnt_have_is_told_with_the_count():
+    cues = [{"scene": 1, "at": 0, "name": "rain"}, {"scene": 9, "at": 1, "name": "ting"}]
+    problem = sounds.cue_problem(cues, SEVEN)
+    assert problem.startswith("Video.sounds: cue 2 names scene 9; this video has 7 scenes"), problem
+    one = sounds.cue_problem([{"scene": 2, "at": 0, "name": "ting"}], ["word " * 14])
+    assert "cue 1 names scene 2; this video has 1 scene" in one and "1 scenes" not in one
+
+
+def test_a_beat_the_scene_doesnt_have_is_told_with_its_phrases():
+    # Review Focus 1: scene 3 is one phrase, so only beat 0 is there
+    problem = sounds.cue_problem([{"scene": 3, "beat": 1, "name": "whoosh"}], SEVEN)
+    assert problem.startswith("Video.sounds: cue 1: scene 3 has 1 phrase (beats 0..0), so beat 1 isn't there"), problem
+    two = sounds.cue_problem([{"scene": 4, "beat": 2, "name": "whoosh"}], SEVEN)
+    assert "scene 4 has 2 phrases (beats 0..1), so beat 2 isn't there" in two
+
+
+def test_at_beyond_the_scenes_estimated_length_is_told():
+    cues = [{"scene": 1, "at": 0, "name": "rain"}, {"scene": 1, "at": 1, "name": "ting"},
+            {"scene": 1, "at": 2, "name": "tick"}, {"scene": 2, "at": 8.5, "name": "ting"}]
+    problem = sounds.cue_problem(cues, SEVEN)
+    assert problem.startswith("Video.sounds: cue 4 is at 8.5 s but scene 2 is about 6.4 s long"), problem
+
+
+def test_more_than_six_cues_in_a_scene_is_told_naming_the_scene():
+    # Review Focus 4: seven in one scene
+    cues = [{"scene": 2, "at": n * 0.5, "name": "tick"} for n in range(7)]
+    problem = sounds.cue_problem(cues, SEVEN)
+    assert problem.startswith("Video.sounds: scene 2 has 7 cues; at most 6"), problem
+    assert sounds.cue_problem(cues[:6], SEVEN) is None
+
+
+def test_more_than_forty_cues_in_all_is_told_with_the_limit():
+    # Review Focus 4: forty-one cues, six or fewer in every scene
+    cues = [{"scene": 1 + n % 7, "at": 0.1 * (n // 7), "name": "tick"} for n in range(41)]
+    problem = sounds.cue_problem(cues, SEVEN)
+    assert problem.startswith("Video.sounds: there are 41 cues; at most 40"), problem
+    assert sounds.cue_problem(cues[:40], SEVEN) is None
+
+
+def test_problems_come_in_order_name_scene_beat_at_then_the_counts():
+    unknown = {"scene": 9, "at": 99, "name": "wooosh"}  # wrong in every way: the name is told first
+    assert "no sound called 'wooosh'" in sounds.cue_problem([unknown], SEVEN)
+    no_scene = {"scene": 9, "beat": 5, "name": "ting"}
+    assert "names scene 9" in sounds.cue_problem([no_scene], SEVEN)
+    crowded = [{"scene": 2, "at": 0, "name": "tick"}] * 7 + [{"scene": 3, "at": 50, "name": "tick"}]
+    assert "is at 50 s" in sounds.cue_problem(crowded, SEVEN)  # a cue's own problem before the counts
+
+
+def test_a_cue_of_the_wrong_shape_is_told_too():
+    # the kit refuses these in the page; Odie checks the shape again, as the list comes back from the page
+    told = {
+        "not a dict": sounds.cue_problem(["whoosh"], SEVEN),
+        "no at or beat": sounds.cue_problem([{"scene": 1, "name": "ting"}], SEVEN),
+        "both": sounds.cue_problem([{"scene": 1, "at": 0, "beat": 0, "name": "ting"}], SEVEN),
+        "scene 0": sounds.cue_problem([{"scene": 0, "at": 0, "name": "ting"}], SEVEN),
+        "beat 1.5": sounds.cue_problem([{"scene": 1, "beat": 1.5, "name": "ting"}], SEVEN),
+        "gain 2": sounds.cue_problem([{"scene": 1, "at": 0, "name": "ting", "gain": 2}], SEVEN),
+        "seconds 0": sounds.cue_problem([{"scene": 1, "at": 0, "name": "rain", "seconds": 0}], SEVEN),
+        "name 5": sounds.cue_problem([{"scene": 1, "at": 0, "name": 5}], SEVEN),
+        "a true scene": sounds.cue_problem([{"scene": True, "at": 0, "name": "ting"}], SEVEN),
+        "volume": sounds.cue_problem([{"scene": 1, "at": 0, "name": "ting", "volume": 0.5}], SEVEN),
+    }
+    for case, problem in told.items():
+        assert problem is not None and problem.startswith("Video.sounds: cue 1 "), (case, problem)
+    assert "neither at nor beat" in told["no at or beat"] and "both at and beat" in told["both"]
+    assert "gain" in told["gain 2"] and "volume" in told["volume"]

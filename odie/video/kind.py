@@ -11,7 +11,8 @@ segment files, <slug>.mp4 and job.json.
 job.data carries, from make_video: "given" ({"images": [...], "clips": [...]}, the chat's lines) and "private" (the
 signed-in sites the asking chat had read); from the writing step: "assets" (each prepared one's name, kind, words,
 credit, size, length and file; never its data), "dropped" (the lines the writer was told about the ones that couldn't
-be used), "narration" (one string per scene) and "body" (the page)."""
+be used), "narration" (one string per scene), "body" (the page) and "cues" (the sound cues the page placed with
+Video.sounds, as odie.video.page.CheckResult gives them; [] when none). job.json never holds any of these."""
 from pathlib import Path
 
 from odie import voice
@@ -79,7 +80,7 @@ def assets_from(job: jobs.Job) -> list[assets.Asset]:
 
 async def write(job: jobs.Job, turn, browser) -> None:
     """The writing step: the pictures and clips first (so the writer is told what it has, by name), then the video
-    writer's focused turn, then the title, narration and page onto the job."""
+    writer's focused turn, then the title, narration, page and sound cues onto the job."""
     keep_lines_in_brief(job)
     gathered, dropped = await gather_assets(job)
     job.data["assets"] = [assets.as_record(asset) for asset in gathered]
@@ -91,6 +92,7 @@ async def write(job: jobs.Job, turn, browser) -> None:
     job.title = jobs.title_after_writing(written.title, job)
     job.data["narration"] = written.narration
     job.data["body"] = written.body
+    job.data["cues"] = written.cues
 
 
 async def make_video(job: jobs.Job, browser, transport) -> Path:

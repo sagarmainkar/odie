@@ -5,17 +5,19 @@ worked example, the style) and one tool, submit_video, which takes the title, th
 once. Every page sent is kept in the job's folder (pages/page-1.html, page-2.html, …), then checked: its size, the
 narration, and the page drawn in a browser. A problem goes back to the writer to fix. An accepted video, a third
 refusal or a browser that fails ends the turn there and then, with no more model calls. A writer that stops without
-any of those is nudged once, in the same session. The turn ends with the accepted video (Written) or WriterFailed."""
+any of those is nudged once, in the same session. The turn ends with the accepted video (Written) or WriterFailed.
+The sound cues the page places (Video.sounds([...])) are read back by the page check, judged against the narration
+(odie.video.sounds.cue_problem) and kept on the accepted video; the submit tool itself takes no cues."""
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from odie.browser.engine import BrowserError, BrowserTimeout
 from odie.making import writer as harness
 from odie.making.chat import text_or_empty
 from odie.video import page as video_page
-from odie.video import timeline
+from odie.video import sounds, timeline
 from odie.video.limits import narration_problem, page_problem
 
 INSTRUCTION = Path(__file__).with_name("writer.md").read_text(encoding="utf-8")
@@ -46,16 +48,20 @@ SUBMIT_FIELDS = {"title": str, "narration": list[str], "page": str}
 
 @dataclass
 class Written:
-    """The accepted video: its title, one string of narration per scene, and the page body that draws them."""
+    """The accepted video: its title, one string of narration per scene, the page body that draws them, and the sound
+    cues the page placed (Video.sounds, as odie.video.page.CheckResult gives them; [] when it placed none)."""
     title: str
     narration: list[str]
     body: str
+    cues: list[dict] = field(default_factory=list)
 
 
 @dataclass(kw_only=True)
 class Desk(harness.Desk):
-    """The shared desk (odie.making.writer.Desk), plus where this video's submitted pages are kept."""
+    """The shared desk (odie.making.writer.Desk), plus where this video's submitted pages are kept and the sound cues
+    the last checked page placed (what an accepted video keeps)."""
     pages: Path
+    cues: list[dict] = field(default_factory=list)
 
 
 def next_page_name(folder: Path) -> str:
@@ -193,55 +199,74 @@ def unknown_name_problem(body: str, assets_script: str) -> str | None:
     return None
 
 
-async def submission_problem(narration, body: str, browser, assets_script: str = "") -> str | None:
-    """Decides whether a video can be accepted: the first problem as words to fix, or None. In this order: a page over
-    300 KB -> the limit; narration that isn't a list of strings -> NOT_A_LIST; a narration problem (["Hi.", "  "] ->
-    scene 2 has no words); a picture or clip the video doesn't have (s.photo("img9") with img1…img8 -> "There is no
-    img9: …", see unknown_name_problem); until here nothing is drawn. Then the page drawn in the browser (a draw that
-    throws -> "The page threw in scene 2 at t = 1.2 s: …"; a frame that never finishes -> the HANG wording). The
-    worked example with two narration strings -> None. The page is drawn with the video's pictures and clips
-    (`assets_script`), so s.photo("img1") draws when img1 was gathered. A browser that fails in another way (it won't
-    start) is not the page's problem: its BrowserError goes up to the check."""
+async def checked_submission(narration, body: str, browser, assets_script: str = "") -> video_page.CheckResult:
+    """Decides whether a video can be accepted: the first problem as words to fix, or None, with the sound cues the
+    page placed. In this order: a page over 300 KB -> the limit; narration that isn't a list of strings ->
+    NOT_A_LIST; a narration problem (["Hi.", "  "] -> scene 2 has no words); a picture or clip the video doesn't have
+    (s.photo("img9") with img1…img8 -> "There is no img9: …", see unknown_name_problem); until here nothing is drawn.
+    Then the page drawn in the browser (a draw that throws -> "The page threw in scene 2 at t = 1.2 s: …"; a frame
+    that never finishes -> the HANG wording; a Video.sounds([...]) that throws -> the kit's words). Then the sound
+    cues it placed, against the narration (a cue on "wooosh" -> "Video.sounds: cue 1: there is no sound called
+    'wooosh'; …", see odie.video.sounds.cue_problem). The worked example with two narration strings -> no problem and
+    no cues. The page is drawn with the video's pictures and clips (`assets_script`), so s.photo("img1") draws when
+    img1 was gathered. A browser that fails in another way (it won't start) is not the page's problem: its
+    BrowserError goes up to the check."""
     problem = page_problem(body)
     if problem:
-        return problem
+        return video_page.CheckResult(problem=problem)
     if not is_list_of_strings(narration):
-        return NOT_A_LIST
+        return video_page.CheckResult(problem=NOT_A_LIST)
     problem = narration_problem(narration)
     if problem:
-        return problem
+        return video_page.CheckResult(problem=problem)
     problem = unknown_name_problem(body, assets_script)
     if problem:
-        return problem
+        return video_page.CheckResult(problem=problem)
     try:
-        return await video_page.check(body, narration, browser, assets_script)
+        drawn = await video_page.check_with_cues(body, narration, browser, assets_script)
     except BrowserTimeout as e:
-        return HANG + str(e)
+        return video_page.CheckResult(problem=HANG + str(e))
+    if drawn.problem:
+        return drawn
+    problem = sounds.cue_problem(drawn.cues, narration)
+    if problem:
+        return video_page.CheckResult(problem=problem, cues=drawn.cues)
+    return drawn
+
+
+async def submission_problem(narration, body: str, browser, assets_script: str = "") -> str | None:
+    """Decides whether a video can be accepted, as checked_submission does, without the cues: the first problem as
+    words to fix ("The page threw in scene 2 at t = 1.2 s: …"), or None (the worked example)."""
+    result = await checked_submission(narration, body, browser, assets_script)
+    return result.problem
 
 
 def tools_for(desk: Desk, browser, assets_script: str = "") -> list:
     """The writer's one tool, submit_video (title, narration, page), built by the shared harness on `desk`. Its check
-    keeps the page under desk.pages first, then judges it (submission_problem, drawn with the video's pictures and
-    clips, `assets_script`); a browser that fails is no refusal:
-    the job ends with the browser's own words. Accepting makes the Written video, the title falling back to the
-    topic."""
+    keeps the page under desk.pages first, then judges it (checked_submission, drawn with the video's pictures and
+    clips, `assets_script`) and puts the sound cues it placed on the desk; a browser that fails is no refusal:
+    the job ends with the browser's own words. Accepting makes the Written video with those cues (the harness accepts
+    right after the check that passed), the title falling back to the topic."""
 
     async def check(fields: dict) -> str | None:
         body = text_or_empty(fields["page"])
         keep_page(desk.pages, body)
         narration = narration_as_given(fields["narration"])
         try:
-            return await submission_problem(narration, body, browser, assets_script)
+            result = await checked_submission(narration, body, browser, assets_script)
         except BrowserError as e:
             words = str(e).strip()
             if not words:
                 words = BROWSER_FAILED
             raise harness.CantCheck(words) from e
+        desk.cues = result.cues
+        return result.problem
 
     def accept(fields: dict) -> Written:
         title = harness.title_given(fields["title"], desk.topic)
         narration = list(narration_as_given(fields["narration"]))
-        return Written(title=title, narration=narration, body=text_or_empty(fields["page"]))
+        cues = list(desk.cues)
+        return Written(title=title, narration=narration, body=text_or_empty(fields["page"]), cues=cues)
 
     return [harness.submit_tool(desk, "submit_video", SUBMIT_DOC, SUBMIT_FIELDS, check, accept)]
 

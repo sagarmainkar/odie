@@ -328,6 +328,39 @@ async def test_a_job_with_a_topic_writes_its_page_then_renders_it(world, fast, m
     assert (job.folder / "attention.mp4").exists()
 
 
+async def test_the_writers_sound_cues_ride_in_job_data_and_never_in_job_json(world, fast, monkeypatch):
+    cues = [{"scene": 1, "at": 0, "name": "rain", "seconds": 4}, {"scene": 2, "beat": 0, "name": "whoosh"}]
+    seen = {}
+
+    async def stand_in_write(topic, minutes, brief, folder, turn, browser, listing="", assets_script=""):
+        return writer.Written(title="Tides", narration=["One.", "Two."], body="<div>x</div>", cues=cues)
+
+    real_write_job = jobs.write_job
+
+    def recording(job, status, error=""):
+        real_write_job(job, status, error)
+        seen[status] = (job.folder / "job.json").read_text()
+
+    monkeypatch.setattr(kind.writer, "write", stand_in_write)
+    monkeypatch.setattr(jobs, "write_job", recording)
+    job = make_topic_job()
+    await jobs.run(job, browser=object(), turn="the turn")
+    assert job.data["cues"] == cues
+    assert seen.keys() >= {"making", "done"}
+    for text in seen.values():
+        assert "cues" not in json.loads(text) and "whoosh" not in text
+
+
+async def test_a_job_written_without_cues_carries_an_empty_list(world, fast, monkeypatch):
+    async def stand_in_write(topic, minutes, brief, folder, turn, browser, listing="", assets_script=""):
+        return writer.Written(title="Tides", narration=["One."], body="<div>x</div>")
+
+    monkeypatch.setattr(kind.writer, "write", stand_in_write)
+    job = make_topic_job()
+    await jobs.run(job, browser=object(), turn="the turn")
+    assert job.data["cues"] == []
+
+
 async def test_the_writer_uses_the_runners_focused_turn_by_default(world, fast, monkeypatch):
     chat, _pushes, _store = world
     chat.focused_turn = object()

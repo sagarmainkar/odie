@@ -3,8 +3,8 @@ ends with an accepted narration and page, or a WriterFailed that says why.
 
 Most tests use a stand-in for runner.focused_turn: a plain object that records what it was handed and calls the tool
 by name, as a model would, following a script per test, then asks the follow-up once (the nudge), as focused_turn
-does. page.check is a recorder where no browser is needed. Two tests run the real focused turn through ADK with a
-stand-in model (an ADK BaseLlm), and one draws the worked example in a real browser."""
+does. page.check_with_cues is a recorder where no browser is needed. Two tests run the real focused turn through
+ADK with a stand-in model (an ADK BaseLlm), and one draws the worked example in a real browser."""
 import ast
 import json
 import logging
@@ -89,19 +89,20 @@ async def submits(turn):
 
 @pytest.fixture
 def checks(monkeypatch):
-    """page.check replaced by a recorder: it answers with the next problem from `checks["problems"]` (None, page fine,
-    once they run out) and records every (body, narration, browser) it was asked about, and in "scripts" the
-    pictures' staple each was drawn with."""
-    record = {"problems": [], "calls": [], "scripts": []}
+    """page.check_with_cues replaced by a recorder: it answers with the next problem from `checks["problems"]` (None,
+    page fine, once they run out) and the sound cues in `checks["cues"]` (none unless a test sets them), and records
+    every (body, narration, browser) it was asked about, and in "scripts" the pictures' staple each was drawn with."""
+    record = {"problems": [], "calls": [], "scripts": [], "cues": []}
 
     async def recorded(body, narration, browser, assets_script=""):
         record["calls"].append((body, list(narration), browser))
         record["scripts"].append(assets_script)
+        problem = None
         if record["problems"]:
-            return record["problems"].pop(0)
-        return None
+            problem = record["problems"].pop(0)
+        return page.CheckResult(problem=problem, cues=list(record["cues"]))
 
-    monkeypatch.setattr(page, "check", recorded)
+    monkeypatch.setattr(page, "check_with_cues", recorded)
     return record
 
 
@@ -310,9 +311,9 @@ async def test_a_hang_is_a_rejection_told_in_words(tmp_path, monkeypatch):
     async def check(body, narration, browser, assets_script=""):
         if failures:
             raise failures.pop(0)
-        return None
+        return page.CheckResult(problem=None)
 
-    monkeypatch.setattr(page, "check", check)
+    monkeypatch.setattr(page, "check_with_cues", check)
 
     async def script(turn):
         await turn.submit()
@@ -330,7 +331,7 @@ async def test_a_browser_that_fails_ends_the_job_with_its_own_words_and_is_no_re
     async def check(body, narration, browser, assets_script=""):
         raise BrowserError("The browser didn't start.")
 
-    monkeypatch.setattr(page, "check", check)
+    monkeypatch.setattr(page, "check_with_cues", check)
     turn = Turn(submits, after_nudge=submits)
     with pytest.raises(harness.WriterFailed) as failed:
         await writer.write("Attention", 2, "", tmp_path / "job", turn, BROWSER)
@@ -338,6 +339,39 @@ async def test_a_browser_that_fails_ends_the_job_with_its_own_words_and_is_no_re
     assert turn.said == [{"error": "The browser didn't start."}]
     assert turn.ended == [True]  # the writer can't fix a browser: the turn ends
     assert turn.nudge is None
+
+
+async def test_the_cues_the_page_placed_reach_the_written_video(tmp_path, checks):
+    cues = [{"scene": 1, "at": 0, "name": "rain", "seconds": 3}, {"scene": 2, "beat": 0, "name": "whoosh"}]
+    checks["cues"] = cues
+    written = await writer.write("Attention", 2, "", tmp_path / "job", Turn(submits), BROWSER)
+    assert written == writer.Written(title="How attention works", narration=NARRATION, body=SAMPLE, cues=cues)
+
+
+async def test_a_bad_cue_is_a_refusal_and_the_fixed_pages_cues_are_kept(tmp_path, checks):
+    misnamed = [{"scene": 1, "at": 0, "name": "wooosh"}]
+    fixed = [{"scene": 1, "at": 0, "name": "whoosh"}]
+
+    async def script(turn):
+        checks["cues"] = misnamed
+        await turn.submit()
+        checks["cues"] = fixed
+        await turn.submit()
+
+    turn = Turn(script)
+    written = await writer.write("Attention", 2, "", tmp_path / "job", turn, BROWSER)
+    assert turn.said[0]["error"].startswith("Video.sounds: cue 1: there is no sound called 'wooosh'; the sounds "
+                                            "are: whoosh, click"), turn.said[0]
+    assert turn.ended == [False, True]
+    assert written.cues == fixed
+
+
+async def test_a_cue_past_its_scene_is_refused_by_the_submission_check(checks):
+    checks["cues"] = [{"scene": 1, "at": 30, "name": "ting"}]
+    problem = await writer.submission_problem(NARRATION, SAMPLE, BROWSER)
+    assert problem.startswith("Video.sounds: cue 1 is at 30 s but scene 1 is about 4.3 s long"), problem
+    checks["cues"] = []
+    assert await writer.submission_problem(NARRATION, SAMPLE, BROWSER) is None
 
 
 async def test_a_null_title_falls_back_to_the_topic(tmp_path, checks):

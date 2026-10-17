@@ -1,10 +1,11 @@
 """A video page, put together: the kit (KaTeX and its fonts, three.js, video.js, the map's data and map.js) and the
 scene timings inlined ahead of the model's page, so the sealed render tab needs nothing from the network. Also checks a
-page before the render."""
+page before the render, and reads back the sound cues it placed."""
 import base64
 import functools
 import json
 import re
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from odie.browser.engine import BrowserError, BrowserTimeout
@@ -220,22 +221,35 @@ def first_problem(scene_count: int | None, narration_count: int, load_errors: li
     return None
 
 
-async def check(body: str, narration: list[str], browser, assets_script: str = "") -> str | None:
+@dataclass
+class CheckResult:
+    """What the page check found: the first problem as a paragraph to act on (None when the page is fine), and the
+    sound cues the page placed with Video.sounds([...]), as Video.soundCues() gives them back: a list of
+    {"scene": 2, "at": 1.5 or "beat": 1, "name": "whoosh", "seconds"?: 6, "gain"?: 0.4}, each with only the keys the
+    writer gave. [] when the page placed none, and whenever there is a problem (they aren't read then)."""
+    problem: str | None
+    cues: list[dict] = field(default_factory=list)
+
+
+async def check_with_cues(body: str, narration: list[str], browser, assets_script: str = "") -> CheckResult:
     """Loads the page in a sealed 1920x1080 tab with estimated timings and the video's pictures and clips
     (`assets_script`, as the render will have them) and draws three moments of every scene, so the chat turn hears
-    about a broken page now and not after minutes of rendering. None when the page is fine, else the first problem as
-    a paragraph to act on (see first_problem). A page that reaches for the network is a problem too."""
+    about a broken page now and not after minutes of rendering; then reads back the sound cues it placed. The problem
+    is None when the page is fine, else the first one as a paragraph to act on (see first_problem). A page that
+    reaches for the network is a problem too, and so is one whose Video.sounds([...]) threw: the kit's own words
+    ("Video.sounds: item 3 has neither at nor beat; …") come back as an error while loading. Whether the cues fit the
+    narration is odie.video.sounds.cue_problem's to say."""
     timings = estimated_timings(narration)
     try:
         html = assemble(body, timings, assets_script)
     except ValueError as e:
-        return str(e)
+        return CheckResult(problem=str(e))
     async with browser.sealed_page(html, 1920, 1080) as tab:
         load_errors = list(tab.errors)
         scene_count = await tab.eval("window.__sceneCount === undefined ? null : window.__sceneCount")
         problem = first_problem(scene_count, len(narration), load_errors, [])
         if problem:
-            return problem
+            return CheckResult(problem=problem)
         draw_errors = []
         for number, seconds in enumerate(probe_times(timings)):
             error = await _draw_error(tab, seconds)
@@ -244,7 +258,18 @@ async def check(body: str, narration: list[str], browser, assets_script: str = "
                 t = round(seconds - timings["starts"][scene_index], 3)  # draw's t: seconds into the scene
                 draw_errors.append((scene_index + 1, t, error))
                 break
-        return first_problem(scene_count, len(narration), load_errors, draw_errors)
+        problem = first_problem(scene_count, len(narration), load_errors, draw_errors)
+        if problem:
+            return CheckResult(problem=problem)
+        cues = await tab.eval("Video.soundCues()")
+        return CheckResult(problem=None, cues=cues)
+
+
+async def check(body: str, narration: list[str], browser, assets_script: str = "") -> str | None:
+    """The page check without the sound cues (see check_with_cues): None when the page is fine, else the first
+    problem as a paragraph to act on."""
+    result = await check_with_cues(body, narration, browser, assets_script)
+    return result.problem
 
 
 async def _draw_error(tab, seconds: float) -> str | None:
