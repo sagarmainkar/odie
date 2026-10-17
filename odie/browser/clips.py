@@ -25,18 +25,23 @@ def search_url(key: str, query: str) -> str:
     return f"https://pixabay.com/videos/search/{q}/"
 
 
+NAME_MAX = 60  # a maker's name is free text a stranger chose, and it's copied into make_video's lines and credits
+
+
 def _clip(address: str, page: str, seconds: float | None, credit: str, width: int, height: int, title: str,
-          tags: str) -> dict:
-    """One clip. `tags` (its description and keywords) is only for the relevance check, never shown."""
+          tags: str, approx: bool) -> dict:
+    """One clip. `tags` (its description and keywords) is only for the relevance check, never shown; `approx` says the
+    size was worked out (Pixabay) rather than read from the page (Pexels)."""
     return {"address": address, "page": page, "seconds": seconds, "credit": credit, "width": width, "height": height,
-            "title": " ".join(title.split())[:140], "tags": tags}
+            "title": " ".join(title.split())[:140], "tags": tags, "approx": approx}
 
 
 def _name(text: str) -> str:
-    """A maker's name as the page has it, with invisible marks dropped and spaces tidied.
+    """A maker's name as the page has it, with invisible marks dropped, spaces tidied and at most 60 characters.
     Example: "Ahmed" with an invisible Arabic letter mark after it (Pexels has one) -> "Ahmed"."""
     visible = "".join(ch for ch in text if unicodedata.category(ch) != "Cf")
-    return " ".join(visible.split())
+    tidy = " ".join(visible.split())
+    return tidy[:NAME_MAX].strip()
 
 
 # ── Pexels: the page's own data (Next.js __NEXT_DATA__): props.pageProps.initialData.data, one entry per video ──
@@ -90,7 +95,7 @@ def pexels(page_html: str) -> list[dict]:
         tag_names = ", ".join(str(t.get("name") or "") for t in a.get("tags") or [])
         tags = f"{a.get('description') or ''} {tag_names}"
         out.append(_clip(f["link"], page, seconds, credit, int(f.get("width") or 0), int(f.get("height") or 0),
-                         str(a.get("title") or ""), tags))
+                         str(a.get("title") or ""), tags, approx=False))
     return out
 
 
@@ -160,7 +165,7 @@ def pixabay(page_html: str) -> list[dict]:
         credit = f"Video by {name} on Pixabay" if name else "Pixabay"
         tags = f"{v.get('name') or ''}, {v.get('description') or ''}"
         out.append(_clip(file, "https://pixabay.com" + path, _seconds(str(v.get("duration") or "")), credit, w, h,
-                         str(v.get("name") or ""), tags))
+                         str(v.get("name") or ""), tags, approx=True))
     return out
 
 
@@ -218,16 +223,20 @@ async def find(browser, query: str, count: int = 4) -> dict:
 
 
 def size_text(clip: dict) -> str:
-    """"1280x720", or "" when the size isn't known (an old Pixabay upload)."""
+    """The clip's size as the model reads it: exact when the page gave it, "~" in front when it was worked out.
+    Example: a Pexels file -> "720x1280"; a Pixabay one -> "~1280x720"; an old Pixabay upload (not known) -> ""."""
     if not clip["width"] or not clip["height"]:
         return ""
-    return f"{clip['width']}x{clip['height']}"
+    size = f"{clip['width']}x{clip['height']}"
+    if clip["approx"]:
+        return "~" + size
+    return size
 
 
 def find_text(got: dict) -> str:
     lines = []
     if got["clips"]:
-        lines.append("Stock clips (Pexels, Pixabay: free to use; the file is HD, its length in seconds):")
+        lines.append("Stock clips (Pexels, Pixabay: free to use; length in seconds; a size with ~ is approximate):")
         for c in got["clips"]:
             parts = [c["address"], c["title"]]
             if c["seconds"]:

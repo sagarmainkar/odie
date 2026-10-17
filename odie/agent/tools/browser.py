@@ -405,9 +405,7 @@ def make_browser_tools(store, browser_for: Callable[[], object] | None = None) -
         if not q:
             return {"error": "Say what the clips should show."}
         got = await clips.find(get(), q, max(1, min(int(count), 8)))
-        found = [{"address": c["address"], "seconds": c["seconds"], "size": clips.size_text(c), "credit": c["credit"],
-                  "page": c["page"]} for c in got["clips"]]
-        return {"result": clips.find_text(got), "clips": found}
+        return {"result": clips.find_text(got)}
 
     return [FunctionTool(browser_open, require_confirmation=guard.for_url(store)),
             FunctionTool(browser_click, require_confirmation=guard.for_click(store)),
