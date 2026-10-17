@@ -37,12 +37,14 @@ ALLOWED='(^\./LICENSE:[0-9]+:Copyright|^\./\.gitignore:|github\.com/[A-Za-z0-9-]
 cd "$DEST"
 hits=0
 # Font files (.woff2) are binary glyph data, not text a person wrote. A short private word can match some bytes
-# in them by chance (KaTeX's fonts did, 16 Oct 2026), so the word scan skips them.
+# in them by chance (KaTeX's fonts did, 16 Oct 2026), so the word scan skips them. The map's place names
+# (odie/video/kit/geo, Natural Earth, public domain) are skipped too: a town can share its name with a person
+# (a town in Madhya Pradesh did, 17 Oct 2026).
 report() {  # report <label> <grep -E pattern>: lists each line that matches and isn't allowed
   while IFS= read -r line; do
     [ -z "$line" ] && continue
     echo "$1  $line"; hits=$((hits + 1))
-  done < <(grep -rniE --exclude-dir=node_modules --exclude-dir=.venv --exclude-dir=.git --exclude='*.woff2' "$2" . 2>/dev/null | grep -vE "$ALLOWED" | cut -c1-160)
+  done < <(grep -rniE --exclude-dir=node_modules --exclude-dir=.venv --exclude-dir=.git --exclude-dir=geo --exclude='*.woff2' "$2" . 2>/dev/null | grep -vE "$ALLOWED" | cut -c1-160)
 }
 for p in "${PRIVATE[@]+"${PRIVATE[@]}"}"; do report "PERSONAL" "$p"; done
 for p in "${SHAPES[@]}"; do report "PERSONAL" "$p"; done
