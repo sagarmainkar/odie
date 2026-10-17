@@ -221,9 +221,10 @@ async def checked_submission(narration, body: str, browser, assets_script: str =
     NOT_A_LIST; a narration problem (["Hi.", "  "] -> scene 2 has no words); a picture or clip the video doesn't have
     (s.photo("img9") with img1…img8 -> "There is no img9: …", see unknown_name_problem); until here nothing is drawn.
     Then the page drawn in the browser (a draw that throws -> "The page threw in scene 2 at t = 1.2 s: …"; a frame
-    that never finishes -> the HANG wording; a Video.sounds([...]) that throws -> the kit's words). Then the sound
-    cues it placed, against the narration, as cue_problem (a cue on "wooosh" -> "Video.sounds: cue 1: there is no
-    sound called 'wooosh'; …", see odie.video.sounds.cue_problem). The worked example with two narration strings -> no
+    that never finishes -> the HANG wording; Video.sounds given something other than a list -> the kit's words). Then
+    the sound cues it placed, against the narration, as cue_problem, shape included (a cue on "wooosh" ->
+    "Video.sounds: cue 1: there is no sound called 'wooosh'; …"; {at: "1.5", …} -> "Video.sounds: cue 1 has at
+    '1.5'; …", see odie.video.sounds.cue_problem). The worked example with two narration strings -> no
     problem and no cues. The page is drawn with the video's pictures and clips (`assets_script`), so s.photo("img1")
     draws when img1 was gathered. A browser that fails in another way (it won't start) is not the page's problem: its
     BrowserError goes up to the check."""
@@ -259,17 +260,22 @@ async def submission_problem(narration, body: str, browser, assets_script: str =
 
 
 def refuses_for_cues(desk: Desk) -> bool:
-    """Decides whether cues that don't fit refuse the page, or are dropped: no page refused for its cues yet -> True
-    (the writer hears the words and can fix them); one already refused -> False (the cues that don't fit are dropped
-    and the page is accepted, so a mis-named sound never uses up the writer's tries and fails the video)."""
-    return desk.cue_refusals == 0
+    """Decides whether cues that don't fit refuse the page, or are dropped. They refuse it only when no page was refused
+    for its cues yet and this refusal wouldn't be the writer's last (the harness stops at MAX_REJECTIONS refusals);
+    otherwise the cues that don't fit are dropped and the page is accepted, so a sound never fails the video. No
+    refusals yet -> True (the writer hears the words and can fix them); one cue refusal already -> False; two page
+    refusals already, none for cues -> False (a third refusal would end the writing)."""
+    no_cue_refusal_yet = desk.cue_refusals == 0
+    tries_left_after_this = desk.rejected < harness.MAX_REJECTIONS - 1
+    return no_cue_refusal_yet and tries_left_after_this
 
 
 def cues_answer(desk: Desk, judged: Judged, narration: list[str]) -> str | None:
     """The tool's answer for a page that drew fine, from its cues, setting desk.cues to what an accepted page keeps.
-    Cues that fit -> None, all kept. The first time cues don't fit -> their problem (a refusal), desk.cues []. Any
-    later time -> None, desk.cues only the cues that pass (odie.video.sounds.good_cues), the drop logged: one good
-    cue and one on "wooosh" -> accepted with the good one."""
+    Cues that fit -> None, all kept. The first time cues don't fit, with tries to spare -> their problem (a refusal),
+    desk.cues []. Any later time, or on the writer's last try (see refuses_for_cues) -> None, desk.cues only the cues
+    that pass (odie.video.sounds.good_cues), the drop logged: one good cue and one on "wooosh" -> accepted with the
+    good one."""
     if judged.cue_problem is None:
         desk.cues = judged.cues
         return None

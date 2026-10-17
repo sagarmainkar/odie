@@ -302,7 +302,7 @@ async def test_a_credits_card_without_its_scene_in_the_timings_is_still_a_mismat
     assert any("The page has 2 scenes but the narration has 1" in error for error in errors), errors
 
 
-# ---- Sound cues: Video.sounds keeps the writer's list (after a shape check); Video.soundCues gives it back ----
+# ---- Sound cues: Video.sounds keeps the writer's list as given; Video.soundCues gives it back ----
 
 async def cues_of(body, expressions, tmp_path):
     """Loads `body` in a sealed tab with one 3 s scene's timings; the value of each expression and the page's errors."""
@@ -348,42 +348,32 @@ async def test_a_second_video_sounds_call_adds_to_the_first(tmp_path):
 
 
 @needs_browser
-async def test_a_bad_cue_throws_naming_its_item_and_keeps_none_of_the_list(tmp_path):
-    expressions = [
-        'Video.sounds([{scene: 1, at: 0, name: "rain"}, {scene: 1, at: 1, name: "ting"}, '
-        '{scene: 0, at: 1, name: "x"}])',
-        'Video.sounds([{scene: 1, name: "ting"}])',
-        'Video.sounds([{scene: 1, at: 0, beat: 0, name: "ting"}])',
-        'Video.sounds([{scene: 1, at: -1, name: "ting"}])',
-        'Video.sounds([{scene: 1, beat: 1.5, name: "ting"}])',
-        'Video.sounds([{scene: 1, at: 0, name: "rain", seconds: 0}])',
-        'Video.sounds([{scene: 1, at: 0, name: "ting", gain: 2}])',
-        'Video.sounds([{scene: 1, at: 0, name: 5}])',
-        'Video.sounds([{scene: 1, at: 0, name: "ting", volume: 0.5}])',
-        'Video.sounds(["ting"])',
-        'Video.sounds({scene: 1, at: 0, name: "ting"})',
-    ]
-    told = []
+async def test_video_sounds_keeps_a_mis_shaped_cue_as_given_for_odie_to_judge(tmp_path):
+    # The kit only keeps the list; Odie's shape_problem judges each cue, so a shape slip is told once, then dropped.
+    body = ("<script>" + ONE_SCENE + 'Video.sounds([{scene: 1, at: 0, name: "rain"}, {scene: 1, name: "ting"}, '
+            '{scene: 1, at: "1.5", name: "ting", volume: 0.3}, "ting", {scene: 1, at: 0, name: "x", gain: undefined}'
+            ']);</script>')
+    values, errors = await cues_of(body, [
+        "Video.soundCues()",
+        "(() => { const c = Video.soundCues(); c[2].at = 9; return Video.soundCues()[2].at; })()",
+    ], tmp_path)
+    assert errors == []
+    assert values[0] == [{"scene": 1, "at": 0, "name": "rain"}, {"scene": 1, "name": "ting"},
+                         {"scene": 1, "at": "1.5", "name": "ting", "volume": 0.3}, "ting",
+                         {"scene": 1, "at": 0, "name": "x"}]
+    assert values[1] == "1.5"  # changing the copy changes nothing kept
+
+
+@needs_browser
+async def test_video_sounds_given_something_other_than_a_list_throws(tmp_path):
     b = Browser(tmp_path / "p", BIN, extra_args=RENDER_ARGS)
     try:
         html = page.assemble("<script>" + ONE_SCENE + "</script>", {"starts": [0.0], "lengths": [3.0]})
         async with b.sealed_page(html, 1920, 1080) as p:
-            for expression in expressions:
-                with pytest.raises(BrowserError) as raised:
-                    await p.eval(expression)
-                told.append(str(raised.value))
+            with pytest.raises(BrowserError) as raised:
+                await p.eval('Video.sounds({scene: 1, at: 0, name: "ting"})')
             kept = await p.eval("Video.soundCues()")
     finally:
         await b.close()
-    assert "Error: Video.sounds: item 3 has scene 0; a scene is a whole number from 1" in told[0], told[0]
-    assert kept == []  # a list with a bad item is refused whole
-    assert "item 1 has neither at nor beat" in told[1]
-    assert "item 1 has both at and beat" in told[2]
-    assert "item 1 has at -1" in told[3]
-    assert "item 1 has beat 1.5" in told[4]
-    assert "item 1 has seconds 0" in told[5]
-    assert "item 1 has gain 2" in told[6]
-    assert "item 1 has name 5" in told[7]
-    assert 'item 1 has a key "volume"' in told[8]
-    assert "item 1 isn't an object" in told[9]
-    assert "Video.sounds takes a list" in told[10]
+    assert "Video.sounds takes a list" in str(raised.value)
+    assert kept == []

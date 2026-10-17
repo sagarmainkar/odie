@@ -810,68 +810,22 @@
 
   // ---- Sound cues: placed by Video.sounds, read back by Odie (Video.soundCues); nothing here is drawn or played ----
 
-  const CUE_KEYS = ["scene", "name", "at", "beat", "seconds", "gain"];
-  const cues = [];  // every cue Video.sounds was given, in order, each a copy holding only the keys it was given
+  const cues = [];  // every item Video.sounds was given, in order, as given (a copy), right or wrong
 
-  // A cue's key and value as an error says them: ("gain", 2) -> "gain 2"; ("name", "ting") -> 'name "ting"'.
-  function keyAndValue(key, value) {
-    if (typeof value === "string") {
-      return `${key} ${JSON.stringify(value)}`;
+  // An item as it is kept and given back: an object copied with every key it was given (a key set to undefined
+  // left out, as JSON would); anything else as it is. Whether its shape is right is Odie's to judge
+  // (odie.video.sounds.shape_problem), so a slip is told once like any cue problem, then dropped.
+  // {scene: 1, at: 0, name: "rain", gain: undefined} -> {scene: 1, at: 0, name: "rain"};
+  // {scene: 1, at: "1.5", name: "ting", volume: 0.3} -> the same, copied; "ting" -> "ting"
+  function copyOfItem(item) {
+    if (Array.isArray(item)) {
+      return item.slice();
     }
-    return `${key} ${String(value)}`;
-  }
-
-  // Whether a cue's value is a number (not NaN or Infinity): 1.5 -> true; "1.5" or NaN -> false.
-  function isNumber(value) {
-    return typeof value === "number" && Number.isFinite(value);
-  }
-
-  // The first thing wrong with one cue's shape, as the words after "item 3 ", or null when it is fine. Only the
-  // shape: Odie checks the name, the scene, the beat and the time against the narration when the page is submitted.
-  // {scene: 2, beat: 1, name: "whoosh"} -> null; {scene: 0, at: 1, name: "ting"} -> "has scene 0; a scene is …"
-  function cueShapeProblem(item) {
-    if (item === null || typeof item !== "object" || Array.isArray(item)) {
-      return 'isn\'t an object like {scene: 2, at: 1.5, name: "whoosh"}';
+    if (item === null || typeof item !== "object") {
+      return item;
     }
-    for (const key of Object.keys(item)) {
-      if (!CUE_KEYS.includes(key)) {
-        return `has a key "${key}"; the keys are scene, name, at or beat, seconds and gain`;
-      }
-    }
-    if (!Number.isInteger(item.scene) || item.scene < 1) {
-      return `has ${keyAndValue("scene", item.scene)}; a scene is a whole number from 1 (the first)`;
-    }
-    if (typeof item.name !== "string") {
-      return `has ${keyAndValue("name", item.name)}; a name is a sound's name as text, like "whoosh"`;
-    }
-    const hasAt = item.at !== undefined;
-    const hasBeat = item.beat !== undefined;
-    if (hasAt && hasBeat) {
-      return "has both at and beat; give one: at (seconds into the scene) or beat (a phrase, from 0)";
-    }
-    if (!hasAt && !hasBeat) {
-      return "has neither at nor beat; give one: at (seconds into the scene) or beat (a phrase, from 0)";
-    }
-    if (hasAt && !(isNumber(item.at) && item.at >= 0)) {
-      return `has ${keyAndValue("at", item.at)}; at is seconds into the scene, 0 or more`;
-    }
-    if (hasBeat && !(Number.isInteger(item.beat) && item.beat >= 0)) {
-      return `has ${keyAndValue("beat", item.beat)}; a beat is a whole number from 0 (the scene's first phrase)`;
-    }
-    if (item.seconds !== undefined && !(isNumber(item.seconds) && item.seconds > 0)) {
-      return `has ${keyAndValue("seconds", item.seconds)}; seconds (how long a loop plays) is more than 0`;
-    }
-    if (item.gain !== undefined && !(isNumber(item.gain) && item.gain >= 0 && item.gain <= 1)) {
-      return `has ${keyAndValue("gain", item.gain)}; a gain is from 0 (silent) to 1 (full)`;
-    }
-    return null;
-  }
-
-  // A cue as it is kept: only the keys it was given, copied. {scene: 1, at: 0, name: "rain", gain: undefined}
-  // -> {scene: 1, at: 0, name: "rain"}
-  function copyOfCue(item) {
     const copy = {};
-    for (const key of CUE_KEYS) {
+    for (const key of Object.keys(item)) {
       if (item[key] !== undefined) {
         copy[key] = item[key];
       }
@@ -881,32 +835,24 @@
 
   // Places the video's sound effects; called once in the page, next to Video.scenes. Each cue: scene (from 1), name
   // (a sound in Odie's set), at (seconds into the scene) or beat (a phrase of the scene's narration, from 0), and
-  // optionally seconds (how long a loop plays) and gain (0..1). A second call adds to the first. A list with a bad
-  // item is refused whole, with an error naming the item (counted from 1):
+  // optionally seconds (how long a loop plays) and gain (0..1). A second call adds to the first. Every item is kept
+  // as given, right or wrong: Odie judges them when the page is submitted. Only something other than a list throws:
   // Video.sounds([{scene: 2, at: 0, name: "footsteps", seconds: 6, gain: 0.4}, {scene: 2, beat: 1, name: "whoosh"}])
-  // Video.sounds([{scene: 1, at: 0, name: "rain"}, {scene: 1, name: "ting"}])
-  //   -> Error("Video.sounds: item 2 has neither at nor beat; give one: …")
+  //   -> both kept; Video.sounds([{scene: 1, name: "ting"}]) -> kept (Odie tells "cue 1 has neither at nor beat")
+  // Video.sounds({scene: 1, at: 0, name: "rain"}) -> Error("Video.sounds takes a list: …")
   function sounds(list) {
     if (!Array.isArray(list)) {
       throw new Error('Video.sounds takes a list: Video.sounds([{scene: 1, at: 0, name: "rain"}, ...])');
     }
-    const checked = [];
-    for (let i = 0; i < list.length; i++) {
-      const problem = cueShapeProblem(list[i]);
-      if (problem) {
-        throw new Error(`Video.sounds: item ${i + 1} ${problem}`);
-      }
-      checked.push(copyOfCue(list[i]));
-    }
-    for (const cue of checked) {
-      cues.push(cue);
+    for (const item of list) {
+      cues.push(copyOfItem(item));
     }
   }
 
-  // The cues Video.sounds was given, in order, as copies (changing them changes nothing kept); [] when the page
+  // The items Video.sounds was given, in order, as copies (changing them changes nothing kept); [] when the page
   // placed none. Odie reads this once in the submit check.
   function soundCues() {
-    return cues.map(copyOfCue);
+    return cues.map(copyOfItem);
   }
 
   // Odie's own scenes after the writer's last (the credits card), registered before the page's script runs.

@@ -8,6 +8,7 @@ The writer places sounds in its page with Video.sounds([{scene: 2, at: 0, name: 
 submit check reads them back (odie.video.page.check_with_cues) and cue_problem judges them against the narration.
 Once the narration is spoken, resolve turns the cues into seconds from the video's start and mix lays the sounds under
 the narration with one ffmpeg command; the mixed WAV replaces the narration in the MP4."""
+import array
 import logging
 import math
 import shutil
@@ -113,8 +114,8 @@ def is_whole(value) -> bool:
 
 
 def shape_problem(number: int, cue) -> str | None:
-    """Decides whether cue `number` has the shape Video.sounds takes, as the kit checks it in the page (the list comes
-    back from the page, so it is checked again here): the first thing wrong, or None.
+    """Decides whether cue `number` has the shape Video.sounds takes (the kit keeps every item as given, so this is
+    the one place a cue's shape is judged): the first thing wrong, or None.
     {"scene": 2, "beat": 1, "name": "whoosh"} -> None; {"scene": 1, "name": "ting"} -> "cue 1 has neither at nor
     beat …"; {"scene": 1, "at": 0, "name": "ting", "gain": 2} -> "cue 1 has gain 2; …"."""
     where = f"Video.sounds: cue {number}"
@@ -302,9 +303,16 @@ def good_cues(cues: list, narration: list[str]) -> list[dict]:
 # ---- The mix: the cues as seconds from the video's start, laid under the narration with one ffmpeg command ----
 
 DEFAULT_GAIN = {"loop": 0.35, "hit": 0.6}  # a cue's gain when the writer gave none
-LOOP_DB = -18.0  # a loop at gain 1, under the narration's 0 dB
-HIT_DB = -10.0   # a hit at gain 1
+# How loud each kind plays at gain 1, as RMS in dBFS, whatever its file's own loudness (see level_db). A narration is
+# typically -20 to -25 dBFS RMS: a loop sits about 8 dB under a quiet voice, and a hit about level with it. Set by
+# ear: change these, not the files.
+LOOP_RMS_DBFS = -30.0  # measured over the loop's whole file
+HIT_RMS_DBFS = -22.0  # measured over the hit's loudest HIT_WINDOW_SECONDS
+HIT_WINDOW_SECONDS = 0.1  # the stretch of a hit its loudness is measured over: its attack, which is what is heard
+SILENT_DBFS = -96.0  # what a silent file measures (16-bit's floor), so the maths never takes the log of 0
 LIMIT = 0.891    # the limiter's ceiling (-1 dB), so the sum never clips
+FADE_SECONDS = 0.3  # a sound stopped short fades out over this long (at most a quarter of what it plays)
+LOOP_FADE_IN_SECONDS = 0.05  # a loop fades in over this long, so one starting mid-scene doesn't pop
 CODECS = {1: "pcm_u8", 2: "pcm_s16le", 3: "pcm_s24le", 4: "pcm_s32le"}  # a WAV's bytes a sample -> ffmpeg's codec
 
 
@@ -319,6 +327,7 @@ class Placed:
     kind: Literal["hit", "loop"]
     name: str
     frames: int  # the file's length in samples: the stretch a loop repeats
+    cut: bool = False  # a hit stopped before its file's end (at its scene's spoken end); a loop always fades out
 
 
 @dataclass(frozen=True)
@@ -408,10 +417,11 @@ def play_seconds(cue: dict, kind: str, file_seconds: float, room: float) -> floa
 def place(number: int, cue: dict, timings: dict, narrated_scenes: int) -> Placed | None:
     """Cue `number` as the mix plays it, or None (with a log line) when it can't be played: a name not in the set, a
     scene or beat not among the narrated scenes, no room left (a hit at or past its scene's spoken end, a loop at or
-    past loop_end; the check only estimated the lengths), a gain of 0, or a file that is missing or isn't a WAV.
+    past loop_end; the check only estimated the lengths), a gain of 0, or a file that is missing, isn't a WAV or
+    can't be measured (loudness_dbfs: a 16-bit WAV only). A hit stopped before its file's end is marked cut.
     With scene 2 at 6.5 s, 6.0 s long, and scene 3 at 13.0 s: {"scene": 2, "at": 5.9, "name": "ting"} ->
-    Placed(start=12.4, seconds=0.1, kind="hit", …); {"scene": 2, "at": 1, "name": "crowd"} -> Placed(start=7.5,
-    seconds=5.5, kind="loop", …), through the breath to scene 3's start."""
+    Placed(start=12.4, seconds=0.1, kind="hit", cut=True, …); {"scene": 2, "at": 1, "name": "crowd"} ->
+    Placed(start=7.5, seconds=5.5, kind="loop", …), through the breath to scene 3's start."""
     name = cue["name"]
     sound = SOUNDS.get(name)
     if sound is None:
@@ -442,8 +452,15 @@ def place(number: int, cue: dict, timings: dict, narrated_scenes: int) -> Placed
         return None
     file_seconds = file.frames / file.rate
     seconds = play_seconds(cue, sound.kind, file_seconds, room)
-    return Placed(start=start, path=sound_path, seconds=seconds, gain=gain, kind=sound.kind, name=name,
-                  frames=file.frames)
+    cut = seconds < round(file_seconds, 3)
+    placed = Placed(start=start, path=sound_path, seconds=seconds, gain=gain, kind=sound.kind, name=name,
+                    frames=file.frames, cut=cut)
+    try:
+        loudness_dbfs(placed)  # measured now, and remembered for the mix
+    except (OSError, EOFError, wave.Error) as e:
+        log.info("video sound cue %d (%s) left out: its loudness can't be measured: %s", number, name, e)
+        return None
+    return placed
 
 
 def resolve(cues: list[dict], timings: dict, narrated_scenes: int | None = None) -> list[Placed]:
@@ -464,14 +481,70 @@ def resolve(cues: list[dict], timings: dict, narrated_scenes: int | None = None)
     return placed
 
 
+def wav_rms_dbfs(path: Path, window_seconds: float | None = None) -> float:
+    """How loud a 16-bit WAV is, as its RMS in dBFS (a full-scale square wave is 0): over the whole file, or, given
+    window_seconds, over its loudest stretch that long (the whole file when it is shorter). A silent file ->
+    SILENT_DBFS. rain.wav -> -14.3; footsteps.wav -> -26.1; ting.wav -> -17.4, and with 0.1 s -> -9.9."""
+    with wave.open(str(path), "rb") as file:
+        if file.getsampwidth() != 2:
+            raise wave.Error(f"{path.name} isn't 16-bit")
+        samples_a_second = file.getframerate() * file.getnchannels()
+        frames = file.readframes(file.getnframes())
+    samples = array.array("h")
+    samples.frombytes(frames)
+    squares = [sample * sample for sample in samples]
+    count = len(squares)
+    loudest = sum(squares)
+    if window_seconds is not None:
+        count = min(count, round(window_seconds * samples_a_second))
+        loudest = loudest_window_sum(squares, count)
+    if loudest == 0:
+        return SILENT_DBFS
+    rms = math.sqrt(loudest / count)
+    return 20 * math.log10(rms / 32768)
+
+
+def loudest_window_sum(squares: list[int], count: int) -> int:
+    """The largest sum of `count` squares in a row, slid one sample at a time: [1, 9, 4, 0] with 2 -> 13 (9 + 4)."""
+    running = sum(squares[:count])
+    loudest = running
+    for i in range(count, len(squares)):
+        running += squares[i] - squares[i - count]
+        if running > loudest:
+            loudest = running
+    return loudest
+
+
+measured: dict[tuple[Path, str], float] = {}  # (file, kind) -> its loudness in dBFS; the files don't change at run time
+
+
+def loudness_dbfs(placed: Placed) -> float:
+    """How loud a placed sound's file is, measured as its kind is heard, and remembered in `measured`. Decides the
+    measure by kind: a loop plays round and round, so the ear hears its average, the RMS of its whole file (footsteps
+    -> -26.1, rain -> -14.3); a hit is heard as its attack, so the RMS of its loudest HIT_WINDOW_SECONDS, which leaves
+    out the silent tail a whole-file measure would count against a long hit (ting -> -9.9, not its whole file's
+    -17.4)."""
+    key = (placed.path, placed.kind)
+    if key not in measured:
+        window = None
+        if placed.kind == "hit":
+            window = HIT_WINDOW_SECONDS
+        measured[key] = wav_rms_dbfs(placed.path, window)
+    return measured[key]
+
+
 def level_db(placed: Placed) -> float:
-    """How loud a placed sound plays against the narration's 0 dB: the kind's level at gain 1, lowered by the gain
-    (20·log10). A loop at gain 1 -> -18.0; a hit at gain 1 -> -10.0; a hit at 0.6 -> -14.44; a loop at 0.35 ->
-    -27.12."""
-    lowered = 20 * math.log10(placed.gain)
+    """How much a placed sound's file is raised or lowered in the mix (the narration stays at 0 dB): to its kind's
+    loudness at gain 1 (LOOP_RMS_DBFS or HIT_RMS_DBFS), from what its file measures (loudness_dbfs), then lowered by
+    the gain (20·log10). So sounds of a kind play equally loud at the same gain, a sparse file as loud as a dense
+    one. Footsteps (-26.1) at gain 1 -> -30 + 26.1 = -3.9; rain (-14.3) at gain 1 -> -15.7, at its default 0.35 ->
+    -15.7 - 9.12 = -24.9; a ting (-9.9) at gain 1 -> -12.1; a whoosh (-13.6) at its default 0.6 -> -22 + 13.6 -
+    4.44 = -12.8."""
+    target = HIT_RMS_DBFS
     if placed.kind == "loop":
-        return LOOP_DB + lowered
-    return HIT_DB + lowered
+        target = LOOP_RMS_DBFS
+    lowered = 20 * math.log10(placed.gain)
+    return target - loudness_dbfs(placed) + lowered
 
 
 def seconds_text(seconds: float) -> str:
@@ -481,29 +554,56 @@ def seconds_text(seconds: float) -> str:
 
 def placing_filters(placed: Placed, voice: WavFormat) -> str:
     """The filters every sound ends with: brought to the narration's rate and channels (so the narration itself is
-    never resampled and stays sample for sample as it was), delayed to its start, and set to its level. A hit at
-    1.0 s, gain 0.6, under a 24 kHz mono narration -> "aformat=sample_rates=24000:channel_layouts=1c,
-    adelay=1000:all=1,volume=-14.44dB"."""
+    never resampled and stays sample for sample as it was), delayed to its start, and set to its level (level_db). A
+    whoosh at 1.0 s, gain 0.6, under a 24 kHz mono narration -> "aformat=sample_rates=24000:channel_layouts=1c,
+    adelay=1000:all=1,volume=-12.82dB"."""
     delay_ms = round(placed.start * 1000)
     return (f"aformat=sample_rates={voice.rate}:channel_layouts={voice.channels}c,adelay={delay_ms}:all=1,"
             f"volume={level_db(placed):.2f}dB")
 
 
+def fade_out_seconds(seconds: float) -> float:
+    """How long a sound stopped short fades out, given how long it plays: FADE_SECONDS, or a quarter of what it plays
+    when that is shorter. 6.5 -> 0.3; 0.4 -> 0.1; a hit cut to 0.1 -> 0.025."""
+    quarter = seconds / 4
+    return round(min(FADE_SECONDS, quarter), 3)
+
+
+def fade_filters(placed: Placed) -> str:
+    """Decides which fades a placed sound gets, as filters to put after its trim (each ending in a comma), so nothing
+    stops in one sample with a click: a loop always fades in over LOOP_FADE_IN_SECONDS (it may start mid-scene) and
+    out over its last fade_out_seconds (it is always cut, at its seconds, the next scene's start or the narration's
+    end); a hit fades out only when it was cut at its scene's spoken end; a hit that plays whole gets none (it ends as
+    it was made). Rain for 6.5 s -> "afade=t=in:d=0.05,afade=t=out:st=6.2:d=0.3,"; a ting cut to 0.5 s ->
+    "afade=t=out:st=0.375:d=0.125,"; a whoosh played whole -> ""."""
+    if placed.kind == "hit" and not placed.cut:
+        return ""
+    fade = fade_out_seconds(placed.seconds)
+    fade_start = round(placed.seconds - fade, 3)
+    fade_out = f"afade=t=out:st={seconds_text(fade_start)}:d={seconds_text(fade)},"
+    if placed.kind == "hit":
+        return fade_out
+    fade_in = f"afade=t=in:d={seconds_text(LOOP_FADE_IN_SECONDS)},"
+    return fade_in + fade_out
+
+
 def loop_filter(placed: Placed, k: int, voice: WavFormat) -> str:
-    """Ffmpeg's filters for a loop, input k: its whole file repeated for ever, cut to its seconds, then placed. Rain
-    (176,400 samples) as input 2, from 2.0 s for 2 s at gain 0.35 -> "[2:a]aloop=loop=-1:size=176400,
-    atrim=duration=2.0,aformat=…,adelay=2000:all=1,volume=-27.12dB[a2]"."""
+    """Ffmpeg's filters for a loop, input k: its whole file repeated for ever, cut to its seconds, faded in and out
+    (fade_filters), then placed. Rain (176,400 samples) as input 2, from 2.0 s for 2 s at gain 0.35 ->
+    "[2:a]aloop=loop=-1:size=176400,atrim=duration=2.0,afade=t=in:d=0.05,afade=t=out:st=1.7:d=0.3,aformat=…,
+    adelay=2000:all=1,volume=-24.86dB[a2]"."""
     duration = seconds_text(placed.seconds)
-    return (f"[{k}:a]aloop=loop=-1:size={placed.frames},atrim=duration={duration},"
+    return (f"[{k}:a]aloop=loop=-1:size={placed.frames},atrim=duration={duration},{fade_filters(placed)}"
             f"{placing_filters(placed, voice)}[a{k}]")
 
 
 def hit_filter(placed: Placed, k: int, voice: WavFormat) -> str:
     """Ffmpeg's filters for a hit, input k: played once, cut to its seconds (its own length, or less at its scene's
-    end), then placed. A whoosh as input 1 at 1.0 s, gain 0.6 -> "[1:a]atrim=duration=0.8,aformat=…,
-    adelay=1000:all=1,volume=-14.44dB[a1]"."""
+    end, then faded out: fade_filters), then placed. A whoosh as input 1 at 1.0 s, gain 0.6 ->
+    "[1:a]atrim=duration=0.8,aformat=…,adelay=1000:all=1,volume=-12.82dB[a1]"; a ting cut to 0.5 s ->
+    "[1:a]atrim=duration=0.5,afade=t=out:st=0.375:d=0.125,aformat=…"."""
     duration = seconds_text(placed.seconds)
-    return f"[{k}:a]atrim=duration={duration},{placing_filters(placed, voice)}[a{k}]"
+    return f"[{k}:a]atrim=duration={duration},{fade_filters(placed)}{placing_filters(placed, voice)}[a{k}]"
 
 
 def sound_filter(placed: Placed, k: int, voice: WavFormat) -> str:

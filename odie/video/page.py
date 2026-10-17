@@ -236,9 +236,9 @@ async def check_with_cues(body: str, narration: list[str], browser, assets_scrip
     (`assets_script`, as the render will have them) and draws three moments of every scene, so the chat turn hears
     about a broken page now and not after minutes of rendering; then reads back the sound cues it placed. The problem
     is None when the page is fine, else the first one as a paragraph to act on (see first_problem). A page that
-    reaches for the network is a problem too, and so is one whose Video.sounds([...]) threw: the kit's own words
-    ("Video.sounds: item 3 has neither at nor beat; …") come back as an error while loading. Whether the cues fit the
-    narration is odie.video.sounds.cue_problem's to say."""
+    reaches for the network is a problem too, and so is one whose Video.sounds threw (given something other than a
+    list: "Video.sounds takes a list: …" comes back as an error while loading). The cues come back as the page gave
+    them, right or wrong: whether they fit, shape included, is odie.video.sounds.cue_problem's to say."""
     timings = estimated_timings(narration)
     try:
         html = assemble(body, timings, assets_script)

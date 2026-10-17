@@ -4,7 +4,7 @@ import pytest
 
 from odie.browser import RENDER_ARGS, find
 from odie.browser.engine import Browser
-from odie.video import page
+from odie.video import page, sounds
 
 BIN = find.installed()
 needs_browser = pytest.mark.skipif(BIN is None, reason="no Chrome, Edge, Chromium or Brave here")
@@ -160,14 +160,26 @@ async def test_a_page_without_cues_checks_with_none(tmp_path):
 
 @needs_browser
 async def test_a_page_whose_video_sounds_throws_is_told_the_kits_words(tmp_path):
-    bad = '{scene: 1, at: 0, name: "rain"}, {scene: 1, at: 1, name: "ting"}, {scene: 1, name: "tick"}'
-    after_scenes = f"<script>Video.scenes([{{draw(t, s) {{}}}}]); Video.sounds([{bad}]);</script>"
-    before_scenes = f"<script>Video.sounds([{bad}]); Video.scenes([{{draw(t, s) {{}}}}]);</script>"
+    not_a_list = '{scene: 1, at: 0, name: "rain"}'
+    after_scenes = f"<script>Video.scenes([{{draw(t, s) {{}}}}]); Video.sounds({not_a_list});</script>"
+    before_scenes = f"<script>Video.sounds({not_a_list}); Video.scenes([{{draw(t, s) {{}}}}]);</script>"
     for body in (after_scenes, before_scenes):
         result = await checked_with_cues(body, ["word " * 10], tmp_path)
-        assert result.problem is not None and "Video.sounds: item 3 has neither at nor beat" in result.problem, (
-            result.problem)
+        assert result.problem is not None and "Video.sounds takes a list" in result.problem, result.problem
         assert result.cues == []
+
+
+@needs_browser
+async def test_a_mis_shaped_cue_comes_back_as_a_cue_for_cue_problem_to_tell(tmp_path):
+    body = ('<script>Video.scenes([{draw(t, s) {}}]); Video.sounds([{scene: 1, at: 0, name: "rain"}, '
+            '{scene: 1, name: "tick", volume: 0.3}]);</script>')
+    narration = ["word " * 10]
+    result = await checked_with_cues(body, narration, tmp_path)
+    assert result.problem is None
+    assert result.cues == [{"scene": 1, "at": 0, "name": "rain"}, {"scene": 1, "name": "tick", "volume": 0.3}]
+    told = sounds.cue_problem(result.cues, narration)
+    assert told.startswith('Video.sounds: cue 2 has a key "volume"'), told
+    assert sounds.good_cues(result.cues, narration) == [{"scene": 1, "at": 0, "name": "rain"}]
 
 
 @needs_browser

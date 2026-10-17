@@ -424,6 +424,37 @@ async def test_page_problems_refuse_every_time_after_a_cue_refusal(tmp_path, che
     assert str(failed.value) == "I couldn't write a page that passed its check: second boom"
 
 
+async def test_a_cue_problem_on_the_last_try_is_dropped_not_refused(tmp_path, checks):
+    checks["problems"] = ["first boom", "second boom"]
+    checks["cues"] = [GOOD_CUE, BAD_CUE]
+
+    async def script(turn):
+        await turn.submit()
+        await turn.submit()
+        await turn.submit()
+
+    turn = Turn(script)
+    written = await writer.write("Attention", 2, "", tmp_path / "job", turn, BROWSER)
+    assert turn.said[0] == {"error": "first boom"}
+    assert turn.said[1] == {"error": "second boom"}
+    assert turn.said[2] == ACCEPTED  # the cue refusal would have been the third: the bad cue is dropped instead
+    assert written.cues == [GOOD_CUE]
+
+
+async def test_a_mis_shaped_cue_is_refused_once_then_dropped(tmp_path, checks):
+    checks["cues"] = [GOOD_CUE, {"scene": 1, "at": "1.5", "name": "ting"}]
+
+    async def script(turn):
+        await turn.submit()
+        await turn.submit()
+
+    turn = Turn(script)
+    written = await writer.write("Attention", 2, "", tmp_path / "job", turn, BROWSER)
+    assert turn.said[0]["error"].startswith("Video.sounds: cue 2 has at '1.5'; at is seconds"), turn.said[0]
+    assert turn.said[1] == ACCEPTED
+    assert written.cues == [GOOD_CUE]
+
+
 async def test_a_refused_page_keeps_no_cues_on_the_desk(checks):
     desk = writer.Desk(topic="T", pages=Path("unused"))
     judged = writer.Judged(problem=None, cue_problem="Video.sounds: cue 1: …", cues=[BAD_CUE])

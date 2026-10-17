@@ -339,15 +339,33 @@ def test_no_cues_place_nothing():
     assert sounds.resolve([], TIMINGS) == []
 
 
-def test_levels_follow_the_kind_and_the_gain():
-    def placed(kind, gain):
-        return sounds.Placed(start=0.0, path=sounds.path("rain"), seconds=1.0, gain=gain, kind=kind, name="rain",
+def test_a_files_loudness_is_its_rms_in_dbfs():
+    # Loops over the whole file; hits over their loudest 100 ms (their attack, not their silent tail).
+    assert round(sounds.wav_rms_dbfs(sounds.path("rain")), 1) == -14.3
+    assert round(sounds.wav_rms_dbfs(sounds.path("footsteps")), 1) == -26.1
+    assert round(sounds.wav_rms_dbfs(sounds.path("ting"), sounds.HIT_WINDOW_SECONDS), 1) == -9.9
+    assert round(sounds.wav_rms_dbfs(sounds.path("ting")), 1) == -17.4  # the whole ting, tail and all
+
+
+def test_a_silent_file_measures_at_the_floor(tmp_path):
+    silent = tmp_path / "silent.wav"
+    write_silence(silent, seconds=0.5)
+    assert sounds.wav_rms_dbfs(silent) == sounds.SILENT_DBFS
+    assert sounds.wav_rms_dbfs(silent, sounds.HIT_WINDOW_SECONDS) == sounds.SILENT_DBFS
+
+
+def test_levels_bring_each_file_to_its_kinds_loudness_then_follow_the_gain():
+    def placed(name, kind, gain):
+        return sounds.Placed(start=0.0, path=sounds.path(name), seconds=1.0, gain=gain, kind=kind, name=name,
                              frames=176400)
 
-    assert sounds.level_db(placed("loop", 1.0)) == -18.0
-    assert sounds.level_db(placed("hit", 1.0)) == -10.0
-    assert round(sounds.level_db(placed("hit", 0.6)), 2) == -14.44
-    assert round(sounds.level_db(placed("loop", 0.35)), 2) == -27.12
+    footsteps = sounds.level_db(placed("footsteps", "loop", 1.0))
+    rain = sounds.level_db(placed("rain", "loop", 1.0))
+    assert round(footsteps, 1) == -3.9  # -30 - (-26.1): the quiet file is raised
+    assert round(rain, 1) == -15.7  # -30 - (-14.3): the loud one lowered
+    assert round(sounds.level_db(placed("rain", "loop", 0.35)) - rain, 2) == -9.12  # the gain, 20·log10(0.35)
+    assert round(sounds.level_db(placed("ting", "hit", 1.0)), 1) == -12.1  # -22 - (-9.9), its loudest 100 ms
+    assert round(sounds.level_db(placed("whoosh", "hit", 0.6)), 1) == -12.8  # -22 - (-13.6) - 4.44
 
 
 def write_silence(path, seconds=4.0, rate=24000, channels=1):
@@ -387,14 +405,74 @@ def test_the_mix_command_is_one_ffmpeg_graph(tmp_path):
     command = sounds.mix_command(narration, placed, voice, tmp_path / "mix.wav")
     graph = command[command.index("-filter_complex") + 1]
     assert graph == (
-        "[1:a]atrim=duration=0.8,aformat=sample_rates=24000:channel_layouts=1c,adelay=1000:all=1,volume=-14.44dB[a1];"
-        "[2:a]aloop=loop=-1:size=176400,atrim=duration=2.0,aformat=sample_rates=24000:channel_layouts=1c,"
-        "adelay=2000:all=1,volume=-27.12dB[a2];"
+        "[1:a]atrim=duration=0.8,aformat=sample_rates=24000:channel_layouts=1c,adelay=1000:all=1,volume=-12.82dB[a1];"
+        "[2:a]aloop=loop=-1:size=176400,atrim=duration=2.0,afade=t=in:d=0.05,afade=t=out:st=1.7:d=0.3,"
+        "aformat=sample_rates=24000:channel_layouts=1c,adelay=2000:all=1,volume=-24.86dB[a2];"
         "[0:a][a1][a2]amix=inputs=3:normalize=0:duration=first,alimiter=limit=0.891:level=0:latency=1[out]")
     inputs = [command[i + 1] for i, word in enumerate(command) if word == "-i"]
     assert inputs == [str(narration), str(sounds.path("whoosh")), str(sounds.path("rain"))]
     assert command[-1] == str(tmp_path / "mix.wav")
     assert sounds.mix_command(narration, placed, voice, tmp_path / "mix.wav") == command
+
+
+def test_fades_go_on_every_loop_and_on_a_hit_only_when_it_is_cut():
+    def placed(kind, seconds, cut=False):
+        return sounds.Placed(start=0.0, path=sounds.path("ting"), seconds=seconds, gain=1.0, kind=kind, name="ting",
+                             frames=66150, cut=cut)
+
+    assert sounds.fade_filters(placed("loop", 6.5)) == "afade=t=in:d=0.05,afade=t=out:st=6.2:d=0.3,"
+    assert sounds.fade_filters(placed("loop", 0.4)) == "afade=t=in:d=0.05,afade=t=out:st=0.3:d=0.1,"  # a quarter
+    assert sounds.fade_filters(placed("hit", 0.5, cut=True)) == "afade=t=out:st=0.375:d=0.125,"
+    assert sounds.fade_filters(placed("hit", 1.5)) == ""  # a hit that plays whole ends as it was made
+
+
+def test_a_hit_cut_at_its_scenes_end_is_marked_cut_and_a_whole_one_isnt():
+    ting_near_the_end, whoosh = sounds.resolve([{"scene": 1, "at": 3.5, "name": "ting"},
+                                                {"scene": 1, "at": 1, "name": "whoosh"}], ONE_SCENE)
+    assert (ting_near_the_end.seconds, ting_near_the_end.cut) == (0.5, True)
+    assert (whoosh.seconds, whoosh.cut) == (0.8, False)
+
+
+async def test_a_cut_loop_and_a_cut_hit_fade_out_instead_of_stopping_dead(tmp_path):
+    narration = tmp_path / "narration.wav"
+    write_silence(narration)
+    out = tmp_path / "mix.wav"
+    cues = [{"scene": 1, "at": 1, "name": "rain", "gain": 1}]  # rain to the narration's end at 4.0 s
+    await sounds.mix(narration, sounds.resolve(cues, ONE_SCENE), out)
+    _shape, samples = read_wav(out)
+    assert window_rms(samples, 24000, 3.95, 4.0) < 0.2 * window_rms(samples, 24000, 3.65, 3.7)
+
+    cues = [{"scene": 1, "at": 2.5, "name": "bell", "gain": 1}]  # a 2.5 s bell cut to 1.5 s at the scene's end
+    await sounds.mix(narration, sounds.resolve(cues, ONE_SCENE), out)
+    _shape, samples = read_wav(out)
+    assert window_rms(samples, 24000, 3.95, 4.0) < 0.2 * window_rms(samples, 24000, 3.65, 3.7)
+
+
+async def test_a_hit_that_plays_whole_is_mixed_as_its_file_is(tmp_path):
+    narration = tmp_path / "narration.wav"
+    write_silence(narration, rate=44100)  # the files' own rate, so nothing is resampled
+    out = tmp_path / "mix.wav"
+    [whoosh] = sounds.resolve([{"scene": 1, "at": 1, "name": "whoosh"}], ONE_SCENE)
+    await sounds.mix(narration, [whoosh], out)
+    _shape, mixed = read_wav(out)
+    file = read_samples("whoosh")
+    factor = 10 ** (round(sounds.level_db(whoosh), 2) / 20)
+    start = 44100
+    for i in range(len(file) - 2205, len(file)):  # its last 50 ms, where a fade would show
+        assert abs(mixed[start + i] - file[i] * factor) <= 2, i
+
+
+async def test_footsteps_and_rain_come_out_equally_loud_at_the_same_gain(tmp_path):
+    narration = tmp_path / "narration.wav"
+    write_silence(narration, seconds=6.0, rate=44100)
+    timings = {"starts": [0.0], "lengths": [6.0], "beats": [[0.0]]}
+    loudness = {}
+    for name in ("footsteps", "rain"):
+        out = tmp_path / f"{name}.wav"
+        await sounds.mix(narration, sounds.resolve([{"scene": 1, "at": 0, "name": name}], timings), out)
+        _shape, samples = read_wav(out)
+        loudness[name] = 20 * math.log10(window_rms(samples, 44100, 0.5, 4.5) / 32768)  # one whole 4 s loop
+    assert abs(loudness["footsteps"] - loudness["rain"]) < 2, loudness
 
 
 async def test_the_mix_lays_the_sounds_where_the_cues_put_them(tmp_path):
