@@ -1,12 +1,15 @@
 """The explainer video's sound set (odie.video.sounds): every named sound has its WAV in the kit (mono, 44.1 kHz,
 16-bit), hits are short and loops 4-8 s and seamless, the folder stays small, and the writer's list names them all."""
 import array
+import logging
 import math
+import shutil
 import wave
 
 import pytest
 
 from odie.video import sounds
+from tests.test_media import make_wav
 
 MAX_TOTAL_BYTES = 8_000_000
 WINDOW = 2_000  # samples, about 45 ms
@@ -239,3 +242,209 @@ def test_good_cues_keep_the_first_six_of_a_scene_and_the_first_forty_in_all():
     many = [{"scene": 1 + n % 7, "at": 0.1 * (n // 7), "name": "tick"} for n in range(42)]
     assert sounds.good_cues(many, SEVEN) == many[:40]
     assert sounds.cue_problem(sounds.good_cues(crowded + many, SEVEN), SEVEN) is None
+
+
+# ---- The mix: cues resolved to seconds, then mixed under the narration with ffmpeg ----
+
+# Three scenes: 6 s, 6 s and 4 s long with a 0.5 s breath between; scene 1 has three phrases, scene 3 two.
+TIMINGS = {"starts": [0.0, 6.5, 13.0], "lengths": [6.0, 6.0, 4.0], "beats": [[0.0, 2.0, 4.1], [0.0], [0.0, 1.5]]}
+
+
+def summary(placed: sounds.Placed) -> tuple:
+    return placed.name, placed.kind, placed.start, placed.seconds, placed.gain
+
+
+def test_resolve_turns_scenes_and_beats_into_seconds_from_the_start():
+    table = [
+        # cue -> (name, kind, start, seconds, gain)
+        ({"scene": 1, "at": 0, "name": "rain"}, ("rain", "loop", 0.0, 4.0, 0.35)),  # no seconds: the file's own
+        ({"scene": 1, "at": 3, "name": "wind"}, ("wind", "loop", 3.0, 3.0, 0.35)),  # a 6 s file, 3 s of scene left
+        ({"scene": 1, "beat": 2, "name": "whoosh"}, ("whoosh", "hit", 4.1, 0.8, 0.6)),
+        ({"scene": 2, "beat": 0, "name": "bell", "seconds": 1, "gain": 0.9}, ("bell", "hit", 6.5, 2.5, 0.9)),
+        ({"scene": 3, "beat": 1, "name": "sea", "seconds": 2, "gain": 0.5}, ("sea", "loop", 14.5, 2.0, 0.5)),
+        ({"scene": 3, "at": 1.5, "name": "heartbeat", "seconds": 1.25}, ("heartbeat", "loop", 14.5, 1.25, 0.35)),
+    ]
+    cues = [cue for cue, _ in table]
+    placed = sounds.resolve(cues, TIMINGS)
+    assert [summary(one) for one in placed] == [want for _, want in table]
+    assert placed[0].path == sounds.path("rain") and placed[0].frames == 4 * 44100
+
+
+def test_a_loop_longer_than_its_scene_is_cut_at_the_scenes_end():  # Review Focus 2
+    [placed] = sounds.resolve([{"scene": 1, "at": 0, "name": "footsteps", "seconds": 20}], TIMINGS)
+    assert (placed.start, placed.seconds) == (0.0, 6.0)
+
+
+def test_a_hit_near_its_scenes_end_plays_and_is_cut_there():  # Review Focus 3
+    [placed] = sounds.resolve([{"scene": 2, "at": 5.9, "name": "ting"}], TIMINGS)
+    assert (placed.start, placed.seconds) == (12.4, 0.1)
+
+
+def test_cues_that_no_longer_fit_are_left_out_with_a_log_line(caplog):
+    cues = [
+        {"scene": 1, "at": 0, "name": "wooosh"},       # no such sound
+        {"scene": 4, "at": 0, "name": "ting"},         # no such scene
+        {"scene": 3, "beat": 2, "name": "ting"},       # scene 3 has beats 0 and 1
+        {"scene": 1, "at": 6.5, "name": "ting"},       # past the scene's real end
+        {"scene": 1, "at": 6, "name": "rain"},         # at the very end: nothing left to play
+        {"scene": 2, "at": 0, "name": "ting", "gain": 0},  # silent
+    ]
+    with caplog.at_level(logging.INFO, logger="odie.video"):
+        assert sounds.resolve(cues, TIMINGS) == []
+    lines = [record.getMessage() for record in caplog.records]
+    assert len(lines) == len(cues)
+    assert "wooosh" in lines[0] and "scene 4" in lines[1] and "beat 2" in lines[2]
+
+
+def test_a_sound_whose_file_is_missing_or_broken_is_left_out(tmp_path, monkeypatch, caplog):
+    shutil.copy(sounds.path("rain"), tmp_path / "rain.wav")
+    (tmp_path / "ting.wav").write_bytes(b"not a wav")
+    monkeypatch.setattr(sounds, "FOLDER", tmp_path)
+    cues = [{"scene": 1, "at": 0, "name": "whoosh"}, {"scene": 1, "at": 0, "name": "rain"},
+            {"scene": 1, "at": 1, "name": "ting"}]
+    with caplog.at_level(logging.INFO, logger="odie.video"):
+        placed = sounds.resolve(cues, TIMINGS)
+    assert [one.name for one in placed] == ["rain"]
+    lines = [record.getMessage() for record in caplog.records]
+    assert len(lines) == 2 and "whoosh" in lines[0] and "ting" in lines[1]
+
+
+def test_no_cues_place_nothing():
+    assert sounds.resolve([], TIMINGS) == []
+
+
+def test_levels_follow_the_kind_and_the_gain():
+    def placed(kind, gain):
+        return sounds.Placed(start=0.0, path=sounds.path("rain"), seconds=1.0, gain=gain, kind=kind, name="rain",
+                             frames=176400)
+
+    assert sounds.level_db(placed("loop", 1.0)) == -18.0
+    assert sounds.level_db(placed("hit", 1.0)) == -10.0
+    assert round(sounds.level_db(placed("hit", 0.6)), 2) == -14.44
+    assert round(sounds.level_db(placed("loop", 0.35)), 2) == -27.12
+
+
+def write_silence(path, seconds=4.0, rate=24000, channels=1):
+    frames = int(seconds * rate)
+    with wave.open(str(path), "wb") as file:
+        file.setnchannels(channels)
+        file.setsampwidth(2)
+        file.setframerate(rate)
+        file.writeframes(b"\x00\x00" * frames * channels)
+
+
+def read_wav(path) -> tuple[tuple, array.array]:
+    """(channels, width, rate, frames) and the samples."""
+    with wave.open(str(path), "rb") as file:
+        shape = (file.getnchannels(), file.getsampwidth(), file.getframerate(), file.getnframes())
+        frames = file.readframes(file.getnframes())
+    samples = array.array("h")
+    samples.frombytes(frames)
+    return shape, samples
+
+
+def window_rms(samples, rate, start, end) -> float:
+    return rms(samples[int(start * rate):int(end * rate)])
+
+
+# A 4 s narration: a hit (whoosh, 0.8 s) at 1 s and a loop (rain) from 2 s for 2 s.
+ONE_SCENE = {"starts": [0.0], "lengths": [4.0], "beats": [[0.0]]}
+HIT_AND_LOOP = [{"scene": 1, "at": 1, "name": "whoosh"}, {"scene": 1, "at": 2, "name": "rain", "seconds": 2}]
+
+
+def test_the_mix_command_is_one_ffmpeg_graph(tmp_path):
+    narration = tmp_path / "narration.wav"
+    write_silence(narration)
+    placed = sounds.resolve(HIT_AND_LOOP, ONE_SCENE)
+    voice = sounds.wav_format(narration)
+    assert voice == sounds.WavFormat(channels=1, width=2, rate=24000, frames=96000)
+    command = sounds.mix_command(narration, placed, voice, tmp_path / "mix.wav")
+    graph = command[command.index("-filter_complex") + 1]
+    assert graph == (
+        "[1:a]atrim=duration=0.8,aformat=sample_rates=24000:channel_layouts=1c,adelay=1000:all=1,volume=-14.44dB[a1];"
+        "[2:a]aloop=loop=-1:size=176400,atrim=duration=2.0,aformat=sample_rates=24000:channel_layouts=1c,"
+        "adelay=2000:all=1,volume=-27.12dB[a2];"
+        "[0:a][a1][a2]amix=inputs=3:normalize=0:duration=first,alimiter=limit=0.891:level=0:latency=1[out]")
+    inputs = [command[i + 1] for i, word in enumerate(command) if word == "-i"]
+    assert inputs == [str(narration), str(sounds.path("whoosh")), str(sounds.path("rain"))]
+    assert command[-1] == str(tmp_path / "mix.wav")
+    assert sounds.mix_command(narration, placed, voice, tmp_path / "mix.wav") == command
+
+
+async def test_the_mix_lays_the_sounds_where_the_cues_put_them(tmp_path):
+    narration = tmp_path / "narration.wav"
+    write_silence(narration)
+    out = tmp_path / "mix.wav"
+    await sounds.mix(narration, sounds.resolve(HIT_AND_LOOP, ONE_SCENE), out)
+    shape, samples = read_wav(out)
+    assert shape == (1, 2, 24000, 96000)  # the narration's format and its exact length
+    assert window_rms(samples, 24000, 0.0, 1.0) < 2  # near silence before the hit
+    assert window_rms(samples, 24000, 1.0, 1.3) > 300  # the hit
+    assert window_rms(samples, 24000, 1.85, 2.0) < 2  # the hit is over and the loop not yet begun
+    for start in (2.0, 2.5, 3.0, 3.5):  # the loop is there to the end
+        assert window_rms(samples, 24000, start, start + 0.5) > 50
+
+
+async def test_the_same_cues_and_narration_give_the_same_mix(tmp_path):
+    narration = tmp_path / "narration.wav"
+    write_silence(narration)
+    placed = sounds.resolve(HIT_AND_LOOP, ONE_SCENE)
+    await sounds.mix(narration, placed, tmp_path / "one.wav")
+    await sounds.mix(narration, placed, tmp_path / "two.wav")
+    assert (tmp_path / "one.wav").read_bytes() == (tmp_path / "two.wav").read_bytes()
+
+
+async def test_the_narration_is_untouched_where_no_sound_plays(tmp_path):
+    narration = tmp_path / "narration.wav"
+    narration.write_bytes(make_wav(4.0, rate=24000, loud=0.5))
+    out = tmp_path / "mix.wav"
+    await sounds.mix(narration, sounds.resolve([{"scene": 1, "at": 3, "name": "whoosh"}], ONE_SCENE), out)
+    _shape, mixed = read_wav(out)
+    _shape, voice = read_wav(narration)
+    before_the_hit = 3 * 24000 - 200  # the limiter looks 5 ms ahead
+    assert mixed[:before_the_hit] == voice[:before_the_hit]
+
+
+async def test_a_loud_mix_is_held_under_the_limit(tmp_path):
+    narration = tmp_path / "narration.wav"
+    narration.write_bytes(make_wav(3.0, rate=24000, loud=0.88))
+    out = tmp_path / "mix.wav"
+    cues = [{"scene": 1, "at": 0.5, "name": "drum", "gain": 1}, {"scene": 1, "at": 0, "name": "rain", "gain": 1,
+                                                                   "seconds": 3}]
+    await sounds.mix(narration, sounds.resolve(cues, {"starts": [0.0], "lengths": [3.0], "beats": [[0.0]]}), out)
+    _shape, samples = read_wav(out)
+    assert max(abs(sample) for sample in samples) <= 0.891 * 32768 + 2
+
+
+async def test_a_stereo_narration_keeps_its_format(tmp_path):
+    narration = tmp_path / "narration.wav"
+    write_silence(narration, seconds=2.0, rate=22050, channels=2)
+    out = tmp_path / "mix.wav"
+    await sounds.mix(narration, sounds.resolve([{"scene": 1, "at": 0.5, "name": "ting"}], ONE_SCENE), out)
+    shape, samples = read_wav(out)
+    assert shape == (2, 2, 22050, 44100)
+    assert rms(samples) > 50
+
+
+async def test_a_file_gone_by_mix_time_is_left_out(tmp_path, caplog):
+    narration = tmp_path / "narration.wav"
+    write_silence(narration)
+    placed = sounds.resolve(HIT_AND_LOOP, ONE_SCENE)
+    gone = sounds.Placed(start=0.5, path=tmp_path / "gone.wav", seconds=0.5, gain=0.6, kind="hit", name="gone",
+                         frames=22050)
+    out = tmp_path / "mix.wav"
+    with caplog.at_level(logging.INFO, logger="odie.video"):
+        await sounds.mix(narration, [gone, *placed], out)
+    shape, samples = read_wav(out)
+    assert shape == (1, 2, 24000, 96000) and window_rms(samples, 24000, 1.0, 1.3) > 300
+    assert any("gone" in record.getMessage() for record in caplog.records)
+
+
+async def test_a_mix_with_every_file_gone_is_the_narration(tmp_path):
+    narration = tmp_path / "narration.wav"
+    narration.write_bytes(make_wav(1.0))
+    gone = sounds.Placed(start=0.5, path=tmp_path / "gone.wav", seconds=0.5, gain=0.6, kind="hit", name="gone",
+                         frames=22050)
+    out = tmp_path / "mix.wav"
+    await sounds.mix(narration, [gone], out)
+    assert out.read_bytes() == narration.read_bytes()

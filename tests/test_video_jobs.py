@@ -2,6 +2,7 @@
 failure said in that chat, and a job that a restart cut off told once."""
 import asyncio
 import json
+import logging
 from pathlib import Path
 
 import pytest
@@ -11,7 +12,7 @@ from odie.browser.engine import BrowserError
 from odie.making import jobs
 from odie.making import writer as harness
 from odie.store.db import Store
-from odie.video import encode, kind, page, writer
+from odie.video import encode, kind, page, sounds, writer
 from tests.test_media import make_wav
 from tests.test_video_encode import jpeg
 
@@ -564,3 +565,90 @@ async def test_a_video_whose_pictures_are_all_the_users_own_has_no_credits_card(
     await jobs.run(job, browser=object())
     assert seen["timings"] == {"starts": [0.0, 1.5], "lengths": [1.0, 0.5], "beats": [[0.0, 0.4], [0.0]]}
     assert seen["credits"] == ""
+
+
+# Sound cues: mixed under the narration when the page placed some, and nothing mixed when it placed none.
+
+@pytest.fixture
+def muxed(monkeypatch):
+    """The voice track each mux was given; the real mux still runs."""
+    seen = []
+    real_mux = kind.mux
+
+    async def recording_mux(segments, narration_wav, out):
+        seen.append(narration_wav)
+        await real_mux(segments, narration_wav, out)
+
+    monkeypatch.setattr(kind, "mux", recording_mux)
+    return seen
+
+
+@pytest.fixture
+def mixes(monkeypatch):
+    """Every sounds.mix call as (narration_wav, placed, out); the real mix still runs."""
+    seen = []
+    real_mix = sounds.mix
+
+    async def recording_mix(narration_wav, placed, out):
+        seen.append((narration_wav, placed, out))
+        await real_mix(narration_wav, placed, out)
+
+    monkeypatch.setattr(sounds, "mix", recording_mix)
+    return seen
+
+
+async def test_a_job_with_cues_muxes_the_mixed_narration(world, fast, muxed, mixes):
+    chat, _pushes, _store = world
+    job = make_job()
+    job.data["cues"] = [{"scene": 1, "beat": 1, "name": "whoosh"}, {"scene": 2, "at": 0, "name": "rain"}]
+    await jobs.run(job, browser=object())
+    [(narration_wav, placed, out)] = mixes
+    assert narration_wav == job.folder / "narration.wav" and out == job.folder / "mix.wav"
+    # The stand-in narration: scene 1 is 1.0 s with beats [0.0, 0.4]; scene 2 starts at 1.5 and is 0.5 s long.
+    assert [(one.name, one.start, one.seconds) for one in placed] == [("whoosh", 0.4, 0.6), ("rain", 1.5, 0.5)]
+    assert muxed == [job.folder / "mix.wav"]
+    assert (job.folder / "mix.wav").read_bytes() != (job.folder / "narration.wav").read_bytes()
+    assert (job.folder / "attention.mp4").exists()
+    assert read_status(job)["status"] == "done" and chat.posts[0][0] == "The video about Attention is ready."
+
+
+async def test_a_job_without_cues_mixes_nothing(world, fast, muxed, mixes):  # Review Focus 5
+    job = make_job()  # made the old way: no "cues" at all
+    await jobs.run(job, browser=object())
+    assert mixes == [] and muxed == [job.folder / "narration.wav"]
+    assert not (job.folder / "mix.wav").exists() and read_status(job)["status"] == "done"
+    job = make_job(slug="empty")
+    job.data["cues"] = []
+    await jobs.run(job, browser=object())
+    assert mixes == [] and muxed[-1] == job.folder / "narration.wav"
+
+
+async def test_a_job_whose_cues_all_drop_mixes_nothing(world, fast, muxed, mixes):
+    job = make_job()
+    job.data["cues"] = [{"scene": 1, "at": 1.0, "name": "whoosh"}]  # at the very end of the 1.0 s scene
+    await jobs.run(job, browser=object())
+    assert mixes == [] and muxed == [job.folder / "narration.wav"]
+
+
+async def test_a_job_with_sounds_off_mixes_nothing(world, fast, muxed, mixes):
+    job = make_job()
+    job.data["cues"] = [{"scene": 1, "beat": 1, "name": "whoosh"}]
+    job.data["sounds"] = False
+    await jobs.run(job, browser=object())
+    assert mixes == [] and muxed == [job.folder / "narration.wav"]
+
+
+async def test_a_mix_that_fails_leaves_the_video_its_narration(world, fast, muxed, monkeypatch, caplog):
+    chat, _pushes, _store = world
+
+    async def failing_mix(narration_wav, placed, out):
+        raise encode.EncodeError("Invalid argument")
+
+    monkeypatch.setattr(sounds, "mix", failing_mix)
+    job = make_job()
+    job.data["cues"] = [{"scene": 1, "beat": 1, "name": "whoosh"}]
+    with caplog.at_level(logging.WARNING, logger="odie.video"):
+        await jobs.run(job, browser=object())
+    assert muxed == [job.folder / "narration.wav"] and read_status(job)["status"] == "done"
+    assert chat.posts[0][0] == "The video about Attention is ready."
+    assert any("Invalid argument" in record.getMessage() for record in caplog.records)

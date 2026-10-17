@@ -5,12 +5,20 @@ long as a cue asks (rain under a monsoon shot, footsteps under an army). The fil
 scripts/sounds/build_sounds.py; the folder's README says how to replace one with a recording.
 
 The writer places sounds in its page with Video.sounds([{scene: 2, at: 0, name: "footsteps", seconds: 6}, ...]); the
-submit check reads them back (odie.video.page.check_with_cues) and cue_problem judges them against the narration."""
+submit check reads them back (odie.video.page.check_with_cues) and cue_problem judges them against the narration.
+Once the narration is spoken, resolve turns the cues into seconds from the video's start and mix lays the sounds under
+the narration with one ffmpeg command; the mixed WAV replaces the narration in the MP4."""
+import logging
+import math
+import shutil
+import wave
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from odie.video import beats, page
+from odie.video import beats, encode, page
+
+log = logging.getLogger("odie.video")
 
 FOLDER = Path(__file__).parent / "kit" / "sounds"
 
@@ -289,3 +297,253 @@ def good_cues(cues: list, narration: list[str]) -> list[dict]:
         per_scene[scene] = in_scene + 1
         kept.append(cue)
     return kept
+
+
+# ---- The mix: the cues as seconds from the video's start, laid under the narration with one ffmpeg command ----
+
+DEFAULT_GAIN = {"loop": 0.35, "hit": 0.6}  # a cue's gain when the writer gave none
+LOOP_DB = -18.0  # a loop at gain 1, under the narration's 0 dB
+HIT_DB = -10.0   # a hit at gain 1
+LIMIT = 0.891    # the limiter's ceiling (-1 dB), so the sum never clips
+CODECS = {1: "pcm_u8", 2: "pcm_s16le", 3: "pcm_s24le", 4: "pcm_s32le"}  # a WAV's bytes a sample -> ffmpeg's codec
+
+
+@dataclass(frozen=True)
+class Placed:
+    """One sound as the mix plays it: from `start` seconds into the video, for `seconds`, at `gain`."""
+    start: float  # seconds from the video's start
+    path: Path  # the sound's WAV
+    seconds: float  # how long it plays: a hit its own length, a loop as long as asked; both cut at the scene's end
+    gain: float  # more than 0, at most 1: the cue's, or its kind's default
+    kind: Literal["hit", "loop"]
+    name: str
+    frames: int  # the file's length in samples: the stretch a loop repeats
+
+
+@dataclass(frozen=True)
+class WavFormat:
+    channels: int
+    width: int  # bytes a sample
+    rate: int  # samples a second
+    frames: int  # the file's length in samples
+
+
+def wav_format(path: Path) -> WavFormat:
+    """A WAV's format and length: rain.wav -> WavFormat(channels=1, width=2, rate=44100, frames=176400)."""
+    with wave.open(str(path), "rb") as file:
+        return WavFormat(channels=file.getnchannels(), width=file.getsampwidth(), rate=file.getframerate(),
+                         frames=file.getnframes())
+
+
+def readable_format(path: Path) -> WavFormat | None:
+    """A sound file's format, or None when the file is missing or isn't a WAV: rain.wav -> WavFormat(1, 2, 44100,
+    176400); a deleted file, or a text file saved as rain.wav -> None."""
+    try:
+        return wav_format(path)
+    except (OSError, EOFError, wave.Error):
+        return None
+
+
+def where_problem(cue: dict, timings: dict) -> str | None:
+    """Decides whether a cue's scene and beat are in the spoken video's timings (the check made sure of it against
+    the narration, so this only catches a job whose narration changed since): scene 2 of three -> None; scene 4 of
+    three -> "scene 4 isn't in the video"; beat 2 of a scene with beats [0.0, 1.5] -> "scene 3 has no beat 2"."""
+    scene = cue["scene"]
+    scene_count = len(timings["starts"])
+    if scene > scene_count:
+        return f"scene {scene} isn't in the video"
+    if "beat" not in cue:
+        return None
+    beat = cue["beat"]
+    scene_beats = timings["beats"][scene - 1]
+    if beat >= len(scene_beats):
+        return f"scene {scene} has no beat {beat}"
+    return None
+
+
+def offset_in_scene(cue: dict, timings: dict) -> float:
+    """Seconds into its scene where a cue starts: {"at": 1.5} -> 1.5; {"scene": 1, "beat": 2} with scene 1's beats
+    [0.0, 2.0, 4.1] -> 4.1."""
+    if "at" in cue:
+        return cue["at"]
+    scene_beats = timings["beats"][cue["scene"] - 1]
+    return scene_beats[cue["beat"]]
+
+
+def cue_gain(cue: dict, kind: str) -> float:
+    """The cue's gain, or its kind's default when the writer gave none: {"gain": 0.5} -> 0.5; a loop without one ->
+    0.35; a hit without one -> 0.6."""
+    if "gain" in cue:
+        return cue["gain"]
+    return DEFAULT_GAIN[kind]
+
+
+def play_seconds(cue: dict, kind: str, file_seconds: float, room: float) -> float:
+    """Decides how long a placed sound plays: a hit its file's own length (a cue's seconds mean nothing to it), a loop
+    the cue's seconds or, without them, its file's length once; either way cut at the scene's end (`room` is what
+    is left of the scene after the cue starts). A 0.8 s whoosh with 6 s of room -> 0.8; a 1.5 s ting 5.9 s into a
+    6 s scene -> 0.1; footsteps asked for 20 s with 6 s of room -> 6.0; rain (a 4 s file) with no seconds -> 4.0."""
+    wanted = file_seconds
+    if kind == "loop" and "seconds" in cue:
+        wanted = cue["seconds"]
+    return round(min(wanted, room), 3)
+
+
+def place(number: int, cue: dict, timings: dict) -> Placed | None:
+    """Cue `number` as the mix plays it, or None (with a log line) when it can't be played: a name not in the set, a
+    scene or beat not in the timings, a start at or past its scene's spoken end (the check only estimated the
+    lengths), a gain of 0, or a file that is missing or isn't a WAV. {"scene": 2, "at": 5.9, "name": "ting"} with
+    scene 2 at 6.5 s and 6.0 s long -> Placed(start=12.4, seconds=0.1, gain=0.6, kind="hit", …)."""
+    name = cue["name"]
+    sound = SOUNDS.get(name)
+    if sound is None:
+        log.info("video sound cue %d left out: there is no sound called %r", number, name)
+        return None
+    problem = where_problem(cue, timings)
+    if problem:
+        log.info("video sound cue %d (%s) left out: %s", number, name, problem)
+        return None
+    scene = cue["scene"]
+    offset = offset_in_scene(cue, timings)
+    length = timings["lengths"][scene - 1]
+    room = round(length - offset, 3)
+    if room <= 0:
+        log.info("video sound cue %d (%s) left out: it starts %.3g s into scene %d, which is %.3g s long", number,
+                 name, offset, scene, length)
+        return None
+    gain = cue_gain(cue, sound.kind)
+    if gain <= 0:
+        log.info("video sound cue %d (%s) left out: its gain is 0", number, name)
+        return None
+    sound_path = path(name)
+    file = readable_format(sound_path)
+    if file is None:
+        log.info("video sound cue %d (%s) left out: %s is missing or isn't a WAV", number, name, sound_path)
+        return None
+    file_seconds = file.frames / file.rate
+    seconds = play_seconds(cue, sound.kind, file_seconds, room)
+    start = round(timings["starts"][scene - 1] + offset, 3)
+    return Placed(start=start, path=sound_path, seconds=seconds, gain=gain, kind=sound.kind, name=name,
+                  frames=file.frames)
+
+
+def resolve(cues: list[dict], timings: dict) -> list[Placed]:
+    """The page's sound cues as the mix plays them, in the writer's order, from the spoken video's timings
+    ({"starts": [...], "lengths": [...], "beats": [[...], ...]}, seconds; each scene's beats start at 0.0). A cue
+    that can't be played is left out with a log line (see place), never an error. [] -> []; with scene 1 starting at
+    0.0 and its beats [0.0, 2.0, 4.1]: [{"scene": 1, "beat": 2, "name": "whoosh"}] -> [Placed(start=4.1,
+    seconds=0.8, gain=0.6, kind="hit", name="whoosh", …)]."""
+    placed = []
+    for number, cue in enumerate(cues, start=1):
+        one = place(number, cue, timings)
+        if one is not None:
+            placed.append(one)
+    return placed
+
+
+def level_db(placed: Placed) -> float:
+    """How loud a placed sound plays against the narration's 0 dB: the kind's level at gain 1, lowered by the gain
+    (20·log10). A loop at gain 1 -> -18.0; a hit at gain 1 -> -10.0; a hit at 0.6 -> -14.44; a loop at 0.35 ->
+    -27.12."""
+    lowered = 20 * math.log10(placed.gain)
+    if placed.kind == "loop":
+        return LOOP_DB + lowered
+    return HIT_DB + lowered
+
+
+def seconds_text(seconds: float) -> str:
+    """Seconds as ffmpeg is given them, to the millisecond: 2 -> "2.0"; 0.1 -> "0.1"; 1.23456 -> "1.235"."""
+    return str(round(float(seconds), 3))
+
+
+def placing_filters(placed: Placed, voice: WavFormat) -> str:
+    """The filters every sound ends with: brought to the narration's rate and channels (so the narration itself is
+    never resampled and stays sample for sample as it was), delayed to its start, and set to its level. A hit at
+    1.0 s, gain 0.6, under a 24 kHz mono narration -> "aformat=sample_rates=24000:channel_layouts=1c,
+    adelay=1000:all=1,volume=-14.44dB"."""
+    delay_ms = round(placed.start * 1000)
+    return (f"aformat=sample_rates={voice.rate}:channel_layouts={voice.channels}c,adelay={delay_ms}:all=1,"
+            f"volume={level_db(placed):.2f}dB")
+
+
+def loop_filter(placed: Placed, k: int, voice: WavFormat) -> str:
+    """Ffmpeg's filters for a loop, input k: its whole file repeated for ever, cut to its seconds, then placed. Rain
+    (176,400 samples) as input 2, from 2.0 s for 2 s at gain 0.35 -> "[2:a]aloop=loop=-1:size=176400,
+    atrim=duration=2.0,aformat=…,adelay=2000:all=1,volume=-27.12dB[a2]"."""
+    duration = seconds_text(placed.seconds)
+    return (f"[{k}:a]aloop=loop=-1:size={placed.frames},atrim=duration={duration},"
+            f"{placing_filters(placed, voice)}[a{k}]")
+
+
+def hit_filter(placed: Placed, k: int, voice: WavFormat) -> str:
+    """Ffmpeg's filters for a hit, input k: played once, cut to its seconds (its own length, or less at its scene's
+    end), then placed. A whoosh as input 1 at 1.0 s, gain 0.6 -> "[1:a]atrim=duration=0.8,aformat=…,
+    adelay=1000:all=1,volume=-14.44dB[a1]"."""
+    duration = seconds_text(placed.seconds)
+    return f"[{k}:a]atrim=duration={duration},{placing_filters(placed, voice)}[a{k}]"
+
+
+def sound_filter(placed: Placed, k: int, voice: WavFormat) -> str:
+    """Decides which filters a placed sound gets by its kind: a loop (rain) -> loop_filter, repeated to its seconds;
+    a hit (whoosh) -> hit_filter, played once."""
+    if placed.kind == "loop":
+        return loop_filter(placed, k, voice)
+    return hit_filter(placed, k, voice)
+
+
+def mix_graph(placed: list[Placed], voice: WavFormat) -> str:
+    """The whole filter graph: each sound's filters (inputs 1, 2, …), then all of them summed with the narration
+    (input 0) at 0 dB, the mix as long as the narration, and a limiter at -1 dB that neither raises the level nor
+    shifts the sound in time. A whoosh and a rain loop -> "[1:a]…[a1];[2:a]…[a2];[0:a][a1][a2]amix=inputs=3:
+    normalize=0:duration=first,alimiter=limit=0.891:level=0:latency=1[out]"."""
+    parts = []
+    labels = "[0:a]"
+    for k, one in enumerate(placed, start=1):
+        parts.append(sound_filter(one, k, voice))
+        labels += f"[a{k}]"
+    inputs = len(placed) + 1
+    parts.append(f"{labels}amix=inputs={inputs}:normalize=0:duration=first,"
+                 f"alimiter=limit={LIMIT}:level=0:latency=1[out]")
+    return ";".join(parts)
+
+
+def mix_command(narration_wav: Path, placed: list[Placed], voice: WavFormat, out: Path) -> list[str]:
+    """The one ffmpeg command for the mix: the narration and each sound as inputs, the graph (mix_graph), and out
+    written as a WAV in the narration's own format. Bit-exact, so the same inputs give the same bytes."""
+    command = [encode.ffmpeg(), "-y", "-loglevel", "error", "-i", str(narration_wav)]
+    for one in placed:
+        command += ["-i", str(one.path)]
+    command += [
+        "-filter_complex", mix_graph(placed, voice), "-map", "[out]",
+        "-ar", str(voice.rate), "-ac", str(voice.channels), "-c:a", CODECS[voice.width],
+        "-fflags", "+bitexact", "-flags:a", "+bitexact",
+        str(out),
+    ]
+    return command
+
+
+def files_present(placed: list[Placed]) -> list[Placed]:
+    """The placed sounds whose files are still there, in order; one gone since resolve is left out with a log line:
+    [whoosh, rain] with rain.wav deleted since -> [whoosh]."""
+    present = []
+    for one in placed:
+        if one.path.is_file():
+            present.append(one)
+        else:
+            log.info("video sound %r left out of the mix: %s is missing", one.name, one.path)
+    return present
+
+
+async def mix(narration_wav: Path, placed: list[Placed], out: Path) -> None:
+    """Write out: the narration with the placed sounds under it, in the narration's format and to its exact length
+    (one ffmpeg command, mix_command). With every file gone, out is a copy of the narration. ffmpeg failing is an
+    EncodeError with the end of what it said."""
+    present = files_present(placed)
+    if not present:
+        shutil.copyfile(narration_wav, out)
+        return
+    voice = wav_format(narration_wav)
+    command = mix_command(narration_wav, present, voice, out)
+    code, stderr = await encode.run(command)
+    if code != 0:
+        raise encode.EncodeError(encode.tail(stderr) or f"ffmpeg exited with {code}")
