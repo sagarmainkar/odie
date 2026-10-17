@@ -3,6 +3,7 @@ each picture fetched and prepared (upright, at most 2400 px, a JPEG), each clip 
 sound (VP9 WebM, real ffmpeg), named img1…/clip1… in the order given, listed for the writer in words, and stapled
 into the page as data URIs under a cap."""
 import base64
+import io
 import json
 
 import pytest
@@ -344,3 +345,73 @@ def test_the_brief_keeps_the_lines_as_the_chat_gave_them():
                                                                         "Clips:\n\n"
                                                                         "- https://ex.com/v.mp4 — waves")
 
+
+
+# A failed fetch never fails the video: the asset is dropped and the writer told; the same address twice is one fetch.
+
+def jpeg_bytes(w=800, h=600):
+    out = io.BytesIO()
+    Image.new("RGB", (w, h), RED).save(out, "JPEG")
+    return out.getvalue()
+
+
+@pytest.fixture
+def internet(isolated_settings, monkeypatch):
+    """The real photos.fetch and safe_download over a MockTransport: "down.example" refuses to connect, anything else
+    answers with a JPEG. Every request is counted by its address."""
+    import httpx
+
+    from odie import net
+    requests = []
+
+    async def resolve(host):
+        return ["93.184.216.34"]
+
+    def handler(request):
+        requests.append(str(request.url))
+        if request.url.host == "down.example":
+            raise httpx.ConnectError("connection refused", request=request)
+        return httpx.Response(200, headers={"content-type": "image/jpeg"}, content=jpeg_bytes())
+
+    monkeypatch.setattr(net, "resolve_host", resolve)
+    monkeypatch.setattr(net, "_transport", httpx.MockTransport(handler))
+    return requests
+
+
+async def test_a_picture_or_clip_that_cant_connect_is_dropped_and_the_rest_kept(tmp_path, internet):
+    images, clips = assets.parse(["https://down.example/a.jpg — Akbar", "https://ex.com/b.jpg — Babur"],
+                                 ["https://down.example/v.mp4 — waves"])
+    got, dropped = await assets.gather(images, clips, tmp_path / "job")
+    assert [a.name for a in got] == ["img2"]
+    assert dropped == ["img1 couldn't be fetched: The link couldn't be reached.",
+                       "clip1 couldn't be fetched: The link couldn't be reached."]
+
+
+async def test_anything_unexpected_with_one_picture_drops_it_and_keeps_the_rest(tmp_path, sources, monkeypatch, caplog):
+    pictures, _clip_bytes = sources
+    pictures["https://ex.com/a.jpg"] = (jpeg_file(tmp_path / "a.jpg", 400, 300), "ex.com")
+    pictures["https://ex.com/b.jpg"] = (jpeg_file(tmp_path / "b.jpg", 400, 300), "ex.com")
+    real_prepare = assets.prepare_image
+
+    def breaks_on_the_first(src, dest):
+        if dest.name == "img1.jpg":
+            raise ValueError("/Users/asha/private/path broke")
+        return real_prepare(src, dest)
+
+    monkeypatch.setattr(assets, "prepare_image", breaks_on_the_first)
+    images, _ = assets.parse(["https://ex.com/a.jpg — one", "https://ex.com/b.jpg — two"], None)
+    got, dropped = await assets.gather(images, [], tmp_path / "job")
+    assert [a.name for a in got] == ["img2"]
+    assert dropped == ["img1 couldn't be used: something went wrong (see Odie's log)"]  # no path for the writer
+    assert "img1" in caplog.text and "ValueError" in caplog.text  # the details are in the log
+
+
+async def test_the_same_address_twice_is_fetched_once_and_gives_two_pictures(tmp_path, internet):
+    images, _ = assets.parse(["https://ex.com/fort.jpg — the fort at dusk (Photo by A on Unsplash)",
+                              "https://ex.com/fort.jpg — the fort again, closer"], None)
+    got, dropped = await assets.gather(images, [], tmp_path / "job")
+    assert dropped == [] and internet == ["https://ex.com/fort.jpg"]
+    first, second = got
+    assert (first.name, first.words, first.credit) == ("img1", "the fort at dusk", "Photo by A on Unsplash")
+    assert (second.name, second.words, second.credit) == ("img2", "the fort again, closer", "ex.com")
+    assert first.path.is_file() and second.path.is_file() and first.path != second.path

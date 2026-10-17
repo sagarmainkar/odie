@@ -88,11 +88,13 @@ async def submits(turn):
 @pytest.fixture
 def checks(monkeypatch):
     """page.check replaced by a recorder: it answers with the next problem from `checks["problems"]` (None, page fine,
-    once they run out) and records every (body, narration, browser) it was asked about."""
-    record = {"problems": [], "calls": []}
+    once they run out) and records every (body, narration, browser) it was asked about, and in "scripts" the
+    pictures' staple each was drawn with."""
+    record = {"problems": [], "calls": [], "scripts": []}
 
-    async def recorded(body, narration, browser):
+    async def recorded(body, narration, browser, assets_script=""):
         record["calls"].append((body, list(narration), browser))
+        record["scripts"].append(assets_script)
         if record["problems"]:
             return record["problems"].pop(0)
         return None
@@ -303,7 +305,7 @@ async def test_a_page_too_big_is_a_rejection_with_the_limit(tmp_path, checks):
 async def test_a_hang_is_a_rejection_told_in_words(tmp_path, monkeypatch):
     failures = [BrowserTimeout("frame 3 took too long.")]
 
-    async def check(body, narration, browser):
+    async def check(body, narration, browser, assets_script=""):
         if failures:
             raise failures.pop(0)
         return None
@@ -323,7 +325,7 @@ async def test_a_hang_is_a_rejection_told_in_words(tmp_path, monkeypatch):
 
 
 async def test_a_browser_that_fails_ends_the_job_with_its_own_words_and_is_no_rejection(tmp_path, monkeypatch):
-    async def check(body, narration, browser):
+    async def check(body, narration, browser, assets_script=""):
         raise BrowserError("The browser didn't start.")
 
     monkeypatch.setattr(page, "check", check)
@@ -540,3 +542,14 @@ async def test_the_listing_reaches_the_writers_prompt(tmp_path, checks):
     turn = Turn(script)
     await writer.write("Delhi", 2, "For Asha.", tmp_path / "job", turn, BROWSER, listing="Pictures (…):\n  img1  x")
     assert "For Asha.\n\nPictures (…):\n  img1  x\n\n" in turn.prompt
+
+
+async def test_the_pictures_staple_reaches_the_page_check(tmp_path, checks):
+    async def script(turn):
+        await turn.submit()
+
+    staple = '<script>Video.assets({"img1": {"kind": "image"}})</script>'
+    await writer.write("Delhi", 2, "", tmp_path / "job", Turn(script), BROWSER, listing="x", assets_script=staple)
+    assert checks["scripts"] == [staple]
+    await writer.write("Delhi", 2, "", tmp_path / "job2", Turn(script), BROWSER)
+    assert checks["scripts"] == [staple, ""]

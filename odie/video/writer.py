@@ -117,13 +117,14 @@ def is_list_of_strings(value) -> bool:
     return all(isinstance(item, str) for item in value)
 
 
-async def submission_problem(narration, body: str, browser) -> str | None:
+async def submission_problem(narration, body: str, browser, assets_script: str = "") -> str | None:
     """Decides whether a video can be accepted: the first problem as words to fix, or None. In this order: a page over
     300 KB -> the limit; narration that isn't a list of strings -> NOT_A_LIST; a narration problem (["Hi.", "  "] ->
     scene 2 has no words), and then nothing is drawn; the page drawn in the browser (a draw that throws -> "The page
     threw in scene 2 at t = 1.2 s: …"; a frame that never finishes -> the HANG wording). The worked example with two
-    narration strings -> None. A browser that fails in another way (it won't start) is not the page's problem: its
-    BrowserError goes up to the check."""
+    narration strings -> None. The page is drawn with the video's pictures and clips (`assets_script`), so
+    s.photo("img1") draws when img1 was gathered. A browser that fails in another way (it won't start) is not the
+    page's problem: its BrowserError goes up to the check."""
     problem = page_problem(body)
     if problem:
         return problem
@@ -133,14 +134,15 @@ async def submission_problem(narration, body: str, browser) -> str | None:
     if problem:
         return problem
     try:
-        return await video_page.check(body, narration, browser)
+        return await video_page.check(body, narration, browser, assets_script)
     except BrowserTimeout as e:
         return HANG + str(e)
 
 
-def tools_for(desk: Desk, browser) -> list:
+def tools_for(desk: Desk, browser, assets_script: str = "") -> list:
     """The writer's one tool, submit_video (title, narration, page), built by the shared harness on `desk`. Its check
-    keeps the page under desk.pages first, then judges it (submission_problem); a browser that fails is no refusal:
+    keeps the page under desk.pages first, then judges it (submission_problem, drawn with the video's pictures and
+    clips, `assets_script`); a browser that fails is no refusal:
     the job ends with the browser's own words. Accepting makes the Written video, the title falling back to the
     topic."""
 
@@ -149,7 +151,7 @@ def tools_for(desk: Desk, browser) -> list:
         keep_page(desk.pages, body)
         narration = narration_as_given(fields["narration"])
         try:
-            return await submission_problem(narration, body, browser)
+            return await submission_problem(narration, body, browser, assets_script)
         except BrowserError as e:
             words = str(e).strip()
             if not words:
@@ -164,13 +166,15 @@ def tools_for(desk: Desk, browser) -> list:
     return [harness.submit_tool(desk, "submit_video", SUBMIT_DOC, SUBMIT_FIELDS, check, accept)]
 
 
-async def write(topic: str, minutes: int, brief: str, folder: Path, turn, browser, listing: str = "") -> Written:
+async def write(topic: str, minutes: int, brief: str, folder: Path, turn, browser, listing: str = "",
+                assets_script: str = "") -> Written:
     """Writes the video in one focused turn: `turn(prompt, instruction, tools, timeout, follow_up=…)` is
     runner.focused_turn in Odie, `browser` the one page.check draws in (render_browser()), `listing` the pictures and
-    clips the writer may use, by name (see prompt_for). Every submitted page is kept under folder/pages. Returns the
+    clips the writer may use, by name (see prompt_for), and `assets_script` those same pictures and clips stapled
+    (odie.video.assets.staple), so the check draws them. Every submitted page is kept under folder/pages. Returns the
     accepted video; raises WriterFailed when there's none, with the video's words (LINES), or the harness's time-limit
     line (see odie.making.writer.write)."""
     desk = Desk(topic=topic, pages=folder / "pages")
-    [tool] = tools_for(desk, browser)
+    [tool] = tools_for(desk, browser, assets_script)
     prompt = prompt_for(topic, minutes, brief, listing)
     return await harness.write(desk, prompt, INSTRUCTION, tool, LINES, turn)

@@ -154,13 +154,14 @@ def first_problem(scene_count: int | None, narration_count: int, load_errors: li
     return None
 
 
-async def check(body: str, narration: list[str], browser) -> str | None:
-    """Loads the page in a sealed 1920x1080 tab with estimated timings and draws three moments of every scene, so the
-    chat turn hears about a broken page now and not after minutes of rendering. None when the page is fine, else the
-    first problem as a paragraph to act on (see first_problem). A page that reaches for the network is a problem too."""
+async def check(body: str, narration: list[str], browser, assets_script: str = "") -> str | None:
+    """Loads the page in a sealed 1920x1080 tab with estimated timings and the video's pictures and clips
+    (`assets_script`, as the render will have them) and draws three moments of every scene, so the chat turn hears
+    about a broken page now and not after minutes of rendering. None when the page is fine, else the first problem as
+    a paragraph to act on (see first_problem). A page that reaches for the network is a problem too."""
     timings = estimated_timings(narration)
     try:
-        html = assemble(body, timings)
+        html = assemble(body, timings, assets_script)
     except ValueError as e:
         return str(e)
     async with browser.sealed_page(html, 1920, 1080) as tab:

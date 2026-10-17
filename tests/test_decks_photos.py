@@ -209,3 +209,25 @@ async def test_without_photos_set_up_a_library_picture_is_said_missing(isolated_
     monkeypatch.setitem(jobs.hooks, "store", None)
     with pytest.raises(photos.PhotoError, match="There's no picture photo:abc in the user's Photos library here."):
         await photos.fetch("photo:abc")
+
+
+async def test_a_link_that_cant_be_reached_is_a_download_error(monkeypatch):
+    async def resolve(host):
+        return ["93.184.216.34"]
+
+    def handler(req):
+        raise httpx.ReadTimeout("timed out", request=req)
+
+    monkeypatch.setattr(net, "resolve_host", resolve)
+    monkeypatch.setattr(net, "_transport", httpx.MockTransport(handler))
+    with pytest.raises(net.DownloadError, match="The link couldn't be reached."):
+        await net.safe_download("https://ex.com/slow.jpg", 1000)
+
+
+async def test_one_address_fetched_twice_at_once_is_fine(web):
+    import asyncio
+    web["https://ex.com/same.jpg"] = (200, "image/jpeg", jpeg(2400, 1600))
+    first, second = await asyncio.gather(photos.fetch("https://ex.com/same.jpg"),
+                                         photos.fetch("https://ex.com/same.jpg"))
+    assert first.path == second.path and (first.width, second.width) == (2000, 2000)
+    assert [p.name for p in first.path.parent.iterdir() if p.suffix == ".tmp"] == []  # no temporary file left

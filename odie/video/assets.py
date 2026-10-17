@@ -50,6 +50,7 @@ DROPPED_HEADER = "Left out (don't use these names):"
 # so they go to the log instead).
 NOT_A_CLIP = "it isn't a video Odie can read"
 NOT_A_PICTURE = "it isn't a picture Odie can read"
+SOMETHING_WRONG = "something went wrong (see Odie's log)"
 OVER_THE_CAP = "{name} was left out: the pictures and clips before it already fill what a video can carry"
 
 
@@ -248,11 +249,32 @@ async def fetch_clip(address: str) -> bytes:
     return data
 
 
-async def image_asset(name: str, given: Given, place: Path) -> Asset:
-    """One picture fetched (odie.decks.photos.fetch: the cache, the guarded download, the private-chat refusal, the
-    user's library) and prepared as place/<name>.jpg. A failure -> Dropped with the line for the writer."""
+def web_credit(given: Given) -> str:
+    """The credit a picture shows in the video: a web picture's own credit from its line, else its site's name; the
+    user's own pictures none. "https://ex.com/a.jpg — fort (Photo by A on Unsplash)" -> "Photo by A on Unsplash";
+    "https://www.ex.com/a.jpg — fort" -> "ex.com"; "photo:3F2A — us" -> ""."""
+    if not is_web(given.address):
+        return ""
+    if given.credit:
+        return given.credit
+    return photos.site_name(given.address)
+
+
+def shared_fetch(fetches: dict[str, asyncio.Future], given: Given) -> asyncio.Future:
+    """The fetch of this line's address: started by the first line that names it and shared by every later one, so an
+    address given twice is fetched once (and its cached file never written twice at once). img1 and img3 both
+    "https://ex.com/fort.jpg" -> one photos.fetch, both await it; img2 "photo:3F2A" -> a fetch of its own."""
+    if given.address not in fetches:
+        fetches[given.address] = asyncio.ensure_future(photos.fetch(given.address, given.credit))
+    return fetches[given.address]
+
+
+async def image_asset(name: str, given: Given, place: Path, fetching: asyncio.Future) -> Asset:
+    """One picture, its fetch (`fetching`: odie.decks.photos.fetch, the cache, the guarded download, the private-chat
+    refusal, the user's library) awaited and the file prepared as place/<name>.jpg. A failure -> Dropped with the
+    line for the writer."""
     try:
-        photo = await photos.fetch(given.address, given.credit)
+        photo = await fetching
     except photos.PhotoError as e:
         raise Dropped(f"{name} couldn't be fetched: {e}") from None
     dest = place / f"{name}{SUFFIX['image']}"
@@ -261,10 +283,7 @@ async def image_asset(name: str, given: Given, place: Path) -> Asset:
     except OSError as e:
         log.warning("picture %s from %s couldn't be prepared: %s", name, given.address, e)
         raise Dropped(f"{name} couldn't be prepared: {NOT_A_PICTURE}") from None
-    credit = ""
-    if is_web(given.address):
-        credit = photo.credit  # the line's credit, else the site's name
-    return Asset(name, "image", given.words, credit, width, height, 0.0, dest)
+    return Asset(name, "image", given.words, web_credit(given), width, height, 0.0, dest)
 
 
 async def clip_asset(name: str, given: Given, place: Path) -> Asset:
@@ -307,25 +326,37 @@ async def gather(images: list[Given], clips: list[Given], folder: Path) -> tuple
     """Every picture and clip fetched and prepared at once into folder/assets/, named img1…, clip1… by its place in
     the order given (a dropped img2 leaves a gap, so the names the writer is told stay true). Returns the assets that
     worked, pictures then clips, and a line for each one that didn't: "img2 couldn't be fetched: The link answered
-    404." Anything that would take the page over 60 MB is left out the same way."""
+    404." Anything that would take the page over 60 MB is left out the same way, and so is one that fails in a way
+    nobody foresaw (logged): a single bad file never fails the video."""
     place = folder / "assets"
     place.mkdir(parents=True, exist_ok=True)
+    fetches: dict[str, asyncio.Future] = {}
+    names = []
     work = []
     for number, given in enumerate(images, 1):
-        work.append(image_asset(f"img{number}", given, place))
+        name = f"img{number}"
+        names.append(name)
+        work.append(image_asset(name, given, place, shared_fetch(fetches, given)))
     for number, given in enumerate(clips, 1):
-        work.append(clip_asset(f"clip{number}", given, place))
+        name = f"clip{number}"
+        names.append(name)
+        work.append(clip_asset(name, given, place))
     results = await asyncio.gather(*work, return_exceptions=True)
 
     gathered = []
     dropped = []
     stapled_so_far = 0
-    for result in results:
+    for name, result in zip(names, results):
         if isinstance(result, Dropped):
             dropped.append(str(result))
             continue
+        if isinstance(result, Exception):
+            # Anything else that went wrong with one file is that file's problem only: the video goes on without it.
+            log.error("%s couldn't be used", name, exc_info=result)
+            dropped.append(f"{name} couldn't be used: {SOMETHING_WRONG}")
+            continue
         if isinstance(result, BaseException):
-            raise result
+            raise result  # cancelled (Odie stopping): not one file's problem
         size = stapled_size(result)
         if not fits(stapled_so_far, size):
             result.path.unlink(missing_ok=True)

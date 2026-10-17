@@ -227,3 +227,32 @@ async def test_a_beat_the_narration_doesnt_mark_is_a_told_problem(tmp_path):
 @needs_browser
 async def test_a_beat_the_narration_marks_passes_the_check(tmp_path):
     assert await checked(BEAT_ONE, ["word " * 5 + "| " + "word " * 5], tmp_path) is None
+
+
+def one_picture_staple() -> str:
+    """The staple for one 40×30 red picture called img1, as odie.video.assets.staple makes it."""
+    import base64
+    import io
+    import json
+
+    from PIL import Image
+    out = io.BytesIO()
+    Image.new("RGB", (40, 30), (255, 0, 0)).save(out, "JPEG")
+    src = "data:image/jpeg;base64," + base64.b64encode(out.getvalue()).decode()
+    registry = {"img1": {"kind": "image", "src": src, "width": 40, "height": 30}}
+    return f"<script>Video.assets({json.dumps(registry)})</script>"
+
+
+PHOTO_PAGE = '<script>Video.scenes([{draw(t, s) { s.photo("img1", {zoom: 1.1}); }}]);</script>'
+
+
+@needs_browser
+async def test_a_page_that_draws_a_picture_passes_the_check_with_its_staple(tmp_path):
+    b = Browser(tmp_path / "p", BIN, extra_args=RENDER_ARGS)
+    try:
+        with_staple = await page.check(PHOTO_PAGE, ["The Red Fort at dusk."], b, one_picture_staple())
+        without = await page.check(PHOTO_PAGE, ["The Red Fort at dusk."], b)
+    finally:
+        await b.close()
+    assert with_staple is None
+    assert "no picture called img1; this video has no pictures" in without

@@ -84,7 +84,9 @@ async def write(job: jobs.Job, turn, browser) -> None:
     job.data["assets"] = [assets.as_record(asset) for asset in gathered]
     job.data["dropped"] = dropped
     listing = assets.listing(gathered, dropped)
-    written = await writer.write(job.topic, job.minutes, job.brief, job.folder, turn, browser, listing=listing)
+    assets_script = assets.staple(gathered)  # the writer's page check draws the same pictures the render will
+    written = await writer.write(job.topic, job.minutes, job.brief, job.folder, turn, browser, listing=listing,
+                                 assets_script=assets_script)
     job.title = jobs.title_after_writing(written.title, job)
     job.data["narration"] = written.narration
     job.data["body"] = written.body

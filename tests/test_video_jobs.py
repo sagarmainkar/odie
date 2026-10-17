@@ -305,7 +305,7 @@ async def test_a_job_with_a_topic_writes_its_page_then_renders_it(world, fast, m
     chat, pushes, _store = world
     asked = {}
 
-    async def stand_in_write(topic, minutes, brief, folder, turn, browser, listing=""):
+    async def stand_in_write(topic, minutes, brief, folder, turn, browser, listing="", assets_script=""):
         asked.update(topic=topic, minutes=minutes, brief=brief, folder=folder, turn=turn)
         return writer.Written(title="  How attention works  ", narration=["One.", "Two."], body="<div>x</div>")
 
@@ -328,7 +328,7 @@ async def test_the_writer_uses_the_runners_focused_turn_by_default(world, fast, 
     chat.focused_turn = object()
     seen = {}
 
-    async def stand_in_write(topic, minutes, brief, folder, turn, browser, listing=""):
+    async def stand_in_write(topic, minutes, brief, folder, turn, browser, listing="", assets_script=""):
         seen["turn"] = turn
         return writer.Written(title="", narration=["One."], body="<div></div>")
 
@@ -357,7 +357,7 @@ def test_only_a_job_without_a_page_needs_writing():
 async def test_a_page_that_could_not_be_written_is_told_as_it_is(world, fast, monkeypatch, statuses):
     chat, pushes, _store = world
 
-    async def failing_write(topic, minutes, brief, folder, turn, browser, listing=""):
+    async def failing_write(topic, minutes, brief, folder, turn, browser, listing="", assets_script=""):
         raise harness.WriterFailed("I couldn't write a page that passed its check: scene 2 has no words")
 
     monkeypatch.setattr(kind.writer, "write", failing_write)
@@ -372,7 +372,7 @@ async def test_a_page_that_could_not_be_written_is_told_as_it_is(world, fast, mo
 async def test_a_writer_that_breaks_is_a_plain_sentence(world, fast, monkeypatch):
     chat, _pushes, _store = world
 
-    async def broken_write(topic, minutes, brief, folder, turn, browser, listing=""):
+    async def broken_write(topic, minutes, brief, folder, turn, browser, listing="", assets_script=""):
         raise KeyError("/Users/someone/private/path")
 
     monkeypatch.setattr(kind.writer, "write", broken_write)
@@ -383,7 +383,7 @@ async def test_a_writer_that_breaks_is_a_plain_sentence(world, fast, monkeypatch
 async def test_the_writing_step_writes_brief_md_and_the_writer_gets_its_text(world, fast, monkeypatch):
     asked = {}
 
-    async def stand_in_write(topic, minutes, brief, folder, turn, browser, listing=""):
+    async def stand_in_write(topic, minutes, brief, folder, turn, browser, listing="", assets_script=""):
         asked["brief"] = brief
         asked["on_disk"] = (folder / "brief.md").read_text(encoding="utf-8")
         return writer.Written(title="Tides", narration=["One.", "Two."], body="<div>x</div>")
@@ -433,8 +433,9 @@ async def test_a_job_with_a_picture_fetches_it_lists_it_for_the_writer_and_stapl
 
     asked = {}
 
-    async def stand_in_write(topic, minutes, brief, folder, turn, browser, listing=""):
-        asked.update(brief=brief, listing=listing, on_disk=(folder / "brief.md").read_text(encoding="utf-8"))
+    async def stand_in_write(topic, minutes, brief, folder, turn, browser, listing="", assets_script=""):
+        asked.update(brief=brief, listing=listing, on_disk=(folder / "brief.md").read_text(encoding="utf-8"),
+                     assets_script=assets_script)
         return writer.Written(title="Delhi", narration=["One.", "Two."], body="<script>Video.scenes([]);</script>")
 
     rendered = {}
@@ -465,6 +466,7 @@ async def test_a_job_with_a_picture_fetches_it_lists_it_for_the_writer_and_stapl
     assert (job.folder / "assets" / "img1.jpg").is_file()
 
     script = rendered["script"]
+    assert asked["assets_script"] == script  # the writer's page check drew with the same pictures
     assert script.startswith('<script>Video.assets({"img1": {"kind": "image", "src": "data:image/jpeg;base64,')
     html = (job.folder / "page.html").read_text(encoding="utf-8")
     timings_at = html.index("<script>window.__timings = ")
@@ -483,7 +485,7 @@ async def test_a_job_whose_pictures_all_fail_still_tells_the_writer(world, fast,
 
     asked = {}
 
-    async def stand_in_write(topic, minutes, brief, folder, turn, browser, listing=""):
+    async def stand_in_write(topic, minutes, brief, folder, turn, browser, listing="", assets_script=""):
         asked["listing"] = listing
         return writer.Written(title="Delhi", narration=["One.", "Two."], body="<div></div>")
 

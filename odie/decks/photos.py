@@ -8,7 +8,9 @@ import asyncio
 import base64
 import hashlib
 import io
+import os
 import re
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -68,9 +70,16 @@ def _encode(data: bytes, dest: Path) -> tuple[int, int]:
     if img.mode not in ("RGB", "L"):
         img = img.convert("RGB")
     img.thumbnail((MAX_EDGE, MAX_EDGE))
-    tmp = dest.with_suffix(".tmp")
-    img.save(tmp, "JPEG", quality=82, optimize=True, progressive=True)  # no exif=: nothing carried over
-    tmp.replace(dest)
+    # A temporary file of its own, then a rename: two fetches of one address at once each write their own and the
+    # second rename simply wins, never finding the other's file gone.
+    handle, name = tempfile.mkstemp(dir=dest.parent, suffix=".tmp")
+    os.close(handle)
+    tmp = Path(name)
+    try:
+        img.save(tmp, "JPEG", quality=82, optimize=True, progressive=True)  # no exif=: nothing carried over
+        tmp.replace(dest)
+    finally:
+        tmp.unlink(missing_ok=True)
     return img.width, img.height
 
 
