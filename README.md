@@ -70,6 +70,8 @@ Odie is inspired by Muse, but it isn't a copy.
   doesn't include it. It's downloaded from Hugging Face on first use, under its own licence (Apache 2.0).
   Explainer videos are encoded with ffmpeg from the imageio-ffmpeg package, installed with Odie and run as a
   separate program (its bundled ffmpeg is a GPL build); the video kit ships three.js and KaTeX (both MIT).
+  Explainer videos can carry pictures (yours or the web's, credited on a closing card), short stock clips and an
+  offline map, whose data comes from Natural Earth (public domain; borders as India draws them).
 - **Photos and videos.** Odie reads your Photos library (read-only): who is in a picture, where and when, what Photos
   saw in it. Each picture gets one vector from its words and its pixels, so one search covers notes and pictures. A
   video plays in the chat after Odie fetches its original from iCloud.

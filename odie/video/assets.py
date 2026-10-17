@@ -33,7 +33,12 @@ MAX_STAPLED_BYTES = MAX_STAPLED_MB * 1024 * 1024  # every data URI in the page t
 IMAGE_EDGE = 2400                # a picture's longer side at most: room to push in on a 1920 px stage
 JPEG_QUALITY = 85
 CLIP_BOX = "1280:720"            # a clip is fitted inside 1280×720, its shape kept
-CLIP_QUALITY = "33"              # VP9's constant quality: about 2–4 MB for 15 s at 720p
+# A clip is held to 2 Mb/s (constant bitrate, dropping frames when even that can't hold it), so 15 s stays under
+# about 4 MB however busy. VP9's constant quality alone (CRF 33) has no ceiling: fresh noise in every frame came to
+# 100 MB for 15 s, and a capped CRF (-b:v 2000k) still to 15 MB; ffmpeg refuses -maxrate with -b:v 0.
+CLIP_BITRATE = "2000k"
+CLIP_BUFFER = "2000k"            # a second of it: how far one stretch may borrow before frames are dropped
+CLIP_DROP_BELOW = "30"           # drop a frame when the buffer is under 30% full
 STAGE = (14, 17, 23)             # #0e1117, the kit's stage: what a transparent picture sits on
 DASH = "—"                       # the em dash between the address and the words ("address — words")
 WEB = re.compile(r"^https?://", re.IGNORECASE)
@@ -222,12 +227,15 @@ def prepare_image(src: Path, dest: Path) -> tuple[int, int]:
 
 async def prepare_clip(src: Path, dest: Path) -> float:
     """A clip made ready for the page: its first 15 s, fitted inside 1280×720 with its shape kept, no sound, VP9 in
-    WebM. Returns its length in seconds; ffmpeg's complaint (not a video, say) -> EncodeError."""
+    WebM at 2 Mb/s (under about 4 MB, however busy). Returns its length in seconds; ffmpeg's complaint (not a video,
+    say) -> EncodeError."""
     command = [
         ffmpeg(), "-y", "-loglevel", "error", "-i", str(src),
         "-t", str(CLIP_SECONDS), "-an",
         "-vf", f"scale={CLIP_BOX}:force_original_aspect_ratio=decrease:force_divisible_by=2",
-        "-c:v", "libvpx-vp9", "-pix_fmt", "yuv420p", "-crf", CLIP_QUALITY, "-b:v", "0",
+        "-c:v", "libvpx-vp9", "-pix_fmt", "yuv420p",
+        "-b:v", CLIP_BITRATE, "-minrate", CLIP_BITRATE, "-maxrate", CLIP_BITRATE, "-bufsize", CLIP_BUFFER,
+        "-drop-threshold", CLIP_DROP_BELOW,
         "-deadline", "good", "-cpu-used", "4", "-row-mt", "1",
         str(dest),
     ]
@@ -250,8 +258,8 @@ async def fetch_clip(address: str) -> bytes:
 
 
 def web_credit(given: Given) -> str:
-    """The credit a picture shows in the video: a web picture's own credit from its line, else its site's name; the
-    user's own pictures none. "https://ex.com/a.jpg — fort (Photo by A on Unsplash)" -> "Photo by A on Unsplash";
+    """The credit a picture or clip shows in the video: a web one's own credit from its line, else its site's name;
+    the user's own pictures none. "https://ex.com/a.jpg — fort (Photo by A on Unsplash)" -> "Photo by A on Unsplash";
     "https://www.ex.com/a.jpg — fort" -> "ex.com"; "photo:3F2A — us" -> ""."""
     if not is_web(given.address):
         return ""
@@ -305,7 +313,7 @@ async def clip_asset(name: str, given: Given, place: Path) -> Asset:
         raise Dropped(f"{name} couldn't be prepared: {NOT_A_CLIP}") from None
     finally:
         source.unlink(missing_ok=True)
-    return Asset(name, "clip", given.words, given.credit, info["width"], info["height"], seconds, dest)
+    return Asset(name, "clip", given.words, web_credit(given), info["width"], info["height"], seconds, dest)
 
 
 def stapled_size(asset: Asset) -> int:

@@ -18,6 +18,7 @@ from sse_starlette.sse import EventSourceResponse
 from odie import config, devices, persona, qr
 from odie.models import (PRESET_BY_ID, PRESETS, Provider, all_providers, auth_headers, brain_chosen, custom_key_name,
                          list_models, preset_base_url, refresh_fallback, resolve_selection, slug)
+from odie.photos.library import PHOTO_UUID
 from odie.secrets import remove_secret, save_secret
 from odie.store.db import approval_dict as _approval_dict
 from odie.agent.prompt import Who, identity
@@ -690,7 +691,6 @@ class PhotosIn(BaseModel):
     screenshots: bool | None = None
 
 
-PHOTO_UUID = re.compile(r"^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}\Z")
 PHOTO_TYPES = {".jpeg": "image/jpeg", ".jpg": "image/jpeg", ".png": "image/png", ".heic": "image/heic", ".gif": "image/gif",
                ".webp": "image/webp", ".tiff": "image/tiff", ".tif": "image/tiff"}
 

@@ -16,7 +16,8 @@ PHOTOS_SHOWN = 6     # pictures listed per search unless asked for more (the rep
 PHOTOS_MOST = 12
 ONLY = ("docs", "media", "photos", "videos")
 HOW_TO_SHOW = ('Show the ones with an address in one ```odie-images block (url: the /api/photos/… address exactly as '
-               'given, caption: the date and place). Never invent an address.')
+               'given, caption: the date and place). Never invent an address. A photo\'s photo:<id> is the address a '
+               'video or a deck takes.')
 
 
 def _lines(hits: list[Hit], excerpt: int = EXCERPT) -> str:
@@ -37,19 +38,19 @@ def nice_day(day: str) -> str:
 
 def library_address(h: PhotoHit) -> str | None:
     """Decides whether a picture gets the address that puts it in a video or a deck (make_video's images, a deck's
-    photo): a photo with a copy on this computer -> "photo:<uuid> (for a video or a deck)"; a video, or a photo with
+    photo): a photo with a copy on this computer -> "photo:<uuid>", bare, so the model can copy it into a line as it
+    is (what it's for is said once, in HOW_TO_SHOW and search_everything's description); a video, or a photo with
     nothing of it here -> None (those take photos only, from a copy on this Mac)."""
     if h.kind != "photo" or not h.has_thumb:
         return None
-    return f"photo:{h.uuid} (for a video or a deck)"
+    return f"photo:{h.uuid}"
 
 
 def picture_line(h: PhotoHit) -> str:
     """A picture for the model, with the thumbnail address when a copy is on this computer (for the odie-images
-    gallery), and for a photo, the address a video or a deck takes.
+    gallery), and for a photo, the address a video or a deck takes, last.
       a beach photo with a copy -> "[photo] 16 May 2024 · Baga Beach, Goa, India · with Asha · shows Beach, Sea ·
-                                    album Goa 2024 · /api/photos/<uuid>/thumb ·
-                                    photo:<uuid> (for a video or a deck)" """
+                                    album Goa 2024 · /api/photos/<uuid>/thumb · photo:<uuid>" """
     bits = [nice_day(h.taken)]
     if h.place:
         bits.append(h.place)

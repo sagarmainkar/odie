@@ -15,7 +15,7 @@ const TOOL_LABEL: Record<string, [string, string]> = {
   gmail_send_draft: ["Sending", "Sent the email"], gmail_trash: ["Moving to Trash", "Moved to Trash"], calendar_create_event: ["Creating an event", "Created an event"],
   calendar_respond: ["Replying to the invite", "Replied to the invite"], market_history: ["Checking markets", "Checked markets"],
   speak: ["Recording", "Recorded"], browser_open: ["Opening the page", "Opened a page"], browser_click: ["Clicking", "Clicked"],
-  browser_type: ["Typing", "Typed"], browser_scroll: ["Scrolling", "Scrolled"], browser_sign_in: ["Asking you to sign in", "Asked you to sign in"], find_images: ["Finding photos", "Found photos"],
+  browser_type: ["Typing", "Typed"], browser_scroll: ["Scrolling", "Scrolled"], browser_sign_in: ["Asking you to sign in", "Asked you to sign in"], find_images: ["Finding photos", "Found photos"], find_clips: ["Finding clips", "Found clips"],
   make_file: ["Making the file", "Made a file"], attach_file: ["Attaching", "Attached a file"],
   make_slides: ["Making the slides", "Made the slides"], make_document: ["Writing the document", "Wrote the document"],
   load_skill: ["Loading a skill", "Loaded a skill"], unload_skill: ["Putting a skill away", "Put a skill away"],

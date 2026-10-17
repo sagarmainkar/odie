@@ -158,6 +158,24 @@ async def test_a_library_picture_is_its_big_copy_upright_and_uncredited(library)
     assert got.ref == f"photo:{UUID}" and 0x010F not in Image.open(got.path).getexif()  # the camera isn't carried
 
 
+@pytest.mark.parametrize("ref", [f"photo:{UUID} (for a video or a deck)", f"photo:{UUID} us at Nathula",
+                                 f"photo: {UUID}"])
+async def test_words_after_a_library_id_never_lose_the_picture(library, ref):
+    copies, index_rows = library
+    big = copies / "x_1_102_o.jpeg"
+    big.write_bytes(jpeg(2048, 1536))
+    index_rows([library_row(UUID, big)])
+    got = await photos.fetch(ref)
+    assert (got.width, got.height) == (2000, 1500)
+    assert got.ref == f"photo:{UUID}"  # the picture's own address, whatever came after it
+
+
+async def test_a_refusal_names_the_library_picture_by_its_own_address(library):
+    with pytest.raises(photos.PhotoError) as e:
+        await photos.fetch(f"photo:{UUID} (for a video or a deck)")
+    assert str(e.value) == f"There's no picture photo:{UUID} in the user's Photos library here."
+
+
 async def test_a_library_picture_with_only_a_small_copy_is_refused_with_what_to_do(library):
     copies, index_rows = library
     thumb = copies / "x_4_5005_c.jpeg"

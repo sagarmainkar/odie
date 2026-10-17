@@ -3,11 +3,11 @@ the chat named (odie.making.sources: the user's message, a note, a workspace fil
 Odie's background queue (odie.making.jobs, kind "video" from odie.video.kind) with the brief and the sources as one
 text, the job's brief.md. The pictures and clips the chat found (images, clips: "address — what it shows" lines) are
 checked here and go with the job, with the chat's private sites; the job fetches them before the writer runs
-(odie.video.assets). A picture from the user's library that can't go in (only a small copy on this Mac) is left out
-here, and the result says so, so the chat can tell the user at once. In the background the writer (odie.video.writer)
-turns the topic, length, that brief and the pictures' names into the narration and the page; then the video is
-narrated, rendered and posted to this chat. The chat only briefs the video. Plain trusted code of a built-in skill:
-no shell, no approval card."""
+(odie.video.assets). A picture from the user's library that can't go in (only a small copy on this Mac), and in a
+private chat every web picture and clip, is left out here, and the result says so, so the chat can tell the user at
+once. In the background the writer (odie.video.writer) turns the topic, length, that brief and the pictures' names
+into the narration and the page; then the video is narrated, rendered and posted to this chat. The chat only briefs
+the video. Plain trusted code of a built-in skill: no shell, no approval card."""
 import asyncio
 
 from google.adk.tools import FunctionTool, ToolContext
@@ -106,6 +106,26 @@ def library_pictures_left_out(lines: list[str], pictures: list[assets.Given]) ->
     return kept, left_out
 
 
+def web_lines_left_out(lines: list[str], given: list[assets.Given], private: bool) -> tuple[list[str], list[str]]:
+    """Decides which lines go to the job from a private chat (one that read a signed-in page). Such a chat fetches
+    nothing from the web, so its web pictures and clips are left out now, with why, so the chat can tell the user
+    (as the deck does: odie.making.deck); the user's own pictures go on. A public chat keeps every line. Gives (the
+    lines kept, what was left out).
+      private, ["https://… — Red Fort (Photo by A on Unsplash)", "photo:3F2A — us at the gate"] ->
+      (["photo:3F2A — us at the gate"], ["Red Fort (not fetched: this chat read a signed-in page, …)"])
+      not private, the same lines -> (both lines, [])"""
+    if not private:
+        return lines, []
+    kept = []
+    left_out = []
+    for line, picture in zip(lines, given):
+        if assets.is_web(picture.address):
+            left_out.append(f"{picture.words} ({photos.PRIVATE_REFUSAL})")
+            continue
+        kept.append(line)
+    return kept, left_out
+
+
 async def make_video(topic: str, minutes: int = 2, brief: str = "", sources: list[str] | None = None,
                      images: list[str] | None = None, clips: list[str] | None = None, voice_name: str = "",
                      tool_context: ToolContext | None = None) -> dict:
@@ -151,12 +171,17 @@ async def make_video(topic: str, minutes: int = 2, brief: str = "", sources: lis
         return {"error": str(e)}
 
     try:
-        pictures, _moving = assets.parse(images, clips)
+        pictures, moving = assets.parse(images, clips)
     except assets.AssetProblem as e:
         return {"error": str(e)}
+    private = bool(private_sites())
     image_lines = assets.lines_as_given(images, "images")
-    image_lines, left_out = await asyncio.to_thread(library_pictures_left_out, image_lines, pictures)
+    image_lines, pictures_left_out = web_lines_left_out(image_lines, pictures, private)
+    kept_pictures, _ = assets.parse(image_lines, None)  # the kept lines read again, so the next check lines up
+    image_lines, library_left_out = await asyncio.to_thread(library_pictures_left_out, image_lines, kept_pictures)
     clip_lines = assets.lines_as_given(clips, "clips")
+    clip_lines, clips_left_out = web_lines_left_out(clip_lines, moving, private)
+    left_out = library_left_out + pictures_left_out + clips_left_out
     given = {"images": image_lines, "clips": clip_lines}
 
     voice_id = ""

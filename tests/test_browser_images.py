@@ -33,8 +33,25 @@ def test_bing_keeps_originals_with_their_sites():
     got = images.bing(page("bing"))
     assert got[0] == {"url": "https://static.toiimg.com/photo/51287966.cms", "kind": "web", "credit": "timesofindia.indiatimes.com",
                       "page": "https://timesofindia.indiatimes.com/travel/x", "title": "Jadoh, Meghalaya", "width": 0, "height": 0}
-    assert [g["credit"] for g in got] == ["timesofindia.indiatimes.com", "reifytravels.com", "tecbikepartsusa.com"]  # http:// dropped
+    # http:// dropped, and the Dreamstime result too: a stock site's watermarked preview
+    assert [g["credit"] for g in got] == ["timesofindia.indiatimes.com", "reifytravels.com", "tecbikepartsusa.com"]
     assert got[1]["title"] == "Doh Khleh & Jadoh"
+
+
+def test_stock_sites_previews_are_known_by_their_host():
+    stock = ["https://thumbs.dreamstime.com/b/gangtok.jpg", "https://www.shutterstock.com/image-photo/x-260nw-1.jpg",
+             "https://c8.alamy.com/comp/X/x.jpg", "https://media.istockphoto.com/id/1/photo/x.jpg",
+             "https://media.gettyimages.com/id/1/photo/x.jpg", "https://www.gettyimages.co.uk/detail/1",
+             "https://us.123rf.com/450wm/x.jpg", "https://st.depositphotos.com/1/x.jpg",
+             "https://stock.adobe.com/in/images/x/1", "https://t3.ftcdn.net/jpg/01/x.jpg",
+             "https://www.adobestock.com/x.jpg", "https://static.bigstockphoto.com/x.jpg",
+             "https://cdn.vectorstock.com/i/x.jpg", "https://comps.canstockphoto.com/x.jpg"]
+    for url in stock:
+        assert images.is_stock_preview(url), url
+    free = ["https://static.toiimg.com/photo/51287966.cms", "https://images.unsplash.com/photo-1.jpg",
+            "https://notalamy.com/a.jpg", "https://www.adobe.com/x.jpg", "not an address", ""]
+    for url in free:
+        assert not images.is_stock_preview(url), url
 
 
 class FakeBrowser:

@@ -158,6 +158,22 @@ async def test_a_long_clip_is_cut_to_its_first_15_seconds_and_keeps_its_shape(tm
     assert (info["width"], info["height"]) == (960, 720)  # 4:3 kept, fitted inside 1280×720
 
 
+async def test_busy_footage_is_held_to_the_clips_bitrate(tmp_path):
+    # Fresh noise in every frame is the most a clip can hold (rain, snow and surf are milder): at VP9's quality 33
+    # alone, 3 s of it came to 30 MB and 15 s to 100 MB. Held to 2 Mb/s a 15 s clip stays under about 5 MB, so 3 s
+    # stays under a fifth of that.
+    src = tmp_path / "noise.mp4"
+    command = [encode.ffmpeg(), "-y", "-loglevel", "error",
+               "-f", "lavfi", "-i", "nullsrc=size=640x360:rate=25,geq=random(1)*255:128:128",
+               "-t", "3", "-c:v", "libx264", "-preset", "ultrafast", "-crf", "10", "-pix_fmt", "yuv420p", str(src)]
+    code, stderr = await encode.run(command)
+    assert code == 0, stderr
+    dest = tmp_path / "clip1.webm"
+    seconds = await assets.prepare_clip(src, dest)
+    assert 2.8 <= seconds <= 3.05  # still the whole clip, however busy
+    assert dest.stat().st_size < 5_000_000 * 3 / 15
+
+
 async def test_a_file_that_isnt_a_video_is_an_encode_error(tmp_path):
     src = tmp_path / "page.mp4"
     src.write_text("<html>not a video</html>")
@@ -219,6 +235,15 @@ async def test_gather_names_in_order_and_says_what_was_dropped(tmp_path, sources
     assert (waves.kind, waves.credit, waves.width, waves.height) == ("clip", "Pexels, by B", 1280, 720)
     assert 1.9 <= waves.seconds <= 2.05 and waves.path == folder / "assets" / "clip1.webm"
     assert sorted(p.name for p in (folder / "assets").iterdir()) == ["clip1.webm", "img1.jpg", "img3.jpg"]
+
+
+async def test_a_clip_without_a_credit_is_credited_to_its_site(tmp_path, sources):
+    _pictures, clip_bytes = sources
+    waves = await make_clip(tmp_path / "waves.mp4", 1, size="320x240")
+    clip_bytes["https://www.ex.com/waves.mp4"] = waves.read_bytes()
+    _, clips = assets.parse(None, ["https://www.ex.com/waves.mp4 — waves, slow"])
+    got, dropped = await assets.gather([], clips, tmp_path / "job")
+    assert dropped == [] and got[0].credit == "ex.com"  # the credits card names every web clip, as it does a picture
 
 
 async def test_in_a_private_chat_web_clips_are_dropped_with_the_decks_words(tmp_path, sources):

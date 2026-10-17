@@ -42,12 +42,14 @@ def a_copy(path: Path, width: int, height: int) -> str:
     return str(path)
 
 
-def put_in_library(store, tmp_path: Path, small: dict[str, int] | None = None) -> None:
-    """The real index's photos: LIBRARY_UUID with a 2048×1536 copy, and each uuid in `small` with only a copy of that
-    many pixels on its long side."""
+def put_in_library(store, tmp_path: Path, small: dict[str, int] | None = None, full: tuple[str, ...] = ()) -> None:
+    """The real index's photos: LIBRARY_UUID and each uuid in `full` with a 2048×1536 copy, and each uuid in `small`
+    with only a copy of that many pixels on its long side."""
     from odie.photos.library import PhotoRow
     from odie.vault import settings as vault_settings
     copies = {LIBRARY_UUID: a_copy(tmp_path / "full.jpeg", 2048, 1536)}
+    for uuid in full:
+        copies[uuid] = a_copy(tmp_path / f"{uuid}.jpeg", 2048, 1536)
     for uuid, side in (small or {}).items():
         copies[uuid] = a_copy(tmp_path / f"{uuid}.jpeg", side, side * 3 // 4)
     rows = [PhotoRow(uuid=uuid, kind="photo", taken="2026-05-12T10:00:00", people=[], labels=[], place="Nathula",
@@ -337,6 +339,7 @@ def test_the_skill_says_how_to_gather_pictures_clips_and_places():
     assert "6–20" in text and "0–6" in text  # pictures and clips: the ranges that work
     assert "lat, lon" in text and "Gangtok" in text and "Lachung" in text  # a town the map may not know
     assert "private chat" in text and "open it in Photos once" in text
+    assert "Unsplash, Pexels" in text and "watermarked" in text  # free pictures first; never a stock site's preview
 
 
 def test_videos_are_drawn_in_a_browser_cut_off_from_the_network(isolated_settings, monkeypatch):
@@ -421,3 +424,37 @@ async def test_web_pictures_and_full_library_copies_leave_the_reply_as_it_was(wo
     out = await tools.make_video("Goa", images=PICTURES)
     assert "Left out" not in out["result"]
     assert world[1][0].data["given"]["images"] == PICTURES
+
+
+async def test_words_after_a_library_id_in_a_line_keep_the_picture(world, tmp_path):
+    from odie.decks import photos
+    from odie.video import assets
+    store, submitted = world
+    uuid = "0F1E2D3C-4B5A-6978-8899-AABBCCDDEEFF"
+    put_in_library(store, tmp_path, full=(uuid,))
+    line = f"photo:{uuid} (for a video or a deck) — us at Nathula, prayer flags in the snow"
+    out = await tools.make_video("Sikkim", images=[line])
+    assert "Left out" not in out["result"]
+    assert submitted[0].data["given"]["images"] == [line]
+    pictures, _ = assets.parse(submitted[0].data["given"]["images"], None)
+    got = await photos.fetch(pictures[0].address)  # what the job does with the line
+    assert got.ref == f"photo:{uuid}" and (got.width, got.height) == (2000, 1500)
+
+
+async def test_in_a_private_chat_web_pictures_and_clips_are_left_out_and_the_chat_is_told(world):
+    from odie.agent import turn
+    _store, submitted = world
+    fort = "https://images.unsplash.com/a.jpg — Red Fort, Delhi, at dusk (Photo by A on Unsplash)"
+    gate = "photo:3F2A — Nathula pass, us at the gate, 12 May 2026"
+    waves = "https://videos.pexels.com/v.mp4 — waves on a Goa beach, slow (Pexels, by B)"
+    token = turn.PRIVATE.set({"amazon.in"})
+    try:
+        out = await tools.make_video("Goa", images=[fort, gate], clips=[waves])
+    finally:
+        turn.PRIVATE.reset(token)
+    assert "result" in out, out
+    assert submitted[0].data["given"] == {"images": [gate], "clips": []}  # the user's own picture goes on
+    reason = "not fetched: this chat read a signed-in page, so photos from the web aren't fetched here"
+    assert (f"Left out: Red Fort, Delhi, at dusk ({reason}); waves on a Goa beach, slow ({reason}).") in out["result"]
+    assert "Add that to the reply in a few words" in out["result"]
+

@@ -18,6 +18,7 @@ from urllib.parse import urlsplit
 from PIL import Image, ImageOps, UnidentifiedImageError
 
 from odie.net import DownloadError, safe_download
+from odie.photos.library import A_PHOTO_UUID
 
 MAX_BYTES, MAX_EDGE = 10 * 1024 * 1024, 2000
 MAX_PIXELS = 60_000_000  # a decompression bomb is refused, not decoded
@@ -159,14 +160,30 @@ def long_side(path: Path) -> int | None:
         return None
 
 
+def library_id(ref: str) -> str:
+    """The picture's id in a photo: address, read so that words after it never lose the picture: the first Photos id
+    (a uuid) in it, else its first word. "photo:0F1E…EEFF (for a video or a deck)" -> "0F1E…EEFF";
+    "photo: 0F1E…EEFF us at Nathula" -> "0F1E…EEFF"; "photo:3F2A" -> "3F2A"; "photo:" -> ""."""
+    rest = ref.partition(":")[2]
+    found = A_PHOTO_UUID.search(rest)
+    if found is not None:
+        return found.group(0)
+    words = rest.split()
+    if not words:
+        return ""
+    return words[0]
+
+
 def library_copy(ref: str) -> Path:
     """Decides whether photo:<id> can go in, and gives the file it comes from: the largest copy of a photo the index
     knows on this Mac. Anything else raises PhotoError with what the user can do, since Odie never asks iCloud for the
     full picture: photo:<id> with a 2048 px copy here -> that file; with only a 360 px copy -> "photo:<id> has only a
     small copy on this Mac (360 px); open it in Photos once so the full picture comes down"; a video, no copy, a
-    HEIC Odie can't read or an unknown id -> its own refusal. It only reads the index and the file's header, so
-    make_video can check a line within the chat turn."""
-    uuid = ref.partition(":")[2].strip()
+    HEIC Odie can't read or an unknown id -> its own refusal. Words after the id are ignored (library_id), and the
+    refusals name the picture by photo:<id> alone. It only reads the index and the file's header, so make_video can
+    check a line within the chat turn."""
+    uuid = library_id(ref)
+    ref = f"photo:{uuid}"
     row = library_row(uuid)
     if row is None:
         raise PhotoError(f"There's no picture {ref} in the user's Photos library here.")
@@ -189,9 +206,10 @@ def library_copy(ref: str) -> Path:
 
 def _library(ref: str) -> Photo:
     """photo:<id>: the user's own picture from the Photos library, by the copy library_copy allows, re-encoded like
-    the others (upright, at most 2000 px, EXIF and its place dropped). It needs no credit and works in a private chat
-    (it never leaves the Mac)."""
+    the others (upright, at most 2000 px, EXIF and its place dropped), and known by photo:<id> alone, whatever words
+    followed the id. It needs no credit and works in a private chat (it never leaves the Mac)."""
     path = library_copy(ref)
+    ref = f"photo:{library_id(ref)}"
     dest = _dest(ref)
     width, height = _encode(path.read_bytes(), dest)
     return Photo(ref, dest, width, height, "")

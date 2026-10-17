@@ -116,7 +116,8 @@ async def test_search_everything_answers_notes_and_pictures_together(store, vaul
     out = await search(query="goa")
     assert "[note] " in out and "Trip" in out  # the sample vault's Goa trip note
     assert "[photo] " in out and f"/api/photos/{UUID_A}/thumb" in out
-    assert f"photo:{UUID_A} (for a video or a deck)" in out  # the address make_video and decks take
+    assert f"/thumb · photo:{UUID_A}\n" in out  # the address make_video and decks take, bare, to copy as it is
+    assert "photo:<id> is the address a video or a deck takes" in out  # what it's for, said once, not in the address
     assert "16 May 2024" in out and "Baga Beach, Goa, India" in out and "Asha" in out and "Beach, Sea" in out
     assert "odie-images block (url: the /api/photos/… address" in out  # how to show them: not by photo:<id>
     only = await search(query="", only="videos")
@@ -138,8 +139,9 @@ def hit(kind="photo", has_thumb=True):
 
 def test_a_photo_line_carries_its_gallery_address_and_its_address_for_a_video_or_a_deck():
     from odie.vault.tools import picture_line
+    # the photo: address ends the line, bare: copied into a make_video or deck line, it names the picture and only it
     assert picture_line(hit()) == ("[photo] 16 May 2024 · Baga Beach, Goa, India · with Asha · shows Beach · "
-                                   f"/api/photos/{UUID_A}/thumb · photo:{UUID_A} (for a video or a deck)")
+                                   f"/api/photos/{UUID_A}/thumb · photo:{UUID_A}")
     assert "photo:" not in picture_line(hit(kind="video"))  # make_video and decks take photos only
     assert "photo:" not in picture_line(hit(has_thumb=False))  # nothing of it on this computer to put in
 

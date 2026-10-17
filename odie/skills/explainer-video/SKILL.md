@@ -44,7 +44,9 @@ A film of something the viewer should see for real (people, places, things, a tr
 needs material; an abstract topic ("how attention works") doesn't. Gather it before you call:
 
 - **Web pictures:** `find_images(query)`, one query per theme or place: a history, one per ruler, battle or
-  building; a trip plan, one or two per place. 6–20 pictures in all.
+  building; a trip plan, one or two per place. 6–20 pictures in all. Prefer the free ones (Unsplash, Pexels) and the
+  user's own; take a web result only for a real thing a free photo can't show (a named painting, a monument), and
+  never a watermarked preview.
 - **The user's own trip:** `search_everything(only="photos", place=…, since=…, until=…)`; use each hit's
   `photo:<id>` address, not its /api/photos/ one.
 - **Clips:** `find_clips(query)` for places and moods (waves, snow, a busy street; never faces): 0–6, of 5–15 s.
@@ -59,9 +61,9 @@ A trip's brief gives the places in order, with dates. The map knows towns and ci
 pass: give those as `lat, lon` (roughly is fine). Pune, Bagdogra, Gangtok, Lachung: Gangtok is known; write
 "Bagdogra airport (26.681, 88.328)" and "Lachung (27.69, 88.74)".
 
-In a private chat only the user's own pictures go in (web pictures and clips are dropped), so don't search the web
-for them. If a picture can't be fetched, the writer does without it: say nothing. If the result says a library
-picture was left out for a small copy, tell the user to open it in Photos once.
+In a private chat only the user's own pictures go in (web pictures and clips are left out), so don't search the web
+for them. If a picture can't be fetched, the writer does without it: say nothing. If the result says something was
+left out, tell the user in a few words (a library picture with a small copy: open it in Photos once).
 
 ## The call
 

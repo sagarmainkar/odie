@@ -17,11 +17,32 @@ from odie.agent.tools.web import _fence
 
 SOURCES = (("unsplash", "Unsplash", "free"), ("pexels", "Pexels", "free"), ("bing", "Bing", "web"))
 Loads = Callable[[list[str]], Awaitable[set[str]]]
+# Stock-photo sites whose pictures in a search are watermarked previews (the full picture is sold): a Bing result from
+# one is never offered (a live Sikkim film once used a Dreamstime preview). A name counts when it is a whole part of
+# the host, so thumbs.dreamstime.com and gettyimages.co.uk match; ftcdn.net is where Adobe Stock keeps its previews.
+STOCK_PREVIEW_SITES = frozenset({"dreamstime", "shutterstock", "alamy", "istockphoto", "gettyimages", "123rf",
+                                 "depositphotos", "adobestock", "bigstock", "bigstockphoto", "vectorstock",
+                                 "canstockphoto", "ftcdn"})
+ADOBE_STOCK = "stock.adobe.com"
 
 
 def site_name(url: str) -> str:
     host = (urlsplit(url or "").hostname or "").lower()
     return host[4:] if host.startswith("www.") else host
+
+
+def is_stock_preview(url: str) -> bool:
+    """Decides whether a picture's address is on a stock-photo site that shows only watermarked previews, so a Bing
+    result there is dropped: "https://thumbs.dreamstime.com/b/gangtok.jpg" -> True; "https://stock.adobe.com/in/x"
+    -> True; "https://static.toiimg.com/photo/1.cms" -> False; "https://notalamy.com/a.jpg" -> False (only a whole
+    part of the host counts); "https://www.adobe.com/x.jpg" -> False."""
+    host = (urlsplit(url or "").hostname or "").lower()
+    if host == ADOBE_STOCK or host.endswith("." + ADOBE_STOCK):
+        return True
+    for part in host.split("."):
+        if part in STOCK_PREVIEW_SITES:
+            return True
+    return False
 
 
 def search_url(key: str, query: str) -> str:
@@ -123,8 +144,11 @@ class _Bing(HTMLParser):
         except ValueError:
             return
         url, page = str(m.get("murl") or ""), str(m.get("purl") or "")
-        if url.startswith("https://"):
-            self.out.append(_photo(url, "web", site_name(page or url), page, _html.unescape(str(m.get("t") or ""))))
+        if not url.startswith("https://"):
+            return
+        if is_stock_preview(url) or is_stock_preview(page):  # a watermarked preview, wherever Bing found it
+            return
+        self.out.append(_photo(url, "web", site_name(page or url), page, _html.unescape(str(m.get("t") or ""))))
 
 
 def bing(page_html: str) -> list[dict]:
