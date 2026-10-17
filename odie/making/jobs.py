@@ -9,7 +9,7 @@ and tells the chat "The {word} about {title} is ready." (or didn't finish, or wa
 Each job has a folder, <data>/workspace/<the kind's folder>/<slug>/, holding what its steps make, job.json (status:
 queued, writing, making, done, failed or interrupted_told; a video's job.json from before the queue was shared may say
 "running", which meant making) and brief.md. A job starts as a topic, a length and a brief (the chat model's brief and
-any sources, word for word: odie.video.sources for a video); the writing step first writes the brief to brief.md, kept
+any sources, word for word: odie.making.sources); the writing step first writes the brief to brief.md, kept
 for later, then turns them into the title and the kind's own results (job.data). job.json never holds the brief."""
 from __future__ import annotations
 

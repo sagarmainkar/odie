@@ -33,6 +33,12 @@ message.
 
 Only what the podcast needs, nothing private it doesn't use: plain text, up to 6,000 characters.
 
+## What the user gave: sources
+
+Pass what the user gave (pasted text, a note, a file) in `sources` instead of copying it into the brief: the
+writer gets it word for word, and the brief stays the plan. A source is `"my message"` (their latest message), a
+note's name or path, or a text file's path in Odie's workspace; up to 5.
+
 ## The call
 
 ```

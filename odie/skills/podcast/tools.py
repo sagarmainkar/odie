@@ -1,8 +1,9 @@
 """The podcast skill's tool: make_podcast checks the request within the chat turn (instantly) and puts the podcast in
-Odie's background queue (odie.making.jobs, kind "podcast" from odie.making.podcast) with the chat's brief, kept as the
-job's brief.md. In the background the writer (odie.making.podcast_writer) turns the topic, length and brief into a
-two-host script; then the script is spoken in two voices and posted to this chat with a ping. The chat only briefs
-the podcast. Plain trusted code of a built-in skill: no shell, no approval card."""
+Odie's background queue (odie.making.jobs, kind "podcast" from odie.making.podcast) with the chat's brief and the
+sources it named (odie.making.sources, word for word), kept as the job's brief.md. In the background the writer
+(odie.making.podcast_writer) turns the topic, length and brief into a two-host script; then the script is spoken in
+two voices and posted to this chat with a ping. The chat only briefs the podcast. Plain trusted code of a built-in
+skill: no shell, no approval card."""
 import math
 
 from google.adk.tools import FunctionTool, ToolContext
@@ -11,6 +12,7 @@ from odie import voice
 from odie.agent.context import session_id_of
 from odie.agent.tools.files import workspace
 from odie.making import chat, jobs, podcast
+from odie.making import sources as making_sources
 from odie.signin import guard
 
 MIN_MINUTES = 1
@@ -59,7 +61,8 @@ def minutes_to_make(minutes: int, engine: str) -> tuple[int, int]:
     return low_writing + speaking, high_writing + speaking
 
 
-async def make_podcast(topic: str, minutes: int = 4, brief: str = "", tool_context: ToolContext | None = None) -> dict:
+async def make_podcast(topic: str, minutes: int = 4, brief: str = "", sources: list[str] | None = None,
+                       tool_context: ToolContext | None = None) -> dict:
     """Make a podcast the user can play in this chat: two hosts (a woman, then a man) talking a topic through,
     NotebookLM style. A separate writer writes the script from your brief, in the background; it can't see this chat,
     the user's notes, memory or the web.
@@ -67,6 +70,8 @@ async def make_podcast(topic: str, minutes: int = 4, brief: str = "", tool_conte
     minutes: its length, from 1 to 10: the user's length, else 4.
     brief: the angle, the key points in order, and the facts from this chat or the notes it must use (for a podcast
     of this conversation: its decisions, questions and surprises). Up to 6,000 characters.
+    sources: what the user gave, passed to the writer word for word (never retype it): "my message" (the user's
+    latest message), a note's name or path in their vault, or a text file's path in Odie's workspace. Up to 5.
     It returns at once. {"error": …}: fix exactly that and call again. {"result": …}: the podcast is being made; reply
     in one or two lines as the result says, and don't repeat the brief."""
     if words_would_leave(jobs.hooks["store"]):
@@ -86,11 +91,18 @@ async def make_podcast(topic: str, minutes: int = 4, brief: str = "", tool_conte
 
     problem = chat.brief_problem(brief, WORD)
     if problem:
-        return {"error": problem}
+        return {"error": f"{problem} {chat.USE_SOURCES}"}
+
+    try:
+        references = making_sources.sources_as_given(sources)
+        found = making_sources.resolve(references, jobs.hooks["store"])
+    except making_sources.SourceProblem as e:
+        return {"error": str(e)}
 
     folder = chat.free_folder(workspace() / podcast.FOLDER, chat.slug_of(title, WORD))
     folder.mkdir(parents=True)
-    job = jobs.Job(kind="podcast", slug=folder.name, title=title, topic=title, minutes=minutes, brief=brief,
+    whole_brief = making_sources.brief_with_sources(brief, found)
+    job = jobs.Job(kind="podcast", slug=folder.name, title=title, topic=title, minutes=minutes, brief=whole_brief,
                    session_id=session_id_of(tool_context), folder=folder)
     place = jobs.submit(job)
     engine, _voice_id = voice.get_tts(jobs.hooks["store"])

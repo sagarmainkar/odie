@@ -1,7 +1,7 @@
-"""The sources of an explainer video (odie.video.sources): what the user gave, named by the chat model and read by
-Odie's code word for word. "my message" is the user's message of this chat turn without Odie's trailer; a file in
-Odie's workspace is read when one is there by that path, else a note by the vault's own reader. Limits and refusals
-come back as words to act on. Everything here is made up and lives under tmp_path."""
+"""The sources of anything made in the background (odie.making.sources): what the user gave, named by the chat model
+and read by Odie's code word for word. "my message" is the user's message of this chat turn without Odie's trailer; a
+file in Odie's workspace is read when one is there by that path, else a note by the vault's own reader. Limits and
+refusals come back as words to act on. Everything here is made up and lives under tmp_path."""
 import os
 from contextlib import contextmanager
 
@@ -9,8 +9,8 @@ import pytest
 
 from odie.agent import turn
 from odie.agent.tools.files import in_workspace
+from odie.making import sources
 from odie.store.db import Store
-from odie.video import sources
 
 TIDES = "Asha's notes on tides.\n\n| place | high tide |\n|---|---|\n| Goa | 2.1 m |\n| Kochi | 0.9 m |"
 

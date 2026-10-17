@@ -13,6 +13,8 @@ from google.adk.tools import FunctionTool
 
 from odie import voice
 from odie.agent import turn
+from odie.agent.tools.files import workspace
+from odie.making import chat as making_chat
 from odie.making import jobs, podcast
 from odie.signin import state
 from odie.store.db import Store
@@ -209,10 +211,10 @@ def test_the_skill_offers_only_make_podcast_without_an_approval_card(isolated_se
     assert not any(tool._require_confirmation for tool in entry.tool_objs)
 
 
-def test_the_declaration_has_exactly_topic_minutes_and_brief():
+def test_the_declaration_has_exactly_topic_minutes_brief_and_sources():
     declaration = FunctionTool(tools.make_podcast)._get_declaration()
     properties = declaration.parameters_json_schema["properties"]
-    assert sorted(properties) == ["brief", "minutes", "topic"]
+    assert sorted(properties) == ["brief", "minutes", "sources", "topic"]
     assert declaration.parameters_json_schema["required"] == ["topic"]
 
     golden = {d["name"]: d for d in json.loads(GOLDEN.read_text())}
@@ -227,4 +229,87 @@ def test_the_skill_says_how_to_write_the_brief():
     assert "our session" in text.lower() and "decisions" in text  # a podcast of this chat: the brief carries it
     assert "no emojis" in text
     assert 'style="podcast"' not in text and "speak(" not in text and "Host A:" not in text  # the writer's business
-    assert len(text.split("---", 2)[2].split()) < 400  # the body is short: the writer has the podcast rules
+    assert len(text.split("---", 2)[2].split()) < 450  # the body is short: the writer has the podcast rules
+
+
+# Sources: what the user gave, read by Odie's code and put after the brief, word for word.
+
+TIDES = "Asha's notes on tides.\n\n| place | high tide |\n|---|---|\n| Goa | 2.1 m |"
+
+
+async def test_my_message_goes_into_the_jobs_brief_after_the_plan(world):
+    _store, submitted = world
+    chat = SimpleNamespace(session=SimpleNamespace(id="chat-7"))
+    token = turn.USER_TEXT.set(TIDES)  # the runner sets the user's words for the turn's tools
+    try:
+        out = await tools.make_podcast("How tides work", brief="For a ten-year-old. Show the table.",
+                                      sources=["my message"], tool_context=chat)
+    finally:
+        turn.USER_TEXT.reset(token)
+    assert "result" in out, out
+    brief = submitted[0].brief
+    assert brief.startswith("For a ten-year-old. Show the table.")
+    assert "## Source material" in brief and TIDES in brief and "[context:" not in brief
+
+
+async def test_a_workspace_file_is_quoted_word_for_word_into_the_jobs_brief(world):
+    _store, submitted = world
+    (workspace() / "tides.md").write_text(TIDES, encoding="utf-8")
+    out = await tools.make_podcast("How tides work", brief="For Asha.", sources=["tides.md"])
+    assert "result" in out, out
+    brief = submitted[0].brief
+    assert brief.startswith("For Asha.") and "### File: tides.md" in brief and TIDES in brief
+
+
+async def test_the_sources_text_reaches_brief_md_when_the_job_is_written(world):
+    _store, submitted = world
+    (workspace() / "tides.md").write_text(TIDES, encoding="utf-8")
+    await tools.make_podcast("How tides work", brief="For Asha.", sources=["tides.md"])
+    job = submitted[0]
+    jobs.write_brief(job)
+    assert TIDES in (job.folder / "brief.md").read_text(encoding="utf-8")
+
+
+async def test_a_source_that_cant_be_read_is_an_error_and_nothing_is_queued(world):
+    out = await tools.make_podcast("How tides work", brief="For Asha.", sources=["../../outside.txt"])
+    assert "workspace" in out["error"] and world[1] == []
+    out = await tools.make_podcast("How tides work", sources=["a.txt"] * 6)
+    assert "at most 5" in out["error"] and world[1] == []
+    assert not (workspace() / "podcasts").exists()  # no folder made for a refused podcast
+
+
+@pytest.mark.parametrize("given", [None, []])
+async def test_no_sources_leaves_the_brief_as_it_is(world, given):
+    out = await call_as_adk_does(topic="Tides", brief="For Asha.", sources=given)
+    assert "result" in out, out
+    assert world[1][0].brief == "For Asha."
+
+
+async def test_sources_sent_as_json_text_are_read_as_the_list(world):
+    out = await call_as_adk_does(topic="How tides work", brief="For Asha.", sources='["my message"]')
+    assert "error" in out and "user's message" in out["error"]  # read as the list: no user turn here, so refused
+
+
+async def test_sources_that_arent_a_list_are_an_error(world):
+    out = await call_as_adk_does(topic="How tides work", sources={"note": "Tides"})
+    assert "list" in out["error"] and world[1] == []
+
+
+async def test_a_brief_over_the_limit_is_told_to_use_sources(world):
+    out = await tools.make_podcast("Tides", brief="x" * 6001)
+    assert out["error"].endswith(making_chat.USE_SOURCES) and world[1] == []
+    assert making_chat.USE_SOURCES == "Pass what the user gave in sources instead of copying it."
+
+
+def test_the_declaration_offers_sources_last_as_a_list_of_texts_or_nothing():
+    declaration = FunctionTool(tools.make_podcast)._get_declaration()
+    properties = declaration.parameters_json_schema["properties"]
+    assert list(properties)[-1] == "sources"
+    assert properties["sources"]["anyOf"][0] == {"items": {"type": "string"}, "type": "array"}
+    golden = {d["name"]: d for d in json.loads(GOLDEN.read_text())}
+    assert golden["make_podcast"]["parameters_json_schema"]["properties"]["sources"] == properties["sources"]
+
+
+def test_the_skill_says_to_pass_what_the_user_gave_in_sources():
+    text = (SKILL / "SKILL.md").read_text()
+    assert "`sources`" in text and "my message" in text and "instead of" in text

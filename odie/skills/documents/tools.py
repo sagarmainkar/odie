@@ -2,10 +2,11 @@
 Word document made from Markdown and handed to the chat as a download (odie.agent.tools.files).
 
 make_deck checks the request within the chat turn (instantly) and puts the deck in Odie's background queue
-(odie.making.jobs, kind "deck" from odie.making.deck) with the chat's brief, kept as the job's brief.md. In the
-background the writer (odie.making.deck_writer) writes the slides from the brief (and, for a revision, the earlier
-deck); then the deck is built and its card posted to this chat with a ping. Plain trusted code of a built-in skill: no
-shell, no approval card."""
+(odie.making.jobs, kind "deck" from odie.making.deck) with the chat's brief and the sources it named
+(odie.making.sources, word for word), kept as the job's brief.md. In the background the writer
+(odie.making.deck_writer) writes the slides from the brief (and, for a revision, the earlier deck); then the deck is
+built and its card posted to this chat with a ping. Plain trusted code of a built-in skill: no shell, no approval
+card."""
 import math
 import re
 from pathlib import Path
@@ -18,6 +19,7 @@ from odie.agent.turn import file_asked, private_sites
 from odie.decks.model import DeckError, parse
 from odie.decks.themes import THEMES
 from odie.making import chat, deck, jobs
+from odie.making import sources as making_sources
 from odie.skills.documents import build
 
 NOT_ASKED = ("The user didn't ask for {what} or a file: answer here in chat instead, drawn with visual blocks (a timeline, a table, tiles, a chart). Make {what} only when they ask for one.")
@@ -138,7 +140,7 @@ def deck_title(markdown: str, name: str) -> str:
 
 
 async def make_deck(topic: str, brief: str = "", theme: str = "editorial", revise: str = "",
-                    tool_context: ToolContext | None = None) -> dict:
+                    sources: list[str] | None = None, tool_context: ToolContext | None = None) -> dict:
     """Make a designed deck: a PDF and an editable PowerPoint with slide previews, posted to this chat. A separate
     writer writes the slides from your brief, in the background; it can't see this chat, the user's notes, memory or
     the web, and can't search for photos.
@@ -148,6 +150,8 @@ async def make_deck(topic: str, brief: str = "", theme: str = "editorial", revis
     theme: editorial (dark, great with photos), minimal (clean white: research, business), warm (cream), bold (strong
     colour: pitches).
     revise: to change a deck made earlier, its name ("Meghalaya Trip Guide"); the brief then says what to change.
+    sources: what the user gave, passed to the writer word for word (never retype it): "my message" (the user's
+    latest message), a note's name or path in their vault, or a text file's path in Odie's workspace. Up to 5.
     It returns at once. {"error": …}: fix exactly that and call again. {"result": …}: the deck is being made; reply in
     one or two lines as the result says, and don't repeat the brief."""
     if not file_asked("deck"):
@@ -165,11 +169,17 @@ async def make_deck(topic: str, brief: str = "", theme: str = "editorial", revis
 
     problem = chat.brief_problem(brief, WORD)
     if problem:
-        return {"error": problem}
+        return {"error": f"{problem} {chat.USE_SOURCES}"}
 
     problem = theme_problem(theme)
     if problem:
         return {"error": problem}
+
+    try:
+        references = making_sources.sources_as_given(sources)
+        found = making_sources.resolve(references, jobs.hooks["store"])
+    except making_sources.SourceProblem as e:
+        return {"error": str(e)}
 
     title = topic
     earlier = ""
@@ -186,7 +196,8 @@ async def make_deck(topic: str, brief: str = "", theme: str = "editorial", revis
     folder = chat.free_folder(workspace() / deck.FOLDER, chat.slug_of(topic, WORD))
     folder.mkdir(parents=True)
     data = {"theme": theme, "earlier": earlier, "private": sorted(private_sites())}
-    job = jobs.Job(kind="deck", slug=folder.name, title=title, topic=topic, brief=brief,
+    whole_brief = making_sources.brief_with_sources(brief, found)
+    job = jobs.Job(kind="deck", slug=folder.name, title=title, topic=topic, brief=whole_brief,
                    session_id=session_id_of(tool_context), folder=folder, data=data)
     place = jobs.submit(job)
     low, high = minutes_to_make()

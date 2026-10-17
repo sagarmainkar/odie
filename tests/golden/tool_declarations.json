@@ -255,7 +255,7 @@
     "name": "list_trackers"
   },
   {
-    "description": "Make a designed deck: a PDF and an editable PowerPoint with slide previews, posted to this chat. A separate\nwriter writes the slides from your brief, in the background; it can't see this chat, the user's notes, memory or\nthe web, and can't search for photos.\ntopic: what it's about, short (\"A weekend in Coorg\", \"Nvidia's Q2\").\nbrief: the angle, the slides' points in order, the facts it must use, and the photo addresses with their credits\nthat find_images or the browser gave you (only those can go on the slides). Up to 6,000 characters.\ntheme: editorial (dark, great with photos), minimal (clean white: research, business), warm (cream), bold (strong\ncolour: pitches).\nrevise: to change a deck made earlier, its name (\"Meghalaya Trip Guide\"); the brief then says what to change.\nIt returns at once. {\"error\": …}: fix exactly that and call again. {\"result\": …}: the deck is being made; reply in\none or two lines as the result says, and don't repeat the brief.",
+    "description": "Make a designed deck: a PDF and an editable PowerPoint with slide previews, posted to this chat. A separate\nwriter writes the slides from your brief, in the background; it can't see this chat, the user's notes, memory or\nthe web, and can't search for photos.\ntopic: what it's about, short (\"A weekend in Coorg\", \"Nvidia's Q2\").\nbrief: the angle, the slides' points in order, the facts it must use, and the photo addresses with their credits\nthat find_images or the browser gave you (only those can go on the slides). Up to 6,000 characters.\ntheme: editorial (dark, great with photos), minimal (clean white: research, business), warm (cream), bold (strong\ncolour: pitches).\nrevise: to change a deck made earlier, its name (\"Meghalaya Trip Guide\"); the brief then says what to change.\nsources: what the user gave, passed to the writer word for word (never retype it): \"my message\" (the user's\nlatest message), a note's name or path in their vault, or a text file's path in Odie's workspace. Up to 5.\nIt returns at once. {\"error\": …}: fix exactly that and call again. {\"result\": …}: the deck is being made; reply in\none or two lines as the result says, and don't repeat the brief.",
     "name": "make_deck",
     "parameters_json_schema": {
       "properties": {
@@ -277,6 +277,21 @@
           "default": "",
           "title": "Revise",
           "type": "string"
+        },
+        "sources": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sources"
         }
       },
       "required": [
@@ -336,7 +351,7 @@
     }
   },
   {
-    "description": "Make a podcast the user can play in this chat: two hosts (a woman, then a man) talking a topic through,\nNotebookLM style. A separate writer writes the script from your brief, in the background; it can't see this chat,\nthe user's notes, memory or the web.\ntopic: what it's about, short (\"How vaccines train the immune system\", \"Our session on the move to Pune\").\nminutes: its length, from 1 to 10: the user's length, else 4.\nbrief: the angle, the key points in order, and the facts from this chat or the notes it must use (for a podcast\nof this conversation: its decisions, questions and surprises). Up to 6,000 characters.\nIt returns at once. {\"error\": …}: fix exactly that and call again. {\"result\": …}: the podcast is being made; reply\nin one or two lines as the result says, and don't repeat the brief.",
+    "description": "Make a podcast the user can play in this chat: two hosts (a woman, then a man) talking a topic through,\nNotebookLM style. A separate writer writes the script from your brief, in the background; it can't see this chat,\nthe user's notes, memory or the web.\ntopic: what it's about, short (\"How vaccines train the immune system\", \"Our session on the move to Pune\").\nminutes: its length, from 1 to 10: the user's length, else 4.\nbrief: the angle, the key points in order, and the facts from this chat or the notes it must use (for a podcast\nof this conversation: its decisions, questions and surprises). Up to 6,000 characters.\nsources: what the user gave, passed to the writer word for word (never retype it): \"my message\" (the user's\nlatest message), a note's name or path in their vault, or a text file's path in Odie's workspace. Up to 5.\nIt returns at once. {\"error\": …}: fix exactly that and call again. {\"result\": …}: the podcast is being made; reply\nin one or two lines as the result says, and don't repeat the brief.",
     "name": "make_podcast",
     "parameters_json_schema": {
       "properties": {
@@ -353,6 +368,21 @@
           "default": "",
           "title": "Brief",
           "type": "string"
+        },
+        "sources": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sources"
         }
       },
       "required": [

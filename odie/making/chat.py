@@ -7,6 +7,7 @@ from pathlib import Path
 from odie.agent.tools.files import safe_name
 
 MAX_BRIEF_CHARACTERS = 6000
+USE_SOURCES = "Pass what the user gave in sources instead of copying it."  # said after a brief's limit
 AFTER_THE_ESTIMATE = ("It'll appear in this chat, with a ping on the phone, as soon as it's ready. Tell the user that "
                       "in one or two lines, and that they can keep chatting meanwhile.")
 

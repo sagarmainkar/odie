@@ -254,7 +254,7 @@ async def test_the_prompt_gives_the_topic_the_minutes_the_words_and_the_brief(tm
 
 
 async def test_the_prompt_carries_the_source_material_word_for_word(tmp_path, checks):
-    from odie.video.sources import Source, brief_with_sources
+    from odie.making.sources import Source, brief_with_sources
     tides = "Asha's notes on tides.\n\n| place | high tide |\n|---|---|\n| Goa | 2.1 m |"
     brief = brief_with_sources("For a ten-year-old. Show the table.", [Source("The user's message", tides)])
     turn = Turn(submits)

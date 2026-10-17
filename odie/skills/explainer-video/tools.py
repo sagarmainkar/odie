@@ -1,5 +1,5 @@
 """The explainer-video skill's tool: make_video checks the request within the chat turn (instantly), reads the sources
-the chat named (odie.video.sources: the user's message, a note, a workspace file, word for word) and puts the video in
+the chat named (odie.making.sources: the user's message, a note, a workspace file, word for word) and puts the video in
 Odie's background queue (odie.making.jobs, kind "video" from odie.video.kind) with the brief and the sources as one
 text, the job's brief.md. In the background the writer (odie.video.writer) turns the topic, length and that brief into
 the narration and the page; then the video is narrated, rendered and posted to this chat. The chat only briefs the
@@ -11,8 +11,8 @@ from odie.agent.context import session_id_of
 from odie.agent.tools.files import workspace
 from odie.browser import find
 from odie.making import chat, jobs
+from odie.making import sources as making_sources
 from odie.video import kind, timeline
-from odie.video import sources as video_sources
 
 NARRATING_SPEED = 10  # seconds of speech the voice narrates in a second
 JOINING_SECONDS = 10  # joining the segments and the sound into the MP4
@@ -21,14 +21,13 @@ SCENE_SECONDS = 20  # a scene lasts about this long, for counting the breaths be
 ESTIMATE_SPREAD = 2  # the range told is N to N + 2 minutes: writing time varies the most
 MIN_MINUTES = 1
 DEFAULT_MINUTES = 2
-MAX_BRIEF_CHARACTERS = 20_000  # the chat model's own brief; the sources have their own limits (odie.video.sources)
+MAX_BRIEF_CHARACTERS = 20_000  # the chat model's own brief; the sources have their own limits (odie.making.sources)
 WORD = "video"
 DOING = "writing the script and the animation, then drawing it"  # the middle of the reply: what making it involves
 
 NO_BROWSER = ("An explainer video needs Chrome, Edge, Brave or Chromium on this computer to draw its frames, and none "
               "was found. Tell the user to install one (any of them) and ask again.")
 NO_TOPIC = 'Give the topic: a few words saying what the video is about, like "How attention works".'
-USE_SOURCES = "Pass what the user gave in sources instead of copying it."  # after the brief's limit
 
 
 def making_seconds(speech_seconds: float, frames: int) -> float:
@@ -93,12 +92,12 @@ async def make_video(topic: str, minutes: int = 2, brief: str = "", sources: lis
 
     problem = chat.brief_problem(brief, WORD, MAX_BRIEF_CHARACTERS)
     if problem:
-        return {"error": f"{problem} {USE_SOURCES}"}
+        return {"error": f"{problem} {chat.USE_SOURCES}"}
 
     try:
-        references = video_sources.sources_as_given(sources)
-        found = video_sources.resolve(references, jobs.hooks["store"])
-    except video_sources.SourceProblem as e:
+        references = making_sources.sources_as_given(sources)
+        found = making_sources.resolve(references, jobs.hooks["store"])
+    except making_sources.SourceProblem as e:
         return {"error": str(e)}
 
     voice_id = ""
@@ -110,7 +109,7 @@ async def make_video(topic: str, minutes: int = 2, brief: str = "", sources: lis
 
     folder = chat.free_folder(workspace() / kind.FOLDER, chat.slug_of(title, WORD))
     folder.mkdir(parents=True)
-    whole_brief = video_sources.brief_with_sources(brief, found)
+    whole_brief = making_sources.brief_with_sources(brief, found)
     job = jobs.Job(kind="video", slug=folder.name, title=title, topic=title, minutes=minutes, brief=whole_brief,
                    session_id=session_id_of(tool_context), voice_name=voice_id, folder=folder)
     place = jobs.submit(job)

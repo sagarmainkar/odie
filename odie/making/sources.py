@@ -1,8 +1,10 @@
-"""The sources of an explainer video: what the user gave (a message pasted in the chat, a note, a file), passed to the
-writer word for word instead of retold in the chat model's brief, so no detail is lost on the way.
+"""The sources of anything Odie makes in the background (a video, a podcast, a deck): what the user gave (a message
+pasted in the chat, a note, a file), passed to the writer word for word instead of retold in the chat model's brief,
+so no detail is lost on the way.
 
-The chat model only names them in make_video's `sources`; Odie's code reads each one here, within the chat turn, so a
-source that can't be read comes back to the chat model as words to act on before anything is queued:
+The chat model only names them in the make tool's `sources` (make_video, make_podcast, make_deck); Odie's code reads
+each one here, within the chat turn, so a source that can't be read comes back to the chat model as words to act on
+before anything is queued:
   - "my message" (or "the user's message"): the user's message of this chat turn, without what Odie adds after it;
   - a text file in Odie's workspace, by its path there (an exact path, so it wins over a note's looser match);
   - a note in the user's vault, by the name or path read_note takes, read by the vault's own reader.
