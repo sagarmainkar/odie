@@ -4,6 +4,7 @@ podcast, and the reply that says how long, from the voice engine chosen in Setti
 import importlib.util
 import json
 import re
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -11,7 +12,9 @@ import pytest
 from google.adk.tools import FunctionTool
 
 from odie import voice
+from odie.agent import turn
 from odie.making import jobs, podcast
+from odie.signin import state
 from odie.store.db import Store
 
 SKILL = Path(podcast.__file__).parent.parent / "skills" / "podcast"
@@ -95,6 +98,37 @@ async def test_a_brief_over_6000_characters_is_refused(world):
     assert "6,001" in out["error"] and "at most 6,000" in out["error"] and "what the podcast needs" in out["error"]
     assert world[1] == []
     assert "result" in await tools.make_podcast("Tides", brief="x" * 6000)
+
+
+@pytest.fixture
+def private_chat(world):
+    """Signed-in browsing on, and a chat that read amazon.in this turn: a private chat, as the guard sees it."""
+    store, _submitted = world
+    state.turn_on(store, accepted=True, version=state.VERSION, now=datetime(2026, 10, 17, 9, 0, tzinfo=UTC))
+    token = turn.PRIVATE.set({"amazon.in"})
+    yield
+    turn.PRIVATE.reset(token)
+
+
+async def test_a_private_chat_with_a_cloud_voice_is_refused_before_anything_is_made(world, private_chat, monkeypatch):
+    monkeypatch.setattr(voice, "get_tts", lambda store: ("openai", "cedar"))
+    out = await tools.make_podcast("My orders this month", brief="Asha's three orders: a kettle, …")
+    assert out["error"] == tools.PRIVATE_CLOUD_VOICE and "Settings → Voice" in out["error"]
+    assert world[1] == []
+    from odie.agent.tools.files import workspace
+    assert not (workspace() / podcast.FOLDER).exists()  # no folder made
+
+
+async def test_a_private_chat_with_odies_own_voice_is_queued(world, private_chat, monkeypatch):
+    monkeypatch.setattr(voice, "get_tts", lambda store: ("kokoro", "af_heart"))
+    out = await tools.make_podcast("My orders this month", brief="Asha's three orders.")
+    assert "result" in out and len(world[1]) == 1
+
+
+async def test_a_chat_that_isnt_private_is_queued_with_a_cloud_voice(world, monkeypatch):
+    monkeypatch.setattr(voice, "get_tts", lambda store: ("openai", "cedar"))
+    out = await tools.make_podcast("Tides")
+    assert "result" in out and len(world[1]) == 1
 
 
 # A good call: the job carries what the writer needs, and no script.

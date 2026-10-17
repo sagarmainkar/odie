@@ -53,4 +53,5 @@ On `{"result": …}`, reply in one or two lines, with no emojis: it's being made
 gives), it will appear in this chat with a ping on the phone, and they can keep chatting meanwhile. Never repeat the
 brief.
 
-On `{"error": …}`: fix exactly that and call again.
+On `{"error": …}`: fix exactly that and call again. In a private chat (one that read a signed-in site) with a
+cloud voice it is refused, because the script would leave this computer: tell the user what the error says.

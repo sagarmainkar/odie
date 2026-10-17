@@ -11,6 +11,7 @@ from odie import voice
 from odie.agent.context import session_id_of
 from odie.agent.tools.files import workspace
 from odie.making import chat, jobs, podcast
+from odie.signin import guard
 
 MIN_MINUTES = 1
 MAX_MINUTES = 10
@@ -22,6 +23,17 @@ WORD = "podcast"
 DOING = "writing the script, then speaking it in two voices"  # the middle of the reply: what making it involves
 
 NO_TOPIC = 'Give the topic: a few words saying what the podcast is about, like "How vaccines train the immune system".'
+PRIVATE_CLOUD_VOICE = ("This chat is private (it read a signed-in site) and the voice chosen in Settings is a cloud "
+                       "one, so the podcast's words would leave this computer: I can't make it here. Tell the user "
+                       "to pick a local voice (Kokoro) in Settings → Voice, or to ask in a chat that isn't private.")
+
+
+def words_would_leave(store) -> bool:
+    """Decides whether making the podcast would send the private chat's words out: the script is spoken by the voice
+    chosen in Settings, and a cloud voice gets every turn's text (guard.speech_needs_tap, the tap speak asks for).
+    A private chat (it read a signed-in site) with the OpenAI voice -> True, refused; a private chat with Kokoro ->
+    False, queued (nothing leaves); a chat that isn't private, with any voice -> False, queued."""
+    return guard.speech_needs_tap(store)
 
 
 def speaking_speed(engine: str) -> int:
@@ -57,6 +69,9 @@ async def make_podcast(topic: str, minutes: int = 4, brief: str = "", tool_conte
     of this conversation: its decisions, questions and surprises). Up to 6,000 characters.
     It returns at once. {"error": …}: fix exactly that and call again. {"result": …}: the podcast is being made; reply
     in one or two lines as the result says, and don't repeat the brief."""
+    if words_would_leave(jobs.hooks["store"]):
+        return {"error": PRIVATE_CLOUD_VOICE}
+
     topic = chat.text_or_empty(topic)
     brief = chat.text_or_empty(brief)
     minutes = chat.minutes_as_given(minutes, DEFAULT_MINUTES)
