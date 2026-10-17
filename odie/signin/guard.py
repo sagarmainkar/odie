@@ -254,7 +254,7 @@ def background_asks(tool, args: dict, tool_context) -> bool:
 
 
 def for_query(store):
-    """web_search and find_images: ask in a private chat (query_needs_tap)."""
+    """web_search, find_images and find_clips: ask in a private chat (query_needs_tap)."""
     def needs_tap(**_) -> bool:
         return query_needs_tap(store)
     return _marked(needs_tap)
@@ -307,7 +307,8 @@ def for_type(store):
     return _marked(needs_tap)
 
 
-GUARDED = frozenset({"web_search", "web_fetch", "browser_open", "find_images", "browser_click", "browser_type", "speak"})
+GUARDED = frozenset({"web_search", "web_fetch", "browser_open", "find_images", "find_clips", "browser_click", "browser_type",
+                     "speak"})
 
 
 def card(tool: str, args: dict, tab: str, store) -> tuple[str, dict]:
@@ -318,6 +319,8 @@ def card(tool: str, args: dict, tab: str, store) -> tuple[str, dict]:
         return f"Search the web for: {args.get('query', '')}", {"why": WHY_LEAVE.format(sites=where)}
     if tool == "find_images":
         return f"Search for photos of: {args.get('query', '')}", {"why": WHY_LEAVE.format(sites=where)}
+    if tool == "find_clips":
+        return f"Search for video clips of: {args.get('query', '')}", {"why": WHY_LEAVE.format(sites=where)}
     if tool in ("web_fetch", "browser_open"):
         return f"Open {args.get('url', '')}", {"why": WHY_LEAVE.format(sites=where)}
     if tool == "speak":
