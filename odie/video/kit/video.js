@@ -196,7 +196,7 @@
   }
 
   // Starts loading a clip (muted, never played: every frame seeks it); settles once its first frame can be drawn.
-  // loadClip({name: "clip1", ...}, "data:video/mp4;base64,...") -> a promise; asset.el is the <video>
+  // loadClip({name: "clip1", ...}, "data:video/webm;base64,...") -> a promise; asset.el is the <video>
   function loadClip(asset, src) {
     const video = document.createElement("video");
     video.muted = true;
@@ -218,7 +218,7 @@
   // Registers the video's pictures and clips and starts loading them, before Video.scenes; the first frame waits until
   // they are all in. Each entry: kind "image" or "clip", src a data address, width and height in pixels, and for a clip
   // its length in seconds. Video.assets({img1: {kind: "image", src: "data:image/jpeg;base64,...", width: 2400,
-  // height: 1600}, clip1: {kind: "clip", src: "data:video/mp4;base64,...", width: 1280, height: 720, seconds: 15}})
+  // height: 1600}, clip1: {kind: "clip", src: "data:video/webm;base64,...", width: 1280, height: 720, seconds: 15}})
   function registerAssets(list) {
     const loads = [];
     for (const name of Object.keys(list)) {
@@ -319,13 +319,15 @@
     }
   }
 
-  // The focus a picture gets when the options give none: its centre, except a picture that "cover" crops top and
-  // bottom (taller in shape than its box, like a portrait on the stage), which keeps its upper third, where faces are.
-  // 300x600 in the 1920x1080 stage with cover -> {x: 0.5, y: 0.33}; 400x300 with cover -> {x: 0.5, y: 0.5};
+  // The focus a picture gets when the options give none: its centre, except a portrait picture (taller than wide)
+  // that "cover" crops top and bottom (taller in shape than its box), which keeps its upper third, where faces are.
+  // In the 1920x1080 stage with cover: 300x600 -> {x: 0.5, y: 0.33}; 300x400 -> {x: 0.5, y: 0.33};
+  // 400x300 (a landscape, though cover crops it top and bottom too) -> {x: 0.5, y: 0.5};
   // 300x600 with contain -> {x: 0.5, y: 0.5}
   function defaultFocus(imageW, imageH, box, fit) {
+    const portrait = imageH > imageW;
     const tallerThanBox = imageH / imageW > box.h / box.w;
-    if (fit === "cover" && tallerThanBox) {
+    if (fit === "cover" && portrait && tallerThanBox) {
       return {x: 0.5, y: PORTRAIT_FOCUS_Y};
     }
     return {x: 0.5, y: 0.5};

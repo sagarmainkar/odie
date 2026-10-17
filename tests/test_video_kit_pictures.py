@@ -41,14 +41,25 @@ def portrait_red_top_quarter() -> Image.Image:
     return picture
 
 
+def horizontal_bands() -> Image.Image:
+    """400x300 in six 50-row bands of different colours, so any shift up or down changes the picture."""
+    picture = Image.new("RGB", (400, 300))
+    colours = [(255, 0, 0), (255, 160, 0), (255, 255, 0), (0, 200, 0), (0, 0, 255), (160, 0, 200)]
+    for i, colour in enumerate(colours):
+        picture.paste(colour, (0, i * 50, 400, (i + 1) * 50))
+    return picture
+
+
 def picture_assets() -> dict:
-    """img1 the landscape test picture, img2 the portrait one, img3..img8 copies so the names run img1..img8."""
+    """img1 the landscape test picture, img2 the portrait one, img3 the banded landscape, img4..img8 copies of img1 so
+    the names run img1..img8."""
     landscape = png_data_uri(red_left_blue_right())
     assets = {
         "img1": {"kind": "image", "src": landscape, "width": 400, "height": 300},
         "img2": {"kind": "image", "src": png_data_uri(portrait_red_top_quarter()), "width": 300, "height": 600},
+        "img3": {"kind": "image", "src": png_data_uri(horizontal_bands()), "width": 400, "height": 300},
     }
-    for n in range(3, 9):
+    for n in range(4, 9):
         assets[f"img{n}"] = {"kind": "image", "src": landscape, "width": 400, "height": 300}
     return assets
 
@@ -125,6 +136,23 @@ async def test_photos_fit_zoom_and_focus_where_the_options_say(tmp_path):
 
 
 @needs_browser
+async def test_a_landscape_picture_less_wide_than_the_stage_is_centred_by_default(tmp_path):
+    # 4:3 is taller in shape than the 16:9 stage, so cover crops it top and bottom; it is not a portrait, so it keeps
+    # its centre (only portraits keep their upper third)
+    b = Browser(tmp_path / "p", BIN, extra_args=RENDER_ARGS)
+    try:
+        async with b.sealed_page(page.assemble(body_with(picture_assets()), TIMINGS), 1920, 1080) as p:
+            default = await drawn(p, '(t, s) => s.photo("img3")')
+            centred = await drawn(p, '(t, s) => s.photo("img3", {focus: {x: 0.5, y: 0.5}})')
+            upper_third = await drawn(p, '(t, s) => s.photo("img3", {focus: {x: 0.5, y: 0.33}})')
+            assert p.errors == []
+    finally:
+        await b.close()
+    assert hashlib.sha1(default).hexdigest() == hashlib.sha1(centred).hexdigest()
+    assert hashlib.sha1(default).hexdigest() != hashlib.sha1(upper_third).hexdigest()
+
+
+@needs_browser
 async def test_a_wipe_shows_a_on_one_side_and_b_on_the_other_and_a_scrim_darkens_its_edge(tmp_path):
     fill_then_wipe = """(t, s) => {
       s.ctx.fillStyle = "#ff0000"; s.ctx.fillRect(0, 0, s.W, s.H);
@@ -184,13 +212,14 @@ async def test_an_unknown_picture_is_named_with_the_ones_there_are(tmp_path):
     assert "no picture called img9; the pictures are img1…img8" in str(raised.value)
 
 
-def ramp_mp4(tmp_path) -> str:
-    """A 1-second 320x240 MP4 whose every frame differs (ffmpeg's test pattern with a frame counter), as a data URI."""
-    path = tmp_path / "ramp.mp4"
+def ramp_webm(tmp_path) -> str:
+    """A 1-second 320x240 VP9 WebM (the format clips ship in; every Chrome-family browser plays it) whose every frame
+    differs (ffmpeg's test pattern with a frame counter), as a data URI."""
+    path = tmp_path / "ramp.webm"
     pattern = "testsrc=size=320x240:rate=25:duration=1"
     subprocess.run([ffmpeg(), "-y", "-loglevel", "error", "-f", "lavfi", "-i", pattern,
-                    "-c:v", "libx264", "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(path)], check=True)
-    return "data:video/mp4;base64," + base64.b64encode(path.read_bytes()).decode("ascii")
+                    "-c:v", "libvpx-vp9", "-pix_fmt", "yuv420p", "-an", str(path)], check=True)
+    return "data:video/webm;base64," + base64.b64encode(path.read_bytes()).decode("ascii")
 
 
 def clip_body(src: str) -> str:
@@ -212,7 +241,7 @@ async def clip_shots(b: Browser, html: str, times: list[float]) -> list[str]:
 
 @needs_browser
 async def test_a_clip_at_the_same_t_gives_the_same_frame_in_two_tabs(tmp_path):
-    html = page.assemble(clip_body(ramp_mp4(tmp_path)), TIMINGS)
+    html = page.assemble(clip_body(ramp_webm(tmp_path)), TIMINGS)
     b = Browser(tmp_path / "p", BIN, extra_args=RENDER_ARGS)
     try:
         first_tab = await clip_shots(b, html, [0.5, 0.1, 1.5])
@@ -227,7 +256,7 @@ async def test_a_clip_at_the_same_t_gives_the_same_frame_in_two_tabs(tmp_path):
 
 @needs_browser
 async def test_a_frame_with_a_clip_returns_a_promise_and_one_without_returns_true(tmp_path):
-    html = page.assemble(clip_body(ramp_mp4(tmp_path)), TIMINGS)
+    html = page.assemble(clip_body(ramp_webm(tmp_path)), TIMINGS)
     b = Browser(tmp_path / "p", BIN, extra_args=RENDER_ARGS)
     try:
         async with b.sealed_page(html, 1920, 1080) as p:
