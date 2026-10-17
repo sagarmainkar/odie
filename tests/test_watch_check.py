@@ -101,6 +101,80 @@ async def test_an_email_cant_instruct_the_watcher(store, tmp_path):
     assert posts == [] and pushes == []
 
 
+async def test_a_done_item_with_nothing_to_tell_posts_nothing(store, tmp_path):
+    """A Watch for entry ran ("relay the digests"), but nothing came of it the user would act on: no chat message and
+    no push. What it did is kept on the watch's card instead, so nothing is lost."""
+    from odie.plugins import mcp
+    mcp.write_config({"mymail": spec_for("plain", tmp_path, mail=ZAP_MAIL, events=EVENTS)})
+    posts, pushes, post, push = recorder()
+    quiet = "Relayed the digests. Both events are already covered by open items, so nothing was added."
+
+    async def turn(prompt, tools, instruction):
+        await call(tools, "new_mail")
+        await call(tools, "report", needs_you=[], line="2 new emails, nothing urgent", done=[{"message": quiet, "files": []}])
+        return ""
+    assert await check.run_check(store, DAY, turn, post, push) == "ok"
+    assert posts == [] and pushes == []
+    kept = store.get_setting(report.CARD)["done"]
+    assert kept[-1]["message"] == quiet and kept[-1]["told"] is False
+
+
+async def test_a_done_item_worth_telling_posts_once_and_pushes(store, tmp_path):
+    from odie.plugins import mcp
+    mcp.write_config({"mymail": spec_for("plain", tmp_path, mail=ZAP_MAIL, events=EVENTS)})
+    posts, pushes, post, push = recorder()
+    news = "Added a reminder: Asha's recital, Friday 18:00 (a heads-up at 17:30)."
+
+    async def turn(prompt, tools, instruction):
+        await call(tools, "new_mail")
+        await call(tools, "report", needs_you=[], line="2 new emails", done=[{"message": news, "files": [], "tell": True}])
+        return ""
+    assert await check.run_check(store, DAY, turn, post, push) == "ok"
+    assert [t for t, _ in posts] == [news]
+    assert pushes == [("Odie: done", news)]
+    assert store.get_setting(report.CARD)["done"][-1]["told"] is True
+
+
+async def test_a_check_that_added_a_reminder_tells_even_without_tell(store, tmp_path):
+    """The model forgot tell, but the check did add a task (a reminder): that is worth a message and a push."""
+    from odie.plugins import mcp
+    mcp.write_config({"mymail": spec_for("plain", tmp_path, mail=ZAP_MAIL, events=EVENTS)})
+    posts, pushes, post, push = recorder()
+    store.add_task("An older to-do", "todo")  # tasks from before the check don't count
+    news = "Added a heads-up for Asha's recital, Friday 17:30."
+
+    async def turn(prompt, tools, instruction):
+        await call(tools, "new_mail")
+        store.add_task("Heads-up: Asha's recital", "reminder", due_at="2026-10-09T17:30:00+05:30")  # what task_add does
+        await call(tools, "report", needs_you=[], line="2 new emails", done=[{"message": news, "files": []}])
+        return ""
+    assert await check.run_check(store, DAY, turn, post, push) == "ok"
+    assert [t for t, _ in posts] == [news]
+    assert pushes == [("Odie: done", news)]
+
+
+@pytest.mark.parametrize("item, told", [
+    ({"message": "x", "tell": True}, True),
+    ({"message": "x", "tell": "True"}, True),   # a model that quotes the boolean
+    ({"message": "x", "tell": "false"}, False),
+    ({"message": "x"}, False),
+])
+def test_worth_telling_reads_tell(item, told):
+    assert check.worth_telling(item, [], added_task=False) is told
+
+
+async def test_nothing_connected_keeps_the_quiet_record(store):
+    kept = [{"at": "2026-10-08T09:00:00", "message": "made it", "told": False}]
+    store.set_setting(report.CARD, {"done": kept})
+    posts, pushes, post, push = recorder()
+
+    async def turn(prompt, tools, instruction):
+        raise AssertionError("no model call")
+    assert await check.run_check(store, DAY, turn, post, push) == "off"
+    assert store.get_setting(report.CARD)["done"] == kept
+    assert posts == [] and pushes == []
+
+
 def test_due_every_30_minutes(store):
     assert check.due(store, DAY)
     store.set_setting("watch.state", {"last_check": DAY.isoformat()})

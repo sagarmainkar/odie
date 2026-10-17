@@ -19,6 +19,7 @@ import { replyLine, type ReplyUsage } from "../usage";
 import { ToBody } from "../components/ToBody";
 import { CodeBlock } from "../components/CodeBlock";
 import { CopyButton } from "../components/CopyButton";
+import { YourMessage } from "../components/YourMessage";
 import { howChatShowsFence } from "../blocks/fenceShown";
 import { Enlarge } from "../components/Enlarge";
 import { SvgBlock } from "../components/SvgBlock";
@@ -644,14 +645,7 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
                     ) : m.role === "odie" && m.text.startsWith(ROLLOVER) ? (
                       <SegmentDivider text={m.text.slice(ROLLOVER.length).trim()} ts={m.ts} />
                     ) : m.role === "user" ? (
-                      <motion.div {...enter} className="ml-auto max-w-[80%] w-fit flex flex-col items-end gap-0.5">
-                        {m.images && m.images.length > 0 && (
-                          <div className="flex gap-0.5 justify-end flex-wrap mb-1">
-                            {m.images.map((id) => <img key={id} src={`/api/uploads/${id}`} alt="" className="w-[140px] h-[140px] object-cover rounded-[18px]" />)}
-                          </div>
-                        )}
-                        {m.text && <div className="bubble-me rounded-[24px] rounded-br-[8px] px-4 py-3 text-[15.5px] leading-[1.5] whitespace-pre-wrap break-words">{m.text}</div>}
-                      </motion.div>
+                      <motion.div {...enter} className="flex flex-col"><YourMessage text={m.text} images={m.images} /></motion.div>
                     ) : (
                       <motion.div {...enter} className="flex flex-col gap-2.5">
                         <div className="flex items-center gap-2 text-[12.5px] text-muted font-semibold">

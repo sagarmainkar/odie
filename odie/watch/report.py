@@ -60,7 +60,7 @@ def apply(store, now: datetime, needs_you: list[dict], line: str, mails: list[Ma
         if n.get("push"):
             fresh.append(it)
     store.set_setting(CARD, {"checked_at": now.isoformat(timespec="seconds"), "line": str(line or "")[:200], "needs_you": items[-30:],
-                             "events": _events(events), "sources": statuses, "off": ""})
+                             "events": _events(events), "sources": statuses, "off": "", "done": card.get("done", [])})
     flagged = list(store.get_setting(FLAGGED) or [])
     push = [i for i in fresh if i["ref"] not in flagged]
     if first or not push:
@@ -81,7 +81,19 @@ def fallback(store, now: datetime, mails: list[Mail], events: list[Event], statu
     card = store.get_setting(CARD) or {}
     store.set_setting(CARD, {"checked_at": now.isoformat(timespec="seconds"), "line": ", ".join(bits),
                              "needs_you": [i for i in card.get("needs_you", []) if not i.get("done")],
-                             "events": _events(events), "sources": statuses, "off": f"couldn't check properly: {reason}"[:200]})
+                             "events": _events(events), "sources": statuses, "off": f"couldn't check properly: {reason}"[:200],
+                             "done": card.get("done", [])})
+
+
+KEEP_DONE = 10
+
+
+def keep_done(store, now: datetime, message: str, told: bool) -> None:
+    """Note on the card what the watch did for a Watch for entry, told in the chat or not, so a quiet one is still
+    there to look up. The card keeps the last KEEP_DONE."""
+    card = store.get_setting(CARD) or {}
+    done = [*card.get("done", []), {"at": now.isoformat(timespec="seconds"), "message": message[:500], "told": told}]
+    store.set_setting(CARD, {**card, "done": done[-KEEP_DONE:]})
 
 
 def _failures_before(prev: dict, sid: str) -> int:
