@@ -64,7 +64,7 @@ async def test_fonts_load_first_formulas_draw_and_the_first_scene_text_is_hidden
 
 
 def test_the_kit_and_the_sample_use_no_clock_and_no_unseeded_randomness():
-    for name in ("video.js", "sample.html"):
+    for name in ("video.js", "map.js", "sample.html"):
         code = (KIT / name).read_text()
         code = re.sub(r"//[^\n]*", "", code)  # comments may name what the kit avoids
         for banned in ("requestAnimationFrame", "Date", "performance.now", "Math.random", "setTimeout", "setInterval"):

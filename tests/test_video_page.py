@@ -83,3 +83,21 @@ def test_the_stapled_assets_go_after_the_kit_and_before_the_page():
     plain = page.assemble("<div id=page></div>", {"starts": [0], "lengths": [1.0]})
     assert plain == page.assemble("<div id=page></div>", {"starts": [0], "lengths": [1.0]}, "")
     assert "Video.assets({" not in plain.split("<script>window.__timings = ")[1]
+
+
+def test_the_map_and_its_data_go_after_video_js_and_before_the_timings():
+    html = page.assemble("<div id=page></div>", {"starts": [0], "lengths": [1.0]})
+    video = html.index("window.Video = {")
+    geo = html.index("<script>window.__geo = {")
+    map_kit = html.index("// map.js: the explainer-video kit")
+    timings = html.index("<script>window.__timings = ")
+    assert video < geo < map_kit < timings
+
+
+def test_the_map_data_is_inlined_whole_and_under_3_mb():
+    geo = page._kit()["geo"]
+    assert geo.startswith("window.__geo = {") and geo.endswith("};")
+    assert len(geo.encode("utf-8")) < 3_000_000
+    for key in ('"land": {', '"countries": {', '"states": {', '"places": {'):
+        assert key in geo
+    assert "</" not in geo  # nothing in the data can close the <script> it sits in

@@ -1,5 +1,6 @@
-"""A video page, put together: the kit (KaTeX and its fonts, three.js, video.js) and the scene timings inlined ahead
-of the model's page, so the sealed render tab needs nothing from the network. Also checks a page before the render."""
+"""A video page, put together: the kit (KaTeX and its fonts, three.js, video.js, the map's data and map.js) and the
+scene timings inlined ahead of the model's page, so the sealed render tab needs nothing from the network. Also checks a
+page before the render."""
 import base64
 import functools
 import json
@@ -38,14 +39,32 @@ def inline_fonts(css: str, fonts: Path) -> str:
     return WOFF2_URL.sub(as_data_uri, css)
 
 
+# The map's data files (scripts/geo/build_geo.py writes them), by the name map.js reads each under in window.__geo.
+GEO_FILES = {"land": "land.json", "countries": "countries.json", "states": "states-in.json", "places": "places.json"}
+
+
+def geo_script(folder: Path) -> str:
+    """The map's data as one script body, `window.__geo = {"land": {...}, "countries": {...}, "states": {...},
+    "places": {...}};`, each file inlined as it is (already compact JSON). A "</" in the data (none today) is written
+    "<\\/", the same string to JSON, so it can never close the <script> it sits in."""
+    parts = []
+    for key, file_name in GEO_FILES.items():
+        data = (folder / file_name).read_text(encoding="utf-8").strip()
+        parts.append(f'"{key}": {data}')
+    script = "window.__geo = {" + ", ".join(parts) + "};"
+    return script.replace("</", "<\\/")
+
+
 @functools.cache
 def _kit() -> dict[str, str]:
-    """The kit's files, read once: KaTeX's CSS (fonts inlined), three.js, KaTeX and video.js."""
+    """The kit's files, read once: KaTeX's CSS (fonts inlined), three.js, KaTeX, video.js, the map's data and map.js."""
     return {
         "katex_css": inline_fonts((KIT / "katex.min.css").read_text(), KIT / "fonts"),
         "three": (KIT / "three.min.js").read_text(),
         "katex": (KIT / "katex.min.js").read_text(),
         "video": (KIT / "video.js").read_text(),
+        "geo": geo_script(KIT / "geo"),
+        "map": (KIT / "map.js").read_text(),
     }
 
 
@@ -60,7 +79,8 @@ def check_offline(body: str) -> None:
 
 
 def assemble(body: str, timings: dict, assets_script: str = "") -> str:
-    """The whole HTML document for a video: KaTeX's CSS, three.js, KaTeX, video.js, then `window.__timings`
+    """The whole HTML document for a video: KaTeX's CSS, three.js, KaTeX, video.js, the map's data (`window.__geo`)
+    and map.js, then `window.__timings`
     ({"starts": [...], "lengths": [...], "beats": [[...], ...]}, in seconds, passed through as given), then the
     video's pictures and clips (`assets_script`, odie.video.assets.staple's `<script>Video.assets({...})</script>`,
     when there are any), then `body` (the model's markup and script), in that order."""
@@ -73,6 +93,8 @@ def assemble(body: str, timings: dict, assets_script: str = "") -> str:
         f"<script>{kit['three']}</script>",
         f"<script>{kit['katex']}</script>",
         f"<script>{kit['video']}</script>",
+        f"<script>{kit['geo']}</script>",
+        f"<script>{kit['map']}</script>",
         f"<script>window.__timings = {json.dumps(timings)};</script>",
     ]
     if assets_script:

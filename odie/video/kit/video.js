@@ -16,8 +16,8 @@
 // Each scene has its own three.js scene, so objects never carry over from one scene to the next.
 //
 // Layers, back to front: the three.js canvas (cleared to the background colour), a 2D canvas (s.ctx, cleared every
-// frame; pictures, clips, wipes and scrims are drawn here), then text and formulas (absolutely positioned divs,
-// hidden every frame and shown by s.text / s.tex).
+// frame; pictures, clips, wipes, scrims and map.js's maps are drawn here), then text and formulas (absolutely
+// positioned divs, hidden every frame and shown by s.text / s.tex).
 (function () {
   "use strict";
 
@@ -684,12 +684,24 @@
     return scene;
   }
 
+  // ---- Extensions: the kit's other files (map.js) add helpers to every scene's s ----
+
+  const extensions = [];  // [{helpers(s), beforeFrame()}], in the order the kit's files added them
+
+  // Lets another kit file add helpers: helpers(s) runs as each scene's s is made (it adds to s), and beforeFrame(),
+  // if given, runs before every frame is drawn (it forgets anything kept for one frame only, as video.js does).
+  // map.js: Video.extend({helpers(s) { s.map = ...; }, beforeFrame() { projection = null; }})
+  function extend(extension) {
+    extensions.push(extension);
+  }
+
   // The helpers a scene's setup and draw get; `length` is this scene's length in seconds and `beats` the seconds into
   // it at which each phrase starts (the first 0). s.beat(t, 1) is the eased progress across the second phrase;
-  // s.beatAt(t) is the phrase being spoken. Textures are kept per scene, made the first time s.texture asks.
+  // s.beatAt(t) is the phrase being spoken. Textures are kept per scene, made the first time s.texture asks. Then
+  // each extension adds its own (s.map and the rest from map.js).
   function helpersFor(length, beats) {
     const textures = new Map();  // picture name -> its THREE.Texture
-    return {
+    const s = {
       ease: ease, at: at, fade: fade, lerp: lerp, count: count, random: random, arrow: arrow, text: text, tex: tex,
       photo: photo, clip: clip, wipe: wipe, scrim: scrim, image: image,
       texture: function (name) {
@@ -704,6 +716,10 @@
         return beatIndex(beats, t);
       },
     };
+    for (const extension of extensions) {
+      extension.helpers(s);
+    }
+    return s;
   }
 
   // Puts the camera and the renderer back as the kit made them, so a frame never depends on the frame drawn before it
@@ -753,6 +769,11 @@
     clipsThisFrame = new Map();
     seeksNeeded = [];
     afterSeeks = again;
+    for (const extension of extensions) {
+      if (extension.beforeFrame) {
+        extension.beforeFrame();
+      }
+    }
     current.scene.draw(t, current.s);
     renderer.render(current.s.three.scene, camera);
   }
@@ -810,5 +831,5 @@
     window.__frame = frame;
   }
 
-  window.Video = {scenes: scenes, assets: registerAssets, colors: colors, W: W, H: H};
+  window.Video = {scenes: scenes, assets: registerAssets, extend: extend, colors: colors, W: W, H: H, SANS: SANS};
 })();
