@@ -95,7 +95,8 @@ def parse_reply(text: str) -> dict | None:
     """The check's JSON verdict: the last JSON object in the reply that has a state. It looks in the ```json blocks
     first and, only when there are none, at any flat {...} that mentions "state".
     Example: 'It ended 2-1.\n```json\n{"state": "2-1 FT", "done": true}\n```' -> {"state": "2-1 FT",
-    "summary": "2-1 FT", "done": True, "met": False, "blocks": None}; a reply with no state anywhere -> None."""
+    "summary": "2-1 FT", "done": True, "met": False, "tell": True, "blocks": None}; a reply with no state anywhere -> None.
+    tell is False only when the check says so ("tell": false); left out, it is True and the state comparison decides."""
     reply = text or ""
     candidates = re.findall(r"```(?:json)?\s*(\{.*?\})\s*```", reply, re.S)
     if not candidates:  # no ```json block: a bare {...} with "state" in it
@@ -117,7 +118,8 @@ def parse_reply(text: str) -> dict | None:
         if isinstance(d.get("blocks"), list):
             blocks = d["blocks"]
         return {"state": state[:200], "summary": str(summary).strip()[:200],
-                "done": d.get("done") is True, "met": d.get("met") is True, "blocks": blocks}
+                "done": d.get("done") is True, "met": d.get("met") is True, "tell": d.get("tell") is not False,
+                "blocks": blocks}
     return None
 
 
@@ -127,10 +129,11 @@ def _norm(s: str | None) -> str:
 
 def _should_notify(row: dict, result: dict) -> bool:
     """Does the user hear about this check? Always when the tracker is done; otherwise as its notify setting says:
-    "always" -> every check; "change" -> when the state differs from the last one (never on the first check);
-    "condition" -> when the model says the condition holds (met).
+    "always" -> every check; "change" -> when the state differs from the last one (never on the first check) and the
+    check didn't say there is nothing to tell; "condition" -> when the model says the condition holds (met).
     Example: notify="change", last state "Shipped", now "Out for delivery" -> True; now " shipped " -> False (case
-    and spaces don't count); the first check -> False; done -> True whatever the setting."""
+    and spaces don't count); now "Still shipped, no news" with "tell": false -> False (the words moved, the facts
+    didn't); the first check -> False; done -> True whatever the setting."""
     if result["done"]:
         return True
     if row["notify"] == "always":
@@ -138,6 +141,8 @@ def _should_notify(row: dict, result: dict) -> bool:
     if row["notify"] == "change":
         first = row["last_state"] is None
         if first:
+            return False
+        if not result["tell"]:
             return False
         return _norm(result["state"]) != _norm(row["last_state"])
     if row["notify"] == "condition":
@@ -176,6 +181,8 @@ REPLY_FORMAT = ("End your reply with exactly one ```json block:\n"
                 '"summary": "<one line for a phone notification>", '
                 '"done": <true when there is nothing left to track: match over, order delivered>, '
                 '"met": <true if the notify condition holds now, else false>, '
+                '"tell": <false only when the facts are the same as the previous state and only the wording differs; '
+                'otherwise true>, '
                 '"blocks": <optional odie-blocks list for the Today card, e.g. one kpis block; omit if not useful>}')
 
 

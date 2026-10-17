@@ -66,14 +66,17 @@ async def run_check(store, now: datetime, turn, post, push, memory=None, memory_
     if sources.stale(store, now):
         await sources.detect_and_save(store)
     if not sources.saved(store):
+        kept = (store.get_setting(rep.CARD) or {}).get("done", [])
         store.set_setting(rep.CARD, {"checked_at": now.isoformat(timespec="seconds"), "line": "", "needs_you": [], "events": [],
-                                     "sources": {}, "off": "Connect Gmail and Calendar (Zapier, Composio or another app) to see them here."})
+                                     "sources": {}, "off": "Connect Gmail and Calendar (Zapier, Composio or another app) to see them here.",
+                                     "done": kept})
         return "off"
     check = Check(Fetcher(store, now))
     tools = watch_tools(check)
     instruction = _instruction(memory_index, watch_for(memory) if memory is not None else "")
     prompt = "Run the watch check."  # the background turn puts the time before it (odie.app.runner.background_turn)
     reason = ""
+    last_task_before = _last_task_id(store)
     try:
         await turn(prompt, tools, instruction)
     except Exception as e:  # noqa: BLE001 (a failed turn still leaves a card)
@@ -94,6 +97,7 @@ async def run_check(store, now: datetime, turn, post, push, memory=None, memory_
         except Exception as e:  # noqa: BLE001
             reason = f"{type(e).__name__}: {e}"[:160]
             log.warning("watch nudge failed", exc_info=True)
+    added_task = _last_task_id(store) > last_task_before  # task_add ran during the check: a reminder for the user
     first = bool(fetcher.first)
     failing = rep.failing_now(store, fetcher.statuses)  # read against the last check, so before commit()
     recovered = rep.recovered_now(store, fetcher.statuses)
@@ -140,6 +144,38 @@ async def run_check(store, now: datetime, turn, post, push, memory=None, memory_
                 got = hand_over(f, f.name)
                 if "media" in got:
                     media.append(got["media"])
-        await say(str(d.get("message") or "Done.")[:500], media=media or None)
-        ping("Odie: done", str(d.get("message") or "")[:160])
+        message = str(d.get("message") or "Done.")[:500]
+        told = worth_telling(d, media, added_task)
+        rep.keep_done(store, now, message, told)
+        if not told:
+            log.info("watch: done, not told: %s", message)
+            continue
+        await say(message, media=media or None)
+        ping("Odie: done", message[:160])
     return "ok"
+
+
+def _last_task_id(store) -> int:
+    """The newest task's id (0 with none): compared before and after the check, it says whether the check added one."""
+    row = store.one("select max(id) n from tasks")
+    if row is None or row["n"] is None:
+        return 0
+    return int(row["n"])
+
+
+def worth_telling(item: dict, media: list, added_task: bool) -> bool:
+    """Does something the watch did for a Watch for entry become a chat message (and a push)? Only when the user gets
+    something from it: files to open, a task the check added (a reminder), or the check marked it "tell": true
+    (something new he'd act on; a quoted "true" counts too). Anything else stays quiet, on the card and in the log: a
+    check that only relayed, found nothing new, found it already covered, or couldn't do something in the background
+    tells the user nothing.
+    Example: {"message": "The deck from Asha's PDF is ready", "files": [deck]} -> True (a file card);
+    a relay check that added task #41, no tell -> True (a reminder is always told);
+    {"message": "Asha's flight moved to 18:00", "tell": "True"} -> True;
+    {"message": "Relayed the digests; both events already covered, nothing added"}, no task added -> False."""
+    if media or added_task:
+        return True
+    tell = item.get("tell")
+    if isinstance(tell, str):
+        return tell.strip().lower() == "true"
+    return tell is True

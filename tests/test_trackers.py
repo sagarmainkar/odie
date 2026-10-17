@@ -19,10 +19,12 @@ def store(tmp_path):
     return s
 
 
-def _reply(state="0-0 HT", summary="Arsenal 0-0 Spurs at half time", done=False, met=False, blocks=None):
+def _reply(state="0-0 HT", summary="Arsenal 0-0 Spurs at half time", done=False, met=False, blocks=None, tell=None):
     body = {"state": state, "summary": summary, "done": done, "met": met}
     if blocks is not None:
         body["blocks"] = blocks
+    if tell is not None:
+        body["tell"] = tell
     return "Checked the live score.\n```json\n" + json.dumps(body) + "\n```"
 
 
@@ -76,6 +78,24 @@ def test_notify_rules(store):
     assert T.record(store, T.get(store, c["id"]), T.parse_reply(_reply("2990", met=True)), NOW, IST) is True
     al = T.create(store, "weather", "Pune weather", "1d", notify="always", now=NOW)
     assert T.record(store, T.get(store, al["id"]), T.parse_reply(_reply("rain")), NOW, IST) is True
+
+
+def test_a_reworded_state_with_nothing_new_stays_quiet(store):
+    """The state's words drift between checks ("no new note since 10:25" then "still nothing since 10:25"): when the
+    check itself says there is nothing to tell, the user hears nothing, and the card still shows the latest line."""
+    t = T.create(store, "Asha's parcel", "parcel status", "1h", now=NOW)
+    T.record(store, T.get(store, t["id"]), T.parse_reply(_reply("In transit, Pune hub")), NOW, IST)
+    quiet = T.parse_reply(_reply("Still in transit at the Pune hub", "No change: still at the Pune hub", tell=False))
+    assert T.record(store, T.get(store, t["id"]), quiet, NOW, IST) is False
+    assert T.get(store, t["id"])["last_summary"] == "No change: still at the Pune hub"  # kept on the card, not posted
+    news = T.parse_reply(_reply("Out for delivery", "Asha's parcel is out for delivery", tell=True))
+    assert T.record(store, T.get(store, t["id"]), news, NOW, IST) is True
+    over = T.parse_reply(_reply("Delivered", "Delivered", done=True, tell=False))
+    assert T.record(store, T.get(store, t["id"]), over, NOW, IST) is True  # the tracker ending is always said
+
+
+def test_the_check_is_asked_whether_its_worth_telling():
+    assert '"tell"' in T.REPLY_FORMAT
 
 
 def test_blocks_are_kept(store):
