@@ -65,3 +65,16 @@ async def test_search_lists_only_images_that_load():
     out = await search.func(query="sikkim lakes")
     assert "https://ok.example/lake.jpg" in out
     assert "page.example" not in out and "blocked.example" not in out and "lookaside" not in out
+
+
+def test_web_tools_built_not_to_ask_first_have_no_confirmation_and_the_default_keeps_the_guards():
+    # A focused background turn (the research writer) has no chat to show an approval card in, so its web tools are
+    # built without one; the chat's own web tools still ask in a private chat.
+    quiet = make_web_tools(api_key="", ask_first=False)
+    assert [t.name for t in quiet] == ["web_search", "web_fetch"]
+    assert [t._require_confirmation for t in quiet] == [False, False]
+
+    guarded = make_web_tools(api_key="")
+    assert [t.name for t in guarded] == ["web_search", "web_fetch"]
+    assert all(callable(t._require_confirmation) for t in guarded)
+    assert all(t._require_confirmation._signin is True for t in guarded)  # the sign-in guard's own predicates

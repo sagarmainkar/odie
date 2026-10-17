@@ -1,6 +1,6 @@
-"""What the chat tools that start a background job share (make_video, make_podcast and make_deck): reading
-the model's arguments as it sends them, the checks every kind makes in its own words and limits, a folder of its own
-for every job, and the reply that says how long it takes."""
+"""What the chat tools that start a background job share (make_video, make_podcast, make_deck and make_research):
+reading the model's arguments as it sends them, the checks every kind makes in its own words and limits, a folder of
+its own for every job, and the reply that says how long it takes."""
 import re
 from pathlib import Path
 

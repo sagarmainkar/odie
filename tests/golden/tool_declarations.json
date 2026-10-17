@@ -393,6 +393,43 @@
     }
   },
   {
+    "description": "Research a question in the background and post a report (a Markdown file) to this chat: a separate writer\nsearches the web and the user's notes, reads what matters and writes the answer with its sources. Use it for\nanything time-consuming that is mostly reading: research, look into, compare, find out, a report on. The writer\ncan't see this chat or the user's memory.\ntopic: what to find out, short (\"Which kettle to buy for a family of four\").\nbrief: the question as the user means it, what matters to them, what is known already (facts from this chat),\nwhat to skip, and where to look (their notes, sites they trust). Up to 6,000 characters.\nsources: what the user gave, passed to the writer word for word (never retype it): \"my message\" (the user's\nlatest message), a note's name or path in their vault, or a text file's path in Odie's workspace. Up to 5.\nIt returns at once. {\"error\": …}: fix exactly that and call again (in a private chat, tell the user what it says).\n{\"result\": …}: the research is being made; reply in one or two lines as the result says, and don't repeat the\nbrief.",
+    "name": "make_research",
+    "parameters_json_schema": {
+      "properties": {
+        "topic": {
+          "title": "Topic",
+          "type": "string"
+        },
+        "brief": {
+          "default": "",
+          "title": "Brief",
+          "type": "string"
+        },
+        "sources": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sources"
+        }
+      },
+      "required": [
+        "topic"
+      ],
+      "title": "make_researchParams",
+      "type": "object"
+    }
+  },
+  {
     "description": "Make a narrated, animated explainer video that plays in this chat. A separate writer makes the narration and\nthe animation from your brief, in the background; it can't see this chat, the user's notes, memory or the web.\ntopic: what the video is about, short (\"How attention works\").\nminutes: its length, from 1 to 6: the user's length, else 2.\nbrief: the plan: who it's for and their level, the key points in order, the look, examples, numbers or formulas\nthat must appear, and any facts you found. Up to 20,000 characters.\nsources: what the user gave, passed to the writer word for word (never retype it): \"my message\" (the user's\nlatest message), a note's name or path in their vault, or a text file's path in Odie's workspace. Up to 5.\nvoice_name: leave empty; only when the user asks for a voice, one of the Settings engine's voices.\nIt returns at once. {\"error\": …}: fix exactly that and call again. {\"result\": …}: the video is being made; reply\nin one or two lines as the result says, and don't repeat the brief.",
     "name": "make_video",
     "parameters_json_schema": {

@@ -1,10 +1,10 @@
-"""Everything Odie makes in the background (explainer videos, podcasts, decks) is made one at a time, after the chat
-turn that asked for it has ended. A finished one is posted into that chat with a phone push, the way reminders are; a
-failed one says why in one line; a job that a restart cut off is told once.
+"""Everything Odie makes in the background (explainer videos, podcasts, decks, research) is made one at a time,
+after the chat turn that asked for it has ended. A finished one is posted into that chat with a phone push, the way
+reminders are; a failed one says why in one line; a job that a restart cut off is told once.
 
 Each kind registers itself in KINDS with two steps: writing (the only model call: a focused turn, see
-odie.making.writer) and making (no AI: render a video, speak a podcast, build a deck). The queue runs a job's steps
-and tells the chat "The {word} about {title} is ready." (or didn't finish, or was interrupted).
+odie.making.writer) and making (no AI: render a video, speak a podcast, build a deck, save a report). The queue runs
+a job's steps and tells the chat "The {word} about {title} is ready." (or didn't finish, or was interrupted).
 
 Each job has a folder, <data>/workspace/<the kind's folder>/<slug>/, holding what its steps make, job.json (status:
 queued, writing, making, done, failed or interrupted_told; a video's job.json from before the queue was shared may say
@@ -38,7 +38,7 @@ UNKNOWN_ERROR = "something went wrong (see Odie's log)"
 # what a video's job.json said for making before the queue was shared.
 INTERRUPTED_STATUSES = ("queued", "writing", "making", "running")
 # The modules of Odie's own kinds: each puts its Kind in KINDS when imported (load_kinds).
-BUILT_IN_KINDS = ("odie.video.kind", "odie.making.podcast", "odie.making.deck")
+BUILT_IN_KINDS = ("odie.video.kind", "odie.making.podcast", "odie.making.deck", "odie.making.research")
 
 
 @dataclass

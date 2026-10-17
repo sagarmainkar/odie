@@ -50,6 +50,9 @@ SKILL_TOOLS = [
     (("browser_open",), "A real browser: browser_open(url), then browser_click, browser_type and browser_scroll"),
     (("find_images",), "Photos for covers and slides: find_images(query), each with the credit to use"),
     (("market_history",), "Prices: market_history(symbol, period), with a chart block"),
+    (("make_research",), ("Research: make_research(topic, brief, sources) looks a question up on the web and in the "
+                          "user's notes in the background and posts a report with its sources to the chat; for a "
+                          "long read, hand it over instead of searching page after page in the skill")),
 ]
 
 SKILL_RULES = [

@@ -84,3 +84,11 @@ def test_the_skill_kit_lists_what_a_skill_can_build_on(runner):
     assert "make_file(" not in kit and "browser_open" not in kit   # not among this setup's tools
     assert "Web:" in kit and "vault (ok)" in kit and "workspace" in kit
     assert "never macOS `say`" in kit and "Settings > Voice" in kit and "ask the user only" in kit
+
+
+def test_the_skill_kit_says_research_is_make_research_when_the_research_skill_is_there(runner):
+    assert "make_research(" not in about.skill_kit()  # not among this setup's tools
+    names = runner._all_tool_names()
+    runner._all_tool_names = lambda: {**names, "make_research": "the research skill"}
+    kit = about.skill_kit()
+    assert "make_research(topic, brief, sources)" in kit and "background" in kit

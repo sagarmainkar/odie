@@ -74,7 +74,8 @@ class Turn:
 
     async def submit(self, title="Tides", text="The moon pulls the sea."):
         context = Context()
-        out = await self.tools[0](title=title, text=text, tool_context=context)
+        by_name = {tool.__name__: tool for tool in self.tools}
+        out = await by_name["submit_note"](title=title, text=text, tool_context=context)
         self.said.append(out)
         self.ended.append(context.actions.skip_summarization is True)
         return out
@@ -170,6 +171,36 @@ async def test_running_out_of_time_is_the_time_limit_line():
     with pytest.raises(harness.WriterFailed) as failed:
         await write(Turn(script))
     assert str(failed.value) == "The writer took more than 15 minutes and stopped."
+
+
+async def test_a_time_limit_given_reaches_the_turn_and_its_line():
+    desk = harness.Desk(topic="tides")
+    turn = Turn(submits)
+    await harness.write(desk, "Topic: tides", "the note rules", note_tool(desk, Checks()), LINES, turn,
+                        time_limit=1800)
+    assert turn.handed[3] == 1800
+
+    async def script(turn):
+        raise TimeoutError
+
+    desk = harness.Desk(topic="tides")
+    with pytest.raises(harness.WriterFailed) as failed:
+        await harness.write(desk, "Topic: tides", "the note rules", note_tool(desk, Checks()), LINES, Turn(script),
+                            time_limit=1800)
+    assert str(failed.value) == "The writer took more than 30 minutes and stopped."
+
+
+async def test_other_tools_are_handed_to_the_turn_before_the_submit_tool():
+    async def look_up(query: str) -> str:
+        """Look something up."""
+        return "found"
+
+    desk = harness.Desk(topic="tides")
+    turn = Turn(submits)
+    await harness.write(desk, "Topic: tides", "the note rules", note_tool(desk, Checks()), LINES, turn,
+                        other_tools=[look_up])
+    assert turn.handed[2] == ["look_up", "submit_note"]
+    assert turn.said == [ACCEPTED]
 
 
 async def test_a_model_failure_after_acceptance_keeps_the_result():

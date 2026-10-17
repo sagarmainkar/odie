@@ -23,7 +23,12 @@ MAX_REJECTIONS = 3  # submits that may be refused before the writing stops
 
 ACCEPTED = "Accepted."
 STOP = "That's three tries, so the writing stops here."
-TIMED_OUT = f"The writer took more than {TIME_LIMIT // 60} minutes and stopped."
+
+
+def timed_out(time_limit: float) -> str:
+    """The line the user is told when the writer ran out of time: 900 seconds -> "The writer took more than 15 minutes
+    and stopped."; 1800 -> "… more than 30 minutes …"."""
+    return f"The writer took more than {int(time_limit // 60)} minutes and stopped."
 
 
 class WriterFailed(Exception):
@@ -174,21 +179,29 @@ def outcome(desk: Desk, lines: Lines) -> object:
     raise WriterFailed(lines.never_submitted)
 
 
-async def write(desk: Desk, prompt: str, instruction: str, tool: Callable, lines: Lines, turn) -> object:
+async def write(desk: Desk, prompt: str, instruction: str, tool: Callable, lines: Lines, turn,
+                time_limit: float = TIME_LIMIT, other_tools: list | None = None) -> object:
     """Write in one focused turn: `turn(prompt, instruction, tools, timeout, follow_up=…)` is runner.focused_turn in
-    Odie, handed only `instruction` and the one `tool` (made by submit_tool on this `desk`). When the turn ends
-    unfinished, follow_up gives the one nudge (nudge_for). Returns the accepted result; raises WriterFailed when there's
-    none (see outcome), or TIMED_OUT when the time ran out first. A model failure before any outcome goes up as it is,
-    for the job to tell (as "something went wrong"); one after the outcome is settled is only logged."""
+    Odie, handed only `instruction` and the one `tool` (made by submit_tool on this `desk`), after any `other_tools`
+    the kind's writer reads with first (research: the web and the user's notes). When the turn ends unfinished,
+    follow_up gives the one nudge (nudge_for). Returns the accepted result; raises WriterFailed when there's none (see
+    outcome), or the time-limit line (timed_out) when `time_limit` seconds ran out first. A model failure before any
+    outcome goes up as it is, for the job to tell (as "something went wrong"); one after the outcome is settled is only
+    logged."""
 
     def follow_up() -> str | None:
         return nudge_for(desk, lines)
 
+    tools = []
+    if other_tools:
+        tools.extend(other_tools)
+    tools.append(tool)
+
     try:
-        await turn(prompt, instruction, [tool], TIME_LIMIT, follow_up=follow_up)
+        await turn(prompt, instruction, tools, time_limit, follow_up=follow_up)
     except TimeoutError:
         if not desk.finished():
-            raise WriterFailed(TIMED_OUT) from None
+            raise WriterFailed(timed_out(time_limit)) from None
         log.warning("the writer's turn (%s) timed out after its outcome was settled", tool.__name__, exc_info=True)
     except Exception:
         if not desk.finished():
