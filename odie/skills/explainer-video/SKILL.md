@@ -19,17 +19,24 @@ is unclear. Search first only if the topic needs current facts, and put what you
 
 ## Write the brief
 
-The writer can't see this chat, the user's notes, memory or the web: it knows only the topic, the length and the
-brief. So the brief carries everything the video needs:
+The writer can't see this chat, the user's notes, memory or the web: it knows only the topic, the length, the brief
+and the sources. So the brief carries everything else the video needs, research included:
 
-- **who it's for and their level** ("a curious beginner", "an engineer who knows matrices");
+- **who it's for and their level** ("a curious beginner");
 - **the key points, in order,** one idea per point (they become the scenes);
 - **examples and analogies** to show;
 - **numbers, names and formulas** that must appear exactly;
-- **facts from this chat or the user's notes** the video should use.
+- **facts from this chat or the notes** to use.
 
-Put in only what the video needs, nothing private it doesn't use. Plain text, up to 6,000 characters; a short
-numbered list is usually plenty.
+Only what the video needs, nothing private it doesn't use: plain text, up to 20,000 characters.
+
+## What the user gave: sources
+
+When the video is about something the user gave (pasted text, a note, a file), pass it in `sources`
+instead of retyping it: the writer gets it word for word. Then keep the brief to the plan: who it's for, the story
+in order, the look, what must appear. A source is `"my message"` (the user's latest message), a note's name or
+path, or a text file's path in Odie's workspace; up to 5. If it came in an earlier message, put what the video needs
+in the brief, or ask the user to paste it again.
 
 ## The call
 
@@ -45,6 +52,7 @@ mix. Show softmax(QK^T / sqrt(d)) V. Example sentence: 'The cat sat on the mat'.
 
 - `topic`: a few words.
 - `minutes`: the user's length, else 2; from 1 to 6.
+- `sources`: only for what the user gave, e.g. `sources=["my message"]`.
 - `voice_name`: leave it out unless the user asks for a voice; only a voice of the engine chosen in Settings (an
   error lists them).
 

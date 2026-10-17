@@ -41,6 +41,12 @@ def test_the_brief_check_names_the_kind():
     assert "6,001" in problem and "6,000" in problem and "what the deck needs" in problem
 
 
+def test_a_kind_can_allow_a_longer_brief():
+    assert chat.brief_problem("x" * 20_000, "video", 20_000) is None
+    problem = chat.brief_problem("x" * 20_001, "video", 20_000)
+    assert "20,001" in problem and "at most 20,000" in problem and "what the video needs" in problem
+
+
 def test_the_reply_carries_the_kinds_middle_part():
     assert chat.reply(1, 2, 4, "writing the script, then speaking it") == (
         "Making it now: about 2–4 minutes (writing the script, then speaking it). It'll appear in this chat, with a "

@@ -6,11 +6,11 @@ Each kind registers itself in KINDS with two steps: writing (the only model call
 odie.making.writer) and making (no AI: render a video, speak a podcast, build a deck). The queue runs a job's steps
 and tells the chat "The {word} about {title} is ready." (or didn't finish, or was interrupted).
 
-Each job has a folder, <data>/workspace/<the kind's folder>/<slug>/, holding what its steps make and job.json (status:
+Each job has a folder, <data>/workspace/<the kind's folder>/<slug>/, holding what its steps make, job.json (status:
 queued, writing, making, done, failed or interrupted_told; a video's job.json from before the queue was shared may say
-"running", which meant making). A job starts as a topic, a length and a brief; the writing step turns them into the
-title and the kind's own results (job.data). The brief is kept only in memory, for the writer: it isn't written to
-job.json or anywhere else in the folder."""
+"running", which meant making) and brief.md. A job starts as a topic, a length and a brief (the chat model's brief and
+any sources, word for word: odie.video.sources for a video); the writing step first writes the brief to brief.md, kept
+for later, then turns them into the title and the kind's own results (job.data). job.json never holds the brief."""
 from __future__ import annotations
 
 import asyncio
@@ -143,6 +143,12 @@ def save_json(folder: Path, data: dict) -> None:
     temporary.replace(target)
 
 
+def write_brief(job: Job) -> None:
+    """Keep the writer's brief in the job's folder as brief.md, as the writer reads it (with a closing newline)."""
+    job.folder.mkdir(parents=True, exist_ok=True)
+    (job.folder / "brief.md").write_text(job.brief + "\n", encoding="utf-8")
+
+
 def write_job(job: Job, status: str, error: str = "") -> None:
     data = {"status": status, "kind": job.kind, "title": job.title, "session_id": job.session_id, "slug": job.slug,
             "created": job.created, "topic": job.topic, "minutes": job.minutes}
@@ -205,6 +211,7 @@ async def run(job: Job, browser=None, transport=None, turn=None) -> None:
             browser = render_browser()
         if kind.needs_writing(job):
             write_job(job, "writing")
+            write_brief(job)
             if turn is None:
                 turn = hooks["runner"].focused_turn
             await kind.write(job, turn, browser)

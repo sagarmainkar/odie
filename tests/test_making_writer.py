@@ -117,7 +117,7 @@ async def test_adk_calls_it_with_the_models_arguments_and_its_context(tmp_path):
 async def test_accepted_first_time_ends_the_turn_with_what_accept_made():
     turn = Turn(submits)
     assert await write(turn) == ("Tides", "The moon pulls the sea.")
-    assert turn.handed == ("Topic: tides", "the note rules", ["submit_note"], 600)
+    assert turn.handed == ("Topic: tides", "the note rules", ["submit_note"], 900)
     assert turn.said == [ACCEPTED] and turn.ended == [True] and turn.nudge is None
 
 
@@ -169,7 +169,7 @@ async def test_running_out_of_time_is_the_time_limit_line():
 
     with pytest.raises(harness.WriterFailed) as failed:
         await write(Turn(script))
-    assert str(failed.value) == "The writer took more than 10 minutes and stopped."
+    assert str(failed.value) == "The writer took more than 15 minutes and stopped."
 
 
 async def test_a_model_failure_after_acceptance_keeps_the_result():

@@ -70,12 +70,13 @@ def minutes_problem(minutes, lowest: int, highest: int, word: str, default: int)
             f"{default}), {given}.")
 
 
-def brief_problem(brief: str, word: str) -> str | None:
-    """Decides whether the brief is short enough for the writer: up to 6,000 characters -> None; 6,001 -> the limit,
-    as words to act on, naming the kind ("Keep only what the video needs: …")."""
-    if len(brief) <= MAX_BRIEF_CHARACTERS:
+def brief_problem(brief: str, word: str, limit: int = MAX_BRIEF_CHARACTERS) -> str | None:
+    """Decides whether the brief is short enough for the writer: up to `limit` characters (6,000 unless the kind
+    says) -> None; one more -> the limit, as words to act on, naming the kind. 6,001 for a deck -> "The brief is 6,001
+    characters; it can be at most 6,000. Keep only what the deck needs: …"; the video allows 20,000."""
+    if len(brief) <= limit:
         return None
-    return (f"The brief is {len(brief):,} characters; it can be at most {MAX_BRIEF_CHARACTERS:,}. Keep only what the "
+    return (f"The brief is {len(brief):,} characters; it can be at most {limit:,}. Keep only what the "
             f"{word} needs: who it's for, the key points in order, the examples and the facts it must use.")
 
 

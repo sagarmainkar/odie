@@ -25,7 +25,8 @@ NOT_A_LIST = ('narration is a list of strings, one string of plain speech per sc
 BROWSER_FAILED = "The browser failed while checking the page."  # a BrowserError with no words of its own
 PLAN_THEN_WRITE = "Plan in a few lines, then call submit_video with the title, the narration and the whole page."
 LINES = harness.Lines(
-    nudge="You haven't called submit_video yet. Call it now with the title, the narration and the whole page.",
+    nudge=("You haven't called submit_video yet. Stop planning and don't count words: write the narration and the "
+           "page now, as they are, and call submit_video with the title, the narration and the whole page."),
     nudge_after_problem=("submit_video hasn't accepted the video yet. Its last answer was: {problem} Fix exactly that "
                          "and call submit_video again with the title, the whole narration and the whole fixed page."),
     never_submitted="I couldn't write the video's page (the writer stopped without one).",
@@ -74,7 +75,7 @@ def keep_page(folder: Path, body: str) -> None:
 
 def prompt_for(topic: str, minutes: int, brief: str) -> str:
     """The writer's whole message: the topic, the length in minutes and in words (140 a minute: 2 minutes -> about
-    280 words), the brief, and what to do."""
+    280 words, given as a guide, not a count), the brief, and what to do."""
     words = minutes * timeline.WORDS_PER_MINUTE
     unit = "minutes"
     if minutes == 1:
@@ -83,7 +84,7 @@ def prompt_for(topic: str, minutes: int, brief: str) -> str:
     if not brief_text:
         brief_text = "(none: use what you know about the topic)"
     return (f"Topic: {topic}\n"
-            f"Length: {minutes} {unit}, about {words} words of narration.\n\n"
+            f"Length: {minutes} {unit}, roughly {words} words of narration (a guide, not a count).\n\n"
             f"Brief:\n{brief_text}\n\n"
             f"{PLAN_THEN_WRITE}")
 

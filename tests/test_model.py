@@ -171,3 +171,14 @@ async def test_a_provider_that_refuses_32k_gets_16k_and_is_remembered():
     assert [b["max_tokens"] for b in bodies] == [32000, 16000]          # refused, then the retry at 16k
     await complete(sel, [{"role": "user", "content": "again"}], transport=httpx.MockTransport(handler))
     assert bodies[-1]["max_tokens"] == 16000 and len(bodies) == 3       # remembered: no second refusal
+
+
+def test_a_background_writer_gets_more_room_where_the_model_allows_it():
+    # A rich 4-minute video's page drafted in DeepSeek's thinking took all of 32k; the writer's turn asks for 64k.
+    from odie.agent.model import WRITER_REPLY_TOKENS, completion_args, reply_tokens_for
+    assert WRITER_REPLY_TOKENS == 64000
+    assert reply_tokens_for(_sel("ollama", "deepseek-v4.1-flash:cloud", base="http://localhost:11434/v1"), WRITER_REPLY_TOKENS) == 64000
+    assert reply_tokens_for(_sel("anthropic", "claude-sonnet-4-5"), WRITER_REPLY_TOKENS) == 64000
+    assert reply_tokens_for(_sel("openai", "gpt-4o-mini"), WRITER_REPLY_TOKENS) == 16384     # its own limit still wins
+    assert reply_tokens_for(_sel("custom-box", "my-model"), WRITER_REPLY_TOKENS) == 16000
+    assert completion_args(_sel("ollama", "m", base="http://localhost:11434/v1"))["max_tokens"] == 32000  # a chat turn

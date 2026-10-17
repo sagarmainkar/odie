@@ -26,6 +26,9 @@ log = logging.getLogger("odie.model")
 # tool call (16 Oct 2026).
 REPLY_TOKENS = 16000
 ROOMY_REPLY_TOKENS = 32000
+# A background writer's turn (an explainer video's page): DeepSeek drafts the whole page in its thinking before it
+# writes the call, and a rich 4-minute video's draft alone took all of 32k (16 Oct 2026); with 64k it passed first time.
+WRITER_REPLY_TOKENS = 64000
 # The names litellm's table knows each cloud provider's models by ("openai/gpt-4o-mini"). Not listed: a custom provider.
 LOOKUP_PREFIX = {"openai": "openai/", "anthropic": "anthropic/", "gemini": "gemini/", "openrouter": "openrouter/"}
 # Where a provider refused the roomy reply: model and address -> the room it gets from then on (REPLY_TOKENS).
@@ -59,23 +62,23 @@ def _known_output_limit(name: str) -> int:
     return int(info.get("max_output_tokens") or 0)
 
 
-def reply_tokens_for(selection) -> int:
-    """How many tokens a reply may use: 32k where the model allows it, its own limit where that's lower, 16k (which
-    every provider accepts) where nothing is known.
-      LM Studio or Ollama (the user's own server, or Ollama's cloud models) -> 32000
+def reply_tokens_for(selection, wanted: int = ROOMY_REPLY_TOKENS) -> int:
+    """How many tokens a reply may use: the room wanted (32k for a chat turn, 64k for a background writer) where the
+    model allows it, its own limit where that's lower, 16k (which every provider accepts) where nothing is known.
+      LM Studio or Ollama (the user's own server, or Ollama's cloud models) -> the room wanted: 32000, or 64000
       OpenAI gpt-4o-mini (litellm: at most 16,384)                          -> 16384
-      Claude Sonnet 4.5 (litellm: 64,000)                                   -> 32000
+      Claude Sonnet 4.5 (litellm: 64,000)                                   -> 32000; a writer: 64000
       a custom provider, or a model litellm doesn't know                     -> 16000"""
     provider = selection.provider
     if provider.id in ("lmstudio", "ollama"):
-        return ROOMY_REPLY_TOKENS
+        return wanted
     prefix = LOOKUP_PREFIX.get(provider.id)
     if prefix is None:
         return REPLY_TOKENS
     limit = _known_output_limit(prefix + selection.model)
     if not limit:
         return REPLY_TOKENS
-    return min(ROOMY_REPLY_TOKENS, limit)
+    return min(wanted, limit)
 
 
 def refused_for_reply_room(error: Exception) -> bool:
@@ -139,13 +142,14 @@ def address_of(selection) -> dict[str, str]:
     return {"api_base": base_url, **out}
 
 
-def completion_args(selection, think_harder: bool = False) -> dict[str, Any]:
-    """Everything a litellm call carries for this Selection (odie.models), the agent's and the one-shot ones alike."""
+def completion_args(selection, think_harder: bool = False, room: int = ROOMY_REPLY_TOKENS) -> dict[str, Any]:
+    """Everything a litellm call carries for this Selection (odie.models), the agent's and the one-shot ones alike.
+    room: the reply room wanted (reply_tokens_for decides what the model gets)."""
     args: dict[str, Any] = {
         "model": litellm_model(selection),
         **address_of(selection),
         "reasoning_effort": effort_for(think_harder),
-        "max_tokens": reply_tokens_for(selection),
+        "max_tokens": reply_tokens_for(selection, room),
         "timeout": TIMEOUT_SECONDS,
         "drop_params": True,
     }
@@ -197,11 +201,12 @@ def _litellm():
     return litellm
 
 
-def model_for(selection, think_harder: bool) -> LiteLlm:
+def model_for(selection, think_harder: bool, room: int = ROOMY_REPLY_TOKENS) -> LiteLlm:
     """The ADK model for a Selection (odie.models). think_harder: the chat's "Think harder" toggle; background turns pass
-    False. The same model object serves a whole chat until the selection or the toggle changes (odie.app.runner)."""
+    False. room: the reply room wanted (a background writer asks for WRITER_REPLY_TOKENS). The same model object serves
+    a whole chat until the selection or the toggle changes (odie.app.runner)."""
     _litellm()
-    return LiteLlm(llm_client=SavingClient(), **completion_args(selection, think_harder))
+    return LiteLlm(llm_client=SavingClient(), **completion_args(selection, think_harder, room))
 
 
 async def complete(selection, messages: list[dict], tools: list[dict] | None = None, think_harder: bool = False, transport=None,

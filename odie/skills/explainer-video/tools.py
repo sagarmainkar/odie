@@ -1,8 +1,9 @@
-"""The explainer-video skill's tool: make_video checks the request within the chat turn (instantly) and puts the video
-in Odie's background queue (odie.making.jobs, kind "video" from odie.video.kind). In the background the writer
-(odie.video.writer) turns the topic, length and brief into the narration and the page; then the video is narrated,
-rendered and posted to this chat. The chat only briefs the video. Plain trusted code of a built-in skill: no shell, no
-approval card."""
+"""The explainer-video skill's tool: make_video checks the request within the chat turn (instantly), reads the sources
+the chat named (odie.video.sources: the user's message, a note, a workspace file, word for word) and puts the video in
+Odie's background queue (odie.making.jobs, kind "video" from odie.video.kind) with the brief and the sources as one
+text, the job's brief.md. In the background the writer (odie.video.writer) turns the topic, length and that brief into
+the narration and the page; then the video is narrated, rendered and posted to this chat. The chat only briefs the
+video. Plain trusted code of a built-in skill: no shell, no approval card."""
 from google.adk.tools import FunctionTool, ToolContext
 
 from odie import voice
@@ -11,20 +12,23 @@ from odie.agent.tools.files import workspace
 from odie.browser import find
 from odie.making import chat, jobs
 from odie.video import kind, timeline
+from odie.video import sources as video_sources
 
 NARRATING_SPEED = 10  # seconds of speech the voice narrates in a second
 JOINING_SECONDS = 10  # joining the segments and the sound into the MP4
-WRITING_MINUTES = 2  # the writer's turn (live: about 100 s for a 7-scene page, from a ~4.7k-token prompt)
+MIN_WRITING_MINUTES = 2  # the writer's turn, at least (live: about 100 s for a 7-scene page, from a ~4.7k-token prompt)
 SCENE_SECONDS = 20  # a scene lasts about this long, for counting the breaths between scenes before there are any
 ESTIMATE_SPREAD = 2  # the range told is N to N + 2 minutes: writing time varies the most
 MIN_MINUTES = 1
 DEFAULT_MINUTES = 2
+MAX_BRIEF_CHARACTERS = 20_000  # the chat model's own brief; the sources have their own limits (odie.video.sources)
 WORD = "video"
 DOING = "writing the script and the animation, then drawing it"  # the middle of the reply: what making it involves
 
 NO_BROWSER = ("An explainer video needs Chrome, Edge, Brave or Chromium on this computer to draw its frames, and none "
               "was found. Tell the user to install one (any of them) and ask again.")
 NO_TOPIC = 'Give the topic: a few words saying what the video is about, like "How attention works".'
+USE_SOURCES = "Pass what the user gave in sources instead of copying it."  # after the brief's limit
 
 
 def making_seconds(speech_seconds: float, frames: int) -> float:
@@ -36,29 +40,38 @@ def making_seconds(speech_seconds: float, frames: int) -> float:
     return narrating + drawing + JOINING_SECONDS
 
 
+def writing_minutes(minutes: int) -> int:
+    """How long the writer's turn takes, in whole minutes: about a minute per minute of video, at least 2. Live: a
+    2-minute video took ~1.5 minutes -> 2; a 4-minute one with a 9,400-character source took ~5.5 -> 4 (the estimate
+    told is a range of 4 + making to 2 more); 6 -> 6."""
+    return max(MIN_WRITING_MINUTES, minutes)
+
+
 def minutes_to_make(minutes: int) -> int:
-    """The low end of the estimate told to the user, in whole minutes: 2 minutes of writing, plus making a video of
-    that length (rounded to the nearest minute, at least 1). The scenes aren't written yet, so it counts one scene per
-    20 seconds and a 0.5 s breath between scenes.
+    """The low end of the estimate told to the user, in whole minutes: the writing (writing_minutes), plus making a
+    video of that length (rounded to the nearest minute, at least 1). The scenes aren't written yet, so it counts one
+    scene per 20 seconds and a 0.5 s breath between scenes.
     2 minutes of video: 120 s of speech in 6 scenes, 122.5 s with the 5 breaths, 3,675 frames -> 12 + 52.5 + 10 =
-    74.5 s -> 1 minute of making + 2 of writing -> 3, told as "about 3–5 minutes". 6 minutes: 203.9 s -> 3 + 2 -> 5."""
+    74.5 s -> 1 minute of making + 2 of writing -> 3, told as "about 3–5 minutes". 6 minutes: 203.9 s -> 3 + 6 -> 9."""
     speech_seconds = minutes * 60
     scenes = max(1, round(speech_seconds / SCENE_SECONDS))
     breaths = (scenes - 1) * timeline.BREATH
     frames = timeline.frame_count(speech_seconds + breaths, timeline.FPS)
     seconds = making_seconds(speech_seconds, frames)
     making = max(1, round(seconds / 60))
-    return WRITING_MINUTES + making
+    return writing_minutes(minutes) + making
 
 
-async def make_video(topic: str, minutes: int = 2, brief: str = "", voice_name: str = "",
-                     tool_context: ToolContext | None = None) -> dict:
+async def make_video(topic: str, minutes: int = 2, brief: str = "", sources: list[str] | None = None,
+                     voice_name: str = "", tool_context: ToolContext | None = None) -> dict:
     """Make a narrated, animated explainer video that plays in this chat. A separate writer makes the narration and
     the animation from your brief, in the background; it can't see this chat, the user's notes, memory or the web.
     topic: what the video is about, short ("How attention works").
     minutes: its length, from 1 to 6: the user's length, else 2.
-    brief: everything the writer needs: who it's for and their level, the key points in order, examples, numbers or
-    formulas that must appear, and any facts from this chat or the user's notes. Up to 6,000 characters.
+    brief: the plan: who it's for and their level, the key points in order, the look, examples, numbers or formulas
+    that must appear, and any facts you found. Up to 20,000 characters.
+    sources: what the user gave, passed to the writer word for word (never retype it): "my message" (the user's
+    latest message), a note's name or path in their vault, or a text file's path in Odie's workspace. Up to 5.
     voice_name: leave empty; only when the user asks for a voice, one of the Settings engine's voices.
     It returns at once. {"error": …}: fix exactly that and call again. {"result": …}: the video is being made; reply
     in one or two lines as the result says, and don't repeat the brief."""
@@ -78,9 +91,15 @@ async def make_video(topic: str, minutes: int = 2, brief: str = "", voice_name: 
     if problem:
         return {"error": problem}
 
-    problem = chat.brief_problem(brief, WORD)
+    problem = chat.brief_problem(brief, WORD, MAX_BRIEF_CHARACTERS)
     if problem:
-        return {"error": problem}
+        return {"error": f"{problem} {USE_SOURCES}"}
+
+    try:
+        references = video_sources.sources_as_given(sources)
+        found = video_sources.resolve(references, jobs.hooks["store"])
+    except video_sources.SourceProblem as e:
+        return {"error": str(e)}
 
     voice_id = ""
     if voice_name.strip():
@@ -91,7 +110,8 @@ async def make_video(topic: str, minutes: int = 2, brief: str = "", voice_name: 
 
     folder = chat.free_folder(workspace() / kind.FOLDER, chat.slug_of(title, WORD))
     folder.mkdir(parents=True)
-    job = jobs.Job(kind="video", slug=folder.name, title=title, topic=title, minutes=minutes, brief=brief,
+    whole_brief = video_sources.brief_with_sources(brief, found)
+    job = jobs.Job(kind="video", slug=folder.name, title=title, topic=title, minutes=minutes, brief=whole_brief,
                    session_id=session_id_of(tool_context), voice_name=voice_id, folder=folder)
     place = jobs.submit(job)
     low = minutes_to_make(minutes)

@@ -111,10 +111,58 @@ async def test_a_null_topic_is_the_topic_refusal(world):
     assert out["error"] == tools.NO_TOPIC and world[1] == []
 
 
-async def test_a_brief_over_6000_characters_is_refused(world):
-    out = await tools.make_video("Attention", brief="x" * 6001, voice_name="nobody")
-    assert "6,001" in out["error"] and "6,000" in out["error"] and world[1] == []
-    assert "result" in await tools.make_video("Attention", brief="x" * 6000)
+async def test_a_brief_over_20000_characters_is_refused(world):
+    out = await tools.make_video("Attention", brief="x" * 20_001, voice_name="nobody")
+    assert "20,001" in out["error"] and "20,000" in out["error"] and world[1] == []
+    assert "result" in await tools.make_video("Attention", brief="x" * 20_000)
+
+
+# Sources: what the user gave, read by Odie's code and put after the brief, word for word.
+
+TIDES = "Asha's notes on tides.\n\n| place | high tide |\n|---|---|\n| Goa | 2.1 m |"
+
+
+async def test_sources_go_into_the_jobs_brief_after_the_plan(world):
+    from odie.agent import turn
+    _store, submitted = world
+    chat = SimpleNamespace(session=SimpleNamespace(id="chat-7"))
+    token = turn.USER_TEXT.set(TIDES)  # the runner sets the user's words for the turn's tools
+    try:
+        out = await tools.make_video("How tides work", brief="For a ten-year-old. Show the table.",
+                                     sources=["my message"], tool_context=chat)
+    finally:
+        turn.USER_TEXT.reset(token)
+    assert "result" in out, out
+    brief = submitted[0].brief
+    assert brief.startswith("For a ten-year-old. Show the table.")
+    assert "## Source material" in brief and TIDES in brief and "[context:" not in brief
+
+
+async def test_a_source_that_cant_be_read_is_an_error_and_nothing_is_queued(world):
+    out = await tools.make_video("How tides work", brief="For a ten-year-old.", sources=["../../outside.txt"])
+    assert "workspace" in out["error"] and world[1] == []
+    out = await tools.make_video("How tides work", sources=["a.txt"] * 6)
+    assert "at most 5" in out["error"] and world[1] == []
+    from odie.agent.tools.files import workspace
+    videos = workspace() / "videos"
+    assert not videos.exists() or not any(videos.iterdir())  # no folder made for a refused video
+
+
+@pytest.mark.parametrize("given", [None, []])
+async def test_no_sources_leaves_the_brief_as_it_is(world, given):
+    out = await call_as_adk_does(topic="Attention", brief="For Asha.", sources=given)
+    assert "result" in out, out
+    assert world[1][0].brief == "For Asha."
+
+
+async def test_sources_sent_as_json_text_are_read_as_the_list(world):
+    out = await call_as_adk_does(topic="How tides work", brief="For Asha.", sources='["my message"]')
+    assert "error" in out and "user's message" in out["error"]  # read as the list: no user turn here, so refused
+
+
+async def test_sources_that_arent_a_list_are_an_error(world):
+    out = await call_as_adk_does(topic="How tides work", sources={"note": "Tides"})
+    assert "list" in out["error"] and world[1] == []
 
 
 async def test_a_voice_from_the_other_engine_is_refused_and_nothing_is_queued(world):
@@ -176,11 +224,17 @@ def test_the_making_counts_narrating_rendering_and_joining_in_seconds():
     assert round(tools.making_seconds(96.25, 2963), 1) == 62.0  # 9.6 narrating + 42.3 drawing + 10 joining
 
 
-def test_the_estimate_adds_two_minutes_of_writing_to_the_making():
+def test_writing_takes_a_minute_per_minute_of_video_and_at_least_two():
+    # live: a 2-minute video ~1.5 min of writing; a 4-minute one with a long source ~5.5 min
+    assert [tools.writing_minutes(m) for m in (1, 2, 4, 6)] == [2, 2, 4, 6]
+
+
+def test_the_estimate_adds_the_writing_to_the_making():
     # 2 minutes: 120 s of speech in 6 scenes, 122.5 s of video, 3,675 frames -> 12 + 52.5 + 10 = 74.5 s -> 1, + 2
     assert tools.minutes_to_make(2) == 3
     assert tools.minutes_to_make(1) == 3  # 42.1 s of making -> at least 1, + 2
-    assert tools.minutes_to_make(6) == 5  # 203.9 s -> 3, + 2
+    assert tools.minutes_to_make(4) == 6  # 139.2 s -> 2, + 4
+    assert tools.minutes_to_make(6) == 9  # 203.9 s -> 3, + 6
 
 
 async def test_the_reply_says_how_long_and_that_the_chat_stays_free(world, monkeypatch):
@@ -207,10 +261,11 @@ def test_the_skill_offers_only_make_video_without_an_approval_card(isolated_sett
     assert not any(tool._require_confirmation for tool in entry.tool_objs)
 
 
-def test_the_declaration_has_exactly_topic_minutes_brief_and_voice_name():
+def test_the_declaration_has_exactly_topic_minutes_brief_sources_and_voice_name():
     declaration = FunctionTool(tools.make_video)._get_declaration()
     properties = declaration.parameters_json_schema["properties"]
-    assert sorted(properties) == ["brief", "minutes", "topic", "voice_name"]
+    assert sorted(properties) == ["brief", "minutes", "sources", "topic", "voice_name"]
+    assert properties["sources"]["anyOf"][0] == {"items": {"type": "string"}, "type": "array"}  # a list of texts
     assert declaration.parameters_json_schema["required"] == ["topic"]
 
     golden = {d["name"]: d for d in json.loads(GOLDEN.read_text())}
@@ -220,7 +275,8 @@ def test_the_declaration_has_exactly_topic_minutes_brief_and_voice_name():
 
 def test_the_skill_says_how_to_write_the_brief():
     text = (SKILL / "SKILL.md").read_text()
-    assert "brief" in text and "can't see" in text and "6,000" in text
+    assert "brief" in text and "can't see" in text and "20,000" in text
+    assert "sources" in text and "my message" in text and "earlier message" in text
     assert "no emojis" in text and "save_video_page" not in text
     assert len(text.split("---", 2)[2].split()) < 500  # the body is short: the writer has the page contract
 

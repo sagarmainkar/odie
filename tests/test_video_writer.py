@@ -26,7 +26,8 @@ SAMPLE = (Path(page.__file__).parent / "kit" / "sample.html").read_text()
 WRITER_MD = Path(writer.__file__).with_name("writer.md")
 NARRATION = ["Here is how attention works, one word at a time.", "Then one formula does the work for every word."]
 ACCEPTED = {"result": "Accepted."}
-NUDGE = "You haven't called submit_video yet. Call it now with the title, the narration and the whole page."
+NUDGE = ("You haven't called submit_video yet. Stop planning and don't count words: write the narration and the "
+         "page now, as they are, and call submit_video with the title, the narration and the whole page.")
 BIN = find.installed()
 needs_browser = pytest.mark.skipif(BIN is None, reason="no Chrome, Edge, Chromium or Brave here")
 
@@ -238,7 +239,7 @@ async def test_the_turn_gets_only_submit_video_writer_md_and_the_time_limit(tmp_
                        BROWSER)
     assert [tool.__name__ for tool in turn.tools] == ["submit_video"]
     assert turn.instruction == WRITER_MD.read_text()
-    assert turn.timeout == 600
+    assert turn.timeout == 900  # 15 minutes: one refused page on a long video with sources still fits
 
 
 async def test_the_prompt_gives_the_topic_the_minutes_the_words_and_the_brief(tmp_path, checks):
@@ -252,8 +253,23 @@ async def test_the_prompt_gives_the_topic_the_minutes_the_words_and_the_brief(tm
     assert "submit_video" in writer.PLAN_THEN_WRITE
 
 
+async def test_the_prompt_carries_the_source_material_word_for_word(tmp_path, checks):
+    from odie.video.sources import Source, brief_with_sources
+    tides = "Asha's notes on tides.\n\n| place | high tide |\n|---|---|\n| Goa | 2.1 m |"
+    brief = brief_with_sources("For a ten-year-old. Show the table.", [Source("The user's message", tides)])
+    turn = Turn(submits)
+    await writer.write("How tides work", 3, brief, tmp_path / "job", turn, BROWSER)
+    assert "Brief:\nFor a ten-year-old. Show the table." in turn.prompt
+    assert "## Source material" in turn.prompt and tides in turn.prompt
+
+
+def test_writer_md_says_the_brief_may_end_with_the_users_own_material():
+    text = WRITER_MD.read_text()
+    assert "## Source material" in text and "the user's own text" in text
+
+
 def test_one_minute_is_said_in_the_singular():
-    assert "Length: 1 minute, about 140 words" in writer.prompt_for("Tides", 1, "")
+    assert "Length: 1 minute, roughly 140 words" in writer.prompt_for("Tides", 1, "")
 
 
 async def test_a_narration_problem_is_a_rejection_and_comes_back_before_the_page_is_drawn(tmp_path, checks):
@@ -379,7 +395,7 @@ async def test_a_writer_that_runs_out_of_time_fails_with_the_time_limit(tmp_path
 
     with pytest.raises(harness.WriterFailed) as failed:
         await writer.write("Attention", 2, "", tmp_path / "job", Turn(script), BROWSER)
-    assert str(failed.value) == "The writer took more than 10 minutes and stopped."
+    assert str(failed.value) == "The writer took more than 15 minutes and stopped."
 
 
 def test_adk_reads_submit_video_with_its_three_arguments_and_no_context():
@@ -432,7 +448,7 @@ class TalksFirst(BaseLlm):
 async def write_through_the_runner(tmp_path, monkeypatch, model):
     from odie.app import runner as runner_mod
     from odie.store.db import Store
-    monkeypatch.setattr(runner_mod, "model_for", lambda selection, thinking: model)
+    monkeypatch.setattr(runner_mod, "model_for", lambda selection, thinking, room=None: model)
     store = Store(tmp_path / "assistant.db")
     store.init_schema()
     odie = runner_mod.OdieRunner(store)
@@ -490,3 +506,13 @@ async def test_the_worked_example_is_accepted_in_a_real_browser(tmp_path):
         await real.close()
     assert turn.said == [ACCEPTED], turn.said
     assert written.narration == ["word " * 20, "word " * 20]
+
+
+# A rich 4-minute brief made DeepSeek count each scene's words by hand until all 32,000 tokens of its reply were
+# thinking, twice, so no page was ever submitted (16 Oct 2026). The length is a guide the writer must not count to.
+
+def test_the_length_is_a_guide_the_writer_is_told_not_to_count():
+    from odie.video import writer
+    assert "a guide, not a count" in writer.prompt_for("Quantization", 4, "")
+    assert "Never count words" in writer.INSTRUCTION and "within about a tenth" not in writer.INSTRUCTION
+    assert "don't count words" in writer.LINES.nudge

@@ -17,7 +17,8 @@ from odie.making.chat import text_or_empty
 
 log = logging.getLogger("odie.making.writer")
 
-TIME_LIMIT = 600  # seconds the whole writing turn may take, the nudge included
+TIME_LIMIT = 900  # seconds the whole writing turn may take, the nudge included (a long video with sources took
+                  # 331 s live on its first try, so one refused page still fits)
 MAX_REJECTIONS = 3  # submits that may be refused before the writing stops
 
 ACCEPTED = "Accepted."
