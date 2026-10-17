@@ -1,10 +1,11 @@
-"""speak: a voice memo (plain speech in the chosen voice) or a podcast (two hosts, a woman first, then a man), made into
-one WAV and handed to the chat as media. The podcast skill tells the model how to write the script."""
+"""speak: a voice memo (plain speech in the chosen voice), made into one WAV and handed to the chat as media. A podcast
+is the podcast skill's make_podcast (tests/test_podcast_*.py); speak only reads memos aloud."""
 import json
 from pathlib import Path
 
 import httpx
 import pytest
+from google.adk.tools import FunctionTool
 
 from odie import media, voice
 from odie.agent.tools import media as mtools
@@ -69,24 +70,11 @@ async def test_openai_is_asked_for_pcm(store):
 
 async def test_memo_text_is_plain_speech(store):
     seen = []
-    await _speak(store, kokoro(seen)).func(script="## Plan\n- **Call** the [bank](https://x.example/a)\n- `code` here\n\nDone.")
+    script = "## Plan\n- **Call** the [bank](https://x.example/a)\n- `code` here\n\nDone."
+    await _speak(store, kokoro(seen)).func(script=script)
     assert seen[0]["text"] == "Plan. Call the bank. code here. Done."
     assert mtools.plain_speech("See https://x.example/page for *more*.") == "See for more."
     assert len(mtools.plain_speech("word " * 2000)) <= 4000
-
-
-async def test_a_podcast_gives_the_first_host_a_womans_voice(store):
-    seen = []
-    script = ("Asha: Welcome back! I'm Asha.\n**Rohan:** And I'm Rohan. Today, our session.\nAsha: So where do we start?\n"
-              "it continues here.\n\nRohan: With the basics.")
-    out = await _speak(store, kokoro(seen, 0.5)).func(script=script, title="Our session", style="podcast")
-    m = media.get(out["media"]["id"])[1]
-    assert m["kind"] == "podcast" and m["title"] == "Our session"
-    assert m["hosts"] == [{"name": "Asha", "voice": "Heart", "group": "female"}, {"name": "Rohan", "voice": "Michael", "group": "male"}]
-    assert [b["voice"] for b in seen] == ["af_heart", "am_michael", "af_heart", "am_michael"]
-    assert seen[2]["text"] == "So where do we start? it continues here."
-    assert [(t["host"], t["start"]) for t in m["transcript"]] == [("Asha", 0.0), ("Rohan", 0.8), ("Asha", 1.6), ("Rohan", 2.4)]
-    assert m["duration"] == 2.9  # four half-second turns and three 300 ms gaps
 
 
 def test_podcast_voices_follow_the_accent(store):
@@ -100,16 +88,6 @@ def test_podcast_voices_follow_the_accent(store):
     assert ids() == ["hf_beta", "hm_omega"]
 
 
-@pytest.mark.parametrize("script, why", [
-    ("Ana: hi\nBen: hello\nCal: hey\nCal: again", "two hosts"), ("Ana: just me talking.", "two hosts"), ("no names at all here", "Host A:"),
-    ("\n".join(f"{'Ana' if i % 2 else 'Ben'}: line {i}" for i in range(61)), "60"),
-])
-def test_scripts_are_checked(script, why):
-    with pytest.raises(ValueError) as e:
-        mtools.parse_script(script)
-    assert why in str(e.value)
-
-
 async def test_speak_errors_are_plain(store):
     def down(request):
         raise httpx.ConnectError("refused")
@@ -117,41 +95,17 @@ async def test_speak_errors_are_plain(store):
     out = await tool.func(script="Hello.")
     assert "media" not in out and "voice" in out["error"].lower() and "refused" not in out["error"].lower()
     assert "error" in await tool.func(script="   ")
-    assert "two hosts" in (await tool.func(script="A: hi", style="podcast"))["error"]
-    assert "memo or podcast" in (await tool.func(script="Hi", style="song"))["error"]
 
 
-def test_the_podcast_skill_is_built_in(store):
-    from odie.skills import registry
-    [e] = [e for e in registry.discover(store) if e.name == "podcast"]
-    text = (registry.BUILTIN / "podcast" / "SKILL.md").read_text()
-    assert "podcast" in e.description.lower() and e.status != "error"
-    assert 'style="podcast"' in text and "woman" in text and "Host A:" in text and "140 words" in text
-
-
-def test_the_podcast_skill_keeps_the_hosts_unnamed():
-    """The owner wants "just a man and a woman": Gemma's episode opened "Asha: Welcome back! I'm Asha." (11 Oct 2026)."""
-    from odie.skills import registry
-    text = (registry.BUILTIN / "podcast" / "SKILL.md").read_text()
-    assert "never say their own names or each other's" in text and "Host A (a woman) and Host B (a man)" in text
-    assert "Asha" not in text and "Rohan" not in text and "first names" not in text and "say their names" not in text
-
-
-async def test_a_podcast_with_neutral_labels_gets_both_voices_and_a_title_without_them(store):
-    seen = []
-    script = ("Host A: Today we're looking at how a home loan shrinks if you pay it off early.\n"
-              "Host B: And it's a bigger saving than most people think.\nHost A: Let's start with the EMI.")
-    out = await _speak(store, kokoro(seen, 0.5)).func(script=script, style="podcast")
-    m = media.get(out["media"]["id"])[1]
-    assert [h["name"] for h in m["hosts"]] == ["Host A", "Host B"]
-    assert [b["voice"] for b in seen] == ["af_heart", "am_michael", "af_heart"]
-    assert m["title"] == "Today we're looking at how a home loan shrinks if you pay…"
-    assert "Host" not in m["title"]
-
-
-def test_the_tool_says_when_to_use_it(store):
+def test_the_tool_says_when_to_use_it_and_sends_podcasts_to_make_podcast(store):
     tool = _speak(store, None)
-    assert tool.name == "speak" and "voice memo" in tool.description and "podcast skill" in tool.description
+    assert tool.name == "speak" and "voice memo" in tool.description
+    assert "make_podcast" in tool.description and 'style="podcast"' not in tool.description
+
+
+def test_speak_has_no_style_any_more(store):
+    declaration = FunctionTool(mtools.make_media_tools(store)[0].func)._get_declaration()
+    assert sorted(declaration.parameters_json_schema["properties"]) == ["script", "title", "voice_name"]
 
 
 async def test_the_model_sees_a_short_result(store):
@@ -163,31 +117,9 @@ async def test_the_model_sees_a_short_result(store):
     assert len(full["peaks"]) == 48 and full["transcript"] == "Good morning!"
     ev = _response("speak", out)
     assert event_to_sse(ev)[1] == {"type": "media", "media": full}  # the chat gets it all, from the sidecar
-    [reply] = [i for i in events_to_history([_text("user", "memo please"), _call("speak"), ev, _text("odie", "Here.")]) if i["role"] == "odie"]
+    events = [_text("user", "memo please"), _call("speak"), ev, _text("odie", "Here.")]
+    [reply] = [i for i in events_to_history(events) if i["role"] == "odie"]
     assert reply["media"] == [full]
-
-
-def test_lines_with_colons_continue_the_turn():
-    turns = mtools.parse_script("Asha: Hi there.\nRohan: Let's start.\nAt 10:30 we met the team.\nNote: this matters.\n"
-                                "https://example.com/page was the link.\nAsha: Right.")
-    assert [n for n, _ in turns] == ["Asha", "Rohan", "Asha"]
-    assert turns[1][1] == "Let's start. At 10:30 we met the team. Note: this matters. was the link."
-
-
-def test_a_recurring_third_speaker_is_refused():
-    with pytest.raises(ValueError) as e:
-        mtools.parse_script("Asha: Hi.\nRohan: Hello.\nMeera: Hey.\nAsha: So.\nMeera: Me again.")
-    assert "two hosts" in str(e.value)
-
-
-def test_names_in_any_script():
-    turns = mtools.parse_script("Élodie: Bonjour à tous.\nआशा: नमस्ते।\nÉlodie: On commence.")
-    assert [n for n, _ in turns] == ["Élodie", "आशा", "Élodie"]
-
-
-async def test_a_host_with_only_links_is_a_plain_error(store):
-    out = await _speak(store, kokoro([])).func(script="Asha: Hi there.\nRohan: https://example.com", style="podcast")
-    assert "two hosts" in out["error"]
 
 
 async def test_the_result_gives_the_audio_files_path(store):
@@ -195,8 +127,6 @@ async def test_the_result_gives_the_audio_files_path(store):
     memo = await _speak(store, kokoro([], 0.5)).func(script="Hello there.")
     assert memo["path"] == str(media.media_dir() / f"{memo['media']['id']}.wav")
     assert Path(memo["path"]).read_bytes()[:4] == b"RIFF"
-    pod = await _speak(store, kokoro([], 0.5)).func(script="Host A: Hi.\nHost B: Hello.", style="podcast")
-    assert pod["path"] == str(media.media_dir() / f"{pod['media']['id']}.wav")
 
 
 async def test_a_memo_in_another_voice_of_the_chosen_engine(store):
@@ -214,7 +144,8 @@ async def test_a_voice_from_another_engine_is_refused_with_the_ones_it_can_use(s
     seen = []
     out = await _speak(store, kokoro(seen, 0.5)).func(script="Hello.", voice_name="cedar")
     assert seen == [] and "media" not in out
-    assert "Kokoro" in out["error"] and "Michael" in out["error"] and "Heart" in out["error"] and "Settings" in out["error"]
+    error = out["error"]
+    assert "Kokoro" in error and "Michael" in error and "Heart" in error and "Settings" in error
 
 
 def test_the_tool_explains_the_voice_choice(store):

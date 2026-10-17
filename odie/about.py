@@ -35,10 +35,10 @@ EXTEND = [
 # when the tool is present. The skill builder's guide carries them (skill_kit), so a skill uses Odie's voice and files
 # instead of reaching for something else (a video skill once narrated with macOS `say`, 16 Oct 2026).
 SKILL_TOOLS = [
-    (("speak",), ("Narration: speak(script, style=\"memo\") reads plain speech aloud in the voice above, up to about "
-                  "4,000 characters (some 4 minutes) a call; its result's `path` is the saved WAV file, kept, to hand to "
+    (("speak",), ("Narration: speak(script) reads plain speech aloud in the voice above, up to about 4,000 "
+                  "characters (some 4 minutes) a call; its result's `path` is the saved WAV file, kept, to hand to "
                   "ffmpeg. voice_name=\"Michael\" picks another voice of the same engine, only when the user asks. "
-                  "style=\"podcast\" is two hosts: load the podcast skill")),
+                  "A podcast with two hosts is make_podcast (the podcast skill), not speak")),
     (("attach_file",), ("Showing a file: attach_file(path) for a file in the workspace: a picture shows, a video (mp4, "
                         "webm, mov) or a sound (mp3, m4a, wav) plays under the reply, anything else is a download card; "
                         "50 MB at most")),

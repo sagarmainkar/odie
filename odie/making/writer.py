@@ -1,5 +1,5 @@
 """The writer harness: one focused model turn, in the background, that writes one thing Odie makes (a video's
-narration and page; next, a podcast's script or a deck) and hands it in through one submit tool.
+narration and page, a podcast's script; next, a deck) and hands it in through one submit tool.
 
 The turn sees only the kind's instruction and that one tool (no Odie prompt, no memory, no chat). The tool takes the
 whole result at once and runs the kind's check: a problem goes back to the writer to fix. An accepted result, a third

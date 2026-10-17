@@ -80,6 +80,7 @@ def test_the_skill_kit_lists_what_a_skill_can_build_on(runner):
     kit = about.skill_kit()
     assert "Kokoro, Heart (American, a woman), on this computer" in kit and "men: Michael (American)" in kit
     assert "speak(" in kit and "path" in kit and "attach_file(" in kit and "command -v ffmpeg" in kit
+    assert "style=" not in kit and "make_podcast" in kit  # speak reads memos; a podcast is make_podcast
     assert "make_file(" not in kit and "browser_open" not in kit   # not among this setup's tools
     assert "Web:" in kit and "vault (ok)" in kit and "workspace" in kit
     assert "never macOS `say`" in kit and "Settings > Voice" in kit and "ask the user only" in kit

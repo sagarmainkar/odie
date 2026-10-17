@@ -304,6 +304,33 @@
     }
   },
   {
+    "description": "Make a podcast the user can play in this chat: two hosts (a woman, then a man) talking a topic through,\nNotebookLM style. A separate writer writes the script from your brief, in the background; it can't see this chat,\nthe user's notes, memory or the web.\ntopic: what it's about, short (\"How vaccines train the immune system\", \"Our session on the move to Pune\").\nminutes: its length, from 1 to 10: the user's length, else 4.\nbrief: the angle, the key points in order, and the facts from this chat or the notes it must use (for a podcast\nof this conversation: its decisions, questions and surprises). Up to 6,000 characters.\nIt returns at once. {\"error\": …}: fix exactly that and call again. {\"result\": …}: the podcast is being made; reply\nin one or two lines as the result says, and don't repeat the brief.",
+    "name": "make_podcast",
+    "parameters_json_schema": {
+      "properties": {
+        "topic": {
+          "title": "Topic",
+          "type": "string"
+        },
+        "minutes": {
+          "default": 4,
+          "title": "Minutes",
+          "type": "integer"
+        },
+        "brief": {
+          "default": "",
+          "title": "Brief",
+          "type": "string"
+        }
+      },
+      "required": [
+        "topic"
+      ],
+      "title": "make_podcastParams",
+      "type": "object"
+    }
+  },
+  {
     "description": "Make a designed deck: a PDF and an editable PowerPoint with slide previews, under your reply. \"# Title\" starts\neach slide (the first is the cover). On a slide: \"kicker: …\", \"image: <photo address a tool returned> (credit: …)\",\n\"- **Lead** — rest\" bullets, \"## Name\" cards (with image: and meta: lines), \"1. Step — detail\" steps, \"stat: value —\nlabel\", a ```chart block, \"quote: \"…\" — who\", \"> \" speaker notes, \"| a | b |\" tables. Photos are optional.\ntheme: editorial (dark, great with photos), minimal (clean white: research, business), warm (cream), bold (strong\ncolour: pitches). The documents skill lists the layouts.",
     "name": "make_slides",
     "parameters_json_schema": {
@@ -492,7 +519,7 @@
     "name": "skill_guide"
   },
   {
-    "description": "Read text aloud into audio the user can play right in the chat: the player appears under your reply.\n\nstyle=\"memo\": a voice memo, when the user asks for a voice memo, a voice note, or to hear something. `script`\nis what to say, as plain speech, at most about 4,000 characters (some 4 minutes; split longer narration into\nseveral memos); it's read in the voice chosen in Settings. `voice_name` (optional) is another\nvoice for this one memo, only when the user asks for one (\"a man's voice\"): a voice of the same engine as the\nSettings voice, by name (\"Michael\"); another engine's voice is refused with the list to pick from.\nstyle=\"podcast\": a podcast with two hosts. Load the podcast skill first and follow it; `script` is one turn\nper line, \"Host A: what they say\". The first host to speak gets a woman's voice, the second a man's.\n`title` is short (optional). The result's `path` is the saved WAV file (kept), for a skill to use, e.g. with\nffmpeg. When it works, reply in one short line; don't repeat the script.",
+    "description": "Read text aloud as a voice memo the user can play right in the chat: the player appears under your reply.\nUse it when the user asks for a voice memo, a voice note, or to hear something. `script` is what to say, as\nplain speech, at most about 4,000 characters (some 4 minutes; split longer narration into several memos);\nit's read in the voice chosen in Settings. `voice_name` (optional) is another voice for this one memo, only\nwhen the user asks for one (\"a man's voice\"): a voice of the same engine as the Settings voice, by name\n(\"Michael\"); another engine's voice is refused with the list to pick from. `title` is short (optional).\nThe result's `path` is the saved WAV file (kept), for a skill to use, e.g. with ffmpeg. When it works, reply\nin one short line; don't repeat the script. A podcast with two hosts is make_podcast (the podcast skill),\nnot this.",
     "name": "speak",
     "parameters_json_schema": {
       "properties": {
@@ -503,11 +530,6 @@
         "title": {
           "default": "",
           "title": "Title",
-          "type": "string"
-        },
-        "style": {
-          "default": "memo",
-          "title": "Style",
           "type": "string"
         },
         "voice_name": {
