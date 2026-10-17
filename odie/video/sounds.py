@@ -239,22 +239,53 @@ def cue_problem(cues: list[dict], narration: list[str]) -> str | None:
     scene 3 is one phrase -> "Video.sounds: cue 1: scene 3 has 1 phrase (beats 0..0), so beat 1 isn't there. …"."""
     lengths = page.estimated_timings(narration)["lengths"]
     for number, cue in enumerate(cues, start=1):
-        problem = shape_problem(number, cue)
-        if problem:
-            return problem
-        problem = name_problem(number, cue)
-        if problem:
-            return problem
-        problem = scene_problem(number, cue, len(narration))
-        if problem:
-            return problem
-        problem = beat_problem(number, cue, narration)
-        if problem:
-            return problem
-        problem = at_problem(number, cue, lengths)
+        problem = own_problem(number, cue, narration, lengths)
         if problem:
             return problem
     problem = crowded_scene_problem(cues)
     if problem:
         return problem
     return too_many_problem(cues)
+
+
+def own_problem(number: int, cue, narration: list[str], lengths: list[float]) -> str | None:
+    """Decides whether cue `number` is right on its own, whatever the other cues are: its shape, then its name, its
+    scene, its beat and its at, the first thing wrong as words (`lengths` are the scenes' estimated lengths).
+    {"scene": 1, "at": 0, "name": "rain"} -> None; {"scene": 1, "at": 0, "name": "wooosh"} -> "Video.sounds: cue 1:
+    there is no sound called 'wooosh'; …"."""
+    problem = shape_problem(number, cue)
+    if problem:
+        return problem
+    problem = name_problem(number, cue)
+    if problem:
+        return problem
+    problem = scene_problem(number, cue, len(narration))
+    if problem:
+        return problem
+    problem = beat_problem(number, cue, narration)
+    if problem:
+        return problem
+    return at_problem(number, cue, lengths)
+
+
+def good_cues(cues: list, narration: list[str]) -> list[dict]:
+    """The cues that pass cue_problem's rules, in the writer's order, for when the writer has already been told once
+    and the video goes on without the rest: a cue with a problem of its own is left out, and so is any cue past the
+    first MAX_CUES_PER_SCENE of its scene or past the first MAX_CUES in all.
+    [{"scene": 1, "at": 0, "name": "rain"}, {"scene": 1, "at": 1, "name": "wooosh"}] -> [{"scene": 1, "at": 0,
+    "name": "rain"}]; seven good cues in scene 2 -> its first six."""
+    lengths = page.estimated_timings(narration)["lengths"]
+    kept = []
+    per_scene = {}
+    for number, cue in enumerate(cues, start=1):
+        if own_problem(number, cue, narration, lengths):
+            continue
+        scene = cue["scene"]
+        in_scene = per_scene.get(scene, 0)
+        if in_scene >= MAX_CUES_PER_SCENE:
+            continue
+        if len(kept) >= MAX_CUES:
+            break
+        per_scene[scene] = in_scene + 1
+        kept.append(cue)
+    return kept

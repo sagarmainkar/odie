@@ -366,6 +366,75 @@ async def test_a_bad_cue_is_a_refusal_and_the_fixed_pages_cues_are_kept(tmp_path
     assert written.cues == fixed
 
 
+GOOD_CUE = {"scene": 1, "at": 0, "name": "rain"}
+BAD_CUE = {"scene": 2, "at": 0, "name": "wooosh"}
+CUE_WORDS = "Video.sounds: cue 2: there is no sound called 'wooosh'"
+
+
+async def test_a_cue_problem_refuses_once_then_the_bad_cues_are_dropped_and_logged(tmp_path, checks, caplog):
+    checks["cues"] = [GOOD_CUE, BAD_CUE]
+
+    async def script(turn):
+        await turn.submit()
+        await turn.submit()
+
+    turn = Turn(script)
+    with caplog.at_level(logging.WARNING, logger="odie.video"):
+        written = await writer.write("Attention", 2, "", tmp_path / "job", turn, BROWSER)
+    assert turn.said[0]["error"].startswith(CUE_WORDS), turn.said[0]
+    assert turn.said[1] == ACCEPTED  # the same cues again: accepted, without the bad one
+    assert turn.ended == [False, True]
+    assert written.cues == [GOOD_CUE]
+    dropped = [record.getMessage() for record in caplog.records if record.levelno == logging.WARNING]
+    assert any("kept 1 of 2 sound cues" in line and "wooosh" in line for line in dropped), dropped
+
+
+async def test_a_page_problem_comes_before_the_cues_and_doesnt_use_up_their_refusal(tmp_path, checks):
+    checks["cues"] = [GOOD_CUE, BAD_CUE]
+    checks["problems"] = ["The page threw in scene 2 at t = 1.2 s: boom"]
+
+    async def script(turn):
+        await turn.submit()
+        await turn.submit()
+        await turn.submit()
+
+    turn = Turn(script)
+    written = await writer.write("Attention", 2, "", tmp_path / "job", turn, BROWSER)
+    assert turn.said[0] == {"error": "The page threw in scene 2 at t = 1.2 s: boom"}  # the page's problem first
+    assert turn.said[1]["error"].startswith(CUE_WORDS)  # then the cues, refused once
+    assert turn.said[2] == ACCEPTED
+    assert written.cues == [GOOD_CUE]
+
+
+async def test_page_problems_refuse_every_time_after_a_cue_refusal(tmp_path, checks):
+    checks["cues"] = [BAD_CUE]
+
+    async def script(turn):
+        await turn.submit()
+        checks["problems"] = ["first boom", "second boom"]
+        await turn.submit()
+        await turn.submit()
+
+    turn = Turn(script)
+    with pytest.raises(harness.WriterFailed) as failed:
+        await writer.write("Attention", 2, "", tmp_path / "job", turn, BROWSER)
+    assert turn.said[0]["error"].startswith("Video.sounds: cue 1: there is no sound called 'wooosh'")
+    assert turn.said[1] == {"error": "first boom"}
+    assert turn.said[2]["error"].startswith("second boom")
+    assert str(failed.value) == "I couldn't write a page that passed its check: second boom"
+
+
+async def test_a_refused_page_keeps_no_cues_on_the_desk(checks):
+    desk = writer.Desk(topic="T", pages=Path("unused"))
+    judged = writer.Judged(problem=None, cue_problem="Video.sounds: cue 1: …", cues=[BAD_CUE])
+    assert writer.cues_answer(desk, judged, NARRATION) == "Video.sounds: cue 1: …"
+    assert desk.cues == [] and desk.cue_refusals == 1
+    assert writer.cues_answer(desk, judged, NARRATION) is None
+    assert desk.cues == []  # the one cue didn't fit: nothing kept, and the page goes on silent
+    fine = writer.Judged(problem=None, cues=[GOOD_CUE])
+    assert writer.cues_answer(desk, fine, NARRATION) is None and desk.cues == [GOOD_CUE]
+
+
 async def test_a_cue_past_its_scene_is_refused_by_the_submission_check(checks):
     checks["cues"] = [{"scene": 1, "at": 30, "name": "ting"}]
     problem = await writer.submission_problem(NARRATION, SAMPLE, BROWSER)

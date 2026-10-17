@@ -222,3 +222,20 @@ def test_a_cue_of_the_wrong_shape_is_told_too():
         assert problem is not None and problem.startswith("Video.sounds: cue 1 "), (case, problem)
     assert "neither at nor beat" in told["no at or beat"] and "both at and beat" in told["both"]
     assert "gain" in told["gain 2"] and "volume" in told["volume"]
+
+
+def test_good_cues_keep_the_ones_that_pass_in_order():
+    rain = {"scene": 1, "at": 0, "name": "rain"}
+    cues = [rain, {"scene": 1, "at": 1, "name": "wooosh"}, {"scene": 9, "at": 0, "name": "ting"},
+            {"scene": 3, "beat": 1, "name": "whoosh"}, {"scene": 2, "at": 8.5, "name": "ting"}, "whoosh",
+            {"scene": 4, "beat": 1, "name": "whoosh"}]
+    assert sounds.good_cues(cues, SEVEN) == [rain, {"scene": 4, "beat": 1, "name": "whoosh"}]
+    assert sounds.good_cues([], SEVEN) == []
+
+
+def test_good_cues_keep_the_first_six_of_a_scene_and_the_first_forty_in_all():
+    crowded = [{"scene": 2, "at": n * 0.5, "name": "tick"} for n in range(8)]
+    assert sounds.good_cues(crowded, SEVEN) == crowded[:6]
+    many = [{"scene": 1 + n % 7, "at": 0.1 * (n // 7), "name": "tick"} for n in range(42)]
+    assert sounds.good_cues(many, SEVEN) == many[:40]
+    assert sounds.cue_problem(sounds.good_cues(crowded + many, SEVEN), SEVEN) is None
