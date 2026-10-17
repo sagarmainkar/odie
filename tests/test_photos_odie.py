@@ -116,8 +116,9 @@ async def test_search_everything_answers_notes_and_pictures_together(store, vaul
     out = await search(query="goa")
     assert "[note] " in out and "Trip" in out  # the sample vault's Goa trip note
     assert "[photo] " in out and f"/api/photos/{UUID_A}/thumb" in out
+    assert f"photo:{UUID_A} (for a video or a deck)" in out  # the address make_video and decks take
     assert "16 May 2024" in out and "Baga Beach, Goa, India" in out and "Asha" in out and "Beach, Sea" in out
-    assert "odie-images" in out  # how to show them
+    assert "odie-images block (url: the /api/photos/… address" in out  # how to show them: not by photo:<id>
     only = await search(query="", only="videos")
     assert "[video] 12 Nov 2023 · Pune, India" in only and "also Diwali" in only and "[note]" not in only
     assert UUID_B not in only and "no copy on this computer" in only  # nothing of it here: nothing to show
@@ -127,6 +128,26 @@ async def test_search_everything_answers_notes_and_pictures_together(store, vaul
     photos_only = await search(query="trip", only="photos")
     assert "[note]" not in photos_only
     assert "[photo]" not in await search(query="goa", only="docs")
+
+
+def hit(kind="photo", has_thumb=True):
+    from odie.vault.index import PhotoHit
+    return PhotoHit(uuid=UUID_A, kind=kind, taken="2024-05-16", place="Baga Beach, Goa, India", people=["Asha"],
+                    labels=["Beach"], albums=[], extras=[], has_thumb=has_thumb, score=1.0)
+
+
+def test_a_photo_line_carries_its_gallery_address_and_its_address_for_a_video_or_a_deck():
+    from odie.vault.tools import picture_line
+    assert picture_line(hit()) == ("[photo] 16 May 2024 · Baga Beach, Goa, India · with Asha · shows Beach · "
+                                   f"/api/photos/{UUID_A}/thumb · photo:{UUID_A} (for a video or a deck)")
+    assert "photo:" not in picture_line(hit(kind="video"))  # make_video and decks take photos only
+    assert "photo:" not in picture_line(hit(has_thumb=False))  # nothing of it on this computer to put in
+
+
+def test_search_everything_says_what_the_photo_address_is_for(store):
+    from odie.vault.tools import make_vault_tools
+    search = next(t for t in make_vault_tools(store) if getattr(t, "name", "") == "search_everything")
+    assert "photo:<id>" in search.func.__doc__ and "make_video" in search.func.__doc__
 
 
 async def test_search_everything_without_photos_says_so_and_a_video_has_no_thumb_line(store, vault, library):

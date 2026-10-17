@@ -1,6 +1,6 @@
 """Odie's search over the user's own things (odie.vault.index): one tool for notes and pictures alike, like Spotlight,
 plus reading a note, looking around one, and the index's status. They only read, never outside the vault folder, and
-a picture is only ever named by the address its thumbnail route serves."""
+a picture is only ever named by the address its thumbnail route serves, or, for a video or a deck, by photo:<uuid>."""
 from __future__ import annotations
 
 from datetime import date
@@ -15,8 +15,8 @@ EXCERPT = 700
 PHOTOS_SHOWN = 6     # pictures listed per search unless asked for more (the reply shows them, so a few at a time)
 PHOTOS_MOST = 12
 ONLY = ("docs", "media", "photos", "videos")
-HOW_TO_SHOW = ('Show the ones with an address in one ```odie-images block (url: the address exactly as given, caption: '
-               'the date and place). Never invent an address.')
+HOW_TO_SHOW = ('Show the ones with an address in one ```odie-images block (url: the /api/photos/… address exactly as '
+               'given, caption: the date and place). Never invent an address.')
 
 
 def _lines(hits: list[Hit], excerpt: int = EXCERPT) -> str:
@@ -35,10 +35,21 @@ def nice_day(day: str) -> str:
         return day
 
 
+def library_address(h: PhotoHit) -> str | None:
+    """Decides whether a picture gets the address that puts it in a video or a deck (make_video's images, a deck's
+    photo): a photo with a copy on this computer -> "photo:<uuid> (for a video or a deck)"; a video, or a photo with
+    nothing of it here -> None (those take photos only, from a copy on this Mac)."""
+    if h.kind != "photo" or not h.has_thumb:
+        return None
+    return f"photo:{h.uuid} (for a video or a deck)"
+
+
 def picture_line(h: PhotoHit) -> str:
-    """A picture for the model, with the thumbnail address when a copy is on this computer.
+    """A picture for the model, with the thumbnail address when a copy is on this computer (for the odie-images
+    gallery), and for a photo, the address a video or a deck takes.
       a beach photo with a copy -> "[photo] 16 May 2024 · Baga Beach, Goa, India · with Asha · shows Beach, Sea ·
-                                    album Goa 2024 · /api/photos/<uuid>/thumb" """
+                                    album Goa 2024 · /api/photos/<uuid>/thumb ·
+                                    photo:<uuid> (for a video or a deck)" """
     bits = [nice_day(h.taken)]
     if h.place:
         bits.append(h.place)
@@ -51,6 +62,9 @@ def picture_line(h: PhotoHit) -> str:
     if h.extras:
         bits.append("also " + ", ".join(h.extras))
     bits.append(f"/api/photos/{h.uuid}/thumb" if h.has_thumb else "no copy on this computer (can't be shown)")
+    for_making = library_address(h)
+    if for_making:
+        bits.append(for_making)
     return f"[{h.kind}] " + " · ".join(bits)
 
 
@@ -89,7 +103,7 @@ def make_vault_tools(store) -> list[FunctionTool]:
     async def search_everything(query: str, only: str | None = None, people: list[str] | None = None, place: str | None = None,
                                 since: str | None = None, until: str | None = None, album: str | None = None, k: int = 8,
                                 photos: int = PHOTOS_SHOWN) -> str:
-        """Search the user's own things in one go, like Spotlight: their notes (the Obsidian vault: anything they wrote, decided, planned or studied) and their photos and videos (what Photos knows about each: who is in it, what it shows, where and when, its albums; and what is in the picture itself, when pictures are read by meaning). One ranked list, best first, each line tagged [note], [photo] or [video]. only: docs, media, photos or videos narrows the kinds (leave it out to search everything). Filters for pictures, applied after the search: people (every name must be in it), place, since and until (ISO dates), album; with a filter or only=media the query may be empty (newest first). k: note passages (up to 20). photos: pictures listed (up to 12; more are counted, not listed). Cite notes by name and prefer recent ones; show pictures with an odie-images block using the addresses returned."""
+        """Search the user's own things in one go, like Spotlight: their notes (the Obsidian vault: anything they wrote, decided, planned or studied) and their photos and videos (what Photos knows about each: who is in it, what it shows, where and when, its albums; and what is in the picture itself, when pictures are read by meaning). One ranked list, best first, each line tagged [note], [photo] or [video]. only: docs, media, photos or videos narrows the kinds (leave it out to search everything). Filters for pictures, applied after the search: people (every name must be in it), place, since and until (ISO dates), album; with a filter or only=media the query may be empty (newest first). k: note passages (up to 20). photos: pictures listed (up to 12; more are counted, not listed). Cite notes by name and prefer recent ones; show pictures with an odie-images block using the addresses returned; a photo's photo:<id> address is what make_video's images (and a deck) take."""
         ix = index()
         if ix is None:
             return "Neither notes nor photos are set up."

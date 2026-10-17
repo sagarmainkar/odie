@@ -159,11 +159,13 @@ def long_side(path: Path) -> int | None:
         return None
 
 
-def _library(ref: str) -> Photo:
-    """photo:<id>: the user's own picture from the Photos library, by the copy the index knows, re-encoded like the
-    others (upright, at most 2000 px, EXIF and its place dropped). It needs no credit and works in a private chat (it
-    never leaves the Mac). Odie never asks iCloud for the full picture: a copy under 1,000 px is refused with what
-    the user can do."""
+def library_copy(ref: str) -> Path:
+    """Decides whether photo:<id> can go in, and gives the file it comes from: the largest copy of a photo the index
+    knows on this Mac. Anything else raises PhotoError with what the user can do, since Odie never asks iCloud for the
+    full picture: photo:<id> with a 2048 px copy here -> that file; with only a 360 px copy -> "photo:<id> has only a
+    small copy on this Mac (360 px); open it in Photos once so the full picture comes down"; a video, no copy, a
+    HEIC Odie can't read or an unknown id -> its own refusal. It only reads the index and the file's header, so
+    make_video can check a line within the chat turn."""
     uuid = ref.partition(":")[2].strip()
     row = library_row(uuid)
     if row is None:
@@ -182,6 +184,14 @@ def _library(ref: str) -> Photo:
     if side < MIN_LIBRARY_SIDE:
         raise PhotoError(f"{ref} has only a small copy on this Mac ({side} px); open it in Photos once so the full "
                          "picture comes down")
+    return path
+
+
+def _library(ref: str) -> Photo:
+    """photo:<id>: the user's own picture from the Photos library, by the copy library_copy allows, re-encoded like
+    the others (upright, at most 2000 px, EXIF and its place dropped). It needs no credit and works in a private chat
+    (it never leaves the Mac)."""
+    path = library_copy(ref)
     dest = _dest(ref)
     width, height = _encode(path.read_bytes(), dest)
     return Photo(ref, dest, width, height, "")

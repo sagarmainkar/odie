@@ -9,6 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 from google.adk.tools import FunctionTool
+from PIL import Image
 
 from odie import browser as odie_browser
 from odie import voice
@@ -32,13 +33,38 @@ def load_tools():
 tools = load_tools()
 
 
+LIBRARY_UUID = "3F2A"  # the user's own picture the examples below use, with a full copy on this Mac
+
+
+def a_copy(path: Path, width: int, height: int) -> str:
+    """A JPEG of that size at path, standing for a copy Photos keeps on this Mac."""
+    Image.new("RGB", (width, height), (30, 90, 60)).save(path, "JPEG")
+    return str(path)
+
+
+def put_in_library(store, tmp_path: Path, small: dict[str, int] | None = None) -> None:
+    """The real index's photos: LIBRARY_UUID with a 2048×1536 copy, and each uuid in `small` with only a copy of that
+    many pixels on its long side."""
+    from odie.photos.library import PhotoRow
+    from odie.vault import settings as vault_settings
+    copies = {LIBRARY_UUID: a_copy(tmp_path / "full.jpeg", 2048, 1536)}
+    for uuid, side in (small or {}).items():
+        copies[uuid] = a_copy(tmp_path / f"{uuid}.jpeg", side, side * 3 // 4)
+    rows = [PhotoRow(uuid=uuid, kind="photo", taken="2026-05-12T10:00:00", people=[], labels=[], place="Nathula",
+                     city="", country="India", albums=[], big=big) for uuid, big in copies.items()]
+    vault_settings.index_for(store).index_photos(rows)
+
+
 @pytest.fixture
 def world(isolated_settings, tmp_path, monkeypatch):
-    """A browser said to be present, a store for the voice, and jobs.submit replaced by a recorder. Everything on disk
-    is under tmp_path."""
+    """A browser said to be present, a store for the voice and for the user's photos (LIBRARY_UUID in the real index,
+    with a full copy), and jobs.submit replaced by a recorder. Everything on disk is under tmp_path."""
+    from odie.photos import settings as photo_settings
     assert str(isolated_settings.data_dir).startswith(str(tmp_path))
     store = Store(tmp_path / "assistant.db")
     store.init_schema()
+    photo_settings.put(store, on=True)
+    put_in_library(store, tmp_path)
     monkeypatch.setitem(jobs.hooks, "store", store)
     monkeypatch.setattr(find, "browser_binary", lambda: "/Applications/Some Browser")
     submitted = []
@@ -238,6 +264,26 @@ def test_the_estimate_adds_the_writing_to_the_making():
     assert tools.minutes_to_make(6) == 9  # 203.9 s -> 3, + 6
 
 
+def test_fetching_takes_about_a_second_a_picture_and_five_a_clip():
+    assert tools.gathering_seconds(0, 0) == 0
+    assert tools.gathering_seconds(12, 3) == 27  # 12 + 15
+    assert tools.gathering_seconds(20, 6) == 50
+
+
+def test_the_estimate_adds_the_pictures_and_clips_to_the_making():
+    # 2 minutes: 74.5 s of making; 6 pictures -> 80.5 s, still 1 minute -> 3; 20 pictures and 6 clips -> 124.5 s -> 4
+    assert tools.minutes_to_make(2, images=6) == 3
+    assert tools.minutes_to_make(2, images=20, clips=6) == 4
+    assert tools.minutes_to_make(2, images=0, clips=0) == tools.minutes_to_make(2)
+
+
+async def test_the_reply_counts_the_pictures_and_clips(world):
+    images = [f"https://ex.com/{i}.jpg — picture {i} (Photo by A on Unsplash)" for i in range(20)]
+    clips = [f"https://ex.com/{i}.mp4 — clip {i} (Pexels, by B)" for i in range(6)]
+    out = await tools.make_video("Goa", minutes=2, images=images, clips=clips)
+    assert out["result"].startswith("Making it now: about 4–6 minutes")
+
+
 async def test_the_reply_says_how_long_and_that_the_chat_stays_free(world, monkeypatch):
     out = await tools.make_video("Attention", minutes=2)
     assert out["result"].startswith("Making it now: about 3–5 minutes (writing the script and the animation, then "
@@ -281,7 +327,16 @@ def test_the_skill_says_how_to_write_the_brief():
     assert "brief" in text and "can't see" in text and "20,000" in text
     assert "sources" in text and "my message" in text and "earlier message" in text
     assert "no emojis" in text and "save_video_page" not in text
-    assert len(text.split("---", 2)[2].split()) < 500  # the body is short: the writer has the page contract
+    assert len(text.split("---", 2)[2].split()) < 850  # short: the writer has the page contract and the film grammar
+
+
+def test_the_skill_says_how_to_gather_pictures_clips_and_places():
+    text = (SKILL / "SKILL.md").read_text()
+    assert "find_images" in text and "find_clips" in text and 'search_everything(only="photos"' in text
+    assert "photo:<id>" in text and "upload:<id>" in text and "screenshot:<id>" in text
+    assert "6–20" in text and "0–6" in text  # pictures and clips: the ranges that work
+    assert "lat, lon" in text and "Gangtok" in text and "Lachung" in text  # a town the map may not know
+    assert "private chat" in text and "open it in Photos once" in text
 
 
 def test_videos_are_drawn_in_a_browser_cut_off_from_the_network(isolated_settings, monkeypatch):
@@ -339,3 +394,30 @@ async def test_the_chats_private_sites_go_with_the_job(world):
         turn.PRIVATE.reset(token)
     assert "result" in out, out
     assert submitted[0].data["private"] == ["amazon.in", "swiggy.com"]
+
+
+async def test_a_library_picture_with_only_a_small_copy_is_left_out_and_the_chat_is_told(world, tmp_path):
+    store, submitted = world
+    put_in_library(store, tmp_path, small={"5A11": 360})
+    lake = "photo:5A11 — Asha at Tsomgo lake, ice at the edge, 11 May 2026"
+    out = await tools.make_video("Sikkim", images=[PICTURES[1], lake, PICTURES[0]])
+    assert "result" in out, out
+    assert submitted[0].data["given"]["images"] == [PICTURES[1], PICTURES[0]]  # the video goes on without it
+    assert out["result"].startswith("Making it now: about")
+    assert ("Left out: Asha at Tsomgo lake, ice at the edge, 11 May 2026 (photo:5A11 has only a small copy on this "
+            "Mac (360 px); open it in Photos once so the full picture comes down).") in out["result"]
+    assert out["result"].endswith("Add that to the reply in a few words, with what the user can do; the video goes on "
+                                  "without them.")
+
+
+async def test_a_library_picture_that_isnt_there_is_left_out_with_why(world):
+    _store, submitted = world
+    out = await tools.make_video("Sikkim", images=["photo:NOPE — us at the gate"])
+    assert submitted[0].data["given"]["images"] == []
+    assert "There's no picture photo:NOPE in the user's Photos library here." in out["result"]
+
+
+async def test_web_pictures_and_full_library_copies_leave_the_reply_as_it_was(world):
+    out = await tools.make_video("Goa", images=PICTURES)
+    assert "Left out" not in out["result"]
+    assert world[1][0].data["given"]["images"] == PICTURES

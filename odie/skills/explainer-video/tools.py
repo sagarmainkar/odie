@@ -3,9 +3,13 @@ the chat named (odie.making.sources: the user's message, a note, a workspace fil
 Odie's background queue (odie.making.jobs, kind "video" from odie.video.kind) with the brief and the sources as one
 text, the job's brief.md. The pictures and clips the chat found (images, clips: "address — what it shows" lines) are
 checked here and go with the job, with the chat's private sites; the job fetches them before the writer runs
-(odie.video.assets). In the background the writer (odie.video.writer) turns the topic, length, that brief and the
-pictures' names into the narration and the page; then the video is narrated, rendered and posted to this chat. The
-chat only briefs the video. Plain trusted code of a built-in skill: no shell, no approval card."""
+(odie.video.assets). A picture from the user's library that can't go in (only a small copy on this Mac) is left out
+here, and the result says so, so the chat can tell the user at once. In the background the writer (odie.video.writer)
+turns the topic, length, that brief and the pictures' names into the narration and the page; then the video is
+narrated, rendered and posted to this chat. The chat only briefs the video. Plain trusted code of a built-in skill:
+no shell, no approval card."""
+import asyncio
+
 from google.adk.tools import FunctionTool, ToolContext
 
 from odie import voice
@@ -13,6 +17,7 @@ from odie.agent.context import session_id_of
 from odie.agent.tools.files import workspace
 from odie.agent.turn import private_sites
 from odie.browser import find
+from odie.decks import photos
 from odie.making import chat, jobs
 from odie.making import sources as making_sources
 from odie.video import assets, kind, timeline
@@ -22,6 +27,8 @@ JOINING_SECONDS = 10  # joining the segments and the sound into the MP4
 MIN_WRITING_MINUTES = 2  # the writer's turn, at least (live: about 100 s for a 7-scene page, from a ~4.7k-token prompt)
 SCENE_SECONDS = 20  # a scene lasts about this long, for counting the breaths between scenes before there are any
 ESTIMATE_SPREAD = 2  # the range told is N to N + 2 minutes: writing time varies the most
+SECONDS_A_PICTURE = 1  # fetching and preparing one picture before the writer starts
+SECONDS_A_CLIP = 5  # downloading one clip and re-encoding its first 15 s (about 3 s measured, for 1080p)
 MIN_MINUTES = 1
 DEFAULT_MINUTES = 2
 MAX_BRIEF_CHARACTERS = 20_000  # the chat model's own brief; the sources have their own limits (odie.making.sources)
@@ -31,6 +38,8 @@ DOING = "writing the script and the animation, then drawing it"  # the middle of
 NO_BROWSER = ("An explainer video needs Chrome, Edge, Brave or Chromium on this computer to draw its frames, and none "
               "was found. Tell the user to install one (any of them) and ask again.")
 NO_TOPIC = 'Give the topic: a few words saying what the video is about, like "How attention works".'
+LEFT_OUT = ("Left out: {pictures}. Add that to the reply in a few words, with what the user can do; the video goes "
+            "on without them.")
 
 
 def making_seconds(speech_seconds: float, frames: int) -> float:
@@ -49,19 +58,52 @@ def writing_minutes(minutes: int) -> int:
     return max(MIN_WRITING_MINUTES, minutes)
 
 
-def minutes_to_make(minutes: int) -> int:
+def gathering_seconds(images: int, clips: int) -> int:
+    """How long fetching and preparing the pictures and clips adds, in seconds: about a second a picture and five a
+    clip. 12 pictures and 3 clips -> 12 + 15 = 27 s; 20 and 6 -> 50 s; none -> 0."""
+    pictures = images * SECONDS_A_PICTURE
+    moving = clips * SECONDS_A_CLIP
+    return pictures + moving
+
+
+def minutes_to_make(minutes: int, images: int = 0, clips: int = 0) -> int:
     """The low end of the estimate told to the user, in whole minutes: the writing (writing_minutes), plus making a
-    video of that length (rounded to the nearest minute, at least 1). The scenes aren't written yet, so it counts one
-    scene per 20 seconds and a 0.5 s breath between scenes.
+    video of that length with its pictures and clips (gathering_seconds), rounded to the nearest minute, at least 1.
+    The scenes aren't written yet, so it counts one scene per 20 seconds and a 0.5 s breath between scenes.
     2 minutes of video: 120 s of speech in 6 scenes, 122.5 s with the 5 breaths, 3,675 frames -> 12 + 52.5 + 10 =
-    74.5 s -> 1 minute of making + 2 of writing -> 3, told as "about 3–5 minutes". 6 minutes: 203.9 s -> 3 + 6 -> 9."""
+    74.5 s -> 1 minute of making + 2 of writing -> 3, told as "about 3–5 minutes". With 20 pictures and 6 clips:
+    74.5 + 50 = 124.5 s -> 2 + 2 -> 4. 6 minutes: 203.9 s -> 3 + 6 -> 9."""
     speech_seconds = minutes * 60
     scenes = max(1, round(speech_seconds / SCENE_SECONDS))
     breaths = (scenes - 1) * timeline.BREATH
     frames = timeline.frame_count(speech_seconds + breaths, timeline.FPS)
-    seconds = making_seconds(speech_seconds, frames)
+    seconds = making_seconds(speech_seconds, frames) + gathering_seconds(images, clips)
     making = max(1, round(seconds / 60))
     return writing_minutes(minutes) + making
+
+
+def library_pictures_left_out(lines: list[str], pictures: list[assets.Given]) -> tuple[list[str], list[str]]:
+    """Decides which picture lines go to the job. A photo:<id> from the user's library that can't go in (only a small
+    copy on this Mac, none at all, a video, an id the library doesn't have) is left out now, with why, so the chat can
+    tell the user while they're here; every other line goes on, and the job fetches it. Gives (the lines kept, what
+    was left out).
+      ["photo:3F2A — us at the gate", "photo:5A11 — Tsomgo lake"], 5A11 with only a 360 px copy here ->
+      (["photo:3F2A — us at the gate"], ["Tsomgo lake (photo:5A11 has only a small copy on this Mac (360 px); open
+      it in Photos once so the full picture comes down)"])
+      ["https://… — Red Fort"] -> kept unchecked: a web picture is the job's to fetch"""
+    kept = []
+    left_out = []
+    for line, picture in zip(lines, pictures):
+        if not picture.address.startswith("photo:"):
+            kept.append(line)
+            continue
+        try:
+            photos.library_copy(picture.address)
+        except photos.PhotoError as e:
+            left_out.append(f"{picture.words} ({e})")
+            continue
+        kept.append(line)
+    return kept, left_out
 
 
 async def make_video(topic: str, minutes: int = 2, brief: str = "", sources: list[str] | None = None,
@@ -109,10 +151,13 @@ async def make_video(topic: str, minutes: int = 2, brief: str = "", sources: lis
         return {"error": str(e)}
 
     try:
-        assets.parse(images, clips)
+        pictures, _moving = assets.parse(images, clips)
     except assets.AssetProblem as e:
         return {"error": str(e)}
-    given = {"images": assets.lines_as_given(images, "images"), "clips": assets.lines_as_given(clips, "clips")}
+    image_lines = assets.lines_as_given(images, "images")
+    image_lines, left_out = await asyncio.to_thread(library_pictures_left_out, image_lines, pictures)
+    clip_lines = assets.lines_as_given(clips, "clips")
+    given = {"images": image_lines, "clips": clip_lines}
 
     voice_id = ""
     if voice_name.strip():
@@ -128,9 +173,13 @@ async def make_video(topic: str, minutes: int = 2, brief: str = "", sources: lis
     job = jobs.Job(kind="video", slug=folder.name, title=title, topic=title, minutes=minutes, brief=whole_brief,
                    session_id=session_id_of(tool_context), voice_name=voice_id, folder=folder, data=data)
     place = jobs.submit(job)
-    low = minutes_to_make(minutes)
+    low = minutes_to_make(minutes, len(image_lines), len(clip_lines))
     high = low + ESTIMATE_SPREAD
-    return {"result": chat.reply(place, low, high, DOING)}
+    reply = chat.reply(place, low, high, DOING)
+    if left_out:
+        told = LEFT_OUT.format(pictures="; ".join(left_out))
+        reply = f"{reply} {told}"
+    return {"result": reply}
 
 
 TOOLS = [FunctionTool(make_video)]

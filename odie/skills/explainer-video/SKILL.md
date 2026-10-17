@@ -1,9 +1,9 @@
 ---
 name: explainer-video
-description: Make a narrated, animated explainer video (3Blue1Brown style) that plays in the chat. Use for 'explain X with a video', 'make a video about…', 'animate how … works'.
+description: Make a narrated, animated explainer video (3Blue1Brown style) that plays in the chat, with real pictures, stock clips and a map when the topic needs them. Use for 'explain X with a video', 'make a video about…', 'animate how … works', 'a video of my trip'.
 metadata:
   title: Explainer videos
-  summary: "A narrated, animated explainer of any topic, 3Blue1Brown style; it plays in the chat."
+  summary: "A narrated, animated explainer of any topic, 3Blue1Brown style, with real pictures, clips and a map when it needs them; it plays in the chat."
   adk_additional_tools: [make_video]
 ---
 # Explainer videos
@@ -37,6 +37,31 @@ instead of retyping it: the writer gets it word for word. Then keep the brief to
 in order, the look, what must appear. A source is `"my message"` (the user's latest message), a note's name or
 path, or a text file's path in Odie's workspace; up to 5. If it came in an earlier message, put what the video needs
 in the brief, or ask the user to paste it again.
+
+## Pictures, clips and places
+
+A film of something the viewer should see for real (people, places, things, a trip, a history, nature, a product)
+needs material; an abstract topic ("how attention works") doesn't. Gather it before you call:
+
+- **Web pictures:** `find_images(query)`, one query per theme or place: a history, one per ruler, battle or
+  building; a trip plan, one or two per place. 6–20 pictures in all.
+- **The user's own trip:** `search_everything(only="photos", place=…, since=…, until=…)`; use each hit's
+  `photo:<id>` address, not its /api/photos/ one.
+- **Clips:** `find_clips(query)` for places and moods (waves, snow, a busy street; never faces): 0–6, of 5–15 s.
+- **What the user gave here:** `upload:<id>`, `screenshot:<id>`.
+
+Pass them as `images` and `clips`, one line each: the address exactly as the tool gave it, " — ", then what it shows,
+its mood and its orientation if unusual, then a web one's credit in brackets as the tool gave it:
+`"https://… — the Red Fort at dusk, warm and still (Photo by A on Unsplash)"`,
+`"photo:3F2A… — us at Nathula, prayer flags in the snow, 12 May 2026, portrait"`. The writer sees only these words.
+
+A trip's brief gives the places in order, with dates. The map knows towns and cities, not every village, airport or
+pass: give those as `lat, lon` (roughly is fine). Pune, Bagdogra, Gangtok, Lachung: Gangtok is known; write
+"Bagdogra airport (26.681, 88.328)" and "Lachung (27.69, 88.74)".
+
+In a private chat only the user's own pictures go in (web pictures and clips are dropped), so don't search the web
+for them. If a picture can't be fetched, the writer does without it: say nothing. If the result says a library
+picture was left out for a small copy, tell the user to open it in Photos once.
 
 ## The call
 
