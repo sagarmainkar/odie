@@ -8,11 +8,12 @@ assets/ (the prepared pictures and clips: img1.jpg, clip1.webm, …), pages/ (ev
 page.html (the accepted page as it was drawn, with its timings, pictures and credits card), narration.wav, mix.wav
 (the narration with the page's sound cues under it, when it placed any), the segment files, <slug>.mp4 and job.json.
 
-job.data carries, from make_video: "given" ({"images": [...], "clips": [...]}, the chat's lines) and "private" (the
-signed-in sites the asking chat had read); from the writing step: "assets" (each prepared one's name, kind, words,
-credit, size, length and file; never its data), "dropped" (the lines the writer was told about the ones that couldn't
-be used), "narration" (one string per scene), "body" (the page) and "cues" (the sound cues the page placed with
-Video.sounds, as odie.video.page.CheckResult gives them; [] when none). job.json never holds any of these."""
+job.data carries, from make_video: "given" ({"images": [...], "clips": [...]}, the chat's lines), "private" (the
+signed-in sites the asking chat had read) and "sounds" (False when the user asked for no sound effects); from the
+writing step: "assets" (each prepared one's name, kind, words, credit, size, length and file; never its data),
+"dropped" (the lines the writer was told about the ones that couldn't be used), "narration" (one string per scene),
+"body" (the page) and "cues" (the sound cues the page placed with Video.sounds, as odie.video.page.CheckResult gives
+them; [] when none). job.json never holds any of these."""
 import logging
 from pathlib import Path
 

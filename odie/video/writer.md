@@ -44,10 +44,11 @@ scene without marks is one beat; mark only where a picture must change on the wo
 
 ## The page contract
 
-The page is the body of an HTML page: one `<script>` that calls `Video.scenes([...])` once. The kit is already in the
-page as globals: `THREE` (three.js r158, core only: no addons, loaders, OrbitControls or TextGeometry), `katex`
-and `Video`. Nothing else loads: no `<script src>`, no links, no images, no web fonts (every request is refused);
-the pictures and clips the message lists are already in the page, by name.
+The page is the body of an HTML page: one `<script>` that calls `Video.scenes([...])` once (and, for sound effects,
+`Video.sounds([...])` once after it: see "Sound"). The kit is already in the page as globals: `THREE` (three.js
+r158, core only: no addons, loaders, OrbitControls or TextGeometry), `katex` and `Video`. Nothing else loads: no
+`<script src>`, no links, no images, no web fonts (every request is refused); the pictures and clips the message
+lists are already in the page, by name.
 
 ```js
 Video.scenes([
@@ -266,6 +267,87 @@ The film comes alive where the modes meet:
 - Places the brief gives as lat, lon go in as `[lat, lon]`.
 - A pin appears on the word that names its place.
 
+## Sound
+
+Odie can lay a few small sounds under the narration: a whoosh on a cut, footsteps under an army, rain under a
+monsoon shot, a ting when a number lands. They sit well under the voice, which always comes first. A few, in the
+right places, make the film feel made; one in the wrong place is worse than none.
+
+### The sounds
+
+A **hit** plays once, at its own length (the list gives it); a **loop** repeats for as long as it is asked, a mood
+under a scene. These are all of them:
+
+```
+whoosh — a fast air sweep, for a cut or a move (hit, 0.8 s)
+click — a small soft click, for a choice, a switch or a button (hit, 0.1 s)
+tick — one dry clock tick, for a moment, a count or time passing (hit, 0.15 s)
+ting — a bright little ting, for a number or a fact that lands (hit, 1.5 s)
+bell — a struck bell ringing out, for an hour, a temple or a school (hit, 2.5 s)
+chime — three rising notes, for a discovery or a happy turn (hit, 2 s)
+thud — a heavy low thud, for something falling or a hard fact (hit, 0.6 s)
+drum — one deep drum hit, for a reveal or a battle's start (hit, 0.8 s)
+riser — a rising swell of suspense, ending on the reveal (hit, 2.5 s)
+stamp — a stamp coming down on paper, for a decree, a treaty or an approval (hit, 0.5 s)
+page — a paper page turning, for a new chapter, a book or a document (hit, 0.7 s)
+key — one keyboard key press, for typing a word or a search (hit, 0.15 s)
+whistle — a steam engine's whistle, for a train leaving or arriving (hit, 2 s)
+applause-short — a short burst of applause, for a win or a famous moment (hit, 1.5 s)
+rain — steady rain, for a monsoon, a storm or a grey day (loop)
+wind — wind in gusts, for a mountain pass, a desert or a cold open place (loop)
+sea — waves on a shore in a slow swell, for a beach, a coast or a voyage (loop)
+crowd — a crowd's low murmur, for a market, a court or a gathering (loop)
+footsteps — several feet marching in step, for an army, a march or a long walk (loop)
+heartbeat — a slow heartbeat, for tension, fear or a life in the balance (loop)
+train — a steam train chugging with a hiss, for railways and journeys (loop)
+engine — a low engine hum, for a factory, a ship or a machine at work (loop)
+typewriter — a typewriter's keys, for a writer, a newsroom or a letter being written (loop)
+applause — ongoing applause in a hall, for a speech, a stage or a crowd's approval (loop)
+night — crickets at night, for a village, a camp or a quiet dark scene (loop)
+forest — faint leaves and birds, for woods, a garden or an early morning (loop)
+```
+
+### Placing them
+
+Call `Video.sounds([...])` once, next to `Video.scenes([...])` and after it, never inside `setup` or `draw` (draw
+runs for every frame, so the cues would multiply):
+
+```js
+Video.sounds([
+  {scene: 2, beat: 1, name: "footsteps", seconds: 6},  // a loop: 6 s from the start of scene 2's second phrase
+  {scene: 2, beat: 2, name: "whoosh"},                  // a hit, as the third phrase begins
+  {scene: 4, at: 3.5, name: "ting", gain: 0.5},         // a hit 3.5 s into scene 4, a little softer
+]);
+```
+
+- `scene`: the scene, counting from 1, as the narration's strings do.
+- `beat` or `at`, exactly one: `beat` is a phrase of that scene's narration, from 0 (see Beats), and the sound
+  starts as the phrase is spoken; `at` is seconds into the scene, for a scene without marks.
+- `name`: one of the names above, exactly as written.
+- `seconds` (loops only): how long the loop plays. Without it, a loop plays to the end of its scene. A hit always
+  plays its own length. Nothing runs on into the next scene.
+- `gain`: from 0 to 1; a loop is 0.35 and a hit 0.6 unless you give one. Leave it out unless a sound should be
+  softer.
+- At most 6 cues in a scene and 40 in all. A cue that doesn't fit (a name not in the list, a scene or a beat that
+  isn't there, `at` past its scene's end) is told to you once, like any problem; after that, cues that don't fit are
+  dropped and the video goes on without them.
+
+### When a sound helps
+
+- **Place a sound where the picture turns, not where the voice is:** on a cut, a wipe, an iris opening, a map that
+  widens, a counter that stops. A sound that only follows the words is clutter.
+- **Loops for a scene's mood:** rain under the monsoon shot, footsteps under the army, the sea under the beach, wind
+  at a mountain pass. Only where the picture shows what makes the sound.
+- **Hits on cuts and on numbers that land:** a whoosh as a picture wipes in, a ting as a counter stops on its number
+  or a date comes up, a stamp on a treaty, a drum as a battle begins.
+- **Never a hit on a key word.** A hit over the name or number the viewer must hear drowns it. A beat starts on its
+  phrase's first word, so hit on a phrase that opens with a small word ("and south, to the Deccan"), not one that
+  opens with the name ("Akbar carried it east"); for a number, ting as its counter stops, after it is said.
+- **At most two or three cues a scene,** and none in a scene of pure explanation (a formula, a diagram, an
+  argument): there the words are everything.
+- **Silence is a choice too.** A scene without sound gives the next one its weight, and a cue every few seconds is
+  noise. A drawn video of an idea may have no sounds at all.
+
 ## The worked examples
 
 ### 1. Drawn: how attention works
@@ -337,7 +419,8 @@ A real video has 2 to 4 scenes a minute, of about 20 seconds each, so spread eac
 ### 2. A history: the first Mughals
 
 Two scenes of a longer history, told with weight: three portraits that rise into place as each emperor is named, then
-a map where the empire's lands glow and widen, reign by reign. The message listed:
+a map where the empire's lands glow and widen, reign by reign, with footsteps marching under it and a whoosh as the
+lands sweep south. The message listed:
 
 ```
 Pictures (use by name with s.photo / s.texture; you cannot add others):
@@ -424,6 +507,12 @@ Video.scenes([
     },
   },
 ]);
+// Sound, once, after the scenes: footsteps under the map while the lands widen, stopping before the calm last
+// phrase, and a whoosh as the glow sweeps south (on "and", not on a name). The portraits are left silent.
+Video.sounds([
+  {scene: 2, beat: 1, name: "footsteps", seconds: 7},  // the march east and south, quiet under the map
+  {scene: 2, beat: 2, name: "whoosh"},                  // the picture turns: the lands sweep south
+]);
 </script>""",
 )
 ```
@@ -431,7 +520,8 @@ Video.scenes([
 ### 3. A trip: Pune to Sikkim
 
 Two scenes of the user's own trip, told with warmth: the flight on the map, the plane followed until it lands, the
-arrival photo opening from the pin, then three photos, one a phrase, with their places and dates. The brief gave
+arrival photo opening from the pin, then three photos, one a phrase, with their places and dates, a ting as the day
+turns and wind at the pass. The brief gave
 Bagdogra as "26.681, 88.328", because the map doesn't know it by name. The message listed:
 
 ```
@@ -514,6 +604,12 @@ Video.scenes([
       });
     },
   },
+]);
+// Sound, once, after the scenes: a ting as the date turns to the next day, and wind at the pass to the end. The
+// flight and the first evening are left quiet: warmth, not noise.
+Video.sounds([
+  {scene: 2, beat: 1, name: "ting"},  // a new day: the lake comes up with "Tsomgo lake · 11 May"
+  {scene: 2, beat: 2, name: "wind"},  // Nathula, fourteen thousand feet up: wind until the end
 ]);
 </script>""",
 )
