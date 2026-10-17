@@ -112,24 +112,11 @@ def private_chat(world):
     turn.PRIVATE.reset(token)
 
 
-async def test_a_private_chat_with_a_cloud_voice_is_refused_before_anything_is_made(world, private_chat, monkeypatch):
+async def test_a_private_chat_with_a_cloud_voice_is_queued_like_any_other(world, private_chat, monkeypatch):
+    # The owner's choice (17 Oct 2026): a podcast is never refused for privacy; the chat asked for it, so it is made
+    # with whatever voice Settings holds, private chat or not.
     monkeypatch.setattr(voice, "get_tts", lambda store: ("openai", "cedar"))
     out = await tools.make_podcast("My orders this month", brief="Asha's three orders: a kettle, …")
-    assert out["error"] == tools.PRIVATE_CLOUD_VOICE and "Settings → Voice" in out["error"]
-    assert world[1] == []
-    from odie.agent.tools.files import workspace
-    assert not (workspace() / podcast.FOLDER).exists()  # no folder made
-
-
-async def test_a_private_chat_with_odies_own_voice_is_queued(world, private_chat, monkeypatch):
-    monkeypatch.setattr(voice, "get_tts", lambda store: ("kokoro", "af_heart"))
-    out = await tools.make_podcast("My orders this month", brief="Asha's three orders.")
-    assert "result" in out and len(world[1]) == 1
-
-
-async def test_a_chat_that_isnt_private_is_queued_with_a_cloud_voice(world, monkeypatch):
-    monkeypatch.setattr(voice, "get_tts", lambda store: ("openai", "cedar"))
-    out = await tools.make_podcast("Tides")
     assert "result" in out and len(world[1]) == 1
 
 
