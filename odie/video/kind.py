@@ -113,7 +113,8 @@ async def voice_track(job: jobs.Job, narration_wav: Path, timings: dict) -> Path
     if not wants_sounds(job):
         return narration_wav
     cues = job.data.get("cues", [])
-    placed = sounds.resolve(cues, timings)
+    narrated_scenes = len(job.data["narration"])  # the timings may end with Odie's silent credits card
+    placed = sounds.resolve(cues, timings, narrated_scenes)
     if not placed:
         return narration_wav
     mixed_wav = job.folder / "mix.wav"

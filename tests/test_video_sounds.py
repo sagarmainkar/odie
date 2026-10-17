@@ -257,8 +257,8 @@ def summary(placed: sounds.Placed) -> tuple:
 def test_resolve_turns_scenes_and_beats_into_seconds_from_the_start():
     table = [
         # cue -> (name, kind, start, seconds, gain)
-        ({"scene": 1, "at": 0, "name": "rain"}, ("rain", "loop", 0.0, 4.0, 0.35)),  # no seconds: the file's own
-        ({"scene": 1, "at": 3, "name": "wind"}, ("wind", "loop", 3.0, 3.0, 0.35)),  # a 6 s file, 3 s of scene left
+        ({"scene": 1, "at": 0, "name": "rain"}, ("rain", "loop", 0.0, 6.5, 0.35)),  # no seconds: to scene 2's start
+        ({"scene": 1, "at": 3, "name": "wind"}, ("wind", "loop", 3.0, 3.5, 0.35)),  # through the breath too
         ({"scene": 1, "beat": 2, "name": "whoosh"}, ("whoosh", "hit", 4.1, 0.8, 0.6)),
         ({"scene": 2, "beat": 0, "name": "bell", "seconds": 1, "gain": 0.9}, ("bell", "hit", 6.5, 2.5, 0.9)),
         ({"scene": 3, "beat": 1, "name": "sea", "seconds": 2, "gain": 0.5}, ("sea", "loop", 14.5, 2.0, 0.5)),
@@ -272,7 +272,32 @@ def test_resolve_turns_scenes_and_beats_into_seconds_from_the_start():
 
 def test_a_loop_longer_than_its_scene_is_cut_at_the_scenes_end():  # Review Focus 2
     [placed] = sounds.resolve([{"scene": 1, "at": 0, "name": "footsteps", "seconds": 20}], TIMINGS)
-    assert (placed.start, placed.seconds) == (0.0, 6.0)
+    assert (placed.start, placed.seconds) == (0.0, 6.5)  # scene 1's 6 s and the breath, to scene 2's start
+
+
+def test_a_loop_without_seconds_fills_its_scene_to_the_next_ones_start():
+    [placed] = sounds.resolve([{"scene": 2, "at": 1, "name": "crowd"}], TIMINGS)
+    assert (placed.start, placed.seconds) == (7.5, 5.5)  # scene 3 starts at 13.0
+
+
+def test_a_loop_in_the_last_scene_stops_at_the_narrations_end():
+    cues = [{"scene": 3, "at": 0, "name": "sea", "seconds": 20}, {"scene": 3, "beat": 1, "name": "rain"}]
+    placed = sounds.resolve(cues, TIMINGS)
+    assert [(one.start, one.seconds) for one in placed] == [(13.0, 4.0), (14.5, 2.5)]  # the narration ends at 17.0
+
+
+def test_the_credits_card_stays_silent():
+    with_credits = {"starts": [*TIMINGS["starts"], 17.5], "lengths": [*TIMINGS["lengths"], 3.0],
+                    "beats": [*TIMINGS["beats"], [0.0]]}
+    cues = [{"scene": 3, "at": 0, "name": "sea", "seconds": 20}, {"scene": 3, "beat": 1, "name": "rain"},
+            {"scene": 4, "at": 0, "name": "ting"}]
+    placed = sounds.resolve(cues, with_credits, narrated_scenes=3)
+    assert [(one.name, one.start, one.seconds) for one in placed] == [("sea", 13.0, 4.0), ("rain", 14.5, 2.5)]
+
+
+def test_a_hit_is_still_cut_at_its_scenes_spoken_end():
+    [placed] = sounds.resolve([{"scene": 1, "at": 5.5, "name": "bell"}], TIMINGS)
+    assert (placed.start, placed.seconds) == (5.5, 0.5)  # not through the breath
 
 
 def test_a_hit_near_its_scenes_end_plays_and_is_cut_there():  # Review Focus 3
@@ -286,7 +311,8 @@ def test_cues_that_no_longer_fit_are_left_out_with_a_log_line(caplog):
         {"scene": 4, "at": 0, "name": "ting"},         # no such scene
         {"scene": 3, "beat": 2, "name": "ting"},       # scene 3 has beats 0 and 1
         {"scene": 1, "at": 6.5, "name": "ting"},       # past the scene's real end
-        {"scene": 1, "at": 6, "name": "rain"},         # at the very end: nothing left to play
+        {"scene": 1, "at": 6, "name": "ting"},         # a hit at the very end: nothing left to play
+        {"scene": 1, "at": 6.5, "name": "rain"},       # a loop at the next scene's start: nothing left either
         {"scene": 2, "at": 0, "name": "ting", "gain": 0},  # silent
     ]
     with caplog.at_level(logging.INFO, logger="odie.video"):

@@ -313,7 +313,8 @@ class Placed:
     """One sound as the mix plays it: from `start` seconds into the video, for `seconds`, at `gain`."""
     start: float  # seconds from the video's start
     path: Path  # the sound's WAV
-    seconds: float  # how long it plays: a hit its own length, a loop as long as asked; both cut at the scene's end
+    seconds: float  # how long it plays: a hit its own length, cut at its scene's spoken end; a loop as long as
+    # asked, or to its scene's end without seconds, cut at the next scene's start (or the narration's end)
     gain: float  # more than 0, at most 1: the cue's, or its kind's default
     kind: Literal["hit", "loop"]
     name: str
@@ -344,13 +345,13 @@ def readable_format(path: Path) -> WavFormat | None:
         return None
 
 
-def where_problem(cue: dict, timings: dict) -> str | None:
-    """Decides whether a cue's scene and beat are in the spoken video's timings (the check made sure of it against
-    the narration, so this only catches a job whose narration changed since): scene 2 of three -> None; scene 4 of
-    three -> "scene 4 isn't in the video"; beat 2 of a scene with beats [0.0, 1.5] -> "scene 3 has no beat 2"."""
+def where_problem(cue: dict, timings: dict, narrated_scenes: int) -> str | None:
+    """Decides whether a cue's scene and beat are among the spoken video's narrated scenes (the check made sure of it
+    against the narration, so this only catches a job whose narration changed since): scene 2 of three -> None;
+    scene 4 of three, even with Odie's credits card as a fourth scene in the timings -> "scene 4 isn't in the
+    video"; beat 2 of a scene with beats [0.0, 1.5] -> "scene 3 has no beat 2"."""
     scene = cue["scene"]
-    scene_count = len(timings["starts"])
-    if scene > scene_count:
+    if scene > narrated_scenes:
         return f"scene {scene} isn't in the video"
     if "beat" not in cue:
         return None
@@ -378,38 +379,57 @@ def cue_gain(cue: dict, kind: str) -> float:
     return DEFAULT_GAIN[kind]
 
 
+def loop_end(scene: int, timings: dict, narrated_scenes: int) -> float:
+    """Decides where a loop in `scene` stops, in seconds from the video's start: at the next scene's start, so it runs
+    through the breath between the scenes; in the last narrated scene, at the narration's end (Odie's credits card,
+    if it follows, stays silent). Starts [0.0, 6.5, 13.0] and lengths [6.0, 6.0, 4.0]: scene 1 -> 6.5; scene 3 ->
+    17.0; scene 3 with a credits card starting at 17.5 after it -> 17.0."""
+    starts = timings["starts"]
+    if scene < narrated_scenes:
+        return starts[scene]
+    last = narrated_scenes - 1
+    return starts[last] + timings["lengths"][last]
+
+
 def play_seconds(cue: dict, kind: str, file_seconds: float, room: float) -> float:
-    """Decides how long a placed sound plays: a hit its file's own length (a cue's seconds mean nothing to it), a loop
-    the cue's seconds or, without them, its file's length once; either way cut at the scene's end (`room` is what
-    is left of the scene after the cue starts). A 0.8 s whoosh with 6 s of room -> 0.8; a 1.5 s ting 5.9 s into a
-    6 s scene -> 0.1; footsteps asked for 20 s with 6 s of room -> 6.0; rain (a 4 s file) with no seconds -> 4.0."""
-    wanted = file_seconds
-    if kind == "loop" and "seconds" in cue:
-        wanted = cue["seconds"]
-    return round(min(wanted, room), 3)
+    """Decides how long a placed sound plays, given its `room` (for a hit, what is left of its scene's spoken length
+    after it starts; for a loop, the seconds to loop_end). A hit plays its file's own length (a cue's seconds mean
+    nothing to it), cut to the room; a loop plays the cue's seconds cut to the room, or the whole room without them.
+    A 0.8 s whoosh with 6 s of room -> 0.8; a 1.5 s ting 5.9 s into a 6 s scene (0.1 s of room) -> 0.1; footsteps
+    asked for 20 s with 6.5 s of room -> 6.5; sea asked for 2 s with 2.5 s of room -> 2.0; rain with no seconds and
+    6.5 s of room -> 6.5."""
+    if kind == "hit":
+        return round(min(file_seconds, room), 3)
+    if "seconds" in cue:
+        return round(min(cue["seconds"], room), 3)
+    return round(room, 3)
 
 
-def place(number: int, cue: dict, timings: dict) -> Placed | None:
+def place(number: int, cue: dict, timings: dict, narrated_scenes: int) -> Placed | None:
     """Cue `number` as the mix plays it, or None (with a log line) when it can't be played: a name not in the set, a
-    scene or beat not in the timings, a start at or past its scene's spoken end (the check only estimated the
-    lengths), a gain of 0, or a file that is missing or isn't a WAV. {"scene": 2, "at": 5.9, "name": "ting"} with
-    scene 2 at 6.5 s and 6.0 s long -> Placed(start=12.4, seconds=0.1, gain=0.6, kind="hit", …)."""
+    scene or beat not among the narrated scenes, no room left (a hit at or past its scene's spoken end, a loop at or
+    past loop_end; the check only estimated the lengths), a gain of 0, or a file that is missing or isn't a WAV.
+    With scene 2 at 6.5 s, 6.0 s long, and scene 3 at 13.0 s: {"scene": 2, "at": 5.9, "name": "ting"} ->
+    Placed(start=12.4, seconds=0.1, kind="hit", …); {"scene": 2, "at": 1, "name": "crowd"} -> Placed(start=7.5,
+    seconds=5.5, kind="loop", …), through the breath to scene 3's start."""
     name = cue["name"]
     sound = SOUNDS.get(name)
     if sound is None:
         log.info("video sound cue %d left out: there is no sound called %r", number, name)
         return None
-    problem = where_problem(cue, timings)
+    problem = where_problem(cue, timings, narrated_scenes)
     if problem:
         log.info("video sound cue %d (%s) left out: %s", number, name, problem)
         return None
     scene = cue["scene"]
     offset = offset_in_scene(cue, timings)
-    length = timings["lengths"][scene - 1]
-    room = round(length - offset, 3)
+    start = round(timings["starts"][scene - 1] + offset, 3)
+    room = round(timings["lengths"][scene - 1] - offset, 3)
+    if sound.kind == "loop":
+        room = round(loop_end(scene, timings, narrated_scenes) - start, 3)
     if room <= 0:
-        log.info("video sound cue %d (%s) left out: it starts %.3g s into scene %d, which is %.3g s long", number,
-                 name, offset, scene, length)
+        log.info("video sound cue %d (%s) left out: it starts %.3g s into scene %d, with nothing of the scene left to "
+                 "play it in", number, name, offset, scene)
         return None
     gain = cue_gain(cue, sound.kind)
     if gain <= 0:
@@ -422,20 +442,23 @@ def place(number: int, cue: dict, timings: dict) -> Placed | None:
         return None
     file_seconds = file.frames / file.rate
     seconds = play_seconds(cue, sound.kind, file_seconds, room)
-    start = round(timings["starts"][scene - 1] + offset, 3)
     return Placed(start=start, path=sound_path, seconds=seconds, gain=gain, kind=sound.kind, name=name,
                   frames=file.frames)
 
 
-def resolve(cues: list[dict], timings: dict) -> list[Placed]:
+def resolve(cues: list[dict], timings: dict, narrated_scenes: int | None = None) -> list[Placed]:
     """The page's sound cues as the mix plays them, in the writer's order, from the spoken video's timings
-    ({"starts": [...], "lengths": [...], "beats": [[...], ...]}, seconds; each scene's beats start at 0.0). A cue
-    that can't be played is left out with a log line (see place), never an error. [] -> []; with scene 1 starting at
-    0.0 and its beats [0.0, 2.0, 4.1]: [{"scene": 1, "beat": 2, "name": "whoosh"}] -> [Placed(start=4.1,
-    seconds=0.8, gain=0.6, kind="hit", name="whoosh", …)]."""
+    ({"starts": [...], "lengths": [...], "beats": [[...], ...]}, seconds; each scene's beats start at 0.0).
+    `narrated_scenes` is how many of the timings' scenes the narration speaks: fewer than the timings hold when Odie's
+    silent credits card follows them; None means all of them. A cue that can't be played is left out with a log line
+    (see place), never an error. [] -> []; with scene 1 starting at 0.0 and its beats [0.0, 2.0, 4.1]:
+    [{"scene": 1, "beat": 2, "name": "whoosh"}] -> [Placed(start=4.1, seconds=0.8, gain=0.6, kind="hit",
+    name="whoosh", …)]."""
+    if narrated_scenes is None:
+        narrated_scenes = len(timings["starts"])
     placed = []
     for number, cue in enumerate(cues, start=1):
-        one = place(number, cue, timings)
+        one = place(number, cue, timings, narrated_scenes)
         if one is not None:
             placed.append(one)
     return placed
