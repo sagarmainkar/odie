@@ -1,6 +1,6 @@
-"""make_slides end to end: Markdown in; one card's media out (the PDF with its deck: the PowerPoint, the previews);
-files in the workspace (never overwriting an older deck's); failed photos reported; without Chrome the PowerPoint
-still arrives; limits say what to cut."""
+"""A deck end to end (what make_deck's job builds): Markdown in; one card's media out (the PDF with its deck: the
+PowerPoint, the previews); files in the workspace (never overwriting an older deck's); failed photos reported; without
+Chrome the PowerPoint still arrives; limits say what to cut."""
 import io
 
 import pytest
@@ -82,18 +82,6 @@ async def test_without_chrome_the_pptx_still_arrives(no_web):
 async def test_limits_come_back_as_an_error(no_web):
     got = await build.make_deck("# A\n\n# B\n" + "".join(f"- {i}\n" for i in range(9)), "", "", browser=FakeBrowser())
     assert got == {"error": "Slide 2 has 9 bullets; keep 6 or split it."}
-
-
-async def test_the_tool_takes_a_theme(no_web, monkeypatch):
-    from odie.skills.documents import tools
-    seen = {}
-
-    async def fake(markdown, title="", theme_name="editorial", browser="default"):
-        seen.update(markdown=markdown, title=title, theme=theme_name)
-        return {"result": "ok"}
-    monkeypatch.setattr(tools.decks, "make_deck", fake)
-    await tools.make_slides("# A\n", title="T", theme="warm")
-    assert seen == {"markdown": "# A\n", "title": "T", "theme": "warm"}
 
 
 async def test_a_builder_that_breaks_comes_back_as_an_error(no_web, monkeypatch):

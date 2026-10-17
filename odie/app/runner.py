@@ -27,6 +27,7 @@ from odie.agent.agent import build_agent, chat_generate_config, memory_file
 from odie.agent.callbacks import OdiePlugin
 from odie.agent.context import parts_of
 from odie.agent.model import WRITER_REPLY_TOKENS, model_for
+from odie.making.writer import MAX_LLM_CALLS as WRITER_MAX_LLM_CALLS
 from odie.models import chat_completion, context_window, history_limit_for, resolve_selection
 from odie.sampling import BACKGROUND_TEMPERATURE
 from odie.agent.prompt import ALL_CAPS, Who, build_static_prompt, build_turn_context, format_open_threads
@@ -410,8 +411,8 @@ class OdieRunner:
         trackers.hooks.update(store=store, tz=self.tz)
         from odie import about
         about.hooks.update(runner=self)
-        from odie.video import jobs as video_jobs
-        video_jobs.hooks.update(runner=self, store=store)
+        from odie.making import jobs as making_jobs
+        making_jobs.hooks.update(runner=self, store=store)
         self._plugin_toolsets: list = []  # MCP connections owned by the current plugin set
         self._plugins_lock = asyncio.Lock()  # one reload at a time, each reading the latest config
         self.close_grace = 120.0  # seconds old connections stay open after a reload, for a turn still using them
@@ -924,14 +925,17 @@ class OdieRunner:
         return "\n".join(out)
 
     async def focused_turn(self, prompt: str, instruction: str, tools: list, timeout: float = 600,
-                           follow_up: Callable[[], str | None] | None = None) -> str:
+                           follow_up: Callable[[], str | None] | None = None,
+                           max_llm_calls: int = WRITER_MAX_LLM_CALLS) -> str:
         """One agent turn that sees only what it is handed: the chat's model, `instruction` as its whole system prompt
         (no Odie prompt, no memory, no chat history), exactly the `tools` given (none of Odie's own), and a fresh
         in-memory session. Returns the reply text, thoughts left out; a turn over `timeout` seconds (follow-up
         included) raises asyncio.TimeoutError. Example: the video writer gets its writing guide and its one tool,
         nothing else. The prompt starts with the date and time, as a background check's does.
         follow_up: asked once, after the turn; a text it returns is sent as one more message in the same session (the
-        video writer's nudge when it stopped without submitting), None sends nothing."""
+        video writer's nudge when it stopped without submitting), None sends nothing.
+        max_llm_calls: the model calls each message may lead to (the writer's 10 by default, research 60); one more
+        raises ADK's LlmCallsLimitExceededError, as a model looping on a tool would."""
         from google.adk.agents import LlmAgent
         from google.adk.sessions import InMemorySessionService
 
@@ -952,10 +956,12 @@ class OdieRunner:
         app = App(name="odie_writer", root_agent=agent, context_cache_config=CACHE)
         runner = Runner(app=app, session_service=sessions)
         out: list[str] = []
+        capped = RunConfig(max_llm_calls=max_llm_calls)
 
         async def send(text: str) -> None:
             message = types.Content(role="user", parts=[types.Part(text=text)])
-            async for ev in runner.run_async(user_id=s.user_id, session_id=sess.id, new_message=message):
+            async for ev in runner.run_async(user_id=s.user_id, session_id=sess.id, new_message=message,
+                                             run_config=capped):
                 if ev.content and ev.content.parts and not getattr(ev, "partial", False):
                     out.extend(p.text for p in ev.content.parts if p.text and not getattr(p, "thought", False))
 

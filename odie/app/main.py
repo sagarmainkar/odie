@@ -288,16 +288,16 @@ def create_app(runner=None, store: Store | None = None) -> FastAPI:
             except Exception:  # noqa: BLE001
                 logging.getLogger("odie").warning("reconcile at startup failed", exc_info=True)
             try:
-                from odie.video import jobs as video_jobs
-                await video_jobs.recover()  # a video a restart cut off is told, once, in its chat
+                from odie.making import jobs as making_jobs
+                await making_jobs.recover()  # a video (or anything else) a restart cut off is told, once, in its chat
             except Exception:  # noqa: BLE001 (never decides whether Odie starts)
-                logging.getLogger("odie").warning("telling interrupted videos failed", exc_info=True)
+                logging.getLogger("odie").warning("telling interrupted background jobs failed", exc_info=True)
         yield
         try:
-            from odie.video import jobs as video_jobs
-            await video_jobs.stop()  # first: a render in progress ends before its browser is closed under it
+            from odie.making import jobs as making_jobs
+            await making_jobs.stop()  # first: a render in progress ends before its browser is closed under it
         except Exception:  # noqa: BLE001 (never blocks shutdown)
-            logging.getLogger("odie").warning("stopping the video worker failed", exc_info=True)
+            logging.getLogger("odie").warning("stopping the background worker failed", exc_info=True)
         fallback_task = getattr(app.state, "fallback_task", None)
         if fallback_task is not None:
             fallback_task.cancel()

@@ -255,6 +255,53 @@
     "name": "list_trackers"
   },
   {
+    "description": "Make a designed deck: a PDF and an editable PowerPoint with slide previews, posted to this chat. A separate\nwriter writes the slides from your brief, in the background; it can't see this chat, the user's notes, memory or\nthe web, and can't search for photos.\ntopic: what it's about, short (\"A weekend in Coorg\", \"Nvidia's Q2\").\nbrief: the angle, the slides' points in order, the facts it must use, and the photo addresses with their credits\nthat find_images or the browser gave you (only those can go on the slides). Up to 6,000 characters.\ntheme: editorial (dark, great with photos), minimal (clean white: research, business), warm (cream), bold (strong\ncolour: pitches).\nrevise: to change a deck made earlier, its name (\"Meghalaya Trip Guide\"); the brief then says what to change.\nsources: what the user gave, passed to the writer word for word (never retype it): \"my message\" (the user's\nlatest message), a note's name or path in their vault, or a text file's path in Odie's workspace. Up to 5.\nIt returns at once. {\"error\": …}: fix exactly that and call again. {\"result\": …}: the deck is being made; reply in\none or two lines as the result says, and don't repeat the brief.",
+    "name": "make_deck",
+    "parameters_json_schema": {
+      "properties": {
+        "topic": {
+          "title": "Topic",
+          "type": "string"
+        },
+        "brief": {
+          "default": "",
+          "title": "Brief",
+          "type": "string"
+        },
+        "theme": {
+          "default": "editorial",
+          "title": "Theme",
+          "type": "string"
+        },
+        "revise": {
+          "default": "",
+          "title": "Revise",
+          "type": "string"
+        },
+        "sources": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sources"
+        }
+      },
+      "required": [
+        "topic"
+      ],
+      "title": "make_deckParams",
+      "type": "object"
+    }
+  },
+  {
     "description": "Make a Word document from Markdown and attach it to the chat: \"#\" and \"##\" headings, paragraphs with **bold**\nand *italic*, \"- \" and \"1. \" lists, \"| a | b |\" tables, \"---\" for a page break. `title` names the file (else the\nfirst heading).",
     "name": "make_document",
     "parameters_json_schema": {
@@ -304,29 +351,81 @@
     }
   },
   {
-    "description": "Make a designed deck: a PDF and an editable PowerPoint with slide previews, under your reply. \"# Title\" starts\neach slide (the first is the cover). On a slide: \"kicker: …\", \"image: <photo address a tool returned> (credit: …)\",\n\"- **Lead** — rest\" bullets, \"## Name\" cards (with image: and meta: lines), \"1. Step — detail\" steps, \"stat: value —\nlabel\", a ```chart block, \"quote: \"…\" — who\", \"> \" speaker notes, \"| a | b |\" tables. Photos are optional.\ntheme: editorial (dark, great with photos), minimal (clean white: research, business), warm (cream), bold (strong\ncolour: pitches). The documents skill lists the layouts.",
-    "name": "make_slides",
+    "description": "Make a podcast the user can play in this chat: two hosts (a woman, then a man) talking a topic through,\nNotebookLM style. A separate writer writes the script from your brief, in the background; it can't see this chat,\nthe user's notes, memory or the web.\ntopic: what it's about, short (\"How vaccines train the immune system\", \"Our session on the move to Pune\").\nminutes: its length, from 1 to 10: the user's length, else 4.\nbrief: the angle, the key points in order, and the facts from this chat or the notes it must use (for a podcast\nof this conversation: its decisions, questions and surprises). Up to 6,000 characters.\nsources: what the user gave, passed to the writer word for word (never retype it): \"my message\" (the user's\nlatest message), a note's name or path in their vault, or a text file's path in Odie's workspace. Up to 5.\nIt returns at once. {\"error\": …}: fix exactly that and call again. {\"result\": …}: the podcast is being made; reply\nin one or two lines as the result says, and don't repeat the brief.",
+    "name": "make_podcast",
     "parameters_json_schema": {
       "properties": {
-        "markdown": {
-          "title": "Markdown",
+        "topic": {
+          "title": "Topic",
           "type": "string"
         },
-        "title": {
+        "minutes": {
+          "default": 4,
+          "title": "Minutes",
+          "type": "integer"
+        },
+        "brief": {
           "default": "",
-          "title": "Title",
+          "title": "Brief",
           "type": "string"
         },
-        "theme": {
-          "default": "editorial",
-          "title": "Theme",
-          "type": "string"
+        "sources": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sources"
         }
       },
       "required": [
-        "markdown"
+        "topic"
       ],
-      "title": "make_slidesParams",
+      "title": "make_podcastParams",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Research a question in the background and post a report (a Markdown file) to this chat: a separate writer\nsearches the web and the user's notes, reads what matters and writes the answer with its sources. Use it for\nanything time-consuming that is mostly reading: research, look into, compare, find out, a report on. The writer\ncan't see this chat or the user's memory.\ntopic: what to find out, short (\"Which kettle to buy for a family of four\").\nbrief: the question as the user means it, what matters to them, what is known already (facts from this chat),\nwhat to skip, and where to look (their notes, sites they trust). Up to 6,000 characters.\nsources: what the user gave, passed to the writer word for word (never retype it): \"my message\" (the user's\nlatest message), a note's name or path in their vault, or a text file's path in Odie's workspace. Up to 5.\nIt returns at once. {\"error\": …}: fix exactly that and call again (in a private chat, tell the user what it says).\n{\"result\": …}: the research is being made; reply in one or two lines as the result says, and don't repeat the\nbrief.",
+    "name": "make_research",
+    "parameters_json_schema": {
+      "properties": {
+        "topic": {
+          "title": "Topic",
+          "type": "string"
+        },
+        "brief": {
+          "default": "",
+          "title": "Brief",
+          "type": "string"
+        },
+        "sources": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sources"
+        }
+      },
+      "required": [
+        "topic"
+      ],
+      "title": "make_researchParams",
       "type": "object"
     }
   },
@@ -492,7 +591,7 @@
     "name": "skill_guide"
   },
   {
-    "description": "Read text aloud into audio the user can play right in the chat: the player appears under your reply.\n\nstyle=\"memo\": a voice memo, when the user asks for a voice memo, a voice note, or to hear something. `script`\nis what to say, as plain speech, at most about 4,000 characters (some 4 minutes; split longer narration into\nseveral memos); it's read in the voice chosen in Settings. `voice_name` (optional) is another\nvoice for this one memo, only when the user asks for one (\"a man's voice\"): a voice of the same engine as the\nSettings voice, by name (\"Michael\"); another engine's voice is refused with the list to pick from.\nstyle=\"podcast\": a podcast with two hosts. Load the podcast skill first and follow it; `script` is one turn\nper line, \"Host A: what they say\". The first host to speak gets a woman's voice, the second a man's.\n`title` is short (optional). The result's `path` is the saved WAV file (kept), for a skill to use, e.g. with\nffmpeg. When it works, reply in one short line; don't repeat the script.",
+    "description": "Read text aloud as a voice memo the user can play right in the chat: the player appears under your reply.\nUse it when the user asks for a voice memo, a voice note, or to hear something. `script` is what to say, as\nplain speech, at most about 4,000 characters (some 4 minutes; split longer narration into several memos);\nit's read in the voice chosen in Settings. `voice_name` (optional) is another voice for this one memo, only\nwhen the user asks for one (\"a man's voice\"): a voice of the same engine as the Settings voice, by name\n(\"Michael\"); another engine's voice is refused with the list to pick from. `title` is short (optional).\nThe result's `path` is the saved WAV file (kept), for a skill to use, e.g. with ffmpeg. When it works, reply\nin one short line; don't repeat the script. A podcast with two hosts is make_podcast (the podcast skill),\nnot this.",
     "name": "speak",
     "parameters_json_schema": {
       "properties": {
@@ -503,11 +602,6 @@
         "title": {
           "default": "",
           "title": "Title",
-          "type": "string"
-        },
-        "style": {
-          "default": "memo",
-          "title": "Style",
           "type": "string"
         },
         "voice_name": {

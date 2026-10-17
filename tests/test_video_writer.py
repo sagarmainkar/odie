@@ -19,6 +19,7 @@ from google.genai import types
 
 from odie.browser import RENDER_ARGS, find
 from odie.browser.engine import Browser, BrowserError, BrowserTimeout
+from odie.making import writer as harness
 from odie.video import page, writer
 
 SAMPLE = (Path(page.__file__).parent / "kit" / "sample.html").read_text()
@@ -54,7 +55,7 @@ class Turn:
         self.said = []
         self.ended = []
 
-    async def __call__(self, prompt, instruction, tools, timeout, follow_up=None):
+    async def __call__(self, prompt, instruction, tools, timeout, follow_up=None, max_llm_calls=None):
         self.prompt = prompt
         self.instruction = instruction
         self.tools = tools
@@ -150,12 +151,12 @@ async def test_three_rejections_end_the_turn_and_fail_with_the_last_problem(tmp_
             await turn.submit()
 
     turn = Turn(script)
-    with pytest.raises(writer.WriterFailed) as failed:
+    with pytest.raises(harness.WriterFailed) as failed:
         await writer.write("Attention", 2, "", tmp_path / "job", turn, BROWSER)
     assert str(failed.value) == "I couldn't write a page that passed its check: third problem"
     assert turn.said[1] == {"error": "second problem"}
     assert turn.said[2]["error"].startswith("third problem")
-    assert writer.STOP in turn.said[2]["error"]
+    assert harness.STOP in turn.said[2]["error"]
     assert turn.ended == [False, False, True]
     assert turn.nudge is None  # stopped is finished: no nudge
     assert len(saved_pages(tmp_path / "job")) == 3
@@ -169,9 +170,9 @@ async def test_a_submit_after_the_stop_is_not_checked_and_ends_the_turn(tmp_path
             await turn.submit()
 
     turn = Turn(script)
-    with pytest.raises(writer.WriterFailed):
+    with pytest.raises(harness.WriterFailed):
         await writer.write("Attention", 2, "", tmp_path / "job", turn, BROWSER)
-    assert turn.said[3] == {"error": writer.STOP}
+    assert turn.said[3] == {"error": harness.STOP}
     assert turn.ended[3] is True
     assert len(checks["calls"]) == 3
 
@@ -201,7 +202,7 @@ async def test_a_writer_that_only_talks_is_nudged_once_and_then_submits(tmp_path
 
 async def test_a_writer_that_never_submits_even_after_the_nudge_fails(tmp_path, checks):
     turn = Turn(nothing, after_nudge=nothing)
-    with pytest.raises(writer.WriterFailed) as failed:
+    with pytest.raises(harness.WriterFailed) as failed:
         await writer.write("Attention", 2, "", tmp_path / "job", turn, BROWSER)
     assert turn.nudge == NUDGE
     assert str(failed.value) == "I couldn't write the video's page (the writer stopped without one)."
@@ -226,7 +227,7 @@ async def test_a_writer_that_stops_after_a_rejection_fails_with_that_problem(tmp
     async def once(turn):
         await turn.submit()
 
-    with pytest.raises(writer.WriterFailed) as failed:
+    with pytest.raises(harness.WriterFailed) as failed:
         await writer.write("Attention", 2, "", tmp_path / "job", Turn(once, after_nudge=nothing), BROWSER)
     assert str(failed.value) == ("I couldn't write a page that passed its check: "
                                  "The page threw in scene 2 at t = 1.2 s: boom")
@@ -253,7 +254,7 @@ async def test_the_prompt_gives_the_topic_the_minutes_the_words_and_the_brief(tm
 
 
 async def test_the_prompt_carries_the_source_material_word_for_word(tmp_path, checks):
-    from odie.video.sources import Source, brief_with_sources
+    from odie.making.sources import Source, brief_with_sources
     tides = "Asha's notes on tides.\n\n| place | high tide |\n|---|---|\n| Goa | 2.1 m |"
     brief = brief_with_sources("For a ten-year-old. Show the table.", [Source("The user's message", tides)])
     turn = Turn(submits)
@@ -291,7 +292,7 @@ async def test_a_page_too_big_is_a_rejection_with_the_limit(tmp_path, checks):
             await turn.submit(page=big)
 
     turn = Turn(script)
-    with pytest.raises(writer.WriterFailed) as failed:
+    with pytest.raises(harness.WriterFailed) as failed:
         await writer.write("Attention", 2, "", tmp_path / "job", turn, BROWSER)
     assert "at most 300 KB" in turn.said[0]["error"]
     assert str(failed.value).startswith("I couldn't write a page that passed its check: The page is 300 KB")
@@ -327,7 +328,7 @@ async def test_a_browser_that_fails_ends_the_job_with_its_own_words_and_is_no_re
 
     monkeypatch.setattr(page, "check", check)
     turn = Turn(submits, after_nudge=submits)
-    with pytest.raises(writer.WriterFailed) as failed:
+    with pytest.raises(harness.WriterFailed) as failed:
         await writer.write("Attention", 2, "", tmp_path / "job", turn, BROWSER)
     assert str(failed.value) == "The browser didn't start."
     assert turn.said == [{"error": "The browser didn't start."}]
@@ -392,7 +393,7 @@ async def test_a_writer_that_runs_out_of_time_fails_with_the_time_limit(tmp_path
     async def script(turn):
         raise TimeoutError
 
-    with pytest.raises(writer.WriterFailed) as failed:
+    with pytest.raises(harness.WriterFailed) as failed:
         await writer.write("Attention", 2, "", tmp_path / "job", Turn(script), BROWSER)
     assert str(failed.value) == "The writer took more than 15 minutes and stopped."
 
@@ -514,4 +515,4 @@ def test_the_length_is_a_guide_the_writer_is_told_not_to_count():
     from odie.video import writer
     assert "a guide, not a count" in writer.prompt_for("Quantization", 4, "")
     assert "Never count words" in writer.INSTRUCTION and "within about a tenth" not in writer.INSTRUCTION
-    assert "don't count words" in writer.NUDGE
+    assert "don't count words" in writer.LINES.nudge

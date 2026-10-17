@@ -385,7 +385,8 @@ def make_browser_tools(store, browser_for: Callable[[], object] | None = None) -
         """Find photos through Odie's browser (free, no search key): free stock photos (Unsplash, Pexels) for covers,
         backgrounds and moods, and web photos (Bing Images) of the actual place or thing, each with the credit to use.
         For a named hotel, restaurant or product, its own page's photos ("Images on this page" when you open it) are
-        better. Use the addresses and credits exactly as given, in a deck (make_slides) or an odie-images gallery."""
+        better. Use the addresses and credits exactly as given: in a deck's brief (make_deck; the deck's writer can't
+        search) or an odie-images gallery."""
         from odie.browser import images
         q = " ".join((query or "").split())[:120]
         if not q:

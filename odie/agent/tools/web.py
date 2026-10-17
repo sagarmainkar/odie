@@ -312,9 +312,11 @@ def needs_browser(text: str) -> bool:
 
 def make_web_tools(api_key: str | None = None, transport: httpx.AsyncBaseTransport | None = None, store=None,
                    keys: Callable[[], list[tuple[str, str]]] | None = None, resolve: Resolver | None = None,
-                   browser_for: Callable[[], object] | None = None) -> list[FunctionTool]:
+                   browser_for: Callable[[], object] | None = None, ask_first: bool = True) -> list[FunctionTool]:
     """api_key pins Tavily with that key ("" = no keys at all), keys replaces the key lookup (tests); store records
-    which provider answered last, for Settings."""
+    which provider answered last, for Settings. ask_first=False builds both tools without the private chat's approval
+    card: for a focused background turn (the research writer), which has no chat to show one in and is only started
+    outside a private chat."""
     if keys is None:
         keys = (lambda: [("tavily", api_key)] if api_key else []) if api_key is not None else configured_keys
     resolve = resolve or resolve_host
@@ -383,6 +385,8 @@ def make_web_tools(api_key: str | None = None, transport: httpx.AsyncBaseTranspo
 
     if browser_for:  # shops and prices go to the browser (its rule says so); search stays for quick facts
         web_search.__doc__ = web_search.__doc__.replace("news, prices, weather", "news, weather, quick facts")
+    if not ask_first:
+        return [FunctionTool(web_search), FunctionTool(web_fetch)]
     return [FunctionTool(web_search, require_confirmation=guard.for_query(store)),
             FunctionTool(web_fetch, require_confirmation=guard.for_fetch(store))]  # a private chat asks first: a fetch service sees the address
 
