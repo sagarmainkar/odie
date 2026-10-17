@@ -358,3 +358,8 @@ def test_a_host_with_only_links_is_a_plain_error():
     with pytest.raises(ValueError) as e:
         writer.parse_script("Asha: Hi there.\nRohan: https://example.com")
     assert "two hosts" in str(e.value) and "something to say" in str(e.value)
+
+
+def test_podcast_writer_md_says_the_brief_may_end_with_the_users_own_material():
+    text = WRITER_MD.read_text()
+    assert "## Source material" in text and "the user's own text" in text

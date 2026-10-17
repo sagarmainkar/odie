@@ -28,7 +28,7 @@ USERS_MESSAGE = ("my message", "the user's message")
 MESSAGE_LABEL = "The user's message"
 HEADING = "## Source material"
 SOURCES_SAID = ("What the user gave, word for word. Take facts, numbers and wording from it; the plan above decides "
-                "what the video covers.")
+                "what it covers.")
 
 
 NOT_A_LIST = ('sources is a list of short texts: ["my message"], a note\'s name or path, or a file\'s path in Odie\'s '
@@ -84,8 +84,8 @@ def count_problem(references: list) -> str | None:
     """Decides whether there are few enough sources: up to 5 -> None; 6 -> the limit, as words to act on."""
     if len(references) <= MAX_SOURCES:
         return None
-    return (f"There are {len(references)} sources; there can be at most {MAX_SOURCES}. Pass only the ones the video "
-            "is about.")
+    return (f"There are {len(references)} sources; there can be at most {MAX_SOURCES}. Pass only the ones the "
+            "thing being made is about.")
 
 
 def length_problem(source: Source, reference: str) -> str | None:
@@ -98,7 +98,7 @@ def length_problem(source: Source, reference: str) -> str | None:
 
 def too_long(reference: str) -> str:
     return (f"{reference} is over {MAX_SOURCE_CHARACTERS:,} characters, the most one source can be. Put the part the "
-            "video needs in the brief instead.")
+            "writer needs in the brief instead.")
 
 
 def total_problem(found: list[Source]) -> str | None:
@@ -108,7 +108,7 @@ def total_problem(found: list[Source]) -> str | None:
     if total <= MAX_ALL_CHARACTERS:
         return None
     return (f"The sources are {total:,} characters together; they can be at most {MAX_ALL_CHARACTERS:,}. Pass fewer, "
-            "or put the parts the video needs in the brief.")
+            "or put the parts the writer needs in the brief.")
 
 
 def users_message() -> str:

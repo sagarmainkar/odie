@@ -369,3 +369,8 @@ async def test_through_the_real_focused_turn_an_accepted_submit_ends_the_turn(is
     request = Writes.seen[0]
     assert sorted(request.tools_dict) == ["submit_deck"]
     assert WRITER_MD.read_text().strip() in str(request.config.system_instruction)
+
+
+def test_deck_writer_md_says_the_brief_may_end_with_the_users_own_material():
+    text = WRITER_MD.read_text()
+    assert "## Source material" in text and "the user's own text" in text
