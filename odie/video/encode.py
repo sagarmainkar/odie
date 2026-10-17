@@ -113,17 +113,33 @@ async def run(command: list[str]) -> tuple[int, bytes]:
     return process.returncode, stderr
 
 
+def padding(video_seconds: float) -> list[str]:
+    """Decides how the voice is padded with silence: to the picture's whole length, so a picture that runs past the
+    narration (Odie's silent credits card) keeps a sound track to its end. 12.5 s of picture -> ["-af",
+    "apad=whole_dur=12.5"]; a length that couldn't be read (0) -> no padding at all. A bare "apad" pads for ever and,
+    with the picture copied, ffmpeg 7.1 never stops (measured), so the pad always has an end."""
+    if video_seconds <= 0:
+        return []
+    return ["-af", f"apad=whole_dur={video_seconds}"]
+
+
 async def mux(segments: list[Path], narration_wav: Path, out: Path) -> None:
     """Join the scene segments in order, lay the narration under them and write the final MP4. The picture is copied
-    (already encoded), the voice becomes AAC, and the shorter of the two sets the length."""
+    (already encoded) and the voice becomes AAC. The picture sets the length: a shorter voice is padded with silence
+    to the picture's end (see padding), and a longer one is cut there (-shortest)."""
     list_file = out.parent / f"{out.stem}-segments.txt"
     lines = [concat_line(segment) for segment in segments]
     list_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    video_seconds = 0.0
+    for segment in segments:
+        info = await probe(segment)
+        video_seconds += info["seconds"]
+    pad = padding(round(video_seconds, 3))
     command = [
         ffmpeg(), "-y", "-loglevel", "error",
         "-f", "concat", "-safe", "0", "-i", str(list_file),
         "-i", str(narration_wav),
-        "-c:v", "copy", "-c:a", "aac", "-b:a", "160k", "-shortest", "-movflags", "+faststart",
+        "-c:v", "copy", "-c:a", "aac", "-b:a", "160k", *pad, "-shortest", "-movflags", "+faststart",
         str(out),
     ]
     code, stderr = await run(command)

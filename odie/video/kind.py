@@ -5,8 +5,8 @@ registers the kind as "video", with its jobs under <workspace>/videos/<slug>/.
 
 A video job's folder holds brief.md (the writer's brief, then the picture and clip lines as the chat gave them),
 assets/ (the prepared pictures and clips: img1.jpg, clip1.webm, …), pages/ (every page the writer submitted),
-page.html (the accepted page as it was drawn, with its timings and pictures), narration.wav, the segment files,
-<slug>.mp4 and job.json.
+page.html (the accepted page as it was drawn, with its timings, pictures and credits card), narration.wav, the
+segment files, <slug>.mp4 and job.json.
 
 job.data carries, from make_video: "given" ({"images": [...], "clips": [...]}, the chat's lines) and "private" (the
 signed-in sites the asking chat had read); from the writing step: "assets" (each prepared one's name, kind, words,
@@ -22,10 +22,11 @@ from odie.making import jobs
 from odie.video import assets, timeline, writer
 from odie.video.encode import EncodeError, mux, probe
 from odie.video.narrate import narrate
-from odie.video.page import assemble
+from odie.video.page import assemble, credits_scene
 from odie.video.render import render
 
 FOLDER = "videos"
+CREDITS_SECONDS = 3.0  # Odie's credits card for web pictures and clips, after the last scene
 
 
 def needs_writing(job: jobs.Job) -> bool:
@@ -93,21 +94,31 @@ async def write(job: jobs.Job, turn, browser) -> None:
 
 
 async def make_video(job: jobs.Job, browser, transport) -> Path:
-    """The steps from narration to a checked MP4 file; returns the MP4's path. Any step may raise."""
+    """The steps from narration to a checked MP4 file; returns the MP4's path. Any step may raise. When the video has
+    web pictures or clips, their credits get a card of Odie's own after the writer's last scene (CREDITS_SECONDS,
+    silent): one more scene in the timings than the narration has, and the voice padded to the picture's end."""
     folder = job.folder
     narration = job.data["narration"]
     body = job.data["body"]
     wav, lengths, beats = await narrate(jobs.hooks["store"], narration, job.voice_name, transport=transport)
 
+    gathered = assets_from(job)
+    credits = assets.credits(gathered)
+    credits_script = credits_scene(credits)
+    if credits:
+        lengths = lengths + [CREDITS_SECONDS]
+        beats = beats + [[0.0]]
     starts, _total = timeline.scene_starts(lengths, timeline.BREATH)
     timings = {"starts": starts, "lengths": lengths, "beats": beats}
 
     narration_wav = folder / "narration.wav"
     narration_wav.write_bytes(wav)
-    assets_script = assets.staple(assets_from(job))
-    (folder / "page.html").write_text(assemble(body, timings, assets_script), encoding="utf-8")
+    assets_script = assets.staple(gathered)
+    page_html = assemble(body, timings, assets_script, credits_script)
+    (folder / "page.html").write_text(page_html, encoding="utf-8")
 
-    segments = await render(browser, body, timings, folder, timeline.FPS, timeline.TABS, assets_script=assets_script)
+    segments = await render(browser, body, timings, folder, timeline.FPS, timeline.TABS, assets_script=assets_script,
+                            credits_script=credits_script)
     mp4 = folder / f"{job.slug}.mp4"
     await mux(segments, narration_wav, mp4)
 

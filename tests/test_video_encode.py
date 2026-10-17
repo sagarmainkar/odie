@@ -95,3 +95,37 @@ async def test_probe_reads_a_video_and_a_voice(tmp_path):
 def test_concat_line_escapes_single_quotes(tmp_path):
     line = encode.concat_line(tmp_path / "Asha's seg.mp4")
     assert line == f"file '{tmp_path}/Asha'\\''s seg.mp4'"
+
+
+async def audio_seconds(path):
+    """How long a file's sound lasts, read by decoding only its audio track to a WAV and probing that."""
+    wav = path.with_suffix(".sound.wav")
+    code, stderr = await encode.run([encode.ffmpeg(), "-y", "-loglevel", "error", "-i", str(path), "-map", "0:a",
+                                     str(wav)])
+    assert code == 0, stderr
+    return (await encode.probe(wav))["seconds"]
+
+
+async def test_a_voice_shorter_than_the_picture_is_padded_so_the_picture_sets_the_length(tmp_path):
+    # Odie's credits card is silent: 2 s of picture over 1 s of voice is a 2 s file with sound the whole way
+    parts = [await make_segment(tmp_path / "seg0.mp4", "red", frames=20)]
+    (tmp_path / "voice.wav").write_bytes(silence(1.0))
+    out = tmp_path / "out.mp4"
+    await encode.mux(parts, tmp_path / "voice.wav", out)
+    info = await encode.probe(out)
+    assert info["video"] and info["audio"]
+    assert abs(info["seconds"] - 2.0) < 0.1, info
+    assert abs(await audio_seconds(out) - 2.0) < 0.1
+
+
+async def test_a_voice_longer_than_the_picture_is_still_cut_to_it(tmp_path):
+    parts = [await make_segment(tmp_path / "seg0.mp4", "red", frames=10)]
+    (tmp_path / "voice.wav").write_bytes(silence(2.0))
+    out = tmp_path / "out.mp4"
+    await encode.mux(parts, tmp_path / "voice.wav", out)
+    assert abs((await encode.probe(out))["seconds"] - 1.0) < 0.1
+
+
+def test_the_voice_is_padded_to_the_pictures_length_and_never_without_one():
+    assert encode.padding(12.5) == ["-af", "apad=whole_dur=12.5"]
+    assert encode.padding(0.0) == []  # a length that couldn't be read: no padding (an endless pad would never end)

@@ -256,3 +256,47 @@ async def test_a_page_that_draws_a_picture_passes_the_check_with_its_staple(tmp_
         await b.close()
     assert with_staple is None
     assert "no picture called img1; this video has no pictures" in without
+
+
+# The sample's two scenes, then Odie's credits card: the timings have three scenes, the writer's page two.
+WITH_CREDITS = {"starts": [0.0, 3.5, 7.0], "lengths": [3.0, 3.0, 3.0], "beats": [[0.0], [0.0], [0.0]]}
+
+
+@needs_browser
+async def test_the_credits_card_is_a_scene_after_the_writers_last(tmp_path):
+    credits = page.credits_scene(["Photo by A on Unsplash", "Video by B on Pexels"])
+    html = page.assemble(SAMPLE, WITH_CREDITS, "", credits)
+    shown = "id => getComputedStyle(document.getElementById(id)).visibility"
+    b = Browser(tmp_path / "p", BIN, extra_args=RENDER_ARGS)
+    try:
+        async with b.sealed_page(html, 1920, 1080) as p:
+            count = await p.eval("window.__sceneCount")
+            await p.eval("__frame(5.0)")
+            title_in_scene_2 = await p.eval(f"document.getElementById('v-odie-credits-title') === null || "
+                                            f"({shown})('v-odie-credits-title')")
+            await p.eval("__frame(9.5)")
+            title = await p.eval(f"({shown})('v-odie-credits-title')")
+            words = await p.eval("[0, 1].map(i => document.getElementById('v-odie-credits-' + i).textContent)")
+            colour = await p.eval("getComputedStyle(document.getElementById('v-odie-credits-0')).color")
+            heading = await p.eval("document.getElementById('v-odie-credits-title').textContent")
+            assert p.errors == []
+    finally:
+        await b.close()
+    assert count == 2  # the writer's scenes: Odie's card isn't one of the page's
+    assert title_in_scene_2 in (True, "hidden")
+    assert title == "visible" and heading == "Pictures"
+    assert words == ["Photo by A on Unsplash", "Video by B on Pexels"]
+    assert colour == "rgb(236, 236, 236)"  # the kit's text colour, #ECECEC
+
+
+@needs_browser
+async def test_a_credits_card_without_its_scene_in_the_timings_is_still_a_mismatch(tmp_path):
+    credits = page.credits_scene(["Photo by A on Unsplash"])
+    html = page.assemble(SAMPLE, TIMINGS, "", credits)
+    b = Browser(tmp_path / "p", BIN, extra_args=RENDER_ARGS)
+    try:
+        async with b.sealed_page(html, 1920, 1080) as p:
+            errors = list(p.errors)
+    finally:
+        await b.close()
+    assert any("The page has 2 scenes but the narration has 1" in error for error in errors), errors

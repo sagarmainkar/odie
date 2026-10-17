@@ -11,7 +11,7 @@ from odie.browser.engine import BrowserError
 from odie.making import jobs
 from odie.making import writer as harness
 from odie.store.db import Store
-from odie.video import encode, kind, writer
+from odie.video import encode, kind, page, writer
 from tests.test_media import make_wav
 from tests.test_video_encode import jpeg
 
@@ -63,7 +63,8 @@ async def stand_in_narrate(store, narration, voice_name="", transport=None):
     return make_wav(2.0), [1.0, 0.5], [[0.0, 0.4], [0.0]]
 
 
-async def stand_in_render(browser, body, timings, folder, fps, tabs, progress=None, assets_script=""):
+async def stand_in_render(browser, body, timings, folder, fps, tabs, progress=None, assets_script="",
+                          credits_script=""):
     """A real, tiny segment file (15 red frames), so the real mux and probe have something to join."""
     path = folder / "segment-0.mp4"
     async with encode.Segment(path, fps=10) as segment:
@@ -121,7 +122,8 @@ async def test_a_finished_video_is_posted_to_its_chat_and_pushed(world, fast):
 async def test_the_page_is_timed_from_the_spoken_lengths(world, fast, monkeypatch):
     seen = {}
 
-    async def watching_render(browser, body, timings, folder, fps, tabs, progress=None, assets_script=""):
+    async def watching_render(browser, body, timings, folder, fps, tabs, progress=None, assets_script="",
+                              credits_script=""):
         seen["timings"] = timings
         return await stand_in_render(browser, body, timings, folder, fps, tabs)
 
@@ -149,7 +151,8 @@ async def test_a_voice_that_cant_speak_is_said_in_the_chat(world, monkeypatch):
 async def test_a_browser_error_keeps_its_own_words(world, fast, monkeypatch):
     chat, _pushes, _store = world
 
-    async def broken_render(browser, body, timings, folder, fps, tabs, progress=None, assets_script=""):
+    async def broken_render(browser, body, timings, folder, fps, tabs, progress=None, assets_script="",
+                            credits_script=""):
         raise BrowserError("no browser is installed\nsecond line that stays out of the chat")
 
     monkeypatch.setattr(kind, "render", broken_render)
@@ -160,7 +163,8 @@ async def test_a_browser_error_keeps_its_own_words(world, fast, monkeypatch):
 async def test_anything_unexpected_is_a_plain_sentence_and_logged(world, fast, monkeypatch, caplog):
     chat, _pushes, _store = world
 
-    async def odd_render(browser, body, timings, folder, fps, tabs, progress=None, assets_script=""):
+    async def odd_render(browser, body, timings, folder, fps, tabs, progress=None, assets_script="",
+                         credits_script=""):
         raise KeyError("/Users/someone/private/path")
 
     monkeypatch.setattr(kind, "render", odd_render)
@@ -268,7 +272,8 @@ async def test_recover_with_no_videos_folder_does_nothing(world):
 async def test_stopping_mid_render_posts_nothing_and_recover_tells_it_as_interrupted(world, fast, monkeypatch):
     chat, pushes, _store = world
 
-    async def render_that_never_ends(browser, body, timings, folder, fps, tabs, progress=None, assets_script=""):
+    async def render_that_never_ends(browser, body, timings, folder, fps, tabs, progress=None, assets_script="",
+                                     credits_script=""):
         await asyncio.Event().wait()
 
     monkeypatch.setattr(kind, "render", render_that_never_ends)
@@ -440,8 +445,9 @@ async def test_a_job_with_a_picture_fetches_it_lists_it_for_the_writer_and_stapl
 
     rendered = {}
 
-    async def watching_render(browser, body, timings, folder, fps, tabs, progress=None, assets_script=""):
-        rendered["script"] = assets_script
+    async def watching_render(browser, body, timings, folder, fps, tabs, progress=None, assets_script="",
+                              credits_script=""):
+        rendered.update(script=assets_script, timings=timings, credits=credits_script)
         return await stand_in_render(browser, body, timings, folder, fps, tabs)
 
     monkeypatch.setattr(assets.photos, "fetch", stand_in_fetch)
@@ -475,6 +481,12 @@ async def test_a_job_with_a_picture_fetches_it_lists_it_for_the_writer_and_stapl
     assert timings_at < staple_at < body_at  # after the kit and the timings, before the writer's page
     assert "data:image" not in (job.folder / "job.json").read_text(encoding="utf-8")
 
+    # a web picture is credited: Odie's 3 s card is one more scene after the writer's two, after a breath
+    assert rendered["timings"] == {"starts": [0.0, 1.5, 2.5], "lengths": [1.0, 0.5, 3.0],
+                                   "beats": [[0.0, 0.4], [0.0], [0.0]]}
+    assert rendered["credits"] == page.credits_scene(["Photo by A on Unsplash"])
+    assert html.index(script) < html.index(rendered["credits"]) < body_at
+
 
 async def test_a_job_whose_pictures_all_fail_still_tells_the_writer(world, fast, monkeypatch):
     from odie.decks.photos import PhotoError
@@ -499,3 +511,23 @@ async def test_a_job_whose_pictures_all_fail_still_tells_the_writer(world, fast,
     assert job.data["assets"] == [] and job.data["dropped"] == ["img1 couldn't be fetched: The link answered 404."]
     html = (job.folder / "page.html").read_text(encoding="utf-8")
     assert "Video.assets(" not in html.split("<script>window.__timings = ")[1]  # nothing stapled
+
+
+async def test_a_video_whose_pictures_are_all_the_users_own_has_no_credits_card(world, fast, monkeypatch):
+    from PIL import Image
+    seen = {}
+
+    async def watching_render(browser, body, timings, folder, fps, tabs, progress=None, assets_script="",
+                              credits_script=""):
+        seen.update(timings=timings, credits=credits_script)
+        return await stand_in_render(browser, body, timings, folder, fps, tabs)
+
+    monkeypatch.setattr(kind, "render", watching_render)
+    job = make_job()
+    (job.folder / "assets").mkdir()
+    Image.new("RGB", (40, 30), (200, 40, 40)).save(job.folder / "assets" / "img1.jpg", "JPEG")
+    job.data["assets"] = [{"name": "img1", "kind": "image", "words": "us at the gate", "credit": "", "width": 40,
+                           "height": 30, "seconds": 0.0, "file": "img1.jpg"}]
+    await jobs.run(job, browser=object())
+    assert seen["timings"] == {"starts": [0.0, 1.5], "lengths": [1.0, 0.5], "beats": [[0.0, 0.4], [0.0]]}
+    assert seen["credits"] == ""

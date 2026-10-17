@@ -78,12 +78,54 @@ def check_offline(body: str) -> None:
                          f"the kit (three.js as THREE, KaTeX as katex, video.js as Video); remove {address}.")
 
 
-def assemble(body: str, timings: dict, assets_script: str = "") -> str:
+# Odie's credits card, the scene after the writer's last: "Pictures", then one small line a credit, fading in one
+# after another on the stage's background in the kit's text colour. Up to CREDITS_PER_COLUMN lines a column, columns
+# side by side (26 credits, the most a video can have, make three). __CREDITS__ is the list, as JSON.
+CREDITS_SCENE = """<script>Video.closing({
+  // Odie's credits card for the web pictures and clips (drawn by Odie, not the writer).
+  draw(t, s) {
+    const credits = __CREDITS__;
+    const perColumn = __PER_COLUMN__;
+    const columns = Math.ceil(credits.length / perColumn);
+    const rows = Math.min(credits.length, perColumn);
+    const lineGap = 46;
+    const top = 540 - (90 + rows * lineGap) / 2;  // the title and the lines together, centred on the stage
+    const columnWidth = 1680 / columns;
+    s.text("odie-credits-title", "Pictures", {y: top + 24, size: 44, weight: 600, opacity: s.fade(t, 0.1)});
+    for (let i = 0; i < credits.length; i++) {
+      const column = Math.floor(i / perColumn);
+      const row = i % perColumn;
+      s.text("odie-credits-" + i, credits[i], {
+        x: 120 + columnWidth * (column + 0.5), y: top + 90 + row * lineGap + lineGap / 2, size: 28,
+        opacity: s.fade(t, 0.3 + 0.05 * i),
+      });
+    }
+  },
+});</script>"""
+CREDITS_PER_COLUMN = 10
+
+
+def credits_scene(credits: list[str]) -> str:
+    """Odie's credits card as a <script> for assemble: a scene placed after the writer's last (Video.closing), showing
+    "Pictures" and then one small line for each credit, ["Photo by A on Unsplash", "Video by B on Pexels"] -> two
+    lines under the title. No credits (only the user's own pictures, or none) -> "", and no card. A "</" inside a
+    credit is written "<\\/", the same string to JavaScript, so a credit can never close the script."""
+    if not credits:
+        return ""
+    listed = json.dumps(credits, ensure_ascii=False).replace("</", "<\\/")
+    script = CREDITS_SCENE.replace("__CREDITS__", listed)
+    return script.replace("__PER_COLUMN__", str(CREDITS_PER_COLUMN))
+
+
+def assemble(body: str, timings: dict, assets_script: str = "", credits_script: str = "") -> str:
     """The whole HTML document for a video: KaTeX's CSS, three.js, KaTeX, video.js, the map's data (`window.__geo`)
     and map.js, then `window.__timings`
     ({"starts": [...], "lengths": [...], "beats": [[...], ...]}, in seconds, passed through as given), then the
     video's pictures and clips (`assets_script`, odie.video.assets.staple's `<script>Video.assets({...})</script>`,
-    when there are any), then `body` (the model's markup and script), in that order."""
+    when there are any), then Odie's credits card (`credits_script`, credits_scene's, when there is one), then `body`
+    (the model's markup and script), in that order. The credits card comes before the body but plays after it: it
+    registers a closing scene that the body's Video.scenes([...]) puts after the writer's last, so the timings then
+    carry one scene more than the writer's page has."""
     check_offline(body)
     kit = _kit()
     head = [
@@ -99,6 +141,8 @@ def assemble(body: str, timings: dict, assets_script: str = "") -> str:
     ]
     if assets_script:
         head.append(assets_script)
+    if credits_script:
+        head.append(credits_script)
     head.append("</head><body>")
     return "\n".join(head) + "\n" + body + "\n</body></html>\n"
 

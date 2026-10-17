@@ -101,3 +101,26 @@ def test_the_map_data_is_inlined_whole_and_under_3_mb():
     for key in ('"land": {', '"countries": {', '"states": {', '"places": {'):
         assert key in geo
     assert "</" not in geo  # nothing in the data can close the <script> it sits in
+
+
+def test_the_credits_card_is_odies_closing_scene_with_one_line_a_credit():
+    script = page.credits_scene(["Photo by A on Unsplash", "Video by B on Pexels"])
+    assert script.startswith("<script>Video.closing({") and script.endswith("</script>")
+    assert '"Pictures"' in script
+    assert '["Photo by A on Unsplash", "Video by B on Pexels"]' in script
+    assert page.credits_scene([]) == ""
+
+
+def test_a_credit_can_never_close_the_script_it_sits_in():
+    script = page.credits_scene(["Photo by </script><script>alert(1)</script> on Unsplash"])
+    assert script.count("</script>") == 1 and "<\\/script>" in script
+
+
+def test_the_credits_go_after_the_pictures_and_before_the_page_so_the_page_ends_with_them():
+    staple = '<script>Video.assets({"img1": {"kind": "image"}})</script>'
+    credits = page.credits_scene(["Photo by A on Unsplash"])
+    timings = {"starts": [0, 1.5], "lengths": [1.0, 3.0]}
+    html = page.assemble("<div id=page></div>", timings, staple, credits)
+    assert html.index(staple) < html.index(credits) < html.index("<div id=page></div>")
+    assert page.assemble("<div id=page></div>", timings, staple) == page.assemble("<div id=page></div>", timings,
+                                                                                  staple, "")

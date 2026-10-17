@@ -5,7 +5,8 @@
 // the page calls Video.scenes([...]) with one {setup(s)?, draw(t, s)} per scene. The server then calls
 // window.__frame(T) for every frame (T = frame / fps) and takes a picture of the 1920x1080 stage. A video with pictures
 // or clips calls Video.assets({...}) before Video.scenes (see registerAssets); the first frame waits until they are
-// loaded, and a frame that draws a clip returns a promise, settled once the clip shows its moment.
+// loaded, and a frame that draws a clip returns a promise, settled once the clip shows its moment. Odie's credits
+// card calls Video.closing({...}) before the page's script: it plays after the page's last scene (see closing).
 //
 // Rules that keep frames deterministic (frame k always draws the same picture, whatever order frames are drawn in):
 // draw(t, s) is a pure function of t; no requestAnimationFrame, no clock, no Math.random (use s.random(seed)); set
@@ -805,23 +806,36 @@
     });
   }
 
-  // Puts the page's scenes on the timeline and defines window.__frame; setup(s) (optional) runs once per scene, here.
-  // Video.scenes([{setup(s) {...}, draw(t, s) {...}}, {draw(t, s) {...}}])
+  // Odie's own scenes after the writer's last (the credits card), registered before the page's script runs.
+  const closingScenes = [];
+
+  // Adds a scene that plays after the page's own, whatever the page's Video.scenes([...]) holds: Odie's credits card
+  // calls it ahead of the writer's body, and its length is the last entry of window.__timings.
+  // Video.closing({draw(t, s) { s.text("odie-credits-title", "Pictures"); }})
+  function closing(scene) {
+    closingScenes.push(scene);
+  }
+
+  // Puts the page's scenes on the timeline, then Odie's closing scenes (see closing), and defines window.__frame;
+  // setup(s) (optional) runs once per scene, here. window.__sceneCount is the page's own scenes, which the check
+  // matches against the narration. Video.scenes([{setup(s) {...}, draw(t, s) {...}}, {draw(t, s) {...}}])
   function scenes(list) {
     window.__sceneCount = list.length;
     const timings = window.__timings;
     if (!timings || !timings.starts || !timings.lengths) {
       throw new Error("window.__timings is missing: the tool sets it from the narration before the page runs");
     }
-    if (timings.lengths.length !== list.length) {
-      throw new Error(`The page has ${list.length} scenes but the narration has ${timings.lengths.length}.`);
+    const all = list.concat(closingScenes);
+    if (timings.lengths.length !== all.length) {
+      const narrated = timings.lengths.length - closingScenes.length;
+      throw new Error(`The page has ${list.length} scenes but the narration has ${narrated}.`);
     }
     buildStage();
     loadAllFonts();
     placed = [];
-    for (let i = 0; i < list.length; i++) {
+    for (let i = 0; i < all.length; i++) {
       const s = helpersFor(timings.lengths[i], beatsFor(timings, i));
-      placed.push({scene: list[i], start: timings.starts[i], s: s});
+      placed.push({scene: all[i], start: timings.starts[i], s: s});
     }
     for (const p of placed) {
       if (p.scene.setup) {
@@ -831,5 +845,6 @@
     window.__frame = frame;
   }
 
-  window.Video = {scenes: scenes, assets: registerAssets, extend: extend, colors: colors, W: W, H: H, SANS: SANS};
+  window.Video = {scenes: scenes, closing: closing, assets: registerAssets, extend: extend, colors: colors, W: W,
+                  H: H, SANS: SANS};
 })();

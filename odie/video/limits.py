@@ -3,7 +3,8 @@ the video writer's tools and the explainer-video skill's tool."""
 from odie.video import beats, timeline
 
 SCENE_CHARACTERS = 4000  # the most narration one scene may have (one piece of speech)
-MAX_SCENES = 40  # the most scenes a video may have (a 6-minute video needs far fewer)
+MAX_SCENES = 40  # the most scenes the writer's narration may have (a 6-minute video needs far fewer); Odie's
+#                  credits card after them isn't the writer's and isn't counted
 MAX_PAGE_KB = 300  # the largest page body, in kilobytes (the worked example is about 3)
 
 
