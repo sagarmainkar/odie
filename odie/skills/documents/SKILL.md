@@ -61,9 +61,10 @@ thetamara.com).",
 - `topic`: a few words.
 - `theme`: `minimal` for research, finance and business; `editorial` (the default: dark, great with photos) for
   stories, places and guides; `warm` for personal and lifestyle; `bold` for pitches and launches.
-- **A change to a deck made earlier** ("make slide 2 shorter", "add a budget slide"): `revise="<its name>"` (the
-  name of its PowerPoint, without .pptx) and the brief says what to change, with any new facts and photos. Pass the
-  theme it had unless the user asks for another.
+- **A change to a deck made earlier** ("make slide 2 shorter", "add a budget slide"): `revise="<its name>"`, the
+  deck's name as this chat saw it in "The deck about … is ready." (or the name the user uses), and the brief says
+  what to change, with any new facts and photos. The newest version of that deck is the one changed, so a second
+  change builds on the first. Pass the theme it had unless the user asks for another.
 
 ### The reply
 

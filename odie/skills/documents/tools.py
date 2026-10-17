@@ -7,6 +7,7 @@ background the writer (odie.making.deck_writer) writes the slides from the brief
 deck); then the deck is built and its card posted to this chat with a ping. Plain trusted code of a built-in skill: no
 shell, no approval card."""
 import math
+import re
 from pathlib import Path
 
 from google.adk.tools import FunctionTool, ToolContext
@@ -86,14 +87,36 @@ def is_plain_name(name: str) -> bool:
     return True
 
 
-def earlier_deck(name: str) -> Path | None:
-    """The .deck.md of the workspace's deck called `name`, or None when there is none: "Tides" with
-    <workspace>/Tides.deck.md there -> that path; with none, or with one that is a link leading out of the workspace
-    -> None."""
-    path = in_workspace(f"{name}{DECK_ENDING}")
-    if path is None or not path.is_file():
+def version_of(path: Path, name: str) -> int | None:
+    """Which version of the deck called `name` this .deck.md is, by the number make_deck adds to keep older ones
+    ("Tides (2)" when "Tides" is there), or None when it is another deck's: "Tides.deck.md" -> 1; "Tides (3).deck.md"
+    -> 3; "Tides at night.deck.md" or "Old Tides (4).deck.md" -> None."""
+    stem = path.name[: -len(DECK_ENDING)]
+    if stem == name:
+        return 1
+    numbered = re.fullmatch(re.escape(name) + r" \((\d+)\)", stem)
+    if numbered is None:
         return None
-    return path
+    return int(numbered.group(1))
+
+
+def newest_deck(name: str) -> Path | None:
+    """Decides which .deck.md revise means: the newest version of the workspace's deck called `name`, by its number
+    (a revision is saved beside the deck it revises, as "Tides (2)", then "Tides (3)"), never by when it was changed.
+    "Tides" with Tides, Tides (2) and Tides (3) there -> Tides (3).deck.md; "Tides" alone -> Tides.deck.md; none there,
+    or the newest a link leading out of the workspace -> None."""
+    newest = None
+    newest_version = 0
+    for path in workspace().glob(f"*{DECK_ENDING}"):
+        version = version_of(path, name)
+        if version is not None and version > newest_version:
+            newest = path
+            newest_version = version
+    if newest is None:
+        return None
+    if in_workspace(newest.name) is None or not newest.is_file():
+        return None
+    return newest
 
 
 def decks_there() -> str:
@@ -154,7 +177,7 @@ async def make_deck(topic: str, brief: str = "", theme: str = "editorial", revis
         name = deck_name(revise)
         if not is_plain_name(name):
             return {"error": NOT_A_NAME.format(name=revise)}
-        path = earlier_deck(name)
+        path = newest_deck(name)
         if path is None:
             return {"error": NO_SUCH_DECK.format(name=name, decks=decks_there())}
         earlier = path.read_text(encoding="utf-8")

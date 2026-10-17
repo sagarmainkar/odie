@@ -173,6 +173,42 @@ async def test_a_private_chats_deck_is_built_as_private_and_a_later_one_is_not(w
     assert seen == [{"amazon.in"}, set()]
 
 
+async def test_a_second_revision_revises_the_first_revision_not_the_original(world, monkeypatch):
+    from odie.skills.documents import tools
+    queued = []
+
+    def queue(job):
+        queued.append(job)
+        return 1
+
+    monkeypatch.setattr(jobs, "submit", queue)
+    prompts = []
+
+    def writes(markdown):
+        """The writer, recording its prompt and submitting `markdown` under the title Tides."""
+        async def focused_turn(prompt, instruction, tools, timeout, follow_up=None):
+            prompts.append(prompt)
+            [submit] = tools
+            await submit("Tides", markdown, "minimal", tool_context=SimpleNamespace(actions=EventActions()))
+            return ""
+        return focused_turn
+
+    original = "# Tides\n- the original\n"
+    first = "# Tides\n- the first revision\n"
+    second = "# Tides\n- the second revision\n"
+    await tools.make_deck("Tides")
+    await jobs.run(queued[-1], browser=object(), turn=writes(original))
+    await tools.make_deck("Tides, shorter", brief="Make it shorter.", revise="Tides")
+    await jobs.run(queued[-1], browser=object(), turn=writes(first))
+    await tools.make_deck("Tides, shorter still", brief="Shorter still.", revise="Tides")
+    await jobs.run(queued[-1], browser=object(), turn=writes(second))
+
+    assert (workspace() / "Tides (2).deck.md").read_text() == first  # make_deck never overwrites the original
+    assert queued[2].data["earlier"] == first
+    assert first.strip() in prompts[2] and original.strip() not in prompts[2]
+    assert (workspace() / "Tides (3).deck.md").read_text() == second
+
+
 def test_the_deck_is_a_built_in_kind_with_its_own_folder():
     assert "odie.making.deck" in jobs.BUILT_IN_KINDS
     jobs.load_kinds()

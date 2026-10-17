@@ -150,6 +150,27 @@ async def test_a_revision_hands_the_writer_the_earlier_deck_and_keeps_its_title(
     assert job.brief == "Make slide 2 shorter."
 
 
+async def test_a_revise_takes_the_newest_version_of_the_deck_by_its_number(world):
+    earlier_deck("Tides", "# Tides\n- the first\n")
+    earlier_deck("Tides (2)", "# Tides\n- the second\n")
+    earlier_deck("Tides (10)", "# Tides\n- the tenth\n")
+    earlier_deck("Tides (9)", "# Tides\n- the ninth\n")
+    earlier_deck("Tides at night", "# Night\n- another deck\n")
+    out = await tools.make_deck("Tides", brief="Shorter.", revise="Tides")
+    assert "result" in out, out
+    assert world[1][0].data["earlier"] == "# Tides\n- the tenth\n"  # by the number: 10 is newer than 9
+
+
+def test_the_newest_deck_is_chosen_by_its_number(world):
+    folder = workspace()
+    for name in ("Tides", "Tides (2)", "Tides (3)", "Tides at night", "Old Tides (4)"):
+        (folder / f"{name}.deck.md").write_text("# T\n")
+    assert tools.newest_deck("Tides").name == "Tides (3).deck.md"
+    (folder / "Moon.deck.md").write_text("# M\n")
+    assert tools.newest_deck("Moon").name == "Moon.deck.md"
+    assert tools.newest_deck("Sun") is None
+
+
 @pytest.mark.parametrize("revise", ["Tides.deck.md", "Tides.pptx", "Tides.pdf", " Tides "])
 async def test_a_revise_may_name_one_of_the_decks_files(world, revise):
     earlier_deck("Tides")

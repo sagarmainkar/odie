@@ -17,6 +17,7 @@ from google.adk.models.llm_response import LlmResponse
 from google.adk.tools import FunctionTool
 from google.genai import types
 
+from odie.decks.model import parse
 from odie.making import deck_writer as writer
 from odie.making import writer as harness
 
@@ -26,6 +27,7 @@ DECK = ("# Tides\nkicker: For Asha, who sails\nWhy the sea comes in twice a day\
         "# Two bulges\n- **The moon** — pulls\n")
 PHOTO = "https://images.unsplash.com/photo-tides.jpg"
 BRIEF = f"For Asha, who sails. 1. The moon pulls. 2. Two bulges.\nPhotos: {PHOTO} (credit: Photo by Ana on Unsplash)."
+BRIDGE = "https://upload.wikimedia.org/wikipedia/commons/a/ab/Living_root_bridge_(Meghalaya).jpg"
 PHOTO_DECK = f"# Tides\nimage: {PHOTO} (credit: Photo by Ana on Unsplash)\nWhy the sea comes in twice a day\n"
 
 
@@ -179,11 +181,34 @@ def test_photo_addresses_are_read_without_their_brackets_and_closing_punctuation
                                          "upload:cd34"]
 
 
-def test_the_photo_check_reads_every_image_line_and_its_credit_is_not_part_of_the_address():
-    deck = (f"# A\nimage: {PHOTO} (credit: Ana)\n\n# B\n## Card\nIMAGE: screenshot:ab12\n\n# C\nimage: upload:zz\n")
-    allowed = [PHOTO, "screenshot:ab12"]
-    assert writer.photo_problem(deck, allowed).startswith("upload:zz isn't a photo address the brief gave")
-    assert writer.photo_problem(deck, [*allowed, "upload:zz"]) is None
+def test_an_address_with_parentheses_in_it_is_read_whole():
+    text = f"Bridge: {BRIDGE} (credit: Wikimedia Commons). Also ({BRIDGE})."
+    assert writer.addresses_in(text) == [BRIDGE]
+
+
+async def test_a_wikimedia_address_with_parentheses_from_the_brief_is_accepted_and_an_invented_one_refused():
+    brief = f"Living root bridges. Photo: {BRIDGE} (credit: Wikimedia Commons)."
+    deck = f"# Root bridges\nimage: {BRIDGE} (credit: Wikimedia Commons)\nGrown, not built\n"
+    other = BRIDGE.replace("Living_root_bridge_(Meghalaya)", "Root_bridge_(Cherrapunji)")
+    invented = deck.replace(BRIDGE, other)
+
+    async def script(turn):
+        await turn.submit(markdown=invented)
+        await turn.submit(markdown=deck)
+
+    turn = Turn(script)
+    written = await write(turn, brief=brief)
+    assert turn.said[0]["error"].startswith(f"{other} isn't a photo address the brief gave")
+    assert f"Use only these, with their credits: {BRIDGE}." in turn.said[0]["error"]  # the whole address
+    assert turn.said[1] == ACCEPTED and written.markdown == deck
+
+
+def test_the_photo_check_reads_every_photo_the_deck_shows_and_its_credit_is_not_part_of_the_address():
+    deck = parse(f"# A\nimage: {PHOTO} (credit: Ana)\n\n# B\n## One\nIMAGE: screenshot:ab12\n## Two\nx\n\n"
+                 f"# C\nimage: upload:zz\n")
+    given = f"{PHOTO} (credit: Ana), screenshot:ab12"
+    assert writer.photo_problem(deck, given).startswith("upload:zz isn't a photo address the brief gave")
+    assert writer.photo_problem(deck, f"{given}, upload:zz") is None
 
 
 async def test_three_refusals_end_the_turn_and_fail_with_the_last_problem():
@@ -282,7 +307,7 @@ def test_a_revision_hands_the_writer_the_earlier_deck_and_what_to_change():
 
 
 def test_adk_reads_submit_deck_with_its_three_arguments_and_no_context():
-    [tool] = writer.tools_for(harness.Desk(topic="T"), "editorial", [])
+    [tool] = writer.tools_for(harness.Desk(topic="T"), "editorial", "")
     declaration = FunctionTool(tool)._get_declaration()
     assert declaration.name == "submit_deck"
     assert declaration.parameters_json_schema["required"] == ["title", "markdown", "theme"]

@@ -11,17 +11,17 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from odie.decks.model import DeckError, parse
+from odie.decks.model import Deck, DeckError, parse
 from odie.decks.themes import THEMES
 from odie.making import writer as harness
 from odie.making.chat import text_or_empty
 
 INSTRUCTION = Path(__file__).with_name("deck_writer.md").read_text(encoding="utf-8")
 
-# The address on a deck's "image:" line: "image: https://x.com/a.jpg (credit: Ana)" -> "https://x.com/a.jpg".
-IMAGE_LINE = re.compile(r"^\s*image:\s*(\S+)", re.IGNORECASE | re.MULTILINE)
 # A photo address written anywhere in a brief: a web address, or a browser screenshot's or the user's photo's id.
-ADDRESS = re.compile(r"(?:https?://|screenshot:|upload:)[^\s<>\"'()\[\]]+", re.IGNORECASE)
+# Parentheses may be part of one (Wikimedia's ".../Living_root_bridge_(Meghalaya).jpg"); without_closing trims an
+# unmatched one at its end.
+ADDRESS = re.compile(r"(?:https?://|screenshot:|upload:)[^\s<>\"'\[\]]+", re.IGNORECASE)
 CLOSING_PUNCTUATION = ".,;:!?"
 
 PLAN_THEN_WRITE = "Plan in a few lines, then call submit_deck with the title, the whole deck and the theme."
@@ -52,27 +52,41 @@ class Written:
     theme: str
 
 
+def without_closing(address: str) -> str:
+    """An address as found in running text, without the punctuation that closes the sentence or the bracket around
+    it: "https://b.com/2.jpg)." (written "(https://b.com/2.jpg).") -> "https://b.com/2.jpg"; a parenthesis that is part
+    of it stays: "https://x.org/Root_bridge_(Meghalaya).jpg" -> the same."""
+    trimmed = address
+    while True:
+        trimmed = trimmed.rstrip(CLOSING_PUNCTUATION)
+        unmatched = trimmed.endswith(")") and trimmed.count(")") > trimmed.count("(")
+        if not unmatched:
+            return trimmed
+        trimmed = trimmed[:-1]
+
+
 def addresses_in(text: str) -> list[str]:
     """Every photo address written in the text, in order, each once: web addresses and screenshot:/upload: ids,
     without the brackets or closing punctuation around them. "Cover: <https://a.com/1.jpg>, credit Pexels. Map:
     screenshot:ab12;" -> ["https://a.com/1.jpg", "screenshot:ab12"]."""
     found = []
     for match in ADDRESS.finditer(text):
-        address = match.group(0).rstrip(CLOSING_PUNCTUATION)
+        address = without_closing(match.group(0))
         if address not in found:
             found.append(address)
     return found
 
 
-def photo_problem(markdown: str, allowed: list[str]) -> str | None:
-    """Decides whether every photo in the deck is one the writer was given: each image: line's address must be in
-    `allowed` (the brief's addresses, and a revised deck's). With ["https://a.com/1.jpg"]: "image: https://a.com/1.jpg
-    (credit: Ana)" -> None; "image: https://example.com/made-up.jpg" -> "https://example.com/made-up.jpg isn't a photo
-    address the brief gave, … Use only these, with their credits: https://a.com/1.jpg. …"; with [] any image: line ->
-    "… The brief gave no photo addresses, so no image: lines: take them out, …"."""
+def photo_problem(deck: Deck, given: str) -> str | None:
+    """Decides whether every photo the deck shows is one the writer was given: each photo's address must be written in
+    `given` (the brief, and a revised deck's Markdown), as it is. With a brief holding "https://a.com/1.jpg (credit:
+    Ana)": a slide with "image: https://a.com/1.jpg" -> None; one with "image: https://example.com/made-up.jpg" ->
+    "https://example.com/made-up.jpg isn't a photo address the brief gave, … Use only these, with their credits:
+    https://a.com/1.jpg. …"; a brief with no addresses and any photo -> "… The brief gave no photo addresses, so no
+    image: lines: take them out, …"."""
     invented = []
-    for address in IMAGE_LINE.findall(markdown):
-        if address not in allowed and address not in invented:
+    for address, _credit in deck.photo_refs():
+        if address not in given and address not in invented:
             invented.append(address)
     if not invented:
         return None
@@ -83,6 +97,7 @@ def photo_problem(markdown: str, allowed: list[str]) -> str | None:
     else:
         said = f"{named} aren't photo addresses the brief gave"
     said += ", and you can't search or make one up."
+    allowed = addresses_in(given)
     if not allowed:
         return (f"{said} The brief gave no photo addresses, so no image: lines: take them out, then call submit_deck "
                 f"again with the whole deck.")
@@ -107,15 +122,15 @@ def theme_given(theme, default: str) -> str:
     return chosen
 
 
-def submission_problem(markdown: str, theme: str, allowed: list[str]) -> str | None:
+def submission_problem(markdown: str, theme: str, given: str) -> str | None:
     """Decides whether a deck can be accepted: the first problem as words to fix, or None. The slides first (the deck
     parser's own words: nine bullets on slide 2 -> "Slide 2 has 9 bullets; keep 6 or split it."), then the photos
     (photo_problem), then the theme (theme_problem). Two plain slides, no photos, "minimal" -> None."""
     try:
-        parse(markdown)
+        deck = parse(markdown)
     except DeckError as e:
         return str(e)
-    problem = photo_problem(markdown, allowed)
+    problem = photo_problem(deck, given)
     if problem:
         return problem
     return theme_problem(theme)
@@ -140,15 +155,15 @@ def prompt_for(topic: str, brief: str, theme: str, earlier: str = "") -> str:
             f"{PLAN_THEN_REVISE}")
 
 
-def tools_for(desk: harness.Desk, theme: str, allowed: list[str]) -> list:
+def tools_for(desk: harness.Desk, theme: str, given: str) -> list:
     """The writer's one tool, submit_deck (title, markdown, theme), built by the shared harness on `desk`. Its check is
-    submission_problem with the photo addresses in `allowed`; accepting makes the Written deck, the title falling back
-    to the desk's topic and the theme to `theme`."""
+    submission_problem with the photos written in `given` (the brief, and a revised deck); accepting makes the Written
+    deck, the title falling back to the desk's topic and the theme to `theme`."""
 
     async def check(fields: dict) -> str | None:
         markdown = text_or_empty(fields["markdown"])
         chosen = theme_given(fields["theme"], theme)
-        return submission_problem(markdown, chosen, allowed)
+        return submission_problem(markdown, chosen, given)
 
     def accept(fields: dict) -> Written:
         title = harness.title_given(fields["title"], desk.topic)
@@ -168,6 +183,6 @@ async def write(topic: str, brief: str, theme: str, turn, earlier: str = "", tit
     if not fallback_title:
         fallback_title = topic
     desk = harness.Desk(topic=fallback_title)
-    allowed = addresses_in(f"{brief}\n{earlier}")
-    [tool] = tools_for(desk, theme, allowed)
+    given = f"{brief}\n{earlier}"
+    [tool] = tools_for(desk, theme, given)
     return await harness.write(desk, prompt_for(topic, brief, theme, earlier), INSTRUCTION, tool, LINES, turn)
