@@ -169,3 +169,38 @@ async def test_the_focused_turn_asks_for_the_writers_room(isolated_settings, tmp
     await r.focused_turn("Write the page about tides.", INSTRUCTION, [])
     await r.close()
     assert Scripted.room == WRITER_REPLY_TOKENS
+
+
+class Looping(BaseLlm):
+    """A model that never stops: every call asks for save_note again. Counts its calls."""
+    calls: ClassVar[int] = 0
+
+    async def generate_content_async(self, llm_request, stream: bool = False):
+        Looping.calls += 1
+        call = types.FunctionCall(id=f"call-{Looping.calls}", name="save_note", args={"text": "again"})
+        yield LlmResponse(content=types.Content(role="model", parts=[types.Part(function_call=call)]))
+
+
+async def test_a_model_that_keeps_calling_a_tool_is_stopped_at_the_cap(isolated_settings, tmp_path, monkeypatch):
+    """ADK's own limit is 500 calls; a focused turn stops at the cap it is given (the writer's 10 by default)."""
+    from google.adk.agents.invocation_context import LlmCallsLimitExceededError
+
+    from odie.app import runner as runner_mod
+    from odie.making import writer as harness
+
+    def save_note(text: str) -> dict:
+        """Save the note."""
+        return {"saved": True}
+
+    r = await _runner(tmp_path, monkeypatch)
+    monkeypatch.setattr(runner_mod, "model_for", lambda selection, thinking, room=None: Looping(model="looping"))
+    Looping.calls = 0
+    with pytest.raises(LlmCallsLimitExceededError):
+        await r.focused_turn("Write the page about tides.", INSTRUCTION, [save_note], max_llm_calls=4)
+    assert Looping.calls == 4
+
+    Looping.calls = 0
+    with pytest.raises(LlmCallsLimitExceededError):
+        await r.focused_turn("Write the page about tides.", INSTRUCTION, [save_note])
+    await r.close()
+    assert Looping.calls == harness.MAX_LLM_CALLS == 10

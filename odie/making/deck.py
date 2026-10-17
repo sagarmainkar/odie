@@ -11,11 +11,14 @@ import logging
 
 from odie.agent import turn as chat_turn
 from odie.decks import build
+from odie.decks.model import parse
 from odie.making import deck_writer, jobs
 
 log = logging.getLogger("odie.making.deck")
 
 FOLDER = "decks"
+WORD = "deck"
+WEB_PHOTOS_LEFT_OUT = "It was built without its web photos, because this chat is private."
 
 
 class DeckNotBuilt(Exception):
@@ -40,8 +43,8 @@ async def make(job: jobs.Job, browser, transport) -> dict:
     DeckNotBuilt with make_deck's words.
 
     The build runs as the asking chat was: a private chat (one that read a signed-in site) fetches no photos from the
-    web, as make_deck does within a private chat turn. The queue's worker keeps the context of whichever chat started
-    it, so the job's own sites are set here, empty ones included."""
+    web, as make_deck does within a private chat turn. The queue's worker runs in an empty context of its own, so the
+    asking chat's sites are set here from the job, empty ones included."""
     private = chat_turn.PRIVATE.set(set(job.data["private"]))
     try:
         built = await build.make_deck(job.data["markdown"], job.title, job.data["theme"])
@@ -54,7 +57,30 @@ async def make(job: jobs.Job, browser, transport) -> dict:
     return built["media"]
 
 
+def web_photos_left_out(job: jobs.Job) -> bool:
+    """Decides whether the deck was built without photos it asked for from the web: the asking chat was private (it
+    had read a signed-in site, so make fetched nothing from the web) and the deck has an image: line with a web
+    address. Private, "image: https://example.com/moon.jpg" -> True; private, no image: lines -> False; a public
+    chat with that photo -> False (it was fetched); private, only "image: screenshot:abc" -> False (Odie's own
+    screenshot, used in any chat)."""
+    if not job.data["private"]:
+        return False
+    for address, _credit in parse(job.data["markdown"]).photo_refs():
+        if address.startswith(("http://", "https://")):
+            return True
+    return False
+
+
+def ready_text(job: jobs.Job) -> str:
+    """The ready message: "The deck about Tides is ready.", and, when its web photos were left out because the chat is
+    private, one more sentence saying so (otherwise the slides arrive with no photos and no word why)."""
+    line = jobs.ready_line(WORD, job.title)
+    if web_photos_left_out(job):
+        return f"{line} {WEB_PHOTOS_LEFT_OUT}"
+    return line
+
+
 # Errors whose words are written for the user: the deck code's reasons the deck can't be built.
 KNOWN_ERRORS = (DeckNotBuilt,)
-KIND = jobs.Kind(word="deck", folder=FOLDER, write=write, make=make, known_errors=KNOWN_ERRORS)
+KIND = jobs.Kind(word=WORD, folder=FOLDER, write=write, make=make, known_errors=KNOWN_ERRORS, ready_text=ready_text)
 jobs.KINDS["deck"] = KIND

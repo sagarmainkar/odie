@@ -130,6 +130,51 @@ async def test_a_second_kind_runs_through_the_queue_end_to_end(world, statuses, 
     assert "brief" not in data and "For Asha" not in json.dumps(data)
 
 
+async def test_the_queue_doesnt_inherit_the_submitting_chat_turns_context(world, monkeypatch):
+    """The worker starts inside whichever chat turn submits first. A private chat queues a job first; a later job
+    from a public chat must not see that chat's words or private sites, so the worker starts in an empty context."""
+    from odie.agent import turn
+
+    chat, pushes, notes = world
+    monkeypatch.setattr(jobs, "render_browser", lambda: object())
+    seen = []
+    real_make = notes.make
+
+    async def make_and_look(job, browser, transport):
+        seen.append((turn.USER_TEXT.get(), turn.PRIVATE.get(), turn.private_sites()))
+        return await real_make(job, browser, transport)
+
+    kind = jobs.Kind(word="note", folder="notes", write=notes.write, make=make_and_look)
+    monkeypatch.setitem(jobs.KINDS, "note", kind)
+
+    said = turn.USER_TEXT.set("make a podcast about tides")
+    private = turn.PRIVATE.set({"amazon.in"})
+    try:
+        jobs.submit(note_job())
+        await wait_until_idle()
+    finally:
+        turn.USER_TEXT.reset(said)
+        turn.PRIVATE.reset(private)
+
+    assert seen == [(None, None, set())]
+    assert chat.posts[0][0] == "The note about A note on tides is ready."
+
+
+async def test_a_kind_may_say_more_than_ready(world, monkeypatch):
+    chat, pushes, notes = world
+    monkeypatch.setattr(jobs, "render_browser", lambda: object())
+
+    def ready_text(job):
+        return f"{jobs.ready_line('note', job.title)}\n\n{job.data['text']}"
+
+    kind = jobs.Kind(word="note", folder="notes", write=notes.write, make=notes.make, ready_text=ready_text)
+    monkeypatch.setitem(jobs.KINDS, "note", kind)
+    await jobs.run(note_job())
+    [(text, _session_id, media)] = chat.posts
+    assert text == "The note about A note on tides is ready.\n\nThe moon pulls the sea."
+    assert media == [{"kind": "note", "url": "/files/note.txt"}]
+
+
 async def test_a_failure_names_the_kind_and_keeps_its_known_words(world, statuses):
     chat, pushes, notes = world
     notes.fail_with = NoteFailed("The paper ran out.\nmore detail that stays out")

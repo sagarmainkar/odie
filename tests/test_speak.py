@@ -151,3 +151,30 @@ async def test_a_voice_from_another_engine_is_refused_with_the_ones_it_can_use(s
 def test_the_tool_explains_the_voice_choice(store):
     tool = _speak(store, None)
     assert "voice_name" in tool.description and "same engine" in tool.description and "path" in tool.description
+
+
+async def test_a_two_host_script_is_refused_with_a_pointer_to_make_podcast(store):
+    """speak once took style="podcast"; ADK now drops that argument silently, so an old-habit call would read
+    "Host A:" aloud in one voice. A script with two hosts is refused, and nothing is spoken."""
+    seen = []
+    script = "Host A: Today we're looking at tides.\nHost B: Why twice a day?\nHost A: Two bulges."
+    out = await _speak(store, kokoro(seen)).func(script=script)
+    assert "make_podcast" in out["error"] and "two hosts" in out["error"]
+    assert seen == []
+
+
+@pytest.mark.parametrize("script", ["Remember to buy milk.", "Note: buy milk.", "Note: buy milk.\nAt 10:30 call Asha.",
+                                    "Monday: gym.\nTuesday: swim.\nWednesday: rest."])
+async def test_a_memo_with_one_label_or_a_list_of_labels_is_spoken(store, script):
+    seen = []
+    out = await _speak(store, kokoro(seen)).func(script=script)
+    assert "error" not in out and len(seen) == 1
+
+
+def test_two_hosts_are_two_names_taking_every_labelled_line():
+    assert mtools.has_two_hosts("Host A: hi\nHost B: hello")
+    assert mtools.has_two_hosts("**Asha:** Hi.\n**Rohan:** Hello.\nAsha: Bye.")
+    assert not mtools.has_two_hosts("Remember to buy milk")
+    assert not mtools.has_two_hosts("Note: buy milk")  # one label isn't two hosts
+    assert not mtools.has_two_hosts("Host A: Hi. Host B: Hello.")  # one line: one speaker
+    assert not mtools.has_two_hosts("Monday: gym\nTuesday: swim\nWednesday: rest")  # a list, not two hosts

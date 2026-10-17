@@ -46,15 +46,17 @@ class Turn:
         self.instruction = ""
         self.tools = []
         self.timeout = None
+        self.max_llm_calls = None
         self.nudge = None
         self.said = []
         self.ended = []
 
-    async def __call__(self, prompt, instruction, tools, timeout, follow_up=None):
+    async def __call__(self, prompt, instruction, tools, timeout, follow_up=None, max_llm_calls=None):
         self.prompt = prompt
         self.instruction = instruction
         self.tools = tools
         self.timeout = timeout
+        self.max_llm_calls = max_llm_calls
         await self.script(self)
         if follow_up is not None:
             self.nudge = follow_up()
@@ -230,6 +232,7 @@ async def test_the_turn_gets_the_web_three_vault_tools_and_submit_research_for_t
     assert turn.names() == ["web_search", "web_fetch", "search_everything", "read_note", "related_notes",
                             "submit_research"]
     assert turn.timeout == writer.RESEARCH_TIME_LIMIT == 1800
+    assert turn.max_llm_calls == writer.RESEARCH_MAX_LLM_CALLS == 60  # searching and reading take many calls
     web = [tool for tool in turn.tools if isinstance(tool, FunctionTool)]
     assert not any(tool._require_confirmation for tool in web)  # no chat here to show an approval card
     assert turn.instruction == WRITER_MD.read_text() == writer.INSTRUCTION

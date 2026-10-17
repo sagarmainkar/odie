@@ -68,7 +68,7 @@ class Turn:
         self.said = []
         self.ended = []
 
-    async def __call__(self, prompt, instruction, tools, timeout, follow_up=None):
+    async def __call__(self, prompt, instruction, tools, timeout, follow_up=None, max_llm_calls=None):
         self.prompt = prompt
         self.instruction = instruction
         self.tools = tools

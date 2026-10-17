@@ -4,7 +4,8 @@ reminders are; a failed one says why in one line; a job that a restart cut off i
 
 Each kind registers itself in KINDS with two steps: writing (the only model call: a focused turn, see
 odie.making.writer) and making (no AI: render a video, speak a podcast, build a deck, save a report). The queue runs
-a job's steps and tells the chat "The {word} about {title} is ready." (or didn't finish, or was interrupted).
+a job's steps and tells the chat "The {word} about {title} is ready." (a kind may add to that line: research adds its
+short answer), or that it didn't finish, or was interrupted.
 
 Each job has a folder, <data>/workspace/<the kind's folder>/<slug>/, holding what its steps make, job.json (status:
 queued, writing, making, done, failed or interrupted_told; a video's job.json from before the queue was shared may say
@@ -14,6 +15,7 @@ for later, then turns them into the title and the kind's own results (job.data).
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import importlib
 import json
 import logging
@@ -73,13 +75,16 @@ class Kind:
     ready" message carries.
     known_errors: the error types whose words are written for the user, so a failure shows them (VoiceUnavailable:
     "Odie's local voice isn't running"); anything else is said as "something went wrong".
-    needs_writing(job): whether the job still has to be written; by default every job does."""
+    needs_writing(job): whether the job still has to be written; by default every job does.
+    ready_text(job): what the chat is told when the job is ready, starting with ready_line; None (the default) says
+    ready_line alone: "The video about Tides is ready." Research adds its short answer below it."""
     word: str
     folder: str
     write: Callable[[Job, Callable, object], Awaitable[None]]
     make: Callable[[Job, object, object], Awaitable[dict]]
     known_errors: tuple[type[Exception], ...] = ()
     needs_writing: Callable[[Job], bool] = always_needs_writing
+    ready_text: Callable[[Job], str] | None = None
 
 
 # Every kind by its name ("video"). A kind registers by putting itself here when its module is imported.
@@ -110,7 +115,11 @@ def submit(job: Job) -> int:
     global _queue, _worker, _waiting
     if _worker is None or _worker.done():
         _queue = asyncio.Queue()
-        _worker = asyncio.create_task(work(_queue))
+        # The worker starts in a fresh, empty context, not a copy of this chat turn's: a task copies the context it
+        # was created in, and the worker outlives the turn and runs every later job. Example: a private chat (it read
+        # amazon.in) queues a deck first; a podcast queued later from a public chat must not see that chat's words or
+        # its private sites. A job that needs the asking chat's private sites carries them itself (the deck's).
+        _worker = asyncio.create_task(work(_queue), context=contextvars.Context())
     write_job(job, "queued")
     _waiting += 1
     _queue.put_nowait(job)
@@ -188,6 +197,19 @@ async def tell(tag: str, session_id: str | None, text: str, media: list[dict] | 
         log.warning("push failed for %s", tag, exc_info=True)
 
 
+def ready_line(word: str, title: str) -> str:
+    """The first line of every "is ready" message: "video", "Tides" -> "The video about Tides is ready."."""
+    return f"The {word} about {title} is ready."
+
+
+def ready_message(kind: Kind, job: Job) -> str:
+    """What the chat is told when a job is ready: the kind's own ready_text when it has one, else ready_line alone. A
+    video about Tides -> "The video about Tides is ready."; research -> that line, a blank line, its short answer."""
+    if kind.ready_text is None:
+        return ready_line(kind.word, job.title)
+    return kind.ready_text(job)
+
+
 def title_after_writing(written_title: str, job: Job) -> str:
     """The title the finished thing goes by: the writer's own, trimmed ("  How attention works " -> "How attention
     works"); with none, the job's topic ("" and topic "attention" -> "attention"); with neither, the title the job
@@ -217,11 +239,11 @@ async def run(job: Job, browser=None, transport=None, turn=None) -> None:
             await kind.write(job, turn, browser)
         write_job(job, "making")
         media = await kind.make(job, browser, transport)
+        text = ready_message(kind, job)
     except Exception as error:  # noqa: BLE001 (whatever went wrong is said in the chat, never lost)
         await tell_failure(job, kind, error)
         return
 
-    text = f"The {kind.word} about {job.title} is ready."
     await tell(push_tag(job.kind, job.slug), job.session_id, text, media=[media])
     write_job(job, "done")
 

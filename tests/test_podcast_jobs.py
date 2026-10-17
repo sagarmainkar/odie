@@ -66,7 +66,7 @@ def down():
     return httpx.MockTransport(handler)
 
 
-async def submits(prompt, instruction, tools, timeout, follow_up=None):
+async def submits(prompt, instruction, tools, timeout, follow_up=None, max_llm_calls=None):
     """A stand-in for the runner's focused turn: the writer submits the script at once."""
     [submit] = tools
     context = SimpleNamespace(actions=EventActions())
@@ -151,7 +151,7 @@ async def test_a_voice_that_cant_speak_is_said_in_the_chat(world):
 async def test_a_writer_that_fails_is_said_in_the_chat(world):
     chat, _pushes, _store = world
 
-    async def talks(prompt, instruction, tools, timeout, follow_up=None):
+    async def talks(prompt, instruction, tools, timeout, follow_up=None, max_llm_calls=None):
         return "I'd rather chat."
 
     await jobs.run(topic_job(), browser=object(), turn=talks)

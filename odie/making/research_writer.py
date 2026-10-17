@@ -23,6 +23,10 @@ from odie.vault.tools import make_vault_tools
 INSTRUCTION = Path(__file__).with_name("research_writer.md").read_text(encoding="utf-8")
 
 RESEARCH_TIME_LIMIT = 1800  # seconds: searching and reading pages takes longer than the other kinds' writing alone
+# Model calls the research turn may make: each search and each page read is one call, and the chat's heaviest turns
+# (a 2-day itinerary with ten searches) use about 15. Sixty leaves room for a thorough search, but stops a writer that
+# loops on searching long before ADK's own 500, each call re-reading every page fetched so far.
+RESEARCH_MAX_LLM_CALLS = 60
 MIN_WORDS = 150
 VAULT_TOOLS = ("search_everything", "read_note", "related_notes")  # the vault's reading tools (not index_status)
 
@@ -178,8 +182,10 @@ async def write(topic: str, brief: str, turn, store: Store,
                 transport: httpx.AsyncBaseTransport | None = None) -> Written:
     """Researches and writes the report in one focused turn: `turn(prompt, instruction, tools, timeout, follow_up=…)`
     is runner.focused_turn in Odie. Returns the accepted report; raises WriterFailed when there's none, with the
-    report's words (LINES), or the harness's time-limit line for 30 minutes (see odie.making.writer.write)."""
+    report's words (LINES), or the harness's time-limit line for 30 minutes or its call-limit line for 60 model calls
+    (see odie.making.writer.write)."""
     desk = harness.Desk(topic=topic)
     tool = submit_tool_for(desk)
     return await harness.write(desk, prompt_for(topic, brief), INSTRUCTION, tool, LINES, turn,
-                               time_limit=RESEARCH_TIME_LIMIT, other_tools=reading_tools(store, transport))
+                               time_limit=RESEARCH_TIME_LIMIT, max_llm_calls=RESEARCH_MAX_LLM_CALLS,
+                               other_tools=reading_tools(store, transport))

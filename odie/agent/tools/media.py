@@ -12,6 +12,8 @@ from odie.signin import guard
 
 NOTHING_TO_SAY = "There's nothing to say: pass the words to speak as script."
 NO_ANSWER = "The voice didn't answer (Settings → Voice). Try again in a moment."
+TWO_HOSTS = ("This script has two hosts, and speak reads everything in one voice, labels included. A podcast with two "
+             "hosts is make_podcast (the podcast skill): give it the topic, and this script as its brief.")
 
 
 def plain_speech(text: str, limit: int = 4000) -> str:
@@ -33,6 +35,27 @@ def plain_speech(text: str, limit: int = 4000) -> str:
         end = max(cut.rfind(". "), cut.rfind("! "), cut.rfind("? "))
         out = cut[: end + 1] if end > limit // 2 else cut.rsplit(" ", 1)[0]
     return out
+
+
+def has_two_hosts(script: str) -> bool:
+    """Decides whether a script is a podcast for two hosts rather than a memo: it reads as a podcast script
+    (odie.making.podcast_writer.parse_script: two names, each starting their own lines) and every "Name:" line
+    belongs to one of those two. "Host A: hi\nHost B: hello" -> True (refused: a podcast); "Remember to buy milk" ->
+    False (spoken); "Note: buy milk" -> False (one label isn't two hosts); "Monday: gym\nTuesday: swim\nWednesday:
+    rest" -> False (a list of three labels, not two hosts)."""
+    # Imported here: the podcast writer imports plain_speech from this module.
+    from odie.making.podcast_writer import labelled_line, parse_script
+
+    try:
+        turns = parse_script(script)
+    except ValueError:
+        return False
+    hosts = {name for name, _speech in turns}
+    for line in script.splitlines():
+        name, _text = labelled_line(line)
+        if name is not None and name not in hosts:
+            return False
+    return True
 
 
 def _title(text: str) -> str:
@@ -68,6 +91,8 @@ def make_media_tools(store, transport: httpx.AsyncBaseTransport | None = None) -
         text = plain_speech(script)
         if not text:
             return {"error": NOTHING_TO_SAY}
+        if has_two_hosts(script):
+            return {"error": TWO_HOSTS}
         try:
             engine, voice_id = voice.get_tts(store)
             if voice_name.strip():

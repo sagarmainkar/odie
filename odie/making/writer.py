@@ -11,6 +11,7 @@ import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
+from google.adk.agents.invocation_context import LlmCallsLimitExceededError
 from google.adk.tools import ToolContext
 
 from odie.making.chat import text_or_empty
@@ -20,6 +21,9 @@ log = logging.getLogger("odie.making.writer")
 TIME_LIMIT = 900  # seconds the whole writing turn may take, the nudge included (a long video with sources took
                   # 331 s live on its first try, so one refused page still fits)
 MAX_REJECTIONS = 3  # submits that may be refused before the writing stops
+# Model calls one writing turn may make (the nudge gets as many again). ADK's own limit is 500. A one-tool writer needs
+# about four: a submit, two more after refusals, and a word or two of talk; a writer that loops gets stopped early.
+MAX_LLM_CALLS = 10
 
 ACCEPTED = "Accepted."
 STOP = "That's three tries, so the writing stops here."
@@ -29,6 +33,12 @@ def timed_out(time_limit: float) -> str:
     """The line the user is told when the writer ran out of time: 900 seconds -> "The writer took more than 15 minutes
     and stopped."; 1800 -> "… more than 30 minutes …"."""
     return f"The writer took more than {int(time_limit // 60)} minutes and stopped."
+
+
+def calls_ran_out(max_llm_calls: int) -> str:
+    """The line the user is told when the writer made too many model calls: 10 -> "The writer made more than 10 model
+    calls and stopped."."""
+    return f"The writer made more than {max_llm_calls} model calls and stopped."
 
 
 class WriterFailed(Exception):
@@ -180,14 +190,16 @@ def outcome(desk: Desk, lines: Lines) -> object:
 
 
 async def write(desk: Desk, prompt: str, instruction: str, tool: Callable, lines: Lines, turn,
-                time_limit: float = TIME_LIMIT, other_tools: list | None = None) -> object:
-    """Write in one focused turn: `turn(prompt, instruction, tools, timeout, follow_up=…)` is runner.focused_turn in
-    Odie, handed only `instruction` and the one `tool` (made by submit_tool on this `desk`), after any `other_tools`
-    the kind's writer reads with first (research: the web and the user's notes). When the turn ends unfinished,
-    follow_up gives the one nudge (nudge_for). Returns the accepted result; raises WriterFailed when there's none (see
-    outcome), or the time-limit line (timed_out) when `time_limit` seconds ran out first. A model failure before any
-    outcome goes up as it is, for the job to tell (as "something went wrong"); one after the outcome is settled is only
-    logged."""
+                time_limit: float = TIME_LIMIT, max_llm_calls: int = MAX_LLM_CALLS,
+                other_tools: list | None = None) -> object:
+    """Write in one focused turn: `turn(prompt, instruction, tools, timeout, follow_up=…, max_llm_calls=…)` is
+    runner.focused_turn in Odie, handed only `instruction` and the one `tool` (made by submit_tool on this `desk`),
+    after any `other_tools` the kind's writer reads with first (research: the web and the user's notes). When the turn
+    ends unfinished, follow_up gives the one nudge (nudge_for). Returns the accepted result; raises WriterFailed when
+    there's none (see outcome), the time-limit line (timed_out) when `time_limit` seconds ran out first, or the
+    call-limit line (calls_ran_out) when the model made more than `max_llm_calls` calls first. A model failure before
+    any outcome goes up as it is, for the job to tell (as "something went wrong"); one after the outcome is settled is
+    only logged."""
 
     def follow_up() -> str | None:
         return nudge_for(desk, lines)
@@ -198,11 +210,16 @@ async def write(desk: Desk, prompt: str, instruction: str, tool: Callable, lines
     tools.append(tool)
 
     try:
-        await turn(prompt, instruction, tools, time_limit, follow_up=follow_up)
+        await turn(prompt, instruction, tools, time_limit, follow_up=follow_up, max_llm_calls=max_llm_calls)
     except TimeoutError:
         if not desk.finished():
             raise WriterFailed(timed_out(time_limit)) from None
         log.warning("the writer's turn (%s) timed out after its outcome was settled", tool.__name__, exc_info=True)
+    except LlmCallsLimitExceededError:
+        if not desk.finished():
+            raise WriterFailed(calls_ran_out(max_llm_calls)) from None
+        log.warning("the writer's turn (%s) ran out of model calls after its outcome was settled", tool.__name__,
+                    exc_info=True)
     except Exception:
         if not desk.finished():
             raise

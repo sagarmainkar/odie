@@ -56,7 +56,7 @@ def world(isolated_settings, tmp_path, monkeypatch):
 
 def submits(markdown=DECK, title="Tides, explained", theme="minimal"):
     """A stand-in for the runner's focused turn: the writer submits this deck at once."""
-    async def focused_turn(prompt, instruction, tools, timeout, follow_up=None):
+    async def focused_turn(prompt, instruction, tools, timeout, follow_up=None, max_llm_calls=None):
         [submit] = tools
         context = SimpleNamespace(actions=EventActions())
         await submit(title, markdown, theme, tool_context=context)
@@ -128,7 +128,7 @@ async def test_a_deck_that_cant_be_built_is_said_in_the_chat(world, monkeypatch)
 async def test_a_writer_that_fails_is_said_in_the_chat(world):
     chat, _pushes, _store = world
 
-    async def talks(prompt, instruction, tools, timeout, follow_up=None):
+    async def talks(prompt, instruction, tools, timeout, follow_up=None, max_llm_calls=None):
         return "I'd rather chat."
 
     await jobs.run(topic_job(), browser=object(), turn=talks)
@@ -173,6 +173,48 @@ async def test_a_private_chats_deck_is_built_as_private_and_a_later_one_is_not(w
     assert seen == [{"amazon.in"}, set()]
 
 
+PHOTO_DECK = DECK + "\n# The moon\nimage: https://example.com/moon.jpg (credit: NASA)\n"
+
+
+def photo_job(private):
+    """A deck job whose writer was given the moon photo's address in the brief."""
+    folder = workspace() / deck.FOLDER / "moon"
+    folder.mkdir(parents=True, exist_ok=True)
+    data = {"theme": "editorial", "earlier": "", "private": private}
+    return jobs.Job(kind="deck", slug="moon", title="Tides", topic="How tides work", session_id="chat-1",
+                    brief="For Asha. Photo: https://example.com/moon.jpg (credit: NASA)", folder=folder, data=data)
+
+
+async def test_a_private_chats_deck_with_web_photos_says_why_they_are_missing(world, monkeypatch):
+    chat, pushes, _store = world
+
+    async def none_fetched(refs):
+        return {}, [ref for ref, _credit in refs]
+
+    monkeypatch.setattr(build, "fetch_all", none_fetched)
+    await jobs.run(photo_job(["amazon.in"]), browser=object(), turn=submits(markdown=PHOTO_DECK, title="Tides"))
+    [(text, _session_id, posted)] = chat.posts
+    assert text == ("The deck about Tides is ready. It was built without its web photos, because this chat is "
+                    "private.")
+    assert posted and pushes[0]["body"] == text
+
+
+def test_the_photo_sentence_needs_both_a_private_chat_and_web_photos():
+    private_with_photos = photo_job(["amazon.in"])
+    private_with_photos.data["markdown"] = PHOTO_DECK
+    private_without = photo_job(["amazon.in"])
+    private_without.data["markdown"] = DECK
+    public_with_photos = photo_job([])
+    public_with_photos.data["markdown"] = PHOTO_DECK
+    local_photo_only = photo_job(["amazon.in"])
+    local_photo_only.data["markdown"] = DECK + "\n# A screenshot\nimage: screenshot:abc123\n"
+
+    assert deck.KIND.ready_text(private_with_photos).endswith("because this chat is private.")
+    assert deck.KIND.ready_text(private_without) == "The deck about Tides is ready."
+    assert deck.KIND.ready_text(public_with_photos) == "The deck about Tides is ready."
+    assert deck.KIND.ready_text(local_photo_only) == "The deck about Tides is ready."  # fetched in any chat
+
+
 async def test_a_second_revision_revises_the_first_revision_not_the_original(world, monkeypatch):
     from odie.skills.documents import tools
     queued = []
@@ -186,7 +228,7 @@ async def test_a_second_revision_revises_the_first_revision_not_the_original(wor
 
     def writes(markdown):
         """The writer, recording its prompt and submitting `markdown` under the title Tides."""
-        async def focused_turn(prompt, instruction, tools, timeout, follow_up=None):
+        async def focused_turn(prompt, instruction, tools, timeout, follow_up=None, max_llm_calls=None):
             prompts.append(prompt)
             [submit] = tools
             await submit("Tides", markdown, "minimal", tool_context=SimpleNamespace(actions=EventActions()))

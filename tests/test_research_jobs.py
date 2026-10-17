@@ -53,7 +53,7 @@ def world(isolated_settings, tmp_path, monkeypatch):
         jobs._worker.cancel()
 
 
-async def submits(prompt, instruction, tools, timeout, follow_up=None):
+async def submits(prompt, instruction, tools, timeout, follow_up=None, max_llm_calls=None):
     """A stand-in for the runner's focused turn: the writer submits the report at once, without searching."""
     [submit] = [tool for tool in tools if getattr(tool, "__name__", "") == "submit_research"]
     context = SimpleNamespace(actions=EventActions())
@@ -75,7 +75,9 @@ async def test_finished_research_is_posted_with_its_file_card_and_pushed(world, 
     job = topic_job()
     await jobs.run(job, browser=object(), turn=submits)
     [(text, session_id, posted)] = chat.posts
-    assert (text, session_id) == ("The research about Which kettle to buy is ready.", "chat-1")
+    assert session_id == "chat-1"
+    assert text == ("The research about Which kettle to buy is ready.\n\n"
+                    "A 1.7 litre steel kettle suits a family of four best.")  # the short answer, for the chat to see
     [card] = posted
     assert card["kind"] == "file" and card["title"] == "Which kettle to buy" and card["filename"] == "kettles.md"
     path, saved = media.get(card["id"])
@@ -91,7 +93,7 @@ async def test_finished_research_is_posted_with_its_file_card_and_pushed(world, 
 async def test_a_writer_that_fails_is_said_in_the_chat(world):
     chat, _pushes, _store = world
 
-    async def talks(prompt, instruction, tools, timeout, follow_up=None):
+    async def talks(prompt, instruction, tools, timeout, follow_up=None, max_llm_calls=None):
         return "I'd rather chat."
 
     await jobs.run(topic_job(), browser=object(), turn=talks)
@@ -129,6 +131,53 @@ async def test_a_report_that_starts_with_its_own_top_heading_keeps_it(world):
 def test_the_title_goes_on_top_only_when_the_report_has_no_top_heading():
     assert research.with_title("## The short answer\n\nYes.", "Kettles") == "# Kettles\n\n## The short answer\n\nYes.\n"
     assert research.with_title("\n# Kettles, compared\n\nYes.\n", "Kettles") == "# Kettles, compared\n\nYes.\n"
+
+
+# What the ready message says.
+
+def test_the_ready_message_carries_the_short_answer_under_its_heading():
+    job = topic_job()
+    job.title = "Which kettle to buy"
+    job.data["markdown"] = REPORT
+    assert research.KIND.ready_text(job) == ("The research about Which kettle to buy is ready.\n\n"
+                                             "A 1.7 litre steel kettle suits a family of four best.")
+
+
+def test_the_short_answer_is_the_first_paragraph_under_its_heading_whole():
+    markdown = ("# Kettles\n\nAn intro.\n\n## The Short Answer\n\nBuy the steel one.\nIt lasts.\n\n"
+                "Another paragraph.\n\n## Findings\n\nMore.")
+    assert research.short_answer(markdown) == "Buy the steel one.\nIt lasts."
+
+
+def test_with_no_short_answer_heading_it_is_the_first_paragraph_after_the_title():
+    assert research.short_answer("# Kettles\n\nSteel wins.\n\n## Findings\n\nMore.") == "Steel wins."
+    assert research.short_answer("## Findings\n\nSteel wins.\n\nMore.") == "Steel wins."
+    assert research.short_answer("Steel wins.\n\nMore.") == "Steel wins."
+
+
+def test_a_report_with_no_paragraph_says_only_that_it_is_ready():
+    job = topic_job()
+    job.title = "Kettles"
+    job.data["markdown"] = "## The short answer\n\n## Sources\n"
+    assert research.short_answer(job.data["markdown"]) == ""
+    assert research.KIND.ready_text(job) == "The research about Kettles is ready."
+
+
+def test_a_long_short_answer_is_cut_at_a_sentence_end_within_the_cap():
+    sentence = "Kettles with a 1.7 litre jug boil a full load in about four minutes. "
+    long = (sentence * 20).strip()  # about 1,380 characters
+    cut = research.short_answer(f"## The short answer\n\n{long}")
+    assert research.SHORT_ANSWER_LIMIT == 600
+    assert cut.endswith("minutes. …")
+    assert len(cut) <= research.SHORT_ANSWER_LIMIT + len(" …")
+    assert long.startswith(cut.removesuffix(" …"))
+
+
+def test_a_long_short_answer_with_no_sentence_end_is_cut_at_a_word():
+    long = " ".join(["kettle"] * 200)  # 1,399 characters, no full stop
+    cut = research.short_answer(long)
+    assert cut.endswith("kettle …")
+    assert len(cut) <= research.SHORT_ANSWER_LIMIT + len(" …")
 
 
 def test_research_is_a_built_in_kind_with_its_own_folder():

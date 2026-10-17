@@ -62,8 +62,9 @@ class Turn:
         self.ended = []
         self.handed = None
 
-    async def __call__(self, prompt, instruction, tools, timeout, follow_up=None):
+    async def __call__(self, prompt, instruction, tools, timeout, follow_up=None, max_llm_calls=None):
         self.handed = (prompt, instruction, [tool.__name__ for tool in tools], timeout)
+        self.max_llm_calls = max_llm_calls
         self.tools = tools
         await self.script(self)
         if follow_up is not None:
@@ -188,6 +189,45 @@ async def test_a_time_limit_given_reaches_the_turn_and_its_line():
         await harness.write(desk, "Topic: tides", "the note rules", note_tool(desk, Checks()), LINES, Turn(script),
                             time_limit=1800)
     assert str(failed.value) == "The writer took more than 30 minutes and stopped."
+
+
+async def test_the_turn_is_capped_at_the_writers_model_calls_by_default_or_as_given():
+    turn = Turn(submits)
+    await write(turn)
+    assert turn.max_llm_calls == harness.MAX_LLM_CALLS == 10
+
+    desk = harness.Desk(topic="tides")
+    turn = Turn(submits)
+    await harness.write(desk, "Topic: tides", "the note rules", note_tool(desk, Checks()), LINES, turn,
+                        max_llm_calls=60)
+    assert turn.max_llm_calls == 60
+
+
+async def test_too_many_model_calls_is_the_call_limit_line():
+    from google.adk.agents.invocation_context import LlmCallsLimitExceededError
+
+    async def script(turn):
+        raise LlmCallsLimitExceededError("Max number of llm calls limit of `10` exceeded")
+
+    with pytest.raises(harness.WriterFailed) as failed:
+        await write(Turn(script))
+    assert str(failed.value) == "The writer made more than 10 model calls and stopped."
+
+    desk = harness.Desk(topic="tides")
+    with pytest.raises(harness.WriterFailed) as failed:
+        await harness.write(desk, "Topic: tides", "the note rules", note_tool(desk, Checks()), LINES, Turn(script),
+                            max_llm_calls=60)
+    assert str(failed.value) == "The writer made more than 60 model calls and stopped."
+
+
+async def test_too_many_model_calls_after_acceptance_keeps_the_result():
+    from google.adk.agents.invocation_context import LlmCallsLimitExceededError
+
+    async def script(turn):
+        await turn.submit()
+        raise LlmCallsLimitExceededError("Max number of llm calls limit of `10` exceeded")
+
+    assert await write(Turn(script)) == ("Tides", "The moon pulls the sea.")
 
 
 async def test_other_tools_are_handed_to_the_turn_before_the_submit_tool():
