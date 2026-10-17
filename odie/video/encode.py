@@ -113,17 +113,33 @@ async def run(command: list[str]) -> tuple[int, bytes]:
     return process.returncode, stderr
 
 
+def padding(video_seconds: float) -> list[str]:
+    """Decides how the voice is padded with silence: to the picture's whole length, so a picture that runs past the
+    narration (Odie's silent credits card) keeps a sound track to its end. 12.5 s of picture -> ["-af",
+    "apad=whole_dur=12.5"]; a length that couldn't be read (0) -> no padding at all. A bare "apad" pads for ever and,
+    with the picture copied, ffmpeg 7.1 never stops (measured), so the pad always has an end."""
+    if video_seconds <= 0:
+        return []
+    return ["-af", f"apad=whole_dur={video_seconds}"]
+
+
 async def mux(segments: list[Path], narration_wav: Path, out: Path) -> None:
     """Join the scene segments in order, lay the narration under them and write the final MP4. The picture is copied
-    (already encoded), the voice becomes AAC, and the shorter of the two sets the length."""
+    (already encoded) and the voice becomes AAC. The picture sets the length: a shorter voice is padded with silence
+    to the picture's end (see padding), and a longer one is cut there (-shortest)."""
     list_file = out.parent / f"{out.stem}-segments.txt"
     lines = [concat_line(segment) for segment in segments]
     list_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    video_seconds = 0.0
+    for segment in segments:
+        info = await probe(segment)
+        video_seconds += info["seconds"]
+    pad = padding(round(video_seconds, 3))
     command = [
         ffmpeg(), "-y", "-loglevel", "error",
         "-f", "concat", "-safe", "0", "-i", str(list_file),
         "-i", str(narration_wav),
-        "-c:v", "copy", "-c:a", "aac", "-b:a", "160k", "-shortest", "-movflags", "+faststart",
+        "-c:v", "copy", "-c:a", "aac", "-b:a", "160k", *pad, "-shortest", "-movflags", "+faststart",
         str(out),
     ]
     code, stderr = await run(command)
@@ -134,11 +150,14 @@ async def mux(segments: list[Path], narration_wav: Path, out: Path) -> None:
 DURATION = re.compile(r"Duration: (\d+):(\d+):(\d+(?:\.\d+)?)")
 # A video stream's pixel format, after its codec: "Video: h264 (High) (avc1 / 0x31637661), yuv420p(tv, bt709, …), …"
 PIXELS = re.compile(r" Video: [^,]+, (\w+\([^)]*\)|\w+)")
+# A video stream's size, after a comma: "…, yuv420p(tv, progressive), 1280x720, SAR 1:1 …" -> 1280, 720.
+SIZE = re.compile(r" Video: .*?, (\d{2,5})x(\d{2,5})\b")
 
 
 async def probe(path: Path) -> dict:
     """What a media file holds: {"seconds": 3.0, "video": True, "audio": False, "pixels": "yuv420p(tv, bt709,
-    progressive)"} ("pixels" is the video's pixel format and colours, "" without video). Read from `ffmpeg -i PATH`,
+    progressive)", "width": 1280, "height": 720} ("pixels" is the video's pixel format and colours, "" without video;
+    width and height are 0 without video). Read from `ffmpeg -i PATH`,
     which prints the facts on stderr and then exits non-zero because there is no output file: that exit is expected."""
     _, stderr = await run([ffmpeg(), "-hide_banner", "-i", str(path)])
     text = stderr.decode("utf-8", errors="replace")
@@ -151,4 +170,11 @@ async def probe(path: Path) -> dict:
     found_pixels = PIXELS.search(text)
     if found_pixels:
         pixels = found_pixels.group(1)
-    return {"seconds": seconds, "video": " Video:" in text, "audio": " Audio:" in text, "pixels": pixels}
+    width = 0
+    height = 0
+    found_size = SIZE.search(text)
+    if found_size:
+        width = int(found_size.group(1))
+        height = int(found_size.group(2))
+    return {"seconds": seconds, "video": " Video:" in text, "audio": " Audio:" in text, "pixels": pixels,
+            "width": width, "height": height}

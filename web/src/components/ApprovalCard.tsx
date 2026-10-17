@@ -11,7 +11,7 @@ export type Approval = {
 };
 
 const TOOL_WORD: Record<string, string> = { gmail_send_draft: "Send", gmail_trash: "Trash", calendar_create_event: "Invite", calendar_respond: "RSVP", run_shell: "Run", install_skill: "Install",
-  web_search: "Search", web_fetch: "Open", browser_open: "Open", find_images: "Photos", browser_click: "Click", browser_type: "Submit", speak: "Read aloud" };
+  web_search: "Search", web_fetch: "Open", browser_open: "Open", find_images: "Photos", find_clips: "Clips", browser_click: "Click", browser_type: "Submit", speak: "Read aloud" };
 
 function toolTileFor(tool: string): { icon: IconName; color: TileColor } {
   if (tool === "run_shell") return { icon: "terminal", color: "ink" };
@@ -19,7 +19,7 @@ function toolTileFor(tool: string): { icon: IconName; color: TileColor } {
   if (tool === "gmail_trash") return { icon: "trash", color: "ink" };
   if (tool.startsWith("calendar")) return { icon: "cal", color: "orange" };
   if (tool === "browser_click" || tool === "browser_type") return { icon: "lock", color: "orange" };  // on a signed-in site
-  if (tool.startsWith("web_") || tool === "browser_open" || tool === "find_images" || tool === "speak") return { icon: "globe", color: "blue" };
+  if (tool.startsWith("web_") || tool === "browser_open" || tool === "find_images" || tool === "find_clips" || tool === "speak") return { icon: "globe", color: "blue" };
   return { icon: "send", color: "blue" };
 }
 

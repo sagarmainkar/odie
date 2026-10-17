@@ -48,7 +48,8 @@ class Counter:
 
 async def render_range(browser: Browser, html: str, path: Path, fps: int, first: int, end: int,
                        counter: Counter) -> Path:
-    """One tab: its own sealed page, frames first..end-1 drawn in order into one segment."""
+    """One tab: its own sealed page, frames first..end-1 drawn in order into one segment. A frame that draws a clip
+    returns a promise (the clip is seeked first); `page.eval` awaits it, so each picture is of the finished frame."""
     async with browser.sealed_page(html, WIDTH, HEIGHT) as page, Segment(path, fps) as segment:
         for k in range(first, end):
             await page.eval(f"__frame({k / fps})")
@@ -59,10 +60,13 @@ async def render_range(browser: Browser, html: str, path: Path, fps: int, first:
 
 
 async def render(browser: Browser, body: str, timings: dict, folder: Path, fps: int, tabs: int,
-                 progress: Callable[[int, int], None] | None = None) -> list[Path]:
-    """Draws every frame of the video and returns the segment files (`segment-0.mp4`, ...) in order. If any tab
-    fails, the others are stopped and the error comes out: no half-written segment is handed back."""
-    html = assemble(body, timings)
+                 progress: Callable[[int, int], None] | None = None, assets_script: str = "",
+                 credits_script: str = "") -> list[Path]:
+    """Draws every frame of the video and returns the segment files (`segment-0.mp4`, ...) in order; every tab's page
+    carries the pictures and clips (`assets_script`) and Odie's credits card (`credits_script`, whose scene the
+    timings include), see page.assemble. If any tab fails, the others are stopped and the error comes out: no
+    half-written segment is handed back."""
+    html = assemble(body, timings, assets_script, credits_script)
     total_seconds = timings["starts"][-1] + timings["lengths"][-1]
     frames = timeline.frame_count(total_seconds, fps)
     counter = Counter(frames, progress)

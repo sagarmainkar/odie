@@ -430,7 +430,7 @@
     }
   },
   {
-    "description": "Make a narrated, animated explainer video that plays in this chat. A separate writer makes the narration and\nthe animation from your brief, in the background; it can't see this chat, the user's notes, memory or the web.\ntopic: what the video is about, short (\"How attention works\").\nminutes: its length, from 1 to 6: the user's length, else 2.\nbrief: the plan: who it's for and their level, the key points in order, the look, examples, numbers or formulas\nthat must appear, and any facts you found. Up to 20,000 characters.\nsources: what the user gave, passed to the writer word for word (never retype it): \"my message\" (the user's\nlatest message), a note's name or path in their vault, or a text file's path in Odie's workspace. Up to 5.\nvoice_name: leave empty; only when the user asks for a voice, one of the Settings engine's voices.\nIt returns at once. {\"error\": …}: fix exactly that and call again. {\"result\": …}: the video is being made; reply\nin one or two lines as the result says, and don't repeat the brief.",
+    "description": "Make a narrated, animated explainer video that plays in this chat. A separate writer makes the narration and\nthe animation from your brief, in the background; it can't see this chat, the user's notes, memory or the web.\ntopic: what the video is about, short (\"How attention works\").\nminutes: its length, from 1 to 6: the user's length, else 2.\nbrief: the plan: who it's for and their level, the key points in order, the look, examples, numbers or formulas\nthat must appear, and any facts you found. Up to 20,000 characters.\nsources: what the user gave, passed to the writer word for word (never retype it): \"my message\" (the user's\nlatest message), a note's name or path in their vault, or a text file's path in Odie's workspace. Up to 5.\nimages: pictures for the film, at most 20, each one line \"address — what it shows\": the address a tool gave\n(https://… from find_images, photo:<id>, upload:<id>, screenshot:<id>), then what the picture shows, its mood, its\norientation if unusual, and a web picture's credit in brackets at the end. The writer sees only these words.\nclips: short stock clips, at most 6, the same way, with the https:// address find_clips gave.\nvoice_name: leave empty; only when the user asks for a voice, one of the Settings engine's voices.\nIt returns at once. {\"error\": …}: fix exactly that and call again. {\"result\": …}: the video is being made; reply\nin one or two lines as the result says, and don't repeat the brief.",
     "name": "make_video",
     "parameters_json_schema": {
       "properties": {
@@ -462,6 +462,36 @@
           ],
           "default": null,
           "title": "Sources"
+        },
+        "images": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Images"
+        },
+        "clips": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Clips"
         },
         "voice_name": {
           "default": "",

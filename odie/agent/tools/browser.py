@@ -394,10 +394,24 @@ def make_browser_tools(store, browser_for: Callable[[], object] | None = None) -
         got = await images.find(get(), q, max(1, min(int(count), 12)))
         return {"result": images.find_text(got)}
 
+    async def find_clips(query: str, count: int = 4) -> dict:
+        """Find short stock video clips through Odie's browser (free, no search key): Pexels and Pixabay, each with
+        its file address, length in seconds, size, credit and page. They're for make_video's clips=[...]: one line per
+        clip, "address — what it shows (credit)", with the address and the credit exactly as given. A clip is 5 to 15
+        seconds of a mood or a place (waves on a beach, snow falling, a busy street, a city from above), not people's
+        faces; search in plain words ("monsoon rain", "Goa beach")."""
+        from odie.browser import clips
+        q = " ".join((query or "").split())[:120]
+        if not q:
+            return {"error": "Say what the clips should show."}
+        got = await clips.find(get(), q, max(1, min(int(count), 8)))
+        return {"result": clips.find_text(got)}
+
     return [FunctionTool(browser_open, require_confirmation=guard.for_url(store)),
             FunctionTool(browser_click, require_confirmation=guard.for_click(store)),
             FunctionTool(browser_type, require_confirmation=guard.for_type(store)), FunctionTool(browser_scroll),
-            FunctionTool(find_images, require_confirmation=guard.for_query(store))]
+            FunctionTool(find_images, require_confirmation=guard.for_query(store)),
+            FunctionTool(find_clips, require_confirmation=guard.for_query(store))]
 
 
 def make_signin_tools(store) -> list[FunctionTool]:

@@ -3,22 +3,30 @@ video writer (odie.video.writer), which turns the topic, length and brief into t
 its making step narrates, draws and joins them into an MP4 and hands it over for the chat. Importing this module
 registers the kind as "video", with its jobs under <workspace>/videos/<slug>/.
 
-A video job's folder holds pages/ (every page the writer submitted), page.html (the accepted page as it was drawn,
-with its timings), narration.wav, the segment files, <slug>.mp4 and job.json. job.data carries "narration" (one
-string per scene) and "body" (the page) from the writing step to the making step."""
+A video job's folder holds brief.md (the writer's brief, then the picture and clip lines as the chat gave them),
+assets/ (the prepared pictures and clips: img1.jpg, clip1.webm, …), pages/ (every page the writer submitted),
+page.html (the accepted page as it was drawn, with its timings, pictures and credits card), narration.wav, the
+segment files, <slug>.mp4 and job.json.
+
+job.data carries, from make_video: "given" ({"images": [...], "clips": [...]}, the chat's lines) and "private" (the
+signed-in sites the asking chat had read); from the writing step: "assets" (each prepared one's name, kind, words,
+credit, size, length and file; never its data), "dropped" (the lines the writer was told about the ones that couldn't
+be used), "narration" (one string per scene) and "body" (the page)."""
 from pathlib import Path
 
 from odie import voice
+from odie.agent import turn as chat_turn
 from odie.agent.tools.files import hand_over
 from odie.browser.engine import BrowserError
 from odie.making import jobs
-from odie.video import timeline, writer
+from odie.video import assets, timeline, writer
 from odie.video.encode import EncodeError, mux, probe
 from odie.video.narrate import narrate
-from odie.video.page import assemble
+from odie.video.page import assemble, credits_scene
 from odie.video.render import render
 
 FOLDER = "videos"
+CREDITS_SECONDS = 3.0  # Odie's credits card for web pictures and clips, after the last scene
 
 
 def needs_writing(job: jobs.Job) -> bool:
@@ -31,29 +39,86 @@ def needs_writing(job: jobs.Job) -> bool:
     return not has_page
 
 
+def given_lines(job: jobs.Job) -> tuple[list[str], list[str]]:
+    """The picture and clip lines the chat gave make_video; a job made before pictures (no "given") has none."""
+    given = job.data.get("given", {})
+    return given.get("images", []), given.get("clips", [])
+
+
+def keep_lines_in_brief(job: jobs.Job) -> None:
+    """Add the chat's picture and clip lines to the job's brief.md under "## Pictures", word for word, so the brief
+    kept for revisions has them. The writer's own brief (job.brief) never has them: it reads names and words only."""
+    images, clips = given_lines(job)
+    section = assets.brief_section(images, clips)
+    if not section:
+        return
+    pieces = [job.brief.strip(), section]
+    text = "\n\n".join(piece for piece in pieces if piece)
+    (job.folder / "brief.md").write_text(text + "\n", encoding="utf-8")
+
+
+async def gather_assets(job: jobs.Job) -> tuple[list[assets.Asset], list[str]]:
+    """The job's pictures and clips fetched and prepared into its assets/ folder (odie.video.assets.gather), as the
+    asking chat was: a private chat's web addresses are refused, with the deck's words. The queue's worker runs in an
+    empty context of its own, so the chat's sites are set here from the job, as the deck's making step does."""
+    images, clips = given_lines(job)
+    pictures, moving = assets.parse(images, clips)
+    private = chat_turn.PRIVATE.set(set(job.data.get("private", [])))
+    try:
+        return await assets.gather(pictures, moving, job.folder)
+    finally:
+        chat_turn.PRIVATE.reset(private)
+
+
+def assets_from(job: jobs.Job) -> list[assets.Asset]:
+    """The prepared pictures and clips the writing step recorded, their files in the job's assets/ folder; a job
+    with none (or made before pictures) -> []."""
+    records = job.data.get("assets", [])
+    return assets.from_records(records, job.folder / "assets")
+
+
 async def write(job: jobs.Job, turn, browser) -> None:
-    """The writing step: the video writer's focused turn, then the title, narration and page onto the job."""
-    written = await writer.write(job.topic, job.minutes, job.brief, job.folder, turn, browser)
+    """The writing step: the pictures and clips first (so the writer is told what it has, by name), then the video
+    writer's focused turn, then the title, narration and page onto the job."""
+    keep_lines_in_brief(job)
+    gathered, dropped = await gather_assets(job)
+    job.data["assets"] = [assets.as_record(asset) for asset in gathered]
+    job.data["dropped"] = dropped
+    listing = assets.listing(gathered, dropped)
+    assets_script = assets.staple(gathered)  # the writer's page check draws the same pictures the render will
+    written = await writer.write(job.topic, job.minutes, job.brief, job.folder, turn, browser, listing=listing,
+                                 assets_script=assets_script)
     job.title = jobs.title_after_writing(written.title, job)
     job.data["narration"] = written.narration
     job.data["body"] = written.body
 
 
 async def make_video(job: jobs.Job, browser, transport) -> Path:
-    """The steps from narration to a checked MP4 file; returns the MP4's path. Any step may raise."""
+    """The steps from narration to a checked MP4 file; returns the MP4's path. Any step may raise. When the video has
+    web pictures or clips, their credits get a card of Odie's own after the writer's last scene (CREDITS_SECONDS,
+    silent): one more scene in the timings than the narration has, and the voice padded to the picture's end."""
     folder = job.folder
     narration = job.data["narration"]
     body = job.data["body"]
-    wav, lengths = await narrate(jobs.hooks["store"], narration, job.voice_name, transport=transport)
+    wav, lengths, beats = await narrate(jobs.hooks["store"], narration, job.voice_name, transport=transport)
 
+    gathered = assets_from(job)
+    credits = assets.credits(gathered)
+    credits_script = credits_scene(credits)
+    if credits:
+        lengths = lengths + [CREDITS_SECONDS]
+        beats = beats + [[0.0]]
     starts, _total = timeline.scene_starts(lengths, timeline.BREATH)
-    timings = {"starts": starts, "lengths": lengths}
+    timings = {"starts": starts, "lengths": lengths, "beats": beats}
 
     narration_wav = folder / "narration.wav"
     narration_wav.write_bytes(wav)
-    (folder / "page.html").write_text(assemble(body, timings), encoding="utf-8")
+    assets_script = assets.staple(gathered)
+    page_html = assemble(body, timings, assets_script, credits_script)
+    (folder / "page.html").write_text(page_html, encoding="utf-8")
 
-    segments = await render(browser, body, timings, folder, timeline.FPS, timeline.TABS)
+    segments = await render(browser, body, timings, folder, timeline.FPS, timeline.TABS, assets_script=assets_script,
+                            credits_script=credits_script)
     mp4 = folder / f"{job.slug}.mp4"
     await mux(segments, narration_wav, mp4)
 
@@ -70,8 +135,9 @@ async def make(job: jobs.Job, browser, transport) -> dict:
     return handed["media"]
 
 
-# Errors whose words are written for the user: the voice isn't running, ffmpeg's complaint, the browser's.
-KNOWN_ERRORS = (voice.VoiceUnavailable, EncodeError, BrowserError)
+# Errors whose words are written for the user: the voice isn't running, ffmpeg's complaint, the browser's, the
+# pictures over what a video can carry.
+KNOWN_ERRORS = (voice.VoiceUnavailable, EncodeError, BrowserError, assets.AssetProblem)
 KIND = jobs.Kind(word="video", folder=FOLDER, write=write, make=make, known_errors=KNOWN_ERRORS,
                  needs_writing=needs_writing)
 jobs.KINDS["video"] = KIND

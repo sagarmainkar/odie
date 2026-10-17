@@ -5,8 +5,10 @@ Most tests use a stand-in for runner.focused_turn: a plain object that records w
 by name, as a model would, following a script per test, then asks the follow-up once (the nudge), as focused_turn
 does. page.check is a recorder where no browser is needed. Two tests run the real focused turn through ADK with a
 stand-in model (an ADK BaseLlm), and one draws the worked example in a real browser."""
+import ast
 import json
 import logging
+import re
 from pathlib import Path
 from typing import ClassVar
 
@@ -88,11 +90,13 @@ async def submits(turn):
 @pytest.fixture
 def checks(monkeypatch):
     """page.check replaced by a recorder: it answers with the next problem from `checks["problems"]` (None, page fine,
-    once they run out) and records every (body, narration, browser) it was asked about."""
-    record = {"problems": [], "calls": []}
+    once they run out) and records every (body, narration, browser) it was asked about, and in "scripts" the
+    pictures' staple each was drawn with."""
+    record = {"problems": [], "calls": [], "scripts": []}
 
-    async def recorded(body, narration, browser):
+    async def recorded(body, narration, browser, assets_script=""):
         record["calls"].append((body, list(narration), browser))
+        record["scripts"].append(assets_script)
         if record["problems"]:
             return record["problems"].pop(0)
         return None
@@ -303,7 +307,7 @@ async def test_a_page_too_big_is_a_rejection_with_the_limit(tmp_path, checks):
 async def test_a_hang_is_a_rejection_told_in_words(tmp_path, monkeypatch):
     failures = [BrowserTimeout("frame 3 took too long.")]
 
-    async def check(body, narration, browser):
+    async def check(body, narration, browser, assets_script=""):
         if failures:
             raise failures.pop(0)
         return None
@@ -323,7 +327,7 @@ async def test_a_hang_is_a_rejection_told_in_words(tmp_path, monkeypatch):
 
 
 async def test_a_browser_that_fails_ends_the_job_with_its_own_words_and_is_no_rejection(tmp_path, monkeypatch):
-    async def check(body, narration, browser):
+    async def check(body, narration, browser, assets_script=""):
         raise BrowserError("The browser didn't start.")
 
     monkeypatch.setattr(page, "check", check)
@@ -516,3 +520,195 @@ def test_the_length_is_a_guide_the_writer_is_told_not_to_count():
     assert "a guide, not a count" in writer.prompt_for("Quantization", 4, "")
     assert "Never count words" in writer.INSTRUCTION and "within about a tenth" not in writer.INSTRUCTION
     assert "don't count words" in writer.LINES.nudge
+
+
+def test_writer_md_tells_how_to_mark_beats_and_draw_on_them():
+    text = WRITER_MD.read_text()
+    assert "### Beats" in text and "`|`" in text and "At most 12 phrases a scene" in text
+    for helper in ("`s.beats`", "`s.beat(t, i)`", "`s.beatAt(t)`"):
+        assert helper in text, helper
+
+
+def test_the_prompt_lists_the_pictures_after_the_brief():
+    listing = "Pictures (use by name with s.photo / s.texture; you cannot add others):\n  img1  1920×1280  landscape  x"
+    prompt = writer.prompt_for("Delhi", 2, "For Asha.", listing)
+    assert f"Brief:\nFor Asha.\n\n{listing}\n\n{writer.PLAN_THEN_WRITE}" in prompt
+    assert writer.prompt_for("Delhi", 2, "For Asha.") == writer.prompt_for("Delhi", 2, "For Asha.", "")
+    assert "Pictures" not in writer.prompt_for("Delhi", 2, "For Asha.")
+
+
+async def test_the_listing_reaches_the_writers_prompt(tmp_path, checks):
+    async def script(turn):
+        await turn.submit()
+
+    turn = Turn(script)
+    await writer.write("Delhi", 2, "For Asha.", tmp_path / "job", turn, BROWSER, listing="Pictures (…):\n  img1  x")
+    assert "For Asha.\n\nPictures (…):\n  img1  x\n\n" in turn.prompt
+
+
+async def test_the_pictures_staple_reaches_the_page_check(tmp_path, checks):
+    async def script(turn):
+        await turn.submit()
+
+    staple = '<script>Video.assets({"img1": {"kind": "image"}})</script>'
+    await writer.write("Delhi", 2, "", tmp_path / "job", Turn(script), BROWSER, listing="x", assets_script=staple)
+    assert checks["scripts"] == [staple]
+    await writer.write("Delhi", 2, "", tmp_path / "job2", Turn(script), BROWSER)
+    assert checks["scripts"] == [staple, ""]
+
+
+# ---- Pictures, clips and the map: what writer.md teaches, and the names the page may use ----
+
+PICTURE_HELPERS = ("s.photo(", "s.clip(", "s.texture(", "s.wipe(", "s.scrim(", "s.image(")
+MAP_HELPERS = ("s.map(", "s.place(", "s.pin(", "s.route(", "s.vehicle(", "s.along(", "s.project(", "s.region(",
+               "s.glow(")
+
+
+def test_writer_md_teaches_every_picture_and_map_helper_in_the_contract():
+    text = WRITER_MD.read_text()
+    assert "### Pictures, clips and the map" in text
+    contract = text.split("## The page contract")[1].split("## Film grammar")[0]
+    for helper in PICTURE_HELPERS + MAP_HELPERS:
+        assert f"`{helper}" in contract, helper
+
+
+def test_writer_md_states_the_kits_conventions_for_pictures():
+    text = WRITER_MD.read_text()
+    for convention in ("the direction the edge moves", "in degrees", "one moment a frame", "only the 2D canvas",
+                       "pictures only", "transparent", "upper third", "at most about 1.15",
+                       "You have no other pictures", "lat, lon"):
+        assert convention in text, convention
+
+
+def test_writer_md_has_a_film_grammar_that_cuts_on_the_beats():
+    text = WRITER_MD.read_text()
+    grammar = text.split("## Film grammar")[1].split("\n## ")[0]
+    for idea in ("strongest picture", "never static", "three to six seconds", "`|`", "s.beat", "scrim",
+                 "lower third", "iris", "warmth", "weight", "twice", "lingers", "5 to 10 seconds",
+                 "no pictures"):
+        assert idea in grammar, idea
+
+
+def stand_in_staple(names: list[str]) -> str:
+    """A staple as odie.video.assets.staple makes it, with only the names and kinds (the check reads no more)."""
+    registry = {}
+    for name in names:
+        kind = "image"
+        if name.startswith("clip"):
+            kind = "clip"
+        registry[name] = {"kind": kind, "src": "data:,", "width": 10, "height": 10}
+    return f"<script>Video.assets({json.dumps(registry)})</script>"
+
+
+def page_using(*calls: str) -> str:
+    draws = " ".join(calls)
+    return f"<script>Video.scenes([{{draw(t, s) {{ {draws} }}}}]);</script>"
+
+
+EIGHT = stand_in_staple([f"img{n}" for n in range(1, 9)])
+
+
+async def test_a_picture_name_the_video_doesnt_have_is_refused_before_the_page_is_drawn(checks):
+    body = page_using('s.photo("img2", {zoom: 1.1});', "s.photo('img9');")
+    problem = await writer.submission_problem(["Words."], body, BROWSER, EIGHT)
+    assert problem.startswith("There is no img9: the pictures are img1…img8"), problem
+    assert checks["calls"] == []  # cheap: refused before the browser
+
+
+async def test_a_page_with_pictures_in_a_video_without_any_is_told_to_remove_them(checks):
+    problem = await writer.submission_problem(["Words."], page_using('s.photo("img1");'), BROWSER)
+    assert "There is no img1: this video has no pictures or clips" in problem and "remove s.photo" in problem
+    assert checks["calls"] == []
+
+
+async def test_every_helper_that_takes_a_name_is_checked(checks):
+    staple = stand_in_staple(["img1", "img3", "clip1", "clip2"])
+    told = {}
+    for call in ('s.clip("clip3", t);', 's.texture("img2");', "s.image(`img4`);", 's.photo( "img5" );'):
+        told[call] = await writer.submission_problem(["Words."], page_using(call), BROWSER, staple)
+    assert told['s.clip("clip3", t);'] == ("There is no clip3: the pictures are img1 and img3; the clips are clip1 "
+                                           "and clip2. Use only those names.")
+    assert told['s.texture("img2");'].startswith("There is no img2:")
+    assert told["s.image(`img4`);"].startswith("There is no img4:")
+    assert told['s.photo( "img5" );'].startswith("There is no img5:")
+    assert checks["calls"] == []
+
+
+async def test_known_names_and_names_in_variables_go_on_to_the_drawn_check(checks):
+    staple = stand_in_staple(["img1", "clip1"])
+    body = page_using('s.photo("img1");', 's.clip("clip1", t);', "const n = 'img' + 1; s.photo(n);",
+                      "s.photo(`img${1}`);")
+    assert await writer.submission_problem(["Words."], body, BROWSER, staple) is None
+    assert len(checks["calls"]) == 1
+
+
+def test_names_in_words_run_a_whole_series_and_list_a_broken_one():
+    assert writer.names_in_words(["img1", "img2", "img3", "img4"]) == "img1…img4"
+    assert writer.names_in_words(["img1", "img2"]) == "img1 and img2"
+    assert writer.names_in_words(["img1", "img3", "img4"]) == "img1, img3 and img4"
+    assert writer.names_in_words(["clip1"]) == "clip1"
+
+
+def test_the_staple_gives_its_names_by_kind():
+    assert writer.stapled_names(stand_in_staple(["img1", "img3", "clip1"])) == (["img1", "img3"], ["clip1"])
+    assert writer.stapled_names("") == ([], [])
+
+
+# ---- The worked examples with pictures: drawn in a real browser with stand-in pictures of the listed sizes ----
+
+LISTED = re.compile(r"^ {2}(img\d+|clip\d+) +(\d+)×(\d+) ", re.MULTILINE)
+NARRATION_LIST = re.compile(r"\n  narration=\[\n(.*?)\n  \],\n", re.DOTALL)
+
+
+def picture_examples() -> list[tuple[str, list[str], str, list[tuple[str, int, int]]]]:
+    """Each worked example in writer.md that uses pictures: (its heading, its narration, its page, the pictures its
+    listing gives as (name, width, height))."""
+    examples = []
+    for section in WRITER_MD.read_text().split("\n### ")[1:]:
+        if "submit_video(" not in section or not LISTED.search(section):
+            continue
+        heading = section.splitlines()[0]
+        narration = ast.literal_eval("[" + NARRATION_LIST.search(section).group(1) + "]")
+        body = section.split('page="""')[1].split('"""')[0]
+        listed = [(name, int(width), int(height)) for name, width, height in LISTED.findall(section)]
+        examples.append((heading, narration, body, listed))
+    return examples
+
+
+def staple_of(listed: list[tuple[str, int, int]]) -> str:
+    """Stand-in pictures of the listed sizes, each a plain colour, stapled as odie.video.assets.staple does."""
+    import base64
+    import io
+
+    from PIL import Image
+    registry = {}
+    for number, (name, width, height) in enumerate(listed):
+        out = io.BytesIO()
+        Image.new("RGB", (width, height), (60 + 40 * number, 90, 120)).save(out, "JPEG", quality=60)
+        src = "data:image/jpeg;base64," + base64.b64encode(out.getvalue()).decode()
+        registry[name] = {"kind": "image", "src": src, "width": width, "height": height}
+    return f"<script>Video.assets({json.dumps(registry)})</script>"
+
+
+def test_writer_md_has_a_history_and_a_trip_example_with_pictures():
+    headings = [heading for heading, _narration, _body, _listed in picture_examples()]
+    assert len(headings) == 2, headings
+    assert "history" in headings[0].lower() and "trip" in headings[1].lower()
+    trip = picture_examples()[1][2]
+    for move in ("s.along(", 's.vehicle("plane"', 'dir: "circle"', "s.scrim(", "s.beats[", "s.beatAt("):
+        assert move in trip, move
+    history = picture_examples()[0][2]
+    for move in ("s.glow(", "s.pin(", "s.beats[", "s.beatAt("):
+        assert move in history, move
+
+
+@needs_browser
+async def test_the_worked_examples_with_pictures_pass_the_check_in_a_real_browser(tmp_path):
+    real = Browser(tmp_path / "render", BIN, extra_args=RENDER_ARGS)
+    told = {}
+    try:
+        for heading, narration, body, listed in picture_examples():
+            told[heading] = await writer.submission_problem(narration, body, real, staple_of(listed))
+    finally:
+        await real.close()
+    assert len(told) == 2 and all(problem is None for problem in told.values()), told

@@ -64,7 +64,7 @@ async def test_fonts_load_first_formulas_draw_and_the_first_scene_text_is_hidden
 
 
 def test_the_kit_and_the_sample_use_no_clock_and_no_unseeded_randomness():
-    for name in ("video.js", "sample.html"):
+    for name in ("video.js", "map.js", "sample.html"):
         code = (KIT / name).read_text()
         code = re.sub(r"//[^\n]*", "", code)  # comments may name what the kit avoids
         for banned in ("requestAnimationFrame", "Date", "performance.now", "Math.random", "setTimeout", "setInterval"):
@@ -179,3 +179,124 @@ async def test_a_page_that_loads_from_the_network_is_refused_with_the_reason(tmp
 @needs_browser
 async def test_a_good_page_passes(tmp_path):
     assert await checked(SAMPLE, ["word " * 10, "word " * 10], tmp_path) is None
+
+
+# A one-scene page that keeps its helpers where the test can call them.
+KEEPS_S = "<script>Video.scenes([{setup(s) { window.__s = s; }, draw(t, s) {}}]);</script>"
+
+
+async def evaluated(timings, expressions, tmp_path):
+    b = Browser(tmp_path / "p", BIN, extra_args=RENDER_ARGS)
+    try:
+        async with b.sealed_page(page.assemble(KEEPS_S, timings), 1920, 1080) as p:
+            values = [await p.eval(expression) for expression in expressions]
+            assert p.errors == []
+    finally:
+        await b.close()
+    return values
+
+
+@needs_browser
+async def test_a_scene_has_its_beats_and_eased_progress_across_each(tmp_path):
+    timings = {"starts": [0.0], "lengths": [5.0], "beats": [[0.0, 1.0, 3.0]]}
+    values = await evaluated(timings, [
+        "__s.beats",
+        "__s.beat(0.5, 1)", "__s.beat(2.0, 1)", "__s.beat(3.5, 1)",  # beat 1 runs from 1 s to 3 s
+        "__s.beat(4.0, 2)", "__s.beat(5.0, 2)",                       # the last beat runs to the scene's end, 5 s
+        "__s.beatAt(0.5)", "__s.beatAt(1.0)", "__s.beatAt(2.9)", "__s.beatAt(4.0)",
+    ], tmp_path)
+    assert values == [[0, 1, 3], 0, 0.5, 1, 0.5, 1, 0, 1, 1, 2]
+
+
+@needs_browser
+async def test_timings_without_beats_give_each_scene_one_beat(tmp_path):
+    values = await evaluated({"starts": [0.0], "lengths": [4.0]},
+                             ["__s.beats", "__s.beat(2.0, 0)", "__s.beatAt(3.0)"], tmp_path)
+    assert values == [[0], 0.5, 0]
+
+
+BEAT_ONE = "<script>Video.scenes([{draw(t, s) { s.text('x', 'hi', {opacity: s.beat(t, 1)}); }}]);</script>"
+
+
+@needs_browser
+async def test_a_beat_the_narration_doesnt_mark_is_a_told_problem(tmp_path):
+    problem = await checked(BEAT_ONE, ["word " * 10], tmp_path)
+    assert problem is not None and "s.beat(t, 1)" in problem and "1 beat" in problem, problem
+
+
+@needs_browser
+async def test_a_beat_the_narration_marks_passes_the_check(tmp_path):
+    assert await checked(BEAT_ONE, ["word " * 5 + "| " + "word " * 5], tmp_path) is None
+
+
+def one_picture_staple() -> str:
+    """The staple for one 40×30 red picture called img1, as odie.video.assets.staple makes it."""
+    import base64
+    import io
+    import json
+
+    from PIL import Image
+    out = io.BytesIO()
+    Image.new("RGB", (40, 30), (255, 0, 0)).save(out, "JPEG")
+    src = "data:image/jpeg;base64," + base64.b64encode(out.getvalue()).decode()
+    registry = {"img1": {"kind": "image", "src": src, "width": 40, "height": 30}}
+    return f"<script>Video.assets({json.dumps(registry)})</script>"
+
+
+PHOTO_PAGE = '<script>Video.scenes([{draw(t, s) { s.photo("img1", {zoom: 1.1}); }}]);</script>'
+
+
+@needs_browser
+async def test_a_page_that_draws_a_picture_passes_the_check_with_its_staple(tmp_path):
+    b = Browser(tmp_path / "p", BIN, extra_args=RENDER_ARGS)
+    try:
+        with_staple = await page.check(PHOTO_PAGE, ["The Red Fort at dusk."], b, one_picture_staple())
+        without = await page.check(PHOTO_PAGE, ["The Red Fort at dusk."], b)
+    finally:
+        await b.close()
+    assert with_staple is None
+    assert "no picture called img1; this video has no pictures" in without
+
+
+# The sample's two scenes, then Odie's credits card: the timings have three scenes, the writer's page two.
+WITH_CREDITS = {"starts": [0.0, 3.5, 7.0], "lengths": [3.0, 3.0, 3.0], "beats": [[0.0], [0.0], [0.0]]}
+
+
+@needs_browser
+async def test_the_credits_card_is_a_scene_after_the_writers_last(tmp_path):
+    credits = page.credits_scene(["Photo by A on Unsplash", "Video by B on Pexels"])
+    html = page.assemble(SAMPLE, WITH_CREDITS, "", credits)
+    shown = "id => getComputedStyle(document.getElementById(id)).visibility"
+    b = Browser(tmp_path / "p", BIN, extra_args=RENDER_ARGS)
+    try:
+        async with b.sealed_page(html, 1920, 1080) as p:
+            count = await p.eval("window.__sceneCount")
+            await p.eval("__frame(5.0)")
+            title_in_scene_2 = await p.eval(f"document.getElementById('v-odie-credits-title') === null || "
+                                            f"({shown})('v-odie-credits-title')")
+            await p.eval("__frame(9.5)")
+            title = await p.eval(f"({shown})('v-odie-credits-title')")
+            words = await p.eval("[0, 1].map(i => document.getElementById('v-odie-credits-' + i).textContent)")
+            colour = await p.eval("getComputedStyle(document.getElementById('v-odie-credits-0')).color")
+            heading = await p.eval("document.getElementById('v-odie-credits-title').textContent")
+            assert p.errors == []
+    finally:
+        await b.close()
+    assert count == 2  # the writer's scenes: Odie's card isn't one of the page's
+    assert title_in_scene_2 in (True, "hidden")
+    assert title == "visible" and heading == "Pictures"
+    assert words == ["Photo by A on Unsplash", "Video by B on Pexels"]
+    assert colour == "rgb(236, 236, 236)"  # the kit's text colour, #ECECEC
+
+
+@needs_browser
+async def test_a_credits_card_without_its_scene_in_the_timings_is_still_a_mismatch(tmp_path):
+    credits = page.credits_scene(["Photo by A on Unsplash"])
+    html = page.assemble(SAMPLE, TIMINGS, "", credits)
+    b = Browser(tmp_path / "p", BIN, extra_args=RENDER_ARGS)
+    try:
+        async with b.sealed_page(html, 1920, 1080) as p:
+            errors = list(p.errors)
+    finally:
+        await b.close()
+    assert any("The page has 2 scenes but the narration has 1" in error for error in errors), errors

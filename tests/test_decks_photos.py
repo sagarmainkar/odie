@@ -57,7 +57,8 @@ async def test_the_credit_defaults_to_the_site(web):
 
 
 async def test_photos_are_public_addresses_only(web):
-    for bad in ("http://10.0.0.1/a.jpg", "http://localhost/a.jpg", "file:///etc/passwd", "ftp://ex.com/a.jpg", "javascript:alert(1)"):
+    for bad in ("http://10.0.0.1/a.jpg", "http://localhost/a.jpg", "file:///etc/passwd", "ftp://ex.com/a.jpg",
+                "javascript:alert(1)"):
         with pytest.raises(photos.PhotoError):
             await photos.fetch(bad)
 
@@ -79,7 +80,8 @@ async def test_fetch_all_reports_the_failures(web):
 async def test_screenshots_and_uploads_by_id(web):
     from odie import media
     from odie.app.images import prepare_image, uploads_dir
-    m = media.save(jpeg(1280, 900, exif=False), "screenshot", "jpg", "image/jpeg", "maps.google.com · Shillong", {"url": "https://maps.google.com/x"})
+    m = media.save(jpeg(1280, 900, exif=False), "screenshot", "jpg", "image/jpeg", "maps.google.com · Shillong",
+                   {"url": "https://maps.google.com/x"})
     shot = await photos.fetch(f"screenshot:{m['id']}")
     assert shot.credit == "maps.google.com" and shot.width == 1280
     up = prepare_image(jpeg(900, 600, exif=False), uploads_dir())
@@ -112,3 +114,138 @@ def test_the_readme_says_whose_photos_they_are():
     from pathlib import Path
     text = (Path(__file__).parent.parent / "README.md").read_text()
     assert "Designed decks" in text and "belong to their owners" in text  # spec part 3: the repo ships no photos
+
+
+# The user's own pictures, by photo:<id>: the library's big copy, through the real index (rows from a stand-in library).
+
+UUID = "0F1E2D3C-4B5A-6978-8899-AABBCCDDEEFF"
+
+
+@pytest.fixture
+def library(isolated_settings, tmp_path, monkeypatch):
+    """Photos switched on, a store the background jobs would use, and index_rows(rows) to put library rows in the
+    real index; the copies are files under tmp_path."""
+    from odie.making import jobs
+    from odie.photos import settings as photo_settings
+    from odie.store.db import Store
+    from odie.vault import settings as vault_settings
+    store = Store(tmp_path / "assistant.db")
+    store.init_schema()
+    photo_settings.put(store, on=True)
+    monkeypatch.setitem(jobs.hooks, "store", store)
+    copies = tmp_path / "library"
+    copies.mkdir()
+
+    def index_rows(rows):
+        vault_settings.index_for(store).index_photos(rows)
+
+    return copies, index_rows
+
+
+def library_row(uuid, big, kind="photo"):
+    from odie.photos.library import PhotoRow
+    return PhotoRow(uuid=uuid, kind=kind, taken="2026-05-12T10:00:00", people=["Asha"], labels=[], place="Nathula",
+                    city="", country="India", albums=[], big=str(big) if big else None)
+
+
+async def test_a_library_picture_is_its_big_copy_upright_and_uncredited(library):
+    copies, index_rows = library
+    big = copies / "x_1_102_o.jpeg"
+    big.write_bytes(jpeg(2048, 1536))
+    index_rows([library_row(UUID, big)])
+    got = await photos.fetch(f"photo:{UUID}", credit="Photo by Asha")
+    assert (got.width, got.height) == (2000, 1500) and got.credit == ""
+    assert got.ref == f"photo:{UUID}" and 0x010F not in Image.open(got.path).getexif()  # the camera isn't carried
+
+
+@pytest.mark.parametrize("ref", [f"photo:{UUID} (for a video or a deck)", f"photo:{UUID} us at Nathula",
+                                 f"photo: {UUID}"])
+async def test_words_after_a_library_id_never_lose_the_picture(library, ref):
+    copies, index_rows = library
+    big = copies / "x_1_102_o.jpeg"
+    big.write_bytes(jpeg(2048, 1536))
+    index_rows([library_row(UUID, big)])
+    got = await photos.fetch(ref)
+    assert (got.width, got.height) == (2000, 1500)
+    assert got.ref == f"photo:{UUID}"  # the picture's own address, whatever came after it
+
+
+async def test_a_refusal_names_the_library_picture_by_its_own_address(library):
+    with pytest.raises(photos.PhotoError) as e:
+        await photos.fetch(f"photo:{UUID} (for a video or a deck)")
+    assert str(e.value) == f"There's no picture photo:{UUID} in the user's Photos library here."
+
+
+async def test_a_library_picture_with_only_a_small_copy_is_refused_with_what_to_do(library):
+    copies, index_rows = library
+    thumb = copies / "x_4_5005_c.jpeg"
+    thumb.write_bytes(jpeg(360, 270))
+    index_rows([library_row(UUID, thumb)])
+    with pytest.raises(photos.PhotoError) as e:
+        await photos.fetch(f"photo:{UUID}")
+    assert str(e.value) == (f"photo:{UUID} has only a small copy on this Mac (360 px); open it in Photos once so the "
+                            "full picture comes down")
+
+
+async def test_a_library_picture_odie_cant_use_is_refused_in_words(library, monkeypatch):
+    copies, index_rows = library
+    heic = copies / "IMG_1.HEIC"
+    heic.write_bytes(b"ftypheic not something Pillow reads here")
+    video = "11111111-2222-3333-4444-555555555555"
+    gone = "22222222-2222-3333-4444-555555555555"
+    index_rows([library_row(UUID, heic), library_row(video, copies / "v.jpeg", kind="video"),
+                library_row(gone, copies / "gone.jpeg")])
+    cases = {
+        f"photo:{UUID}": f"photo:{UUID} is a HEIC Odie can't read here; export it as JPEG from Photos",
+        f"photo:{video}": f"photo:{video} is a video; only photos from the library can go in",
+        f"photo:{gone}": f"photo:{gone} has no copy on this Mac; open it in Photos once so the full picture comes down",
+        "photo:33333333-2222-3333-4444-555555555555": "There's no picture photo:33333333-2222-3333-4444-555555555555 "
+                                                      "in the user's Photos library here.",
+    }
+    for ref, words in cases.items():
+        with pytest.raises(photos.PhotoError) as e:
+            await photos.fetch(ref)
+        assert str(e.value) == words
+
+
+async def test_library_pictures_work_in_a_private_chat(library):
+    from odie.agent import turn
+    copies, index_rows = library
+    big = copies / "x_1_102_o.jpeg"
+    big.write_bytes(jpeg(1200, 1600))
+    index_rows([library_row(UUID, big)])
+    token = turn.PRIVATE.set({"amazon.in"})
+    try:
+        got = await photos.fetch(f"photo:{UUID}")
+    finally:
+        turn.PRIVATE.reset(token)
+    assert (got.width, got.height) == (1200, 1600)
+
+
+async def test_without_photos_set_up_a_library_picture_is_said_missing(isolated_settings, monkeypatch):
+    from odie.making import jobs
+    monkeypatch.setitem(jobs.hooks, "store", None)
+    with pytest.raises(photos.PhotoError, match="There's no picture photo:abc in the user's Photos library here."):
+        await photos.fetch("photo:abc")
+
+
+async def test_a_link_that_cant_be_reached_is_a_download_error(monkeypatch):
+    async def resolve(host):
+        return ["93.184.216.34"]
+
+    def handler(req):
+        raise httpx.ReadTimeout("timed out", request=req)
+
+    monkeypatch.setattr(net, "resolve_host", resolve)
+    monkeypatch.setattr(net, "_transport", httpx.MockTransport(handler))
+    with pytest.raises(net.DownloadError, match="The link couldn't be reached."):
+        await net.safe_download("https://ex.com/slow.jpg", 1000)
+
+
+async def test_one_address_fetched_twice_at_once_is_fine(web):
+    import asyncio
+    web["https://ex.com/same.jpg"] = (200, "image/jpeg", jpeg(2400, 1600))
+    first, second = await asyncio.gather(photos.fetch("https://ex.com/same.jpg"),
+                                         photos.fetch("https://ex.com/same.jpg"))
+    assert first.path == second.path and (first.width, second.width) == (2000, 2000)
+    assert [p.name for p in first.path.parent.iterdir() if p.suffix == ".tmp"] == []  # no temporary file left

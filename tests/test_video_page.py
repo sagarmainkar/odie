@@ -53,6 +53,14 @@ def test_estimated_timings_from_words():
     assert timings["lengths"][0] == 2.0  # short scenes still get 2 s
     assert timings["lengths"][1] == 30.0  # 70 words at 140 a minute
     assert timings["starts"] == [0.0, 2.5]  # the second scene starts after the first and a breath
+    assert timings["beats"] == [[0.0], [0.0]]  # no marks: one beat a scene
+
+
+def test_estimated_beats_share_the_scene_by_words_and_marks_are_not_words():
+    # 7 words then 21 words, 28 words in all (12 s at 140 a minute): the second phrase starts a quarter in, at 3 s
+    timings = page.estimated_timings(["word " * 7 + "| " + "word " * 21])
+    assert timings["lengths"] == [12.0]
+    assert timings["beats"] == [[0.0, 3.0]]
 
 
 def test_the_first_problem_is_the_one_told():
@@ -66,3 +74,53 @@ def test_the_first_problem_is_the_one_told():
     problem = page.first_problem(2, 2, [], [(1, 0.05, "first"), (2, 1.95, "second")])
     assert "scene 1" in problem and "first" in problem and "second" not in problem
     assert page.first_problem(2, 2, [], []) is None
+
+
+def test_the_stapled_assets_go_after_the_kit_and_before_the_page():
+    staple = '<script>Video.assets({"img1": {"kind": "image"}})</script>'
+    html = page.assemble("<div id=page></div>", {"starts": [0], "lengths": [1.0]}, staple)
+    assert html.index("<script>window.__timings = ") < html.index(staple) < html.index("<div id=page></div>")
+    plain = page.assemble("<div id=page></div>", {"starts": [0], "lengths": [1.0]})
+    assert plain == page.assemble("<div id=page></div>", {"starts": [0], "lengths": [1.0]}, "")
+    assert "Video.assets({" not in plain.split("<script>window.__timings = ")[1]
+
+
+def test_the_map_and_its_data_go_after_video_js_and_before_the_timings():
+    html = page.assemble("<div id=page></div>", {"starts": [0], "lengths": [1.0]})
+    video = html.index("window.Video = {")
+    geo = html.index("<script>window.__geo = {")
+    map_kit = html.index("// map.js: the explainer-video kit")
+    timings = html.index("<script>window.__timings = ")
+    assert video < geo < map_kit < timings
+
+
+def test_the_map_data_is_inlined_whole_and_under_3_mb():
+    geo = page._kit()["geo"]
+    assert geo.startswith("window.__geo = {") and geo.endswith("};")
+    assert len(geo.encode("utf-8")) < 3_000_000
+    for key in ('"land": {', '"countries": {', '"states": {', '"places": {'):
+        assert key in geo
+    assert "</" not in geo  # nothing in the data can close the <script> it sits in
+
+
+def test_the_credits_card_is_odies_closing_scene_with_one_line_a_credit():
+    script = page.credits_scene(["Photo by A on Unsplash", "Video by B on Pexels"])
+    assert script.startswith("<script>Video.closing({") and script.endswith("</script>")
+    assert '"Pictures"' in script
+    assert '["Photo by A on Unsplash", "Video by B on Pexels"]' in script
+    assert page.credits_scene([]) == ""
+
+
+def test_a_credit_can_never_close_the_script_it_sits_in():
+    script = page.credits_scene(["Photo by </script><script>alert(1)</script> on Unsplash"])
+    assert script.count("</script>") == 1 and "<\\/script>" in script
+
+
+def test_the_credits_go_after_the_pictures_and_before_the_page_so_the_page_ends_with_them():
+    staple = '<script>Video.assets({"img1": {"kind": "image"}})</script>'
+    credits = page.credits_scene(["Photo by A on Unsplash"])
+    timings = {"starts": [0, 1.5], "lengths": [1.0, 3.0]}
+    html = page.assemble("<div id=page></div>", timings, staple, credits)
+    assert html.index(staple) < html.index(credits) < html.index("<div id=page></div>")
+    assert page.assemble("<div id=page></div>", timings, staple) == page.assemble("<div id=page></div>", timings,
+                                                                                  staple, "")

@@ -1,5 +1,6 @@
-"""A video page, put together: the kit (KaTeX and its fonts, three.js, video.js) and the scene timings inlined ahead
-of the model's page, so the sealed render tab needs nothing from the network. Also checks a page before the render."""
+"""A video page, put together: the kit (KaTeX and its fonts, three.js, video.js, the map's data and map.js) and the
+scene timings inlined ahead of the model's page, so the sealed render tab needs nothing from the network. Also checks a
+page before the render."""
 import base64
 import functools
 import json
@@ -7,7 +8,7 @@ import re
 from pathlib import Path
 
 from odie.browser.engine import BrowserError, BrowserTimeout
-from odie.video import timeline
+from odie.video import beats, timeline
 
 KIT = Path(__file__).parent / "kit"
 
@@ -38,14 +39,32 @@ def inline_fonts(css: str, fonts: Path) -> str:
     return WOFF2_URL.sub(as_data_uri, css)
 
 
+# The map's data files (scripts/geo/build_geo.py writes them), by the name map.js reads each under in window.__geo.
+GEO_FILES = {"land": "land.json", "countries": "countries.json", "states": "states-in.json", "places": "places.json"}
+
+
+def geo_script(folder: Path) -> str:
+    """The map's data as one script body, `window.__geo = {"land": {...}, "countries": {...}, "states": {...},
+    "places": {...}};`, each file inlined as it is (already compact JSON). A "</" in the data (none today) is written
+    "<\\/", the same string to JSON, so it can never close the <script> it sits in."""
+    parts = []
+    for key, file_name in GEO_FILES.items():
+        data = (folder / file_name).read_text(encoding="utf-8").strip()
+        parts.append(f'"{key}": {data}')
+    script = "window.__geo = {" + ", ".join(parts) + "};"
+    return script.replace("</", "<\\/")
+
+
 @functools.cache
 def _kit() -> dict[str, str]:
-    """The kit's files, read once: KaTeX's CSS (fonts inlined), three.js, KaTeX and video.js."""
+    """The kit's files, read once: KaTeX's CSS (fonts inlined), three.js, KaTeX, video.js, the map's data and map.js."""
     return {
         "katex_css": inline_fonts((KIT / "katex.min.css").read_text(), KIT / "fonts"),
         "three": (KIT / "three.min.js").read_text(),
         "katex": (KIT / "katex.min.js").read_text(),
         "video": (KIT / "video.js").read_text(),
+        "geo": geo_script(KIT / "geo"),
+        "map": (KIT / "map.js").read_text(),
     }
 
 
@@ -59,9 +78,54 @@ def check_offline(body: str) -> None:
                          f"the kit (three.js as THREE, KaTeX as katex, video.js as Video); remove {address}.")
 
 
-def assemble(body: str, timings: dict) -> str:
-    """The whole HTML document for a video: KaTeX's CSS, three.js, KaTeX, video.js, then `window.__timings`
-    ({"starts": [...], "lengths": [...]}, in seconds), then `body` (the model's markup and script), in that order."""
+# Odie's credits card, the scene after the writer's last: "Pictures", then one small line a credit, fading in one
+# after another on the stage's background in the kit's text colour. Up to CREDITS_PER_COLUMN lines a column, columns
+# side by side (26 credits, the most a video can have, make three). __CREDITS__ is the list, as JSON.
+CREDITS_SCENE = """<script>Video.closing({
+  // Odie's credits card for the web pictures and clips (drawn by Odie, not the writer).
+  draw(t, s) {
+    const credits = __CREDITS__;
+    const perColumn = __PER_COLUMN__;
+    const columns = Math.ceil(credits.length / perColumn);
+    const rows = Math.min(credits.length, perColumn);
+    const lineGap = 46;
+    const top = 540 - (90 + rows * lineGap) / 2;  // the title and the lines together, centred on the stage
+    const columnWidth = 1680 / columns;
+    s.text("odie-credits-title", "Pictures", {y: top + 24, size: 44, weight: 600, opacity: s.fade(t, 0.1)});
+    for (let i = 0; i < credits.length; i++) {
+      const column = Math.floor(i / perColumn);
+      const row = i % perColumn;
+      s.text("odie-credits-" + i, credits[i], {
+        x: 120 + columnWidth * (column + 0.5), y: top + 90 + row * lineGap + lineGap / 2, size: 28,
+        opacity: s.fade(t, 0.3 + 0.05 * i),
+      });
+    }
+  },
+});</script>"""
+CREDITS_PER_COLUMN = 10
+
+
+def credits_scene(credits: list[str]) -> str:
+    """Odie's credits card as a <script> for assemble: a scene placed after the writer's last (Video.closing), showing
+    "Pictures" and then one small line for each credit, ["Photo by A on Unsplash", "Video by B on Pexels"] -> two
+    lines under the title. No credits (only the user's own pictures, or none) -> "", and no card. A "</" inside a
+    credit is written "<\\/", the same string to JavaScript, so a credit can never close the script."""
+    if not credits:
+        return ""
+    listed = json.dumps(credits, ensure_ascii=False).replace("</", "<\\/")
+    script = CREDITS_SCENE.replace("__CREDITS__", listed)
+    return script.replace("__PER_COLUMN__", str(CREDITS_PER_COLUMN))
+
+
+def assemble(body: str, timings: dict, assets_script: str = "", credits_script: str = "") -> str:
+    """The whole HTML document for a video: KaTeX's CSS, three.js, KaTeX, video.js, the map's data (`window.__geo`)
+    and map.js, then `window.__timings`
+    ({"starts": [...], "lengths": [...], "beats": [[...], ...]}, in seconds, passed through as given), then the
+    video's pictures and clips (`assets_script`, odie.video.assets.staple's `<script>Video.assets({...})</script>`,
+    when there are any), then Odie's credits card (`credits_script`, credits_scene's, when there is one), then `body`
+    (the model's markup and script), in that order. The credits card comes before the body but plays after it: it
+    registers a closing scene that the body's Video.scenes([...]) puts after the writer's last, so the timings then
+    carry one scene more than the writer's page has."""
     check_offline(body)
     kit = _kit()
     head = [
@@ -71,9 +135,15 @@ def assemble(body: str, timings: dict) -> str:
         f"<script>{kit['three']}</script>",
         f"<script>{kit['katex']}</script>",
         f"<script>{kit['video']}</script>",
+        f"<script>{kit['geo']}</script>",
+        f"<script>{kit['map']}</script>",
         f"<script>window.__timings = {json.dumps(timings)};</script>",
-        "</head><body>",
     ]
+    if assets_script:
+        head.append(assets_script)
+    if credits_script:
+        head.append(credits_script)
+    head.append("</head><body>")
     return "\n".join(head) + "\n" + body + "\n</body></html>\n"
 
 
@@ -82,18 +152,36 @@ PROBE_EDGE = 0.05        # seconds after a scene's first moment, where it is fir
 PROBES_PER_SCENE = 3     # just after the start, the middle, the very end
 
 
+def estimated_beats(text: str, length: float) -> list[float]:
+    """A scene's beat starts guessed from its phrases' words, each phrase taking its share of the scene's length:
+    "seven words | twenty-one words" in a 12 s scene -> [0.0, 3.0] (the second phrase starts 7/28 of the way in);
+    no marks -> [0.0]."""
+    word_counts = [len(phrase.split()) for phrase in beats.phrases(text)]
+    total = max(1, sum(word_counts))
+    starts = []
+    words_before = 0
+    for count in word_counts:
+        starts.append(round(length * words_before / total, 3))
+        words_before += count
+    return starts
+
+
 def estimated_timings(narration: list[str]) -> dict:
     """Scene timings guessed from the words alone (the real ones come from the recorded voice later): each scene lasts
     its words at WORDS_PER_MINUTE, but at least 2 s. At 140 words a minute that is 2.33 words a second, so
-    ["one two three", 70 words] -> lengths [2.0, 30.0] (3 words would be 1.29 s, raised to 2.0) and
-    starts [0.0, 2.5] (scene 2 begins after scene 1's 2 s and the 0.5 s breath)."""
+    ["one two three", 70 words] -> lengths [2.0, 30.0] (3 words would be 1.29 s, raised to 2.0),
+    starts [0.0, 2.5] (scene 2 begins after scene 1's 2 s and the 0.5 s breath) and beats [[0.0], [0.0]]. A "|"
+    mark is not a word; it gives the scene one more beat (estimated_beats), as the real narration will."""
     words_per_second = timeline.WORDS_PER_MINUTE / 60
     lengths = []
-    for text in narration:
-        seconds = len(text.split()) / words_per_second
-        lengths.append(round(max(MIN_SCENE_SECONDS, seconds), 3))
+    scene_beats = []
+    for text, said in zip(narration, beats.spoken(narration)):
+        seconds = len(said.split()) / words_per_second
+        length = round(max(MIN_SCENE_SECONDS, seconds), 3)
+        lengths.append(length)
+        scene_beats.append(estimated_beats(text, length))
     starts, _total = timeline.scene_starts(lengths)
-    return {"starts": starts, "lengths": lengths}
+    return {"starts": starts, "lengths": lengths, "beats": scene_beats}
 
 
 def probe_times(timings: dict) -> list[float]:
@@ -132,13 +220,14 @@ def first_problem(scene_count: int | None, narration_count: int, load_errors: li
     return None
 
 
-async def check(body: str, narration: list[str], browser) -> str | None:
-    """Loads the page in a sealed 1920x1080 tab with estimated timings and draws three moments of every scene, so the
-    chat turn hears about a broken page now and not after minutes of rendering. None when the page is fine, else the
-    first problem as a paragraph to act on (see first_problem). A page that reaches for the network is a problem too."""
+async def check(body: str, narration: list[str], browser, assets_script: str = "") -> str | None:
+    """Loads the page in a sealed 1920x1080 tab with estimated timings and the video's pictures and clips
+    (`assets_script`, as the render will have them) and draws three moments of every scene, so the chat turn hears
+    about a broken page now and not after minutes of rendering. None when the page is fine, else the first problem as
+    a paragraph to act on (see first_problem). A page that reaches for the network is a problem too."""
     timings = estimated_timings(narration)
     try:
-        html = assemble(body, timings)
+        html = assemble(body, timings, assets_script)
     except ValueError as e:
         return str(e)
     async with browser.sealed_page(html, 1920, 1080) as tab:

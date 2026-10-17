@@ -16,8 +16,20 @@ class DownloadError(Exception):
     """Why a download didn't happen, in a sentence."""
 
 
+UNREACHABLE = "The link couldn't be reached."
+
+
 async def safe_download(url: str, max_bytes: int, referer: str | None = None, timeout: float = 30) -> tuple[bytes, str]:
-    """The body and its content type."""
+    """The body and its content type. Every failure is a DownloadError in a sentence: a site that refuses the
+    connection, times out or breaks off mid-answer -> "The link couldn't be reached." (httpx's own errors never get
+    out, so one picture that can't be fetched is only that picture's failure)."""
+    try:
+        return await _download(url, max_bytes, referer, timeout)
+    except httpx.HTTPError:
+        raise DownloadError(UNREACHABLE) from None
+
+
+async def _download(url: str, max_bytes: int, referer: str | None, timeout: float) -> tuple[bytes, str]:
     headers = {"User-Agent": UA, **({"Referer": referer} if referer else {})}
     async with httpx.AsyncClient(timeout=timeout, transport=_transport, headers=headers) as c:
         for _ in range(6):

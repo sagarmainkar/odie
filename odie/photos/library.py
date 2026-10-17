@@ -6,9 +6,13 @@ leaves the computer. Hidden items and the bin are never read; screenshots only w
 from __future__ import annotations
 
 import os
+import re
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 
+UUID = r"[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}"  # a picture's id in Photos
+PHOTO_UUID = re.compile(rf"^{UUID}\Z")  # exactly one id, nothing else: what the photo routes take
+A_PHOTO_UUID = re.compile(UUID)  # an id anywhere in a text: "photo:<id> (for a video)" -> the id
 THUMB_MARK = "_5005_"  # Photos' smallest copy (about 360 px, under 100 KB): the thumbnail
 IMAGE_TYPES = (".jpeg", ".jpg", ".png", ".heic", ".heif", ".tiff", ".tif", ".gif", ".webp", ".bmp")  # a still image, never a movie
 EXTRAS = ("holidays", "season", "trip", "activities", "pets", "landmarks", "detected_text", "times_of_day", "venue_types",
