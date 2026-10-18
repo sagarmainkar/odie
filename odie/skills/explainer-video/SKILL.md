@@ -9,8 +9,8 @@ metadata:
 # Explainer videos
 
 You brief the video; a separate writer makes it. `make_video` returns at once; in the background the writer turns
-your brief into the narration and the animation, and the video is rendered and posted to this chat with a ping on
-the phone. You never write narration or a page yourself.
+your brief into the narration and the animation, and the video is rendered and posted to this chat. You never write
+narration or a page yourself.
 
 ## When to use it
 
@@ -80,6 +80,7 @@ mix. Show softmax(QK^T / sqrt(d)) V. Example sentence: 'The cat sat on the mat'.
 - `topic`: a few words.
 - `minutes`: the user's length, else 2; from 1 to 6.
 - `sources`: only for what the user gave, e.g. `sources=["my message"]`.
+- `sounds`: sound effects are on by default; pass `sounds=false` when the user says no sound effects.
 - `voice_name`: leave it out unless the user asks for a voice; only a voice of the engine chosen in Settings (an
   error lists them).
 

@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from odie.browser import RENDER_ARGS, find
-from odie.browser.engine import Browser
+from odie.browser.engine import Browser, BrowserError
 from odie.video import page
 
 KIT = Path(page.__file__).parent / "kit"
@@ -300,3 +300,80 @@ async def test_a_credits_card_without_its_scene_in_the_timings_is_still_a_mismat
     finally:
         await b.close()
     assert any("The page has 2 scenes but the narration has 1" in error for error in errors), errors
+
+
+# ---- Sound cues: Video.sounds keeps the writer's list as given; Video.soundCues gives it back ----
+
+async def cues_of(body, expressions, tmp_path):
+    """Loads `body` in a sealed tab with one 3 s scene's timings; the value of each expression and the page's errors."""
+    b = Browser(tmp_path / "p", BIN, extra_args=RENDER_ARGS)
+    try:
+        async with b.sealed_page(page.assemble(body, {"starts": [0.0], "lengths": [3.0]}), 1920, 1080) as p:
+            values = [await p.eval(expression) for expression in expressions]
+            errors = list(p.errors)
+    finally:
+        await b.close()
+    return values, errors
+
+
+ONE_SCENE = "Video.scenes([{draw(t, s) {}}]);"
+
+
+@needs_browser
+async def test_video_sounds_keeps_the_cues_and_sound_cues_gives_a_copy(tmp_path):
+    body = ("<script>" + ONE_SCENE + 'Video.sounds([{scene: 1, at: 0, name: "rain", seconds: 6, gain: 0.4}, '
+            '{scene: 1, beat: 0, name: "whoosh"}]);</script>')
+    values, errors = await cues_of(body, [
+        "Video.soundCues()",
+        "(() => { const c = Video.soundCues(); c[0].name = 'changed'; c.push({}); return Video.soundCues(); })()",
+    ], tmp_path)
+    expected = [{"scene": 1, "at": 0, "name": "rain", "seconds": 6, "gain": 0.4}, {"scene": 1, "beat": 0,
+                                                                                    "name": "whoosh"}]
+    assert errors == []
+    assert values == [expected, expected]  # changing the copy changes nothing kept
+
+
+@needs_browser
+async def test_sound_cues_are_empty_when_the_page_places_none(tmp_path):
+    values, errors = await cues_of("<script>" + ONE_SCENE + "</script>", ["Video.soundCues()"], tmp_path)
+    assert values == [[]] and errors == []
+
+
+@needs_browser
+async def test_a_second_video_sounds_call_adds_to_the_first(tmp_path):
+    body = ("<script>" + ONE_SCENE + 'Video.sounds([{scene: 1, at: 0, name: "rain"}]); '
+            'Video.sounds([{scene: 1, at: 1.5, name: "ting"}]);</script>')
+    values, _errors = await cues_of(body, ["Video.soundCues().map(c => c.name)"], tmp_path)
+    assert values == [["rain", "ting"]]
+
+
+@needs_browser
+async def test_video_sounds_keeps_a_mis_shaped_cue_as_given_for_odie_to_judge(tmp_path):
+    # The kit only keeps the list; Odie's shape_problem judges each cue, so a shape slip is told once, then dropped.
+    body = ("<script>" + ONE_SCENE + 'Video.sounds([{scene: 1, at: 0, name: "rain"}, {scene: 1, name: "ting"}, '
+            '{scene: 1, at: "1.5", name: "ting", volume: 0.3}, "ting", {scene: 1, at: 0, name: "x", gain: undefined}'
+            ']);</script>')
+    values, errors = await cues_of(body, [
+        "Video.soundCues()",
+        "(() => { const c = Video.soundCues(); c[2].at = 9; return Video.soundCues()[2].at; })()",
+    ], tmp_path)
+    assert errors == []
+    assert values[0] == [{"scene": 1, "at": 0, "name": "rain"}, {"scene": 1, "name": "ting"},
+                         {"scene": 1, "at": "1.5", "name": "ting", "volume": 0.3}, "ting",
+                         {"scene": 1, "at": 0, "name": "x"}]
+    assert values[1] == "1.5"  # changing the copy changes nothing kept
+
+
+@needs_browser
+async def test_video_sounds_given_something_other_than_a_list_throws(tmp_path):
+    b = Browser(tmp_path / "p", BIN, extra_args=RENDER_ARGS)
+    try:
+        html = page.assemble("<script>" + ONE_SCENE + "</script>", {"starts": [0.0], "lengths": [3.0]})
+        async with b.sealed_page(html, 1920, 1080) as p:
+            with pytest.raises(BrowserError) as raised:
+                await p.eval('Video.sounds({scene: 1, at: 0, name: "ting"})')
+            kept = await p.eval("Video.soundCues()")
+    finally:
+        await b.close()
+    assert "Video.sounds takes a list" in str(raised.value)
+    assert kept == []

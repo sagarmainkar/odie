@@ -218,7 +218,7 @@ async def test_a_good_call_queues_a_job_with_the_topic_minutes_and_brief(world, 
     job = submitted[0]
     assert (job.topic, job.title, job.minutes, job.brief) == ("How attention works", "How attention works", 3, brief)
     assert job.kind == "video" and job.voice_name == ""
-    assert job.data == {"given": {"images": [], "clips": []}, "private": []}  # no page: the writer writes it later
+    assert job.data == {"given": {"images": [], "clips": []}, "private": [], "sounds": True}  # no page yet
     assert job.slug == "how-attention-works" and job.session_id == "chat-7"
     assert job.folder.is_dir() and str(job.folder).startswith(str(tmp_path))
     assert kind.needs_writing(job)
@@ -310,10 +310,12 @@ def test_the_skill_offers_only_make_video_without_an_approval_card(isolated_sett
     assert not any(tool._require_confirmation for tool in entry.tool_objs)
 
 
-def test_the_declaration_has_exactly_topic_minutes_brief_sources_images_clips_and_voice_name():
+def test_the_declaration_has_exactly_topic_minutes_brief_sources_images_clips_sounds_and_voice_name():
     declaration = FunctionTool(tools.make_video)._get_declaration()
     properties = declaration.parameters_json_schema["properties"]
-    assert list(properties) == ["topic", "minutes", "brief", "sources", "images", "clips", "voice_name"]
+    assert list(properties) == ["topic", "minutes", "brief", "sources", "images", "clips", "sounds", "voice_name"]
+    assert properties["sounds"] == {"default": True, "title": "Sounds", "type": "boolean"}
+    assert "sounds: leave true; false only when the user asks for no sound effects" in declaration.description
     for name in ("sources", "images", "clips"):
         assert properties[name]["anyOf"][0] == {"items": {"type": "string"}, "type": "array"}  # a list of texts
     assert "address — what it shows" in declaration.description and "at most 20" in declaration.description
@@ -330,6 +332,11 @@ def test_the_skill_says_how_to_write_the_brief():
     assert "sources" in text and "my message" in text and "earlier message" in text
     assert "no emojis" in text and "save_video_page" not in text
     assert len(text.split("---", 2)[2].split()) < 850  # short: the writer has the page contract and the film grammar
+
+
+def test_the_skill_says_sounds_are_on_unless_the_user_says_no_sound_effects():
+    text = (SKILL / "SKILL.md").read_text()
+    assert "sounds=false" in text and "no sound effects" in text
 
 
 def test_the_skill_says_how_to_gather_pictures_clips_and_places():
@@ -458,3 +465,26 @@ async def test_in_a_private_chat_web_pictures_and_clips_are_left_out_and_the_cha
     assert (f"Left out: Red Fort, Delhi, at dusk ({reason}); waves on a Goa beach, slow ({reason}).") in out["result"]
     assert "Add that to the reply in a few words" in out["result"]
 
+
+# Sound effects: on unless the chat turns them off for this video; the making step reads the same key.
+
+async def test_sounds_are_on_by_default_and_the_making_step_mixes_them(world):
+    _store, submitted = world
+    out = await tools.make_video("Attention")
+    assert "result" in out, out
+    assert submitted[0].data["sounds"] is True and kind.wants_sounds(submitted[0])
+
+
+async def test_no_sound_effects_reaches_the_job_and_the_making_step_mixes_none(world):
+    _store, submitted = world
+    out = await tools.make_video("Attention", sounds=False)
+    assert "result" in out, out
+    assert submitted[0].data["sounds"] is False and not kind.wants_sounds(submitted[0])
+
+
+@pytest.mark.parametrize(("given", "meant"), [(None, True), (True, True), (False, False), ("false", False),
+                                              (" False ", False), ("no", False), ("true", True)])
+async def test_sounds_as_the_model_sends_them_are_read_as_on_or_off(world, given, meant):
+    out = await call_as_adk_does(topic="Attention", sounds=given)
+    assert "result" in out, out
+    assert world[1][0].data["sounds"] is meant

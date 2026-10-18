@@ -40,6 +40,7 @@ NO_BROWSER = ("An explainer video needs Chrome, Edge, Brave or Chromium on this 
 NO_TOPIC = 'Give the topic: a few words saying what the video is about, like "How attention works".'
 LEFT_OUT = ("Left out: {pictures}. Add that to the reply in a few words, with what the user can do; the video goes "
             "on without them.")
+SOUNDS_OFF = ("false", "no", "off", "0")  # sounds sent as text that turn them off, after strip and lower case
 
 
 def making_seconds(speech_seconds: float, frames: int) -> float:
@@ -126,9 +127,21 @@ def web_lines_left_out(lines: list[str], given: list[assets.Given], private: boo
     return kept, left_out
 
 
+def sounds_as_given(sounds) -> bool:
+    """Decides whether the video gets sound effects, from the sounds argument as the model sent it: on unless it says
+    off. Some models leave an optional argument null or send a boolean as text: None -> True (the default); True ->
+    True; False -> False; "false", " False " or "no" -> False; "true" -> True."""
+    if sounds is None:
+        return True
+    if isinstance(sounds, str):
+        said = sounds.strip().lower()
+        return said not in SOUNDS_OFF
+    return bool(sounds)
+
+
 async def make_video(topic: str, minutes: int = 2, brief: str = "", sources: list[str] | None = None,
-                     images: list[str] | None = None, clips: list[str] | None = None, voice_name: str = "",
-                     tool_context: ToolContext | None = None) -> dict:
+                     images: list[str] | None = None, clips: list[str] | None = None, sounds: bool = True,
+                     voice_name: str = "", tool_context: ToolContext | None = None) -> dict:
     """Make a narrated, animated explainer video that plays in this chat. A separate writer makes the narration and
     the animation from your brief, in the background; it can't see this chat, the user's notes, memory or the web.
     topic: what the video is about, short ("How attention works").
@@ -141,6 +154,7 @@ async def make_video(topic: str, minutes: int = 2, brief: str = "", sources: lis
     (https://… from find_images, photo:<id>, upload:<id>, screenshot:<id>), then what the picture shows, its mood, its
     orientation if unusual, and a web picture's credit in brackets at the end. The writer sees only these words.
     clips: short stock clips, at most 6, the same way, with the https:// address find_clips gave.
+    sounds: leave true; false only when the user asks for no sound effects.
     voice_name: leave empty; only when the user asks for a voice, one of the Settings engine's voices.
     It returns at once. {"error": …}: fix exactly that and call again. {"result": …}: the video is being made; reply
     in one or two lines as the result says, and don't repeat the brief."""
@@ -195,6 +209,7 @@ async def make_video(topic: str, minutes: int = 2, brief: str = "", sources: lis
     folder.mkdir(parents=True)
     whole_brief = making_sources.brief_with_sources(brief, found)
     data = {"given": given, "private": sorted(private_sites())}  # the job fetches as this chat would
+    data["sounds"] = sounds_as_given(sounds)  # the making step mixes the page's sound cues only when this is True
     job = jobs.Job(kind="video", slug=folder.name, title=title, topic=title, minutes=minutes, brief=whole_brief,
                    session_id=session_id_of(tool_context), voice_name=voice_id, folder=folder, data=data)
     place = jobs.submit(job)

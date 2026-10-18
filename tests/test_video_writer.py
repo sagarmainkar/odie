@@ -3,8 +3,8 @@ ends with an accepted narration and page, or a WriterFailed that says why.
 
 Most tests use a stand-in for runner.focused_turn: a plain object that records what it was handed and calls the tool
 by name, as a model would, following a script per test, then asks the follow-up once (the nudge), as focused_turn
-does. page.check is a recorder where no browser is needed. Two tests run the real focused turn through ADK with a
-stand-in model (an ADK BaseLlm), and one draws the worked example in a real browser."""
+does. page.check_with_cues is a recorder where no browser is needed. Two tests run the real focused turn through
+ADK with a stand-in model (an ADK BaseLlm), and one draws the worked example in a real browser."""
 import ast
 import json
 import logging
@@ -22,7 +22,7 @@ from google.genai import types
 from odie.browser import RENDER_ARGS, find
 from odie.browser.engine import Browser, BrowserError, BrowserTimeout
 from odie.making import writer as harness
-from odie.video import page, writer
+from odie.video import page, sounds, writer
 
 SAMPLE = (Path(page.__file__).parent / "kit" / "sample.html").read_text()
 WRITER_MD = Path(writer.__file__).with_name("writer.md")
@@ -89,19 +89,20 @@ async def submits(turn):
 
 @pytest.fixture
 def checks(monkeypatch):
-    """page.check replaced by a recorder: it answers with the next problem from `checks["problems"]` (None, page fine,
-    once they run out) and records every (body, narration, browser) it was asked about, and in "scripts" the
-    pictures' staple each was drawn with."""
-    record = {"problems": [], "calls": [], "scripts": []}
+    """page.check_with_cues replaced by a recorder: it answers with the next problem from `checks["problems"]` (None,
+    page fine, once they run out) and the sound cues in `checks["cues"]` (none unless a test sets them), and records
+    every (body, narration, browser) it was asked about, and in "scripts" the pictures' staple each was drawn with."""
+    record = {"problems": [], "calls": [], "scripts": [], "cues": []}
 
     async def recorded(body, narration, browser, assets_script=""):
         record["calls"].append((body, list(narration), browser))
         record["scripts"].append(assets_script)
+        problem = None
         if record["problems"]:
-            return record["problems"].pop(0)
-        return None
+            problem = record["problems"].pop(0)
+        return page.CheckResult(problem=problem, cues=list(record["cues"]))
 
-    monkeypatch.setattr(page, "check", recorded)
+    monkeypatch.setattr(page, "check_with_cues", recorded)
     return record
 
 
@@ -310,9 +311,9 @@ async def test_a_hang_is_a_rejection_told_in_words(tmp_path, monkeypatch):
     async def check(body, narration, browser, assets_script=""):
         if failures:
             raise failures.pop(0)
-        return None
+        return page.CheckResult(problem=None)
 
-    monkeypatch.setattr(page, "check", check)
+    monkeypatch.setattr(page, "check_with_cues", check)
 
     async def script(turn):
         await turn.submit()
@@ -330,7 +331,7 @@ async def test_a_browser_that_fails_ends_the_job_with_its_own_words_and_is_no_re
     async def check(body, narration, browser, assets_script=""):
         raise BrowserError("The browser didn't start.")
 
-    monkeypatch.setattr(page, "check", check)
+    monkeypatch.setattr(page, "check_with_cues", check)
     turn = Turn(submits, after_nudge=submits)
     with pytest.raises(harness.WriterFailed) as failed:
         await writer.write("Attention", 2, "", tmp_path / "job", turn, BROWSER)
@@ -338,6 +339,139 @@ async def test_a_browser_that_fails_ends_the_job_with_its_own_words_and_is_no_re
     assert turn.said == [{"error": "The browser didn't start."}]
     assert turn.ended == [True]  # the writer can't fix a browser: the turn ends
     assert turn.nudge is None
+
+
+async def test_the_cues_the_page_placed_reach_the_written_video(tmp_path, checks):
+    cues = [{"scene": 1, "at": 0, "name": "rain", "seconds": 3}, {"scene": 2, "beat": 0, "name": "whoosh"}]
+    checks["cues"] = cues
+    written = await writer.write("Attention", 2, "", tmp_path / "job", Turn(submits), BROWSER)
+    assert written == writer.Written(title="How attention works", narration=NARRATION, body=SAMPLE, cues=cues)
+
+
+async def test_a_bad_cue_is_a_refusal_and_the_fixed_pages_cues_are_kept(tmp_path, checks):
+    misnamed = [{"scene": 1, "at": 0, "name": "wooosh"}]
+    fixed = [{"scene": 1, "at": 0, "name": "whoosh"}]
+
+    async def script(turn):
+        checks["cues"] = misnamed
+        await turn.submit()
+        checks["cues"] = fixed
+        await turn.submit()
+
+    turn = Turn(script)
+    written = await writer.write("Attention", 2, "", tmp_path / "job", turn, BROWSER)
+    assert turn.said[0]["error"].startswith("Video.sounds: cue 1: there is no sound called 'wooosh'; the sounds "
+                                            "are: whoosh, click"), turn.said[0]
+    assert turn.ended == [False, True]
+    assert written.cues == fixed
+
+
+GOOD_CUE = {"scene": 1, "at": 0, "name": "rain"}
+BAD_CUE = {"scene": 2, "at": 0, "name": "wooosh"}
+CUE_WORDS = "Video.sounds: cue 2: there is no sound called 'wooosh'"
+
+
+async def test_a_cue_problem_refuses_once_then_the_bad_cues_are_dropped_and_logged(tmp_path, checks, caplog):
+    checks["cues"] = [GOOD_CUE, BAD_CUE]
+
+    async def script(turn):
+        await turn.submit()
+        await turn.submit()
+
+    turn = Turn(script)
+    with caplog.at_level(logging.WARNING, logger="odie.video"):
+        written = await writer.write("Attention", 2, "", tmp_path / "job", turn, BROWSER)
+    assert turn.said[0]["error"].startswith(CUE_WORDS), turn.said[0]
+    assert turn.said[1] == ACCEPTED  # the same cues again: accepted, without the bad one
+    assert turn.ended == [False, True]
+    assert written.cues == [GOOD_CUE]
+    dropped = [record.getMessage() for record in caplog.records if record.levelno == logging.WARNING]
+    assert any("kept 1 of 2 sound cues" in line and "wooosh" in line for line in dropped), dropped
+
+
+async def test_a_page_problem_comes_before_the_cues_and_doesnt_use_up_their_refusal(tmp_path, checks):
+    checks["cues"] = [GOOD_CUE, BAD_CUE]
+    checks["problems"] = ["The page threw in scene 2 at t = 1.2 s: boom"]
+
+    async def script(turn):
+        await turn.submit()
+        await turn.submit()
+        await turn.submit()
+
+    turn = Turn(script)
+    written = await writer.write("Attention", 2, "", tmp_path / "job", turn, BROWSER)
+    assert turn.said[0] == {"error": "The page threw in scene 2 at t = 1.2 s: boom"}  # the page's problem first
+    assert turn.said[1]["error"].startswith(CUE_WORDS)  # then the cues, refused once
+    assert turn.said[2] == ACCEPTED
+    assert written.cues == [GOOD_CUE]
+
+
+async def test_page_problems_refuse_every_time_after_a_cue_refusal(tmp_path, checks):
+    checks["cues"] = [BAD_CUE]
+
+    async def script(turn):
+        await turn.submit()
+        checks["problems"] = ["first boom", "second boom"]
+        await turn.submit()
+        await turn.submit()
+
+    turn = Turn(script)
+    with pytest.raises(harness.WriterFailed) as failed:
+        await writer.write("Attention", 2, "", tmp_path / "job", turn, BROWSER)
+    assert turn.said[0]["error"].startswith("Video.sounds: cue 1: there is no sound called 'wooosh'")
+    assert turn.said[1] == {"error": "first boom"}
+    assert turn.said[2]["error"].startswith("second boom")
+    assert str(failed.value) == "I couldn't write a page that passed its check: second boom"
+
+
+async def test_a_cue_problem_on_the_last_try_is_dropped_not_refused(tmp_path, checks):
+    checks["problems"] = ["first boom", "second boom"]
+    checks["cues"] = [GOOD_CUE, BAD_CUE]
+
+    async def script(turn):
+        await turn.submit()
+        await turn.submit()
+        await turn.submit()
+
+    turn = Turn(script)
+    written = await writer.write("Attention", 2, "", tmp_path / "job", turn, BROWSER)
+    assert turn.said[0] == {"error": "first boom"}
+    assert turn.said[1] == {"error": "second boom"}
+    assert turn.said[2] == ACCEPTED  # the cue refusal would have been the third: the bad cue is dropped instead
+    assert written.cues == [GOOD_CUE]
+
+
+async def test_a_mis_shaped_cue_is_refused_once_then_dropped(tmp_path, checks):
+    checks["cues"] = [GOOD_CUE, {"scene": 1, "at": "1.5", "name": "ting"}]
+
+    async def script(turn):
+        await turn.submit()
+        await turn.submit()
+
+    turn = Turn(script)
+    written = await writer.write("Attention", 2, "", tmp_path / "job", turn, BROWSER)
+    assert turn.said[0]["error"].startswith("Video.sounds: cue 2 has at '1.5'; at is seconds"), turn.said[0]
+    assert turn.said[1] == ACCEPTED
+    assert written.cues == [GOOD_CUE]
+
+
+async def test_a_refused_page_keeps_no_cues_on_the_desk(checks):
+    desk = writer.Desk(topic="T", pages=Path("unused"))
+    judged = writer.Judged(problem=None, cue_problem="Video.sounds: cue 1: …", cues=[BAD_CUE])
+    assert writer.cues_answer(desk, judged, NARRATION) == "Video.sounds: cue 1: …"
+    assert desk.cues == [] and desk.cue_refusals == 1
+    assert writer.cues_answer(desk, judged, NARRATION) is None
+    assert desk.cues == []  # the one cue didn't fit: nothing kept, and the page goes on silent
+    fine = writer.Judged(problem=None, cues=[GOOD_CUE])
+    assert writer.cues_answer(desk, fine, NARRATION) is None and desk.cues == [GOOD_CUE]
+
+
+async def test_a_cue_past_its_scene_is_refused_by_the_submission_check(checks):
+    checks["cues"] = [{"scene": 1, "at": 30, "name": "ting"}]
+    problem = await writer.submission_problem(NARRATION, SAMPLE, BROWSER)
+    assert problem.startswith("Video.sounds: cue 1 is at 30 s but scene 1 is about 4.3 s long"), problem
+    checks["cues"] = []
+    assert await writer.submission_problem(NARRATION, SAMPLE, BROWSER) is None
 
 
 async def test_a_null_title_falls_back_to_the_topic(tmp_path, checks):
@@ -705,10 +839,81 @@ def test_writer_md_has_a_history_and_a_trip_example_with_pictures():
 @needs_browser
 async def test_the_worked_examples_with_pictures_pass_the_check_in_a_real_browser(tmp_path):
     real = Browser(tmp_path / "render", BIN, extra_args=RENDER_ARGS)
-    told = {}
+    judged = {}
     try:
         for heading, narration, body, listed in picture_examples():
-            told[heading] = await writer.submission_problem(narration, body, real, staple_of(listed))
+            judged[heading] = await writer.checked_submission(narration, body, real, staple_of(listed))
     finally:
         await real.close()
-    assert len(told) == 2 and all(problem is None for problem in told.values()), told
+    assert len(judged) == 2
+    for heading, _narration, body, _listed in picture_examples():
+        result = judged[heading]
+        assert result.problem is None and result.cue_problem is None, (heading, result)
+        assert result.cues == cues_in(body), heading  # the page's Video.sounds call, read back from the drawn page
+        assert result.cues, heading
+
+
+# ---- Sound: what writer.md teaches, and the cues its worked examples place ----
+
+def sound_section() -> str:
+    """writer.md's "## Sound" section, up to the next "## " heading."""
+    return WRITER_MD.read_text().split("\n## Sound\n")[1].split("\n## ")[0]
+
+
+def cues_in(body: str) -> list[dict]:
+    """The cues a worked example's page gives Video.sounds, read as JSON: its one `Video.sounds([...]);` call, with
+    the line comments taken off, the keys quoted and the trailing commas dropped. `{scene: 2, beat: 1, name:
+    "whoosh"},  // why` -> {"scene": 2, "beat": 1, "name": "whoosh"}."""
+    call = body.split("Video.sounds([")[1].split("]);")[0]
+    lines = [line.split("//")[0] for line in call.splitlines()]
+    quoted = re.sub(r"([{,]\s*)(\w+):", r'\1"\2":', "\n".join(lines))
+    no_trailing_commas = re.sub(r",\s*$", "", quoted.strip())
+    return json.loads(f"[{no_trailing_commas}]")
+
+
+def test_writer_md_lists_every_sound_with_its_words_as_the_index_gives_them():
+    section = sound_section()
+    assert sounds.listing() in section  # pasted as listing() gives it, so writer.md and the index can't drift apart
+    for name in sounds.SOUNDS:
+        assert name in section, name
+
+
+def test_writer_md_says_how_to_place_a_cue():
+    section = sound_section()
+    for words in ("`Video.sounds([...])` once", "next to `Video.scenes", "never inside `setup` or `draw`",
+                  "counting from 1", "`beat`", "`at`", "`seconds`", "to the end of its scene", "`gain`",
+                  "0.35", "0.6", "At most 6 cues in a scene and 40 in all", "told to you once", "dropped"):
+        assert words in section, words
+
+
+def test_writer_md_says_when_a_sound_helps_and_when_it_doesnt():
+    section = sound_section()
+    for rule in ("where the picture turns, not where the voice is", "Loops for a scene's mood",
+                 "Hits on cuts and on numbers that land", "two or three cues a scene", "pure explanation",
+                 "Never a hit on a key word", "Silence is a choice too"):
+        assert rule in section, rule
+
+
+def test_the_contract_points_to_the_sound_section_and_the_section_follows_the_film_grammar():
+    text = WRITER_MD.read_text()
+    assert text.index("## Film grammar") < text.index("\n## Sound\n") < text.index("## The worked examples")
+    contract = text.split("## The page contract")[1].split("### Pictures, clips and the map")[0]
+    assert "`Video.sounds([...])`" in contract
+
+
+def test_the_examples_with_pictures_place_a_loop_and_a_hit_that_fit_their_narration():
+    (_h, history_narration, history, _l), (_t, trip_narration, trip, _m) = picture_examples()
+    history_cues = cues_in(history)
+    trip_cues = cues_in(trip)
+    assert [cue["name"] for cue in history_cues] == ["footsteps", "whoosh"]
+    assert "beat" in history_cues[1]  # the whoosh lands on a phrase
+    assert [cue["name"] for cue in trip_cues] == ["ting", "wind"]
+    assert sounds.cue_problem(history_cues, history_narration) is None
+    assert sounds.cue_problem(trip_cues, trip_narration) is None
+    for body in (history, trip):
+        assert body.count("Video.sounds(") == 1
+        assert body.index("Video.scenes(") < body.index("Video.sounds(")  # next to the scenes, after them
+
+
+def test_the_drawn_example_has_no_sounds():
+    assert "Video.sounds" not in SAMPLE  # a drawn explainer of a formula: pure explanation, so silence
