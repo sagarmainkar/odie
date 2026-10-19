@@ -8,8 +8,8 @@
 <p align="center"><b>A personal assistant that lives on your own Mac and talks to you on your phone.</b></p>
 
 <p align="center">
-  <a href="docs/media/odie-film.mp4"><img src="docs/media/odie-film-poster.jpg" width="720" alt="The Odie film: a search for the day the dog met the sea finds the photos, a video and a note"></a>
-  <br><a href="docs/media/odie-film.mp4"><b>▶ Watch the film</b></a> (78 seconds, made-up data)
+  <a href="docs/media/odie-film.mp4"><img src="docs/media/odie-film-poster.jpg" width="720" alt="The Odie film: a search for a shih tzu playing on grass finds the photos, a video and a note"></a>
+  <br><a href="docs/media/odie-film.mp4"><b>▶ Watch the film</b></a> (90 seconds, made-up data)
 </p>
 
 ---
