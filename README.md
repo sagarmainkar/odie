@@ -9,7 +9,7 @@
 
 <p align="center">
   <a href="docs/media/odie-film.mp4"><img src="docs/media/odie-film-poster.jpg" width="720" alt="The Odie film: a search for a shih tzu playing on grass finds the photos, a video and a note"></a>
-  <br><a href="docs/media/odie-film.mp4"><b>▶ Watch the film</b></a> (90 seconds, made-up data)
+  <br><a href="https://youtu.be/LoCgUl9_S2U"><b>▶ Watch the film on YouTube</b></a> · <a href="docs/media/odie-film.mp4">or here</a> (90 seconds, made-up data)
 </p>
 
 **Install on a Mac** (macOS 14 or newer, about two minutes; [details](#install)):
