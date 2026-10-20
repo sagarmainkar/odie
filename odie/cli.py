@@ -799,7 +799,22 @@ def cmd_logs(inst: Install, runner: Runner, lines: int | None, errors_only: bool
     return 0
 
 
+SETUP_LINK_JUST_OPENED = 90  # seconds: within this of the service writing its setup link, it has opened that link itself
+
+
 def cmd_open(inst: Install, runner: Runner) -> int:
+    """Opens Odie in this Mac's browser. While nothing is paired the service writes a one-time setup link at start and
+    opens it itself (open_setup_link_when_written), so right after an install a second tab would only show a page that
+    can't load until that first tab has paired: then this says so and opens nothing (the owner saw two tabs, one blank,
+    20 Oct 2026). An older setup link (the tab was closed) is opened instead of the plain address, which can't pair.
+    Fresh install, link 5 s old -> nothing opened; link 10 min old -> the link; paired -> http://localhost:8000."""
+    link_file = inst.home / "setup-link"
+    if link_file.exists() and link_file.stat().st_size > 0:
+        age = time.time() - link_file.stat().st_mtime
+        if age < SETUP_LINK_JUST_OPENED:
+            print("Setup is already open in your browser: the tab that pairs this Mac.")
+            return 0
+        return runner.run(["open", link_file.read_text().strip()], timeout=10).code
     return runner.run(["open", inst.local_url], timeout=10).code
 
 
