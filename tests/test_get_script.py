@@ -63,9 +63,17 @@ def test_linux_is_pointed_to_the_readme(tmp_path):
     assert result.returncode == 1 and "mac-first-linux-today" in result.stderr
 
 
-def test_an_intel_mac_stops(tmp_path):
-    result = call("check_computer", a_mac(tmp_path, chip="x86_64"))
-    assert result.returncode == 1 and "Apple Silicon" in result.stderr and "x86_64" in result.stderr
+def test_an_intel_mac_goes_on_without_the_apple_silicon_parts(tmp_path):
+    # The owner's Intel laptop, 20 Oct 2026: Odie runs there without Kokoro and search by meaning, and the install says so.
+    result = call("check_computer; echo voice=$ODIE_VOICE embed=$ODIE_EMBED", a_mac(tmp_path, chip="x86_64"))
+    assert result.returncode == 0
+    assert "Intel Mac" in result.stdout and "local voice" in result.stdout and "search by meaning" in result.stdout
+    assert "voice=off embed=off" in result.stdout
+
+
+def test_an_apple_silicon_mac_keeps_its_voice_and_search(tmp_path):
+    result = call("check_computer; echo voice=${ODIE_VOICE:-unset} embed=${ODIE_EMBED:-unset}", a_mac(tmp_path))
+    assert result.returncode == 0 and "voice=unset embed=unset" in result.stdout and "Intel" not in result.stdout
 
 
 def test_an_apple_silicon_mac_in_a_rosetta_shell_goes_on(tmp_path):

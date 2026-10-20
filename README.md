@@ -155,7 +155,8 @@ as words only, without their tool traffic and thinking. There's no summary and n
 
 ## Install
 
-On an **Apple Silicon Mac with macOS 14 or newer**, with [Homebrew](https://brew.sh):
+On a **Mac with macOS 14 or newer**, with [Homebrew](https://brew.sh) (Apple Silicon for everything; an Intel Mac runs
+without the local voice and search by meaning, and the installer says so):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/sagarmainkar/odie/main/scripts/get.sh | bash
@@ -270,14 +271,14 @@ Odie is Mac first. I built it for my own use and then open-sourced it, so it gre
 today without the Mac-only parts: run it in a terminal with `ODIE_VOICE=off scripts/start.sh` and expect a few
 hiccups.
 
-| | macOS 14+ on Apple Silicon | Linux today |
-|---|---|---|
-| Chat, visual blocks, memory, notes, web, MCP apps, trackers, the phone app | ✓ | ✓ in a terminal (`scripts/start.sh`) |
-| Search by meaning (EmbeddingGemma 2) | ✓ on the GPU | on the CPU only, slower |
-| Background service and the `odie` command | ✓ | not yet (it uses macOS launchd) |
-| Photos and videos | ✓ | no (it reads Apple Photos) |
-| Local voices (Kokoro) | ✓ | not yet (it runs on Apple's MLX) |
-| Signed-in browsing | ✓ | not yet (it keeps logins in the macOS Keychain) |
+| | macOS 14+ on Apple Silicon | Intel Mac | Linux today |
+|---|---|---|---|
+| Chat, visual blocks, memory, notes, web, MCP apps, trackers, the phone app | ✓ | ✓ | ✓ in a terminal (`scripts/start.sh`) |
+| Search by meaning (EmbeddingGemma 2) | ✓ on the GPU | not Odie's own (PyTorch has no Intel Mac builds); OpenAI or Ollama embeddings with a key | on the CPU only, slower |
+| Background service and the `odie` command | ✓ | ✓ | not yet (it uses macOS launchd) |
+| Photos and videos | ✓ | by people, place, date and Photos' own words; by meaning only with a cloud embedder | no (it reads Apple Photos) |
+| Local voices (Kokoro) | ✓ | no (it runs on Apple's MLX); cloud voices with a key | not yet (it runs on Apple's MLX) |
+| Signed-in browsing | ✓ | ✓ | not yet (it keeps logins in the macOS Keychain) |
 
 Contributions are very welcome, for other operating systems and for new features alike: a Linux service, voices and
 sign-ins on Linux, a folder of pictures in place of Apple Photos, and anything that makes Odie more fun. See
