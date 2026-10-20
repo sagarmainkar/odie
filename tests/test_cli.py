@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import plistlib
+import shutil
 import subprocess
 from datetime import datetime
 from pathlib import Path
@@ -1008,7 +1009,8 @@ def test_start_sh_moves_aside_when_live_odie_is_a_service(tmp_path, live_service
 def test_install_sh_refuses_when_something_else_has_the_port(tmp_path):
     home = tmp_path / "home"
     bin_dir = fake_bin(tmp_path / "fakebin", {"lsof": "echo 999", "launchctl": "exit 113"})
-    env = {"HOME": str(tmp_path / "user"), "PATH": f"{bin_dir}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin",
+    uv_dir = Path(shutil.which("uv")).parent  # wherever uv lives: Homebrew here, ~/.local/bin on GitHub's runner
+    env = {"HOME": str(tmp_path / "user"), "PATH": f"{bin_dir}:{uv_dir}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin",
            "ODIE_HOME": str(home), "ODIE_SERVICE_LABEL": "dev.odie.unittest", "ODIE_PORT": "8999",
            "ODIE_BIN_DIR": str(tmp_path / "bin"), "ODIE_REPO": str(tmp_path / "no-repo")}
     assert env["ODIE_HOME"] != str(REAL_HOME)
