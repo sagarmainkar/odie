@@ -1,5 +1,25 @@
 # Changelog
 
+## v0.2.0 (2026-10-20)
+
+Things Odie makes while you are away, and a wider door.
+
+- **Explainer videos**: narrated, 3Blue1Brown-style animated films written by a focused writer turn and rendered in
+  the background, with real pictures and clips from the web or your own photos, an offline map with flights and
+  routes, cuts on the narration's beats, and a small set of sound effects under the voice. Ask with "no sound
+  effects" to go without.
+- **Podcasts, decks and research in the background**: one queue for everything that takes minutes; a push to the phone
+  when it is ready; a revision of a deck by name; research with sources, from the web and your notes; sources for
+  every kind. Podcasts are made in any chat, private or not.
+- **The one-line install**: `curl … get.sh | bash` on a Mac with macOS 14 or newer. An Intel Mac goes on without the
+  two Apple Silicon parts (Odie's own voice and its own embedding service) and the installer says so; neither is
+  offered in setup or Settings on such a Mac, and OpenAI's voice is the default there.
+- **The phone step** finds a `tailscale serve` run after setup opened, Settings gains a Phone section, and the words
+  explain Tailscale plainly. The launch film gets a scene of Odie making an explainer video.
+- Smaller: room per reply follows the model (32k where allowed); the video writer gets 64k for its draft and the
+  user's sources word for word; copy your own messages; background checks speak only when it matters; Settings lists
+  only your own skills; the mic connects faster with a livelier wave.
+
 ## v0.1.0 (2026-10)
 
 The first public release.
