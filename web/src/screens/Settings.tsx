@@ -21,7 +21,7 @@ import { has, useCaps } from "../capabilities";
 import { notesRow, type VaultInfo } from "../vault";
 import { photosRow, type PhotosInfo } from "../photos";
 import { LABEL, type Panel, type Step, type Turn } from "../setup";
-import { StepPanel } from "./Setup";
+import { PhoneBlock, StepPanel } from "./Setup";
 
 type Health = { status: string; version?: string; model: string; provider?: string; leaves_mini?: boolean; lm_studio: boolean; connections: { gmail: boolean; vault: boolean }; brain_chosen?: boolean; brain_reachable?: boolean };
 type Google = { client_configured: boolean; connected: boolean; email?: string; redirect_uri: string; setup: string; account: string; services?: { gmail: boolean; calendar: boolean } | null; connected_at?: string | null };
@@ -164,6 +164,23 @@ function AssistantSection() {
 type VoiceItem = { id: string; label: string; group?: string; note?: string };
 type Engine = { id: string; label: string; note: string; local: boolean; available: boolean; voices: VoiceItem[] };
 type VoiceInfo = { engine: string; voice: string; engines: Engine[]; models: { tts: string; realtime: string }; reminders_spoken?: boolean; local_voice?: boolean };
+
+/** The phone, after setup: the same block as the setup step (is Tailscale here, does it pass the phone to Odie, the
+ *  address and the pairing code), so a skipped phone can be set up from here. Check again asks the server to look. */
+function PhoneSection() {
+  const [panel, setPanel] = useState<Panel | null>(null);
+  const load = () => getJSON<Panel>("/api/setup/panel/phone").then(setPanel).catch(() => {});
+  useEffect(() => { void load(); }, []);
+  if (!panel?.phone) return null;
+  return (
+    <Section title="Phone">
+      <div className="p-4 flex flex-col gap-3">
+        {panel.explain && <div className="text-[13px] leading-[18px] text-muted">{panel.explain}</div>}
+        <PhoneBlock phone={panel.phone} onCheck={() => void load()} />
+      </div>
+    </Section>
+  );
+}
 
 function VoiceSection() {
   const [v, setV] = useState<VoiceInfo | null>(null);
@@ -531,6 +548,8 @@ export function Settings() {
           </Section>
 
           {has(caps, "update") && <UpdateSection version={h?.version} />}
+
+          <PhoneSection />
 
           <Section title="Setup">
             <button onClick={async () => {

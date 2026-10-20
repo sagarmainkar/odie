@@ -133,9 +133,11 @@ async def test_the_phone_step_knows_about_tailscale(store, monkeypatch):
     p = await panels.panel(store, "phone", transport=no_models())
     assert p["phone"]["tailscale"] is False and "tailscale.com/download" in json.dumps(p)
     monkeypatch.setattr(panels, "tailscale_installed", lambda: True)
+    monkeypatch.setattr(panels, "serve_address_now", lambda: "")  # Tailscale is here but serves nothing yet
     monkeypatch.setattr(config, "settings", dataclasses.replace(config.settings, public_url="http://localhost:8000"))
     p = await panels.panel(store, "phone", transport=no_models())  # the default address is this computer's own
     assert p["phone"]["serving"] is False and p["phone"]["address"] == "" and p["choices"] == []
+    assert "Check again" in p["note"] and "odie restart" in p["note"]
     monkeypatch.setattr(config, "settings", dataclasses.replace(config.settings, public_url="https://mac.example.ts.net"))
     p = await panels.panel(store, "phone", transport=no_models())
     assert p["phone"]["address"] == "https://mac.example.ts.net" and p["phone"]["serving"] is True
@@ -365,3 +367,30 @@ async def test_the_voice_step_offers_only_openai_where_the_local_voice_cannot_ru
     with pytest.raises(ValueError, match="isn't a choice"):  # Kokoro is not a choice here, like any unknown one
         await chat.choose(store, "voice", "kokoro", transport=no_models())
     assert state.get(store)["steps"]["voice"] == "todo"
+
+
+async def test_check_again_finds_a_tailscale_serve_run_after_odie_started(store, monkeypatch):
+    # The owner's laptop, 20 Oct 2026: he ran `tailscale serve` after setup opened, and Check again did nothing until a
+    # restart. Now the phone step asks Tailscale itself, and the address found is kept for links and QR codes.
+    from odie import config
+    import dataclasses
+    monkeypatch.setattr(config, "settings", dataclasses.replace(config.settings, public_url="http://localhost:8000"))
+    monkeypatch.setattr(config, "learned_public_url", "")
+    monkeypatch.setattr(panels, "tailscale_installed", lambda: True)
+    monkeypatch.setattr(panels, "serve_address_now", lambda: "https://mac.example.ts.net")
+    p = await panels.panel(store, "phone", transport=no_models())
+    assert p["phone"]["serving"] is True and p["phone"]["address"] == "https://mac.example.ts.net"
+    assert [c["id"] for c in p["choices"]] == ["paired"]
+    assert config.phone_address() == "https://mac.example.ts.net"
+
+
+async def test_without_tailscale_nothing_is_asked(store, monkeypatch):
+    from odie import config
+    import dataclasses
+    monkeypatch.setattr(config, "settings", dataclasses.replace(config.settings, public_url="http://localhost:8000"))
+    monkeypatch.setattr(config, "learned_public_url", "")
+    monkeypatch.setattr(panels, "tailscale_installed", lambda: False)
+    monkeypatch.setattr(panels, "serve_address_now", lambda: (_ for _ in ()).throw(AssertionError("asked")))
+    p = await panels.panel(store, "phone", transport=no_models())
+    assert p["phone"]["tailscale"] is False and p["phone"]["address"] == ""
+    assert "free for personal use" in p["explain"] and "VPN" in p["explain"]

@@ -70,12 +70,25 @@ def _currency() -> str:
     return (_get("CURRENCY") or region.currency_for(region.country_of(_locale()))).upper()
 
 
+learned_public_url = ""  # a phone address found after start (setup's Check again asked Tailscale); the service env gets it at the next restart
+
+
+def learn_public_url(url: str) -> None:
+    """Remembers a phone address found while running, so links and QR codes use it without a restart. `odie restart`
+    writes the same address into the service's environment for good."""
+    global learned_public_url
+    learned_public_url = url.rstrip("/")
+
+
 def phone_address() -> str:
-    """The address a phone reaches Odie at (ODIE_PUBLIC_URL, Tailscale's), or "" when there's none: the default is this
-    computer's own address, which no phone can open."""
+    """The address a phone reaches Odie at: ODIE_PUBLIC_URL (Tailscale's, set by `odie restart`), else one learned
+    since start, else "" (the default is this computer's own address, which no phone can open).
+    ODIE_PUBLIC_URL=https://mac.ts.net -> that; localhost and nothing learned -> ""; localhost and a learned one -> it."""
     from urllib.parse import urlsplit
     url = settings.public_url.rstrip("/")
-    return "" if (urlsplit(url).hostname or "") in ("", "localhost", "127.0.0.1", "::1") else url
+    if (urlsplit(url).hostname or "") not in ("", "localhost", "127.0.0.1", "::1"):
+        return url
+    return learned_public_url
 
 
 @dataclass(frozen=True)

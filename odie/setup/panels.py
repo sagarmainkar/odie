@@ -3,6 +3,7 @@ needs first: a key form, an app form, a folder), and Skip. A choice made on the 
 model never decides what is saved, so the checklist only says what really is."""
 from __future__ import annotations
 
+import asyncio
 import shutil
 from pathlib import Path
 
@@ -32,8 +33,9 @@ EXPLAIN = {
     "search": "With a key, results are better. Without one I use a free search that works, with plainer results.",
     "voice": "You can change this any time in Settings.",
     "apps": "That goes through Zapier or Composio: you pick the apps there, and your data then goes through that service.",
-    "phone": ("Your phone reaches this computer through Tailscale, a free private network for your own devices: it works "
-              "anywhere, not just at home, and nothing is open to the internet."),
+    "phone": ("Your phone reaches this computer through Tailscale: a private network between your own devices, like a VPN "
+              "that only you are on. It is free for personal use and safe: nothing is opened to the internet, and it works "
+              "anywhere, not just at home."),
 }
 SKIP = {
     "vault": "Skip: no notes for now", "embeddings": "Skip: find notes by their words", "photos": "Skip: no photos for now",
@@ -60,6 +62,14 @@ class ChoiceError(Exception):
 
 def tailscale_installed() -> bool:
     return shutil.which("tailscale") is not None or Path("/Applications/Tailscale.app").exists()
+
+
+def serve_address_now() -> str:
+    """Asks Tailscale whether it already passes Odie's port to the phone, the way `odie restart` does at start, so
+    Check again finds a `tailscale serve` run after Odie started, with no restart. Serving -> "https://mac.ts.net";
+    not serving, or no tailscale command -> ""."""
+    from odie import cli
+    return cli.tailscale_phone_address(config.settings.port, cli.Runner())
 
 
 def _key_card(provider: str) -> dict:
@@ -123,8 +133,13 @@ async def panel(store, step: str | None = None, transport=None) -> dict | None:
                           _choice("composio", "Composio", "dashboard.composio.dev", needs=_app_card("composio"))]
     elif step == "phone":
         from odie import devices
-        address = config.phone_address()
         installed = tailscale_installed()
+        address = config.phone_address()
+        if installed and not address:  # Check again after `tailscale serve`: look now, don't wait for a restart
+            found = await asyncio.to_thread(serve_address_now)
+            if found:
+                config.learn_public_url(found)
+                address = config.phone_address()
         out["phone"] = {
             "tailscale": installed, "serving": bool(address), "address": address, "pairing": devices.pairing_on(store),
             "download": TAILSCALE_DOWNLOAD, "serve_command": f"tailscale serve --bg {config.settings.port}",
@@ -139,7 +154,8 @@ async def panel(store, step: str | None = None, transport=None) -> dict | None:
             out["note"] = f"Tailscale isn't on this computer yet: get it at {TAILSCALE_DOWNLOAD}, sign in, then Check again."
         else:
             out["note"] = ("Tailscale is here, but it doesn't pass your phone to me yet: run "
-                           f"`tailscale serve --bg {config.settings.port}` in Terminal, then restart me.")
+                           f"`tailscale serve --bg {config.settings.port}` in Terminal, then Check again. If it still "
+                           "doesn't show, run `odie restart` in Terminal, refresh this page, and Check again.")
     return out
 
 
