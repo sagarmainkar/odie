@@ -1243,14 +1243,18 @@ def _speakable(text: str) -> str:
 
 @router.get("/voice")
 async def voice_get(request: Request):
-    from odie import voice
+    from odie import machine, voice
     from odie.secrets import load_secret
     store = request.app.state.store
     engine, current = voice.get_tts(store)
-    openai_ok, local_ok = bool(load_secret("OPENAI_API_KEY")), await voice.local_available()
+    openai_ok = bool(load_secret("OPENAI_API_KEY"))
+    local_ok = await voice.local_available() if machine.local_voice_wanted() else False  # not asked for where it can't run
+    hidden = voice.disabled()
     engines = [{"id": k, **v, "available": local_ok if v["local"] else openai_ok, "voices": voice.engine_voices(k)}
-               for k, v in voice.ENGINES.items() if k not in voice.DISABLED and (v["local"] or openai_ok)]  # OpenAI only with its key
+               for k, v in voice.ENGINES.items() if k not in hidden and (v["local"] or openai_ok)]  # OpenAI only with its key
+    # local_voice: whether Odie's own voice is meant to run on this Mac at all (False on an Intel Mac: Settings says why)
     return {"available": openai_ok, "engine": engine, "voice": current, "talk_voice": voice.get_voice(store), "engines": engines,
+            "local_voice": machine.local_voice_wanted(),
             "reminders_spoken": voice.reminders_spoken(store),
             "voices": voice.VOICES, "models": {"tts": voice.TTS_MODEL, "stt": voice.STT_MODEL, "realtime": voice.REALTIME_MODEL}}
 
@@ -1269,7 +1273,7 @@ async def voice_put(body: VoiceIn, request: Request):
 
 async def _preview(request: Request, engine: str, voice_id: str) -> Response:
     from odie import persona, voice
-    if engine not in voice.ENGINES or engine in voice.DISABLED or voice_id not in {v["id"] for v in voice.engine_voices(engine)}:
+    if engine not in voice.ENGINES or engine in voice.disabled() or voice_id not in {v["id"] for v in voice.engine_voices(engine)}:
         raise HTTPException(404, "no such voice")
     from odie import profile
     name = persona.get(request.app.state.store)["name"]

@@ -253,3 +253,17 @@ async def test_live_dictation_needs_openai_and_says_so(client, monkeypatch):
     assert "dictation" in caps["caps"] and caps["country"] == __import__("odie.config", fromlist=["settings"]).settings.country
     assert "talk" not in caps["caps"]  # Talk is held back for now, key or no key
     assert (await c.post("/api/voice/session")).status_code == 503
+
+
+async def test_the_voice_route_hides_the_local_voice_where_it_cannot_run(client, monkeypatch):
+    # An Intel Mac: ODIE_VOICE=off from the installer. Settings gets no Kokoro, no local check, and local_voice: false.
+    monkeypatch.setenv("ODIE_VOICE", "off")
+    import odie.secrets as sec
+    import odie.voice as v
+    monkeypatch.setattr(sec, "load_secret", lambda name, env_file=None: "sk-test")
+    monkeypatch.setattr(v, "load_secret", lambda name: "sk-test")
+    c = client[0] if isinstance(client, tuple) else client
+    j = (await c.get("/api/voice")).json()
+    assert j["local_voice"] is False and j["engine"] == "openai"
+    assert [e["id"] for e in j["engines"]] == ["openai"]
+    assert (await c.get("/api/voice/preview/kokoro/af_heart")).status_code == 404  # not an engine here

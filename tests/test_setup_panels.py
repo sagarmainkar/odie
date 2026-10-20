@@ -355,3 +355,13 @@ def test_settings_says_what_setup_again_will_do(store):
     for step in ("vault", "embeddings", "search", "apps", "phone"):
         state.mark(store, step, "skipped")
     assert chat.public_state(store)["skipped"] == ["vault", "embeddings", "search", "apps", "phone"]
+
+
+async def test_the_voice_step_offers_only_openai_where_the_local_voice_cannot_run(store, monkeypatch):
+    monkeypatch.setenv("ODIE_VOICE", "off")  # an Intel Mac
+    await through_names(store)
+    p = await panels.panel(store, "voice", transport=no_models())
+    assert ids(p) == ["openai"]
+    with pytest.raises(ValueError, match="isn't a choice"):  # Kokoro is not a choice here, like any unknown one
+        await chat.choose(store, "voice", "kokoro", transport=no_models())
+    assert state.get(store)["steps"]["voice"] == "todo"

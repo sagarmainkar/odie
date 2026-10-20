@@ -111,10 +111,13 @@ async def panel(store, step: str | None = None, transport=None) -> dict | None:
         out["choices"] = [_choice(p.id, p.name + (" (key saved)" if p.id in have else ""), tools.KEYS[p.id][2],
                                   needs=None if p.id in have else _key_card(p.id)) for p in PROVIDERS]
     elif step == "voice":
+        from odie import machine
         has_openai = bool(load_secret("OPENAI_API_KEY"))
-        out["choices"] = [_choice("kokoro", "Kokoro", "Free, private: runs on this computer"),
-                          _choice("openai", "OpenAI voice", "Natural; the text goes to OpenAI",
-                                  needs=None if has_openai else _key_card("openai"))]
+        out["choices"] = []
+        if machine.local_voice_wanted():  # Kokoro needs Apple Silicon: an Intel Mac is offered OpenAI's voices only
+            out["choices"].append(_choice("kokoro", "Kokoro", "Free, private: runs on this computer"))
+        out["choices"].append(_choice("openai", "OpenAI voice", "Natural; the text goes to OpenAI",
+                                      needs=None if has_openai else _key_card("openai")))
     elif step == "apps":
         out["choices"] = [_choice("zapier", "Zapier", "mcp.zapier.com", needs=_app_card("zapier")),
                           _choice("composio", "Composio", "dashboard.composio.dev", needs=_app_card("composio"))]

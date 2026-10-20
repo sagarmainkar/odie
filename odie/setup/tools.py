@@ -150,9 +150,11 @@ async def _apply_vault(runner, photos: bool = False) -> None:
 
 
 async def embedding_options(store, transport=None) -> dict:
-    from odie import embed_worker
+    from odie import embed_worker, machine
     options = []
-    if embed_worker.EmbedWorker().installed:  # Odie's own service, when its environment is there (uv sync in embed_server)
+    # Odie's own service: when its environment is there (uv sync in embed_server) and this Mac is meant to run it
+    # (not an Intel Mac: PyTorch has no build there, and the installer set ODIE_EMBED=off)
+    if embed_worker.EmbedWorker().installed and machine.local_embeddings_wanted():
         options.append({"provider": "gemma", "model": embed_worker.MODEL, "local": True,
                         "note": "on this Mac: Odie's own embedding service (EmbeddingGemma 2); nothing leaves the computer"})
     async with httpx.AsyncClient(timeout=4, transport=transport) as c:
@@ -207,10 +209,13 @@ async def search_status(store) -> dict:
 
 
 async def voice_options(store) -> dict:
+    from odie import machine
     has_openai = bool(load_secret("OPENAI_API_KEY"))
-    return {"options": [{"engine": "kokoro", "label": "Free local voice", "note": "private, runs on this computer"},
-                        {"engine": "openai", "label": "OpenAI voice", "note": "natural; the text goes to OpenAI", "needs_key": not has_openai}],
-            "or": "skip: the app can still read replies with the browser's own voice"}
+    options = []
+    if machine.local_voice_wanted():  # Kokoro needs Apple Silicon: an Intel Mac gets OpenAI's voices only
+        options.append({"engine": "kokoro", "label": "Free local voice", "note": "private, runs on this computer"})
+    options.append({"engine": "openai", "label": "OpenAI voice", "note": "natural; the text goes to OpenAI", "needs_key": not has_openai})
+    return {"options": options, "or": "skip: the app can still read replies with the browser's own voice"}
 
 
 async def set_voice(store, engine: str) -> dict:
@@ -219,6 +224,9 @@ async def set_voice(store, engine: str) -> dict:
         raise _Error("The OpenAI voice needs an OpenAI key: call request_key('openai') first.")
     if engine not in ("kokoro", "openai"):
         raise _Error("engine is kokoro or openai (or skip the step).")
+    from odie import machine
+    if engine == "kokoro" and not machine.local_voice_wanted():
+        raise _Error("Odie's own voice doesn't run on this Mac (it needs Apple Silicon): choose openai, or skip the step.")
     voice.set_tts(store, engine=engine)
     state.mark(store, "voice", "done")
     return {"voice": engine}

@@ -247,3 +247,23 @@ async def test_choosing_odies_own_service_before_its_model_is_here_says_it_is_do
     assert "error" not in out and "download" in out["result"]["note"].lower() and "1.5 GB" in out["result"]["note"]
     assert settings.get(store)["embeddings"] == {"provider": "gemma", "model": "google/embeddinggemma-2"}
     assert state.get(store)["steps"]["embeddings"] == "done"
+
+
+async def test_voice_options_and_set_voice_without_a_local_voice(store, monkeypatch):
+    monkeypatch.setenv("ODIE_VOICE", "off")  # an Intel Mac: Kokoro is not offered and not accepted
+    out = (await tools.run("voice_options", {}, store))["result"]
+    assert [o["engine"] for o in out["options"]] == ["openai"]
+    refused = await tools.run("set_voice", {"engine": "kokoro"}, store)
+    assert "Apple Silicon" in refused["error"]
+
+
+async def test_embedding_options_hide_odies_own_service_where_it_cannot_run(store, monkeypatch):
+    from odie import embed_worker
+
+    def handler(request):
+        return httpx.Response(200, json={"data": [], "models": []})
+    monkeypatch.setattr(embed_worker.EmbedWorker, "installed", property(lambda self: True))
+    monkeypatch.setenv("ODIE_EMBED", "off")  # built once on this Mac, switched off since: not offered
+    out = (await tools.run("embedding_options", {}, store, transport=httpx.MockTransport(handler)))["result"]
+    assert [o["provider"] for o in out["options"]] == ["openai"]
+    monkeypatch.setattr(embed_worker.EmbedWorker, "installed", property(lambda self: False))
