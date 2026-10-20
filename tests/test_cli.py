@@ -500,6 +500,21 @@ def test_open(inst, world):
     assert world.events == ["open http://localhost:8999"]
 
 
+def test_open_right_after_an_install_opens_no_second_tab(inst, world, capsys):
+    # The service has just written its setup link and opened it itself: a second tab would sit blank until the first
+    # one pairs (20 Oct 2026). Later, with that tab closed, the link is what gets opened, not the plain address.
+    import os
+    link = inst.home / "setup-link"
+    link.parent.mkdir(parents=True, exist_ok=True)
+    link.write_text("http://localhost:8999/#setup=abc")
+    assert cli.cmd_open(inst, world) == 0
+    assert world.events == [] and "already open" in capsys.readouterr().out
+    old = link.stat().st_mtime - cli.SETUP_LINK_JUST_OPENED - 1
+    os.utime(link, (old, old))
+    assert cli.cmd_open(inst, world) == 0
+    assert world.events == ["open http://localhost:8999/#setup=abc"]
+
+
 def test_short_subject():
     assert cli.short_subject("Merge pull request #41 from someone/schema-cleanup") == "Merge #41"
     assert cli.short_subject("Short one") == "Short one"
