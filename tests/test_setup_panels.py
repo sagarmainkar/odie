@@ -141,7 +141,7 @@ async def test_the_phone_step_knows_about_tailscale(store, monkeypatch):
     monkeypatch.setattr(config, "settings", dataclasses.replace(config.settings, public_url="https://mac.example.ts.net"))
     p = await panels.panel(store, "phone", transport=no_models())
     assert p["phone"]["address"] == "https://mac.example.ts.net" and p["phone"]["serving"] is True
-    assert [c["id"] for c in p["choices"]] == ["paired"] and len(p["phone"]["steps"]) == 3
+    assert [c["id"] for c in p["choices"]] == ["paired", "later"] and len(p["phone"]["steps"]) == 3
 
 
 async def test_paired_means_a_phone_really_paired(store, monkeypatch):
@@ -380,7 +380,7 @@ async def test_check_again_finds_a_tailscale_serve_run_after_odie_started(store,
     monkeypatch.setattr(panels, "serve_address_now", lambda: "https://mac.example.ts.net")
     p = await panels.panel(store, "phone", transport=no_models())
     assert p["phone"]["serving"] is True and p["phone"]["address"] == "https://mac.example.ts.net"
-    assert [c["id"] for c in p["choices"]] == ["paired"]
+    assert [c["id"] for c in p["choices"]] == ["paired", "later"]
     assert config.phone_address() == "https://mac.example.ts.net"
 
 
@@ -394,3 +394,18 @@ async def test_without_tailscale_nothing_is_asked(store, monkeypatch):
     p = await panels.panel(store, "phone", transport=no_models())
     assert p["phone"]["tailscale"] is False and p["phone"]["address"] == ""
     assert "free for personal use" in p["explain"] and "VPN" in p["explain"]
+
+
+async def test_the_phone_can_be_paired_later_without_losing_the_step(store, monkeypatch):
+    # His fresh install, 20 Oct 2026: the phone wasn't at hand, and "My phone is paired" refused until it was. "Later"
+    # finishes the step; Settings → Phone keeps the address and the code.
+    import dataclasses
+
+    from odie import config, devices
+    monkeypatch.setenv("ODIE_PAIRING", "on")
+    monkeypatch.setattr(panels, "tailscale_installed", lambda: True)
+    monkeypatch.setattr(config, "settings", dataclasses.replace(config.settings, public_url="https://mac.example.ts.net"))
+    await through_names(store)
+    devices.add_device(store, "This Mac")  # no phone yet
+    out = await chat.choose(store, "phone", "later", transport=no_models())
+    assert not out.get("error") and out["state"]["steps"]["phone"] == "done" and "Settings" in out["reply"]
