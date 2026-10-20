@@ -220,7 +220,7 @@ export function PhoneBlock({ phone, onCheck }: { phone: Phone; onCheck: () => vo
           <div className="flex flex-col gap-1">
             <div className="font-mono text-[24px] tracking-[0.18em] font-semibold" aria-label="Pairing code">{made.code}</div>
             <div className="text-[12.5px] text-muted max-w-[300px]">Valid once, for 10 minutes. Scan it with the phone's camera, or open the address on the phone and type the code.</div>
-            <button onClick={code} className="self-start text-[13px] text-ember-text font-medium">Make a new code</button>
+            <button onClick={code} className="self-start h-9 px-4 rounded-full border border-line-2 text-[13.5px] font-medium">Make a new code</button>
           </div>
         </div>
       ) : (
@@ -259,7 +259,9 @@ export function StepPanel({ panel, onChoose, onCheck, busy }: { panel: Panel; on
         </div>
       )}
       {panel.phone && <PhoneBlock phone={panel.phone} onCheck={onCheck} />}
-      {panel.choices.length > 1 && (
+      {/* The choices as a list: more than one, or a lone one that needs a form first (OpenAI's voice on an Intel Mac,
+          20 Oct 2026: the only choice needed a key, and nothing showed but Skip). A lone plain choice is the button below. */}
+      {(panel.choices.length > 1 || (panel.choices.length === 1 && form !== null)) && (
         <div role="radiogroup" aria-label={panel.label} className="flex flex-col gap-1.5">
           {panel.choices.map((c) => (
             <div key={c.id} className="flex flex-col gap-2">
