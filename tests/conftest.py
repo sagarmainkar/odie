@@ -20,6 +20,31 @@ os.environ.setdefault("ODIE_TIMEZONE", "Asia/Kolkata")  # the region the existin
 os.environ.setdefault("ODIE_LOCALE", "en-IN")
 
 
+# Tests that need a Mac with Odie built on it, not GitHub's bare runner: the voice and embedding workers' own
+# environments (`uv sync` in voice_server and embed_server), the embedding model, and a Photos library.
+# On the runner (GITHUB_ACTIONS=true) they are skipped with this reason; on the owner's Mac they run.
+# Each entry: file -> (the part of the test's name it applies to, or "" for the whole file; why).
+# Worked example: test_photos_odie.py::test_the_worker_reads_the_library on the runner -> skipped;
+# test_photos_odie.py::test_search_only_photos on the runner -> runs; both run on this Mac.
+THIS_MAC_ONLY = {
+    "test_voice_worker.py": ("", "starts the voice worker's own environment (uv sync in voice_server)"),
+    "test_embed_server.py": ("", "the embedding service answers 503 until the model is on disk"),
+    "test_photos_odie.py": ("worker", "the vault worker needs the embedding worker's environment"),
+    "test_pictures_meaning.py": ("worker", "reads pictures by meaning with the embedding worker's environment"),
+}
+
+
+def pytest_collection_modifyitems(items):
+    if os.environ.get("GITHUB_ACTIONS") != "true":
+        return
+    for item in items:
+        entry = THIS_MAC_ONLY.get(Path(str(item.fspath)).name)
+        if entry is None:
+            continue
+        name_part, reason = entry
+        if name_part in item.name:
+            item.add_marker(pytest.mark.skip(reason=f"only on a Mac with Odie built: {reason}"))
+
 @pytest.fixture(autouse=True)
 def no_model_probe(monkeypatch):
     """Tests never ask the real LM Studio or Ollama for a model's context size (a test that needs one patches it)."""
