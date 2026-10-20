@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.2.1 (2026-10-20)
+
+- The phone step can be finished before the phone is at hand: "Later, from Settings → Phone" keeps the address; the
+  pairing code waits in Settings.
+
 ## v0.2.0 (2026-10-20)
 
 Things Odie makes while you are away, and a wider door.
