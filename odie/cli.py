@@ -800,21 +800,44 @@ def cmd_logs(inst: Install, runner: Runner, lines: int | None, errors_only: bool
 
 
 SETUP_LINK_JUST_OPENED = 90  # seconds: within this of the service writing its setup link, it has opened that link itself
+OPEN_WAITS_FOR_LINK = 20  # seconds `odie open` gives a just-started service to write its setup link
+
+
+def open_link_or_say_so(link_file: Path, runner: Runner) -> int:
+    """The setup link is there: opened by the service itself if it's young (then nothing more is opened, and this says
+    so), opened here if it's old (that tab was closed). Link 5 s old -> says "already open", opens nothing; 10 min old
+    -> opens the link."""
+    age = time.time() - link_file.stat().st_mtime
+    if age < SETUP_LINK_JUST_OPENED:
+        print("Setup is already open in your browser: the tab that pairs this Mac.")
+        return 0
+    return runner.run(["open", link_file.read_text().strip()], timeout=10).code
+
+
+def needs_no_setup_link(inst: Install, runner: Runner) -> bool:
+    """Whether the plain address is the right thing to open: Odie answers /api/health with its name, which it only does
+    for a paired browser or with pairing off. Health {"status":"ok","name":"Odie"} -> True; {"status":"ok"} (nothing
+    paired yet: the service is about to write a setup link) -> False; nothing answering yet -> False."""
+    health = read_health(inst, runner)
+    return health is not None and "name" in health
 
 
 def cmd_open(inst: Install, runner: Runner) -> int:
     """Opens Odie in this Mac's browser. While nothing is paired the service writes a one-time setup link at start and
     opens it itself (open_setup_link_when_written), so right after an install a second tab would only show a page that
     can't load until that first tab has paired: then this says so and opens nothing (the owner saw two tabs, one blank,
-    20 Oct 2026). An older setup link (the tab was closed) is opened instead of the plain address, which can't pair.
-    Fresh install, link 5 s old -> nothing opened; link 10 min old -> the link; paired -> http://localhost:8000."""
+    20 Oct 2026). The installer runs this before the service has written that link, so with the service loaded and
+    nothing paired it waits up to OPEN_WAITS_FOR_LINK seconds for the link (the owner saw the two tabs again on 0.2.3).
+    An older setup link (the tab was closed) is opened instead of the plain address, which can't pair.
+    Fresh install, link appears 3 s later -> nothing opened, "already open"; paired -> http://localhost:8000 at once;
+    service not loaded -> http://localhost:8000 at once; unpaired and no link after 20 s -> http://localhost:8000."""
     link_file = inst.home / "setup-link"
-    if link_file.exists() and link_file.stat().st_size > 0:
-        age = time.time() - link_file.stat().st_mtime
-        if age < SETUP_LINK_JUST_OPENED:
-            print("Setup is already open in your browser: the tab that pairs this Mac.")
-            return 0
-        return runner.run(["open", link_file.read_text().strip()], timeout=10).code
+    for _ in range(OPEN_WAITS_FOR_LINK):
+        if link_file.exists() and link_file.stat().st_size > 0:
+            return open_link_or_say_so(link_file, runner)
+        if needs_no_setup_link(inst, runner) or not service_loaded(inst, runner):
+            break
+        runner.sleep(1)
     return runner.run(["open", inst.local_url], timeout=10).code
 
 

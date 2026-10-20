@@ -516,6 +516,44 @@ def test_open_right_after_an_install_opens_no_second_tab(inst, world, capsys):
     assert world.events == ["open http://localhost:8999/#setup=abc"]
 
 
+def test_open_waits_for_the_setup_link_the_service_is_about_to_write(inst, world, capsys):
+    # 0.2.3, 20 Oct 2026: the installer's `odie open` ran before the service had written its link, so the plain address
+    # opened (blank until paired) and then the service opened the link: two tabs. Now it waits for the link.
+    world.loaded = True
+    world.running = world.head
+    link = inst.home / "setup-link"
+    link.parent.mkdir(parents=True, exist_ok=True)
+    real_sleep = world.sleep
+
+    def sleep_then_the_service_writes_its_link(seconds):
+        real_sleep(seconds)
+        if world.slept >= 3:
+            link.write_text("http://localhost:8999/#setup=abc")
+    world.sleep = sleep_then_the_service_writes_its_link
+    assert cli.cmd_open(inst, world) == 0
+    assert world.events == [] and "already open" in capsys.readouterr().out and world.slept == 3
+
+
+def test_open_goes_straight_to_the_address_when_paired_or_pairing_is_off(inst, world):
+    world.loaded = True
+    world.running = world.head
+    world.health_extra = {"name": "Odie"}  # health with Odie's name: this browser is paired, or pairing is off
+    assert cli.cmd_open(inst, world) == 0
+    assert world.events == ["open http://localhost:8999"] and world.slept == 0
+
+
+def test_open_without_the_service_opens_the_address_at_once(inst, world):
+    assert cli.cmd_open(inst, world) == 0
+    assert world.events == ["open http://localhost:8999"] and world.slept == 0
+
+
+def test_open_gives_up_waiting_after_a_while(inst, world):
+    world.loaded = True
+    world.running = world.head  # healthy but unpaired, and the link never comes
+    assert cli.cmd_open(inst, world) == 0
+    assert world.events == ["open http://localhost:8999"] and world.slept == cli.OPEN_WAITS_FOR_LINK
+
+
 def test_short_subject():
     assert cli.short_subject("Merge pull request #41 from someone/schema-cleanup") == "Merge #41"
     assert cli.short_subject("Short one") == "Short one"
