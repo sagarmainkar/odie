@@ -28,9 +28,13 @@ def call(function: str, stand_ins: Path) -> subprocess.CompletedProcess:
     )
 
 
-def a_mac(folder: Path, system: str = "Darwin", chip: str = "arm64", macos: str = "15.2") -> Path:
+def a_mac(folder: Path, system: str = "Darwin", chip: str = "arm64", macos: str = "15.2", kernel_chip: str | None = None) -> Path:
+    """`chip` is what the shell's uname says; `kernel_chip` what the kernel says (sysctl), the same unless given."""
     stand_in(folder, "uname", f'if [ "$1" = "-m" ]; then echo {chip}; else echo {system}; fi')
     stand_in(folder, "sw_vers", f"echo {macos}")
+    kernel = kernel_chip or chip
+    # hw.optional.arm64 is 1 on Apple Silicon; on an Intel Mac the key doesn't exist and sysctl fails
+    stand_in(folder, "sysctl", "echo 1" if kernel == "arm64" else "exit 1")
     return folder
 
 
@@ -59,9 +63,22 @@ def test_linux_is_pointed_to_the_readme(tmp_path):
     assert result.returncode == 1 and "mac-first-linux-today" in result.stderr
 
 
-def test_an_intel_mac_stops(tmp_path):
-    result = call("check_computer", a_mac(tmp_path, chip="x86_64"))
-    assert result.returncode == 1 and "Apple Silicon" in result.stderr
+def test_an_intel_mac_goes_on_without_the_apple_silicon_parts(tmp_path):
+    # The owner's Intel laptop, 20 Oct 2026: Odie runs there without Kokoro and search by meaning, and the install says so.
+    result = call("check_computer; echo voice=$ODIE_VOICE embed=$ODIE_EMBED", a_mac(tmp_path, chip="x86_64"))
+    assert result.returncode == 0
+    assert "Intel Mac" in result.stdout and "local voice" in result.stdout and "search by meaning" in result.stdout
+    assert "voice=off embed=off" in result.stdout
+
+
+def test_an_apple_silicon_mac_keeps_its_voice_and_search(tmp_path):
+    result = call("check_computer; echo voice=${ODIE_VOICE:-unset} embed=${ODIE_EMBED:-unset}", a_mac(tmp_path))
+    assert result.returncode == 0 and "voice=unset embed=unset" in result.stdout and "Intel" not in result.stdout
+
+
+def test_an_apple_silicon_mac_in_a_rosetta_shell_goes_on(tmp_path):
+    # The owner's laptop, 20 Oct 2026: uname said x86_64 from a Rosetta terminal and the install stopped on an M-series Mac.
+    assert call("check_computer", a_mac(tmp_path, chip="x86_64", kernel_chip="arm64")).returncode == 0
 
 
 def test_macos_13_stops(tmp_path):

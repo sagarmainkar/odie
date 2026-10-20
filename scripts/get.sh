@@ -17,14 +17,29 @@ MIN_NODE=20
 say() { printf '%s\n' "$*"; }
 stop() { printf '%s\n' "$*" >&2; exit 1; }
 
-# Whether this computer can run Odie: a Mac with Apple Silicon on macOS 14 or newer. Linux runs Odie from a terminal,
-# without this installer. A MacBook Air M2 on macOS 15.2 -> goes on; an Intel Mac or macOS 13 -> stops with why.
+# Whether the chip is Apple Silicon. `uname -m` says x86_64 inside a Rosetta shell (a terminal set to "Open using
+# Rosetta", or one started by an Intel-built tool), so the kernel's own answer comes first: hw.optional.arm64 is 1 on
+# every Apple Silicon Mac whatever the shell, and missing on an Intel Mac. An M2 under Rosetta -> yes; an Intel i7 -> no.
+apple_silicon() {
+  if [ "$(sysctl -n hw.optional.arm64 2>/dev/null || true)" = "1" ]; then
+    return 0
+  fi
+  [ "$(uname -m)" = "arm64" ]
+}
+
+# Whether this computer can run Odie: a Mac on macOS 14 or newer. Linux runs Odie from a terminal, without this
+# installer. A MacBook Air M2 on macOS 15.2 -> goes on; an Intel Mac -> goes on with the Apple Silicon parts off and
+# says so; macOS 13 -> stops with why.
 check_computer() {
   if [ "$(uname -s)" != "Darwin" ]; then
     stop "This installer is for macOS. On Linux, see: https://github.com/sagarmainkar/odie#mac-first-linux-today-more-welcome"
   fi
-  if [ "$(uname -m)" != "arm64" ]; then
-    stop "Odie needs a Mac with Apple Silicon (M1 or newer)."
+  if ! apple_silicon; then
+    # An Intel Mac runs Odie without the two parts that need Apple Silicon: its own voice (Kokoro, on MLX) and
+    # search by meaning (PyTorch has no Intel Mac builds). install.sh reads these and the service keeps them.
+    say "Intel Mac: Odie runs without its local voice (Kokoro) and without search by meaning over notes and photos."
+    say "Everything else works; cloud voices and cloud embeddings need a key in Settings."
+    export ODIE_VOICE=off ODIE_EMBED=off
   fi
   local major
   major="$(sw_vers -productVersion | cut -d. -f1)"
