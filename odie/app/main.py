@@ -248,16 +248,16 @@ def create_app(runner=None, store: Store | None = None) -> FastAPI:
             app.state.runner = runner
         if devices.offer_setup(store):
             logging.getLogger("odie").info("No device is paired yet: the installer opens the link in %s", devices.setup_file())
-        from odie import embed_worker, voice_worker
+        from odie import embed_worker, machine, voice_worker
         logs = (s.home / "logs") if s.home else s.data_dir
-        if runner is None and os.environ.get("ODIE_VOICE", "on").lower() not in ("off", "0", "no"):  # the real server
+        if runner is None and machine.local_voice_wanted():  # the real server, on a Mac that runs Odie's own voice
             logs.mkdir(parents=True, exist_ok=True)
             voice_worker.current = voice_worker.VoiceWorker(log=logs / "voice.log")
             try:
                 await voice_worker.current.start()  # Odie's own local voices, started with it
             except Exception:  # noqa: BLE001 (voice never decides whether Odie starts)
                 logging.getLogger("odie").warning("local voice couldn't start", exc_info=True)
-        if runner is None and os.environ.get("ODIE_EMBED", "on").lower() not in ("off", "0", "no"):
+        if runner is None and machine.local_embeddings_wanted():
             logs.mkdir(parents=True, exist_ok=True)
             embed_worker.current = embed_worker.EmbedWorker(log=logs / "embed.log")  # started on demand by the embedder…
             from odie.vault import settings as vault_settings

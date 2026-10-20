@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import httpx
 
-from odie import config
+from odie import config, machine
 from odie.secrets import load_secret
 from odie.store.db import Store
 
@@ -71,7 +71,31 @@ ENGINES = {
 }
 # Maya1 is hidden until its pipeline is rebuilt from the official prompt format (2026-10-01: through mlx-audio's generic
 # loader it read tags out as words or produced noise).
-DISABLED = {"maya1"}
+_HIDDEN = {"maya1"}
+
+
+def disabled() -> set[str]:
+    """The engines not offered on this machine: Maya1 always (above), and the local ones when Odie's own voice isn't
+    meant to run here (ODIE_VOICE=off: an Intel Mac, see odie.machine). An M2 -> {"maya1"}; an Intel Mac -> {"maya1",
+    "kokoro"}."""
+    if machine.local_voice_wanted():
+        return set(_HIDDEN)
+    return _HIDDEN | {k for k, v in ENGINES.items() if v["local"]}
+
+
+def default_engine() -> str:
+    """The engine when none is chosen, or the chosen one isn't offered here: Kokoro where it runs, else OpenAI (which
+    needs its key; without one, read-aloud says so). An M2 -> "kokoro"; an Intel Mac -> "openai"."""
+    return "kokoro" if machine.local_voice_wanted() else "openai"
+
+
+def _chosen_engine(s: dict) -> str:
+    """The engine the settings name, when it is offered here; else the default. {"engine": "kokoro"} on an M2 ->
+    "kokoro"; the same on an Intel Mac -> "openai"; {} -> the default."""
+    engine = s.get("engine")
+    if engine in ENGINES and engine not in disabled():
+        return engine
+    return default_engine()
 _ENGINE_VOICES = {"openai": VOICES, "kokoro": KOKORO_VOICES, "maya1": MAYA_VOICES}
 _DEFAULT_VOICE = {"openai": DEFAULT_VOICE, "kokoro": "af_heart", "maya1": "in_female"}
 
@@ -83,9 +107,9 @@ def engine_voices(engine: str) -> list[dict]:
 def get_tts(store: Store) -> tuple[str, str]:
     """(engine, voice) for read-aloud. The realtime Talk voice is get_voice() (OpenAI only)."""
     s = store.get_setting("voice") or {}
-    engine = s.get("engine") if s.get("engine") in ENGINES and s.get("engine") not in DISABLED else "kokoro"
-    if engine == "openai" and not load_secret("OPENAI_API_KEY"):
-        engine = "kokoro"  # Kokoro is the default; OpenAI voices need its key
+    engine = _chosen_engine(s)
+    if engine == "openai" and not load_secret("OPENAI_API_KEY") and "kokoro" not in disabled():
+        engine = "kokoro"  # Kokoro is the default where it runs; OpenAI voices need its key
     v = s.get("voice") if engine == "openai" else s.get(f"{engine}_voice")
     ids = {x["id"] for x in engine_voices(engine)}
     return engine, (v if v in ids else _DEFAULT_VOICE[engine])
@@ -93,9 +117,9 @@ def get_tts(store: Store) -> tuple[str, str]:
 
 def set_tts(store: Store, engine: str | None = None, voice: str | None = None) -> tuple[str, str]:
     s = dict(store.get_setting("voice") or {})
-    if engine in ENGINES and engine not in DISABLED:
+    if engine in ENGINES and engine not in disabled():
         s["engine"] = engine
-    eng = s.get("engine") if s.get("engine") in ENGINES and s.get("engine") not in DISABLED else "kokoro"  # same default as get_tts
+    eng = _chosen_engine(s)  # the same default as get_tts
     if voice and voice in {x["id"] for x in engine_voices(eng)}:
         s["voice" if eng == "openai" else f"{eng}_voice"] = voice
     store.set_setting("voice", s)

@@ -163,7 +163,7 @@ function AssistantSection() {
 
 type VoiceItem = { id: string; label: string; group?: string; note?: string };
 type Engine = { id: string; label: string; note: string; local: boolean; available: boolean; voices: VoiceItem[] };
-type VoiceInfo = { engine: string; voice: string; engines: Engine[]; models: { tts: string; realtime: string }; reminders_spoken?: boolean };
+type VoiceInfo = { engine: string; voice: string; engines: Engine[]; models: { tts: string; realtime: string }; reminders_spoken?: boolean; local_voice?: boolean };
 
 function VoiceSection() {
   const [v, setV] = useState<VoiceInfo | null>(null);
@@ -186,13 +186,30 @@ function VoiceSection() {
   }
   if (!v) return null;
   const eng = v.engines.find((e) => e.id === v.engine) ?? v.engines[0];
+  // Odie's own voice needs Apple Silicon; on an Intel Mac the server offers no local engine and says so here.
+  const noLocal = v.local_voice === false;
+  const about = (
+    <div className="text-[13px] leading-[18px] text-muted px-1">
+      Read-aloud (the speaker under each reply).{" "}
+      {noLocal && <>Odie's own voice (Kokoro) needs Apple Silicon, so it isn't offered on this Mac.{" "}</>}
+      {v.engines.some((e) => e.id === "openai") ? <>With your OpenAI key: its voices, and dictation that writes as you speak.</> : <>Add an OpenAI key in Providers for OpenAI voices and live dictation.</>}
+    </div>
+  );
+  if (!eng) {
+    // No engine at all (an Intel Mac without an OpenAI key): the phone's own voice still reads replies.
+    return (
+      <Section title="Voice">
+        <div className="p-3 flex flex-col gap-3">
+          {about}
+          <div className="text-[13px] leading-[18px] text-muted px-1">Until then, replies are read with the browser's own voice.</div>
+        </div>
+      </Section>
+    );
+  }
   return (
     <Section title="Voice">
       <div className="p-3 flex flex-col gap-3">
-        <div className="text-[13px] leading-[18px] text-muted px-1">
-          Read-aloud (the speaker under each reply).{" "}
-          {v.engines.some((e) => e.id === "openai") ? <>With your OpenAI key: its voices, and dictation that writes as you speak.</> : <>Add an OpenAI key in Providers for OpenAI voices and live dictation.</>}
-        </div>
+        {about}
         <div className="bg-well rounded-[14px] p-1 flex gap-1" role="radiogroup" aria-label="Read-aloud engine">
           {v.engines.map((e) => (
             <button key={e.id} role="radio" aria-checked={e.id === v.engine} disabled={!e.available} onClick={() => void save({ engine: e.id })}

@@ -130,3 +130,22 @@ def test_voices_are_listed_by_who_they_sound_like():
     assert "; men: Michael (American), Fenrir (American), George (British)" in kokoro
     assert voice.voices_text("openai") == ("women: Marin, Coral, Sage, Shimmer; men: Cedar, Ash, Ballad, Echo, Verse; "
                                           "neutral: Alloy")
+
+
+def test_without_a_local_voice_kokoro_is_hidden_and_openai_is_the_default(tmp_path, monkeypatch):
+    # An Intel Mac (the installer sets ODIE_VOICE=off, 20 Oct 2026): Kokoro is offered nowhere, OpenAI is the engine.
+    monkeypatch.setenv("ODIE_VOICE", "off")
+    monkeypatch.setattr(voice, "load_secret", lambda name: None)  # even without an OpenAI key: nothing falls back to Kokoro
+    s = _store(tmp_path)
+    assert voice.disabled() == {"maya1", "kokoro"} and voice.default_engine() == "openai"
+    assert voice.get_tts(s) == ("openai", "marin")
+    assert voice.set_tts(s, "kokoro") == ("openai", "marin")  # not offered here: ignored, like Maya1
+    assert voice.set_tts(s, voice="cedar") == ("openai", "cedar")
+    assert [v["id"] for v in voice.podcast_voices(s)] == ["marin", "cedar"]
+
+
+def test_with_a_local_voice_kokoro_stays_the_default(tmp_path, monkeypatch):
+    monkeypatch.setenv("ODIE_VOICE", "on")
+    monkeypatch.setattr(voice, "load_secret", lambda name: None)
+    assert voice.disabled() == {"maya1"} and voice.default_engine() == "kokoro"
+    assert voice.get_tts(_store(tmp_path)) == ("kokoro", "af_heart")
