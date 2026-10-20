@@ -40,7 +40,7 @@ EXPLAIN = {
 SKIP = {
     "vault": "Skip: no notes for now", "embeddings": "Skip: find notes by their words", "photos": "Skip: no photos for now",
     "search": "Skip: use the free search",
-    "voice": "Skip: use the browser's own voice", "apps": "Skip: no apps for now", "phone": "Skip: only this computer",
+    "voice": "Skip: use the browser's own voice", "apps": "Skip: no apps for now", "phone": "Skip: no phone for now",
 }
 LABEL = {"names": "Names", "vault": "Notes", "embeddings": "Search by meaning", "photos": "Photos", "search": "Web search",
          "voice": "Voice", "apps": "Apps", "phone": "Phone"}
@@ -149,7 +149,9 @@ async def panel(store, step: str | None = None, transport=None) -> dict | None:
                       "In the phone's browser, choose Add to Home Screen: I open like an app from then on."],
         }
         if installed and address:
-            out["choices"] = [_choice("paired", "My phone is paired" if devices.pairing_on(store) else "My phone opens it")]
+            # Pairing the phone can wait: "later" finishes the step with the address kept; Settings → Phone has the code.
+            out["choices"] = [_choice("paired", "My phone is paired" if devices.pairing_on(store) else "My phone opens it"),
+                              _choice("later", "Later, from Settings → Phone", "The address stays; pair whenever the phone is at hand")]
         elif not installed:  # "note": for setup's chat model only; the phone card shows the same as steps
             out["note"] = f"Tailscale isn't on this computer yet: get it at {TAILSCALE_DOWNLOAD}, sign in, then Check again."
         else:
@@ -223,6 +225,9 @@ async def apply(store, step: str, choice: str, value=None, runner=None, transpor
         return f"Apps: {found['label']} is connected."
     if step == "phone":
         from odie import devices
+        if choice == "later":
+            state.mark(store, "phone", "done")
+            return "Whenever the phone is at hand: Settings → Phone has the address and the pairing code."
         if devices.pairing_on(store) and len(devices.list_devices(store)) < 2:
             raise ChoiceError("No phone has paired yet: scan the code with the phone's camera first, then press this again.")
         state.mark(store, "phone", "done")
