@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.2.4 (2026-10-20)
+
+- `odie open` right after an install waits for the service's setup link instead of opening a second, blank tab.
+
 ## v0.2.3 (2026-10-20)
 
 - `odie install` opens one browser tab, not two: the install's own open waits when the setup link was just opened.
