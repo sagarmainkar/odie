@@ -12,6 +12,12 @@
   <br><a href="docs/media/odie-film.mp4"><b>▶ Watch the film</b></a> (90 seconds, made-up data)
 </p>
 
+**Install on a Mac** (macOS 14 or newer, about two minutes; [details](#install)):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/sagarmainkar/odie/main/scripts/get.sh | bash
+```
+
 ---
 
 Odie reads your notes, your photos, your mail and your calendar, remembers what you tell it, browses the web, runs
@@ -283,6 +289,20 @@ hiccups.
 Contributions are very welcome, for other operating systems and for new features alike: a Linux service, voices and
 sign-ins on Linux, a folder of pictures in place of Apple Photos, and anything that makes Odie more fun. See
 [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## Odie for Mac is coming. Who wants it?
+
+<p align="center">
+  <a href="https://github.com/sagarmainkar/odie/discussions/28"><img src="docs/media/odie-for-mac.png" width="720" alt="Odie for Mac: a native window with a market answer as two charts and four cards, a Track button and Read it"></a>
+</p>
+
+The web app is Odie today. A native Mac app is in the works: a small capsule in the menu bar, a pull-down chat,
+reminders as banners, a screen snapshot as an attachment, and the same cards, tables and pictures as answers. It will
+be a paid client, one-time, about the price of a lunch; the engine in this repo stays free and MIT.
+
+Before I spend more on it, I'd like to know whether anyone besides me wants it: **[say so in the
+Discussion](https://github.com/sagarmainkar/odie/discussions/28)** (an upvote is enough; what you'd want from it is
+better).
 
 ## More
 
