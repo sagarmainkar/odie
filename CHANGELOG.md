@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.2.2 (2026-10-20)
+
+- Setup shows a lone choice that needs a key first (OpenAI's voice on an Intel Mac), and "Make a new code" under the
+  pairing QR is a button.
+
 ## v0.2.1 (2026-10-20)
 
 - The phone step can be finished before the phone is at hand: "Later, from Settings → Phone" keeps the address; the
