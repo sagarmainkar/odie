@@ -184,7 +184,7 @@ function AppCardView({ card, onSaved }: { card: AppCard; onSaved: (app: string) 
 
 /** The phone step: is Tailscale here and passing the phone to Odie? Then the address, the steps, and a pairing code
  * (a QR code the phone's camera opens, valid once for 10 minutes). */
-function PhoneBlock({ phone, onCheck }: { phone: Phone; onCheck: () => void }) {
+export function PhoneBlock({ phone, onCheck }: { phone: Phone; onCheck: () => void }) {
   const [made, setMade] = useState<{ code: string; svg: string; url: string } | null>(null);
   const [error, setError] = useState("");
   async function code() {
@@ -206,7 +206,7 @@ function PhoneBlock({ phone, onCheck }: { phone: Phone; onCheck: () => void }) {
     <div className="flex flex-col gap-2 text-[14px] leading-[20px]">
       <div>Tailscale is here, but it doesn't pass your phone to me yet. In Terminal, run:</div>
       <code className="font-mono text-[13.5px] rounded-[10px] bg-well px-3 py-2 select-all">{phone.serve_command}</code>
-      <div className="text-muted text-[13px]">Then restart me and press Check again.</div>
+      <div className="text-muted text-[13px]">Then press Check again. If it still doesn't show: run <code className="font-mono">odie restart</code> in Terminal, refresh this page, and press Check again.</div>
       <button onClick={onCheck} className="self-start h-9 px-4 rounded-full border border-line-2 text-[13.5px] font-medium">Check again</button>
     </div>
   );

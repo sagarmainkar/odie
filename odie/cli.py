@@ -464,7 +464,7 @@ def cmd_start(inst: Install, runner: Runner, environ: Mapping[str, str]) -> int:
         print(f"Odie is running: {inst.local_url}")
         phone = tailscale_phone_address(inst.port, runner)
         if phone:
-            print(f"  phone:  {phone}")
+            print(f"  phone:  {phone}  (open this on your phone; Settings → Phone has the steps)")
         # 6. A first start: say how a browser that isn't this Mac's gets in.
         if nothing_paired_before and pairing_asked_for(inst, environ):
             print(PAIRING_HINT)
