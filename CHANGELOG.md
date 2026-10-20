@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.2.3 (2026-10-20)
+
+- `odie install` opens one browser tab, not two: the install's own open waits when the setup link was just opened.
+
 ## v0.2.2 (2026-10-20)
 
 - Setup shows a lone choice that needs a key first (OpenAI's voice on an Intel Mac), and "Make a new code" under the
