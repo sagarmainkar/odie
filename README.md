@@ -12,6 +12,12 @@
   <br><a href="docs/media/odie-film.mp4"><b>▶ Watch the film</b></a> (90 seconds, made-up data)
 </p>
 
+**Install on a Mac** (macOS 14 or newer, about two minutes; [details](#install)):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/sagarmainkar/odie/main/scripts/get.sh | bash
+```
+
 ---
 
 Odie reads your notes, your photos, your mail and your calendar, remembers what you tell it, browses the web, runs
