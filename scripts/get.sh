@@ -17,14 +17,24 @@ MIN_NODE=20
 say() { printf '%s\n' "$*"; }
 stop() { printf '%s\n' "$*" >&2; exit 1; }
 
+# Whether the chip is Apple Silicon. `uname -m` says x86_64 inside a Rosetta shell (a terminal set to "Open using
+# Rosetta", or one started by an Intel-built tool), so the kernel's own answer comes first: hw.optional.arm64 is 1 on
+# every Apple Silicon Mac whatever the shell, and missing on an Intel Mac. An M2 under Rosetta -> yes; an Intel i7 -> no.
+apple_silicon() {
+  if [ "$(sysctl -n hw.optional.arm64 2>/dev/null || true)" = "1" ]; then
+    return 0
+  fi
+  [ "$(uname -m)" = "arm64" ]
+}
+
 # Whether this computer can run Odie: a Mac with Apple Silicon on macOS 14 or newer. Linux runs Odie from a terminal,
 # without this installer. A MacBook Air M2 on macOS 15.2 -> goes on; an Intel Mac or macOS 13 -> stops with why.
 check_computer() {
   if [ "$(uname -s)" != "Darwin" ]; then
     stop "This installer is for macOS. On Linux, see: https://github.com/sagarmainkar/odie#mac-first-linux-today-more-welcome"
   fi
-  if [ "$(uname -m)" != "arm64" ]; then
-    stop "Odie needs a Mac with Apple Silicon (M1 or newer)."
+  if ! apple_silicon; then
+    stop "Odie needs a Mac with Apple Silicon (M1 or newer). This Mac says its chip is $(uname -m)."
   fi
   local major
   major="$(sw_vers -productVersion | cut -d. -f1)"

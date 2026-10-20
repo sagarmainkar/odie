@@ -28,9 +28,13 @@ def call(function: str, stand_ins: Path) -> subprocess.CompletedProcess:
     )
 
 
-def a_mac(folder: Path, system: str = "Darwin", chip: str = "arm64", macos: str = "15.2") -> Path:
+def a_mac(folder: Path, system: str = "Darwin", chip: str = "arm64", macos: str = "15.2", kernel_chip: str | None = None) -> Path:
+    """`chip` is what the shell's uname says; `kernel_chip` what the kernel says (sysctl), the same unless given."""
     stand_in(folder, "uname", f'if [ "$1" = "-m" ]; then echo {chip}; else echo {system}; fi')
     stand_in(folder, "sw_vers", f"echo {macos}")
+    kernel = kernel_chip or chip
+    # hw.optional.arm64 is 1 on Apple Silicon; on an Intel Mac the key doesn't exist and sysctl fails
+    stand_in(folder, "sysctl", "echo 1" if kernel == "arm64" else "exit 1")
     return folder
 
 
@@ -61,7 +65,12 @@ def test_linux_is_pointed_to_the_readme(tmp_path):
 
 def test_an_intel_mac_stops(tmp_path):
     result = call("check_computer", a_mac(tmp_path, chip="x86_64"))
-    assert result.returncode == 1 and "Apple Silicon" in result.stderr
+    assert result.returncode == 1 and "Apple Silicon" in result.stderr and "x86_64" in result.stderr
+
+
+def test_an_apple_silicon_mac_in_a_rosetta_shell_goes_on(tmp_path):
+    # The owner's laptop, 20 Oct 2026: uname said x86_64 from a Rosetta terminal and the install stopped on an M-series Mac.
+    assert call("check_computer", a_mac(tmp_path, chip="x86_64", kernel_chip="arm64")).returncode == 0
 
 
 def test_macos_13_stops(tmp_path):
