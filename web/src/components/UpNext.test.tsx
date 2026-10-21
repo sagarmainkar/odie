@@ -26,6 +26,15 @@ describe("Up next pictures", () => {
     expect(html.match(/has-photo/g)).toHaveLength(1);  // only the card with a picture
   });
 
+  it("show where each card came from, as a coloured mark, on the small cards too", () => {
+    const gmail = [{ kind: "gmail", app: "Gmail and Calendar" }];
+    const icloud = [{ kind: "icloud", app: "Calendar" }];
+    const html = draw([item({ badges: gmail }), item({ id: "cal:2", title: "Buy medicine", kind: "general", badges: icloud })]);
+    expect(html.match(/badge-gmail/g)).toHaveLength(1);
+    expect(html.match(/badge-icloud/g)).toHaveLength(1);  // the small card's
+    expect(html).toContain('title="Calendar"');  // the app's name on a long press or hover
+  });
+
   it("leave a card without one as it was", () => {
     const html = draw([item()]);
     expect(html).not.toContain("<img");

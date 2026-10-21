@@ -264,6 +264,12 @@ input, button, textarea { font-family: inherit; }
 .kind-card { background: linear-gradient(160deg, var(--ka) 0%, var(--kb) 100%); border-color: rgba(255,255,255,.7); }
 .kind-inner { background: rgba(255,255,255,.65); border-color: rgba(255,255,255,.8); }
 .kind-chip { background: rgba(255,255,255,.7); }
+/* Where an item came from (SourceBadges): a small white chip with the source's own colour, readable on any card */
+.badge-mark { display: inline-flex; align-items: center; justify-content: center; height: 18px; min-width: 18px; padding: 0 3px;
+  border-radius: 999px; background: rgba(255,255,255,.92); box-shadow: 0 1px 2px rgba(40,30,70,.18); text-shadow: none; }
+.badge-gmail { color: #d93025; }
+.badge-icloud { color: #1a73e8; }
+.badge-app { padding: 0 6px; font-size: 10px; font-weight: 700; letter-spacing: .03em; text-transform: uppercase; color: #3c3450; }
 /* A card with a picture from Photos (odie.photos.cards): the photo fills it under a veil in the kind's evening colours,
    darker at the bottom; the words turn light with a raised edge; the kind's drawing stays on top. */
 .kind-photo { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }

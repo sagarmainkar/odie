@@ -78,7 +78,7 @@ function Mini({ it }: { it: UpItem }) {
       {photo.shown && it.photo && <CardPhoto src={it.photo} onError={photo.broke} />}
       <div className="flex items-start justify-between">
         <div>
-          <div className="text-[11.5px] font-semibold text-muted">{d.short}</div>
+          <div className="flex items-center text-[11.5px] font-semibold text-muted">{d.short}<SourceBadges badges={it.badges} /></div>
           <div className="text-[30px] leading-none font-extrabold tracking-[-0.04em] tabular-nums">{d.day}</div>
         </div>
         <EventArt kind={it.kind} size={54} />
