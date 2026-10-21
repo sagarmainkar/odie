@@ -13,6 +13,27 @@ export type Sharer = {
 
 export type ShareOutcome = "shared" | "cancelled" | "unsupported" | "failed";
 
+/** How many pictures go with one reply at most; the rest of a long reply's pieces stay in the words. */
+export const MAX_PICTURES = 6;
+/** A drawn piece shorter than this (a line of source links, a one-row note) is not worth a picture of its own. */
+export const SMALL_PIECE = 90;
+
+/** The visual pieces of a reply's bubble, in order: block fences, charts, diagrams, SVGs and tables (each marked
+ * data-visual where it is drawn), leaving out pieces shorter than `minHeight` on screen and anything past the
+ * first MAX_PICTURES. A bubble of words alone -> []. */
+export function visualsIn(bubble: ParentNode | null, minHeight = 0): HTMLElement[] {
+  if (!bubble) return [];
+  const pieces = Array.from(bubble.querySelectorAll<HTMLElement>("[data-visual]"));
+  const tall = pieces.filter((piece) => minHeight <= 0 || piece.getBoundingClientRect().height >= minHeight);
+  return tall.slice(0, MAX_PICTURES);
+}
+
+/** The file name a reply's n-th picture goes out under: ("Odie", 0) -> "odie-1.png". */
+export function pictureName(name: string, n: number): string {
+  const base = name.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "odie";
+  return `${base}-${n + 1}.png`;
+}
+
 /** Decides whether the share sheet exists here: iPhone Safari (share on navigator) -> true; Firefox on a Mac -> false. */
 export function canShareHere(nav: Sharer = typeof navigator !== "undefined" ? (navigator as Sharer) : {}): boolean {
   return typeof nav.share === "function";
@@ -52,6 +73,29 @@ export async function shareText(text: string, title?: string, nav: Sharer = type
   if (typeof nav.share !== "function") return "unsupported";
   try {
     await nav.share({ title, text });
+    return "shared";
+  } catch (error) {
+    return outcomeOf(error);
+  }
+}
+
+/** A reply to the sheet: its words, and its visual pieces as pictures when the sheet takes files. `render` draws
+ * one piece (renderPicture); a piece that can't be drawn is left out. Pictures first with the words as their
+ * caption; words alone where files can't go (an older sheet), or when nothing could be drawn.
+ *  a reply with a chart on an iPhone -> share({files: [chart.png], text, title}) -> "shared"
+ *  the same on a sheet without canShare -> share({text, title}) */
+export async function shareReply(reply: { text: string; title?: string; visuals: HTMLElement[]; name: string },
+                                 render: (piece: HTMLElement, name: string, fileName: string) => Promise<File | null>,
+                                 nav: Sharer = typeof navigator !== "undefined" ? (navigator as Sharer) : {}): Promise<ShareOutcome> {
+  if (typeof nav.share !== "function") return "unsupported";
+  let files: File[] = [];
+  if (reply.visuals.length && typeof nav.canShare === "function") {
+    const drawn = await Promise.all(reply.visuals.map((piece, n) => render(piece, reply.name, pictureName(reply.name, n))));
+    files = drawn.filter((file): file is File => file !== null);
+    if (files.length && !nav.canShare({ files })) files = [];
+  }
+  try {
+    await nav.share(files.length ? { files, text: reply.text, title: reply.title } : { text: reply.text, title: reply.title });
     return "shared";
   } catch (error) {
     return outcomeOf(error);

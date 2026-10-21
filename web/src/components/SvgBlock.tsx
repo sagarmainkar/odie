@@ -8,7 +8,7 @@ import { ToBody } from "./ToBody";
 export function SvgBlock({ svg }: { svg: string }) {
   const [open, setOpen] = useState(false);
   return (
-    <figure className="my-2">
+    <figure className="my-2" data-visual="svg">
       <button type="button" onClick={() => setOpen(true)} aria-label="Show the drawing larger"
         className="glass glass-solid block w-full rounded-[22px] p-3 text-left [&>svg]:block [&>svg]:w-full [&>svg]:h-auto [&>svg]:max-h-[360px]"
         dangerouslySetInnerHTML={{ __html: svg }} />

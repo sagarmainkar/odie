@@ -100,7 +100,7 @@ const mdComponents: Components = {
     if (shown.as === "svg") return <SvgBlock svg={shown.svg} />;
     return <CodeBlock lang={lang} code={code} />;
   },
-  table({ children }) { return <div className="table-wrap"><table>{children}</table></div>; },
+  table({ children }) { return <div className="table-wrap" data-visual="table"><table>{children}</table></div>; },
   img({ src, alt }) { return typeof src === "string" && /^(https?:\/\/|\/api\/(photos|media)\/)/.test(src) ? <SafeImage src={src} alt={alt} className="my-2 max-w-full max-h-[320px] rounded-[16px] border border-line object-cover" /> : null; },
   a({ href, children }) { return <a href={href} target="_blank" rel="noreferrer">{children}</a>; },
   span: MarkdownSpan,  // :icon[…] in reply text (remarkInline marks them)
@@ -665,7 +665,7 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
                             <PrivateReply.Provider value={!!m.private}>
                               <ReplyPlace.Provider value={{ sessionId: m.sid, messageKey: m.key, text: shown, streaming }}>
                                 {/* @container: blocks in the reply size their grids to the bubble (wideColumns.ts), not the window. */}
-                                <div className={`glass rounded-[8px_26px_26px_26px] px-4 py-3.5 md @container ${streaming ? "is-streaming" : ""}`}><ReactMarkdown remarkPlugins={[remarkGfm, remarkInline]} components={mdComponents}>{shown}</ReactMarkdown></div>
+                                <div data-bubble={m.id} className={`glass rounded-[8px_26px_26px_26px] px-4 py-3.5 md @container ${streaming ? "is-streaming" : ""}`}><ReactMarkdown remarkPlugins={[remarkGfm, remarkInline]} components={mdComponents}>{shown}</ReactMarkdown></div>
                               </ReplyPlace.Provider>
                             </PrivateReply.Provider>
                           );
@@ -685,7 +685,7 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
                               {speakingId === m.id ? <SpeakingBars /> : preparingId === m.id ? <span className="spinner" /> : <Glyph name="speaker" size={17} />}
                             </button>
                             <CopyButton text={m.text} />
-                            <ShareWords text={m.text} title={name} />
+                            <ShareWords text={m.text} title={name} bubbleId={String(m.id)} />
                             {m.usage && <span className="ml-1 text-[12px] text-dim">{replyLine(m.usage)}</span>}
                           </motion.div>
                         )}
