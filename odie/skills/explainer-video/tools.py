@@ -32,6 +32,7 @@ SECONDS_A_CLIP = 5  # downloading one clip and re-encoding its first 15 s (about
 MIN_MINUTES = 1
 DEFAULT_MINUTES = 2
 MAX_BRIEF_CHARACTERS = 20_000  # the chat model's own brief; the sources have their own limits (odie.making.sources)
+MAX_STYLE_CHARACTERS = 300  # a narration style is one line; anything longer is cut, not refused
 WORD = "video"
 DOING = "writing the script and the animation, then drawing it"  # the middle of the reply: what making it involves
 
@@ -139,9 +140,18 @@ def sounds_as_given(sounds) -> bool:
     return bool(sounds)
 
 
+def style_as_given(style) -> str:
+    """The narration style as one line of at most MAX_STYLE_CHARACTERS, from the style argument as the model sent it:
+    None or "" -> ""; "Calm.\n  Slow down on numbers. " -> "Calm. Slow down on numbers."; 400 characters -> the
+    first 300."""
+    words = chat.text_or_empty(style).split()
+    one_line = " ".join(words)
+    return one_line[:MAX_STYLE_CHARACTERS]
+
+
 async def make_video(topic: str, minutes: int = 2, brief: str = "", sources: list[str] | None = None,
                      images: list[str] | None = None, clips: list[str] | None = None, sounds: bool = True,
-                     voice_name: str = "", tool_context: ToolContext | None = None) -> dict:
+                     voice_name: str = "", style: str = "", tool_context: ToolContext | None = None) -> dict:
     """Make a narrated, animated explainer video that plays in this chat. A separate writer makes the narration and
     the animation from your brief, in the background; it can't see this chat, the user's notes, memory or the web.
     topic: what the video is about, short ("How attention works").
@@ -156,6 +166,9 @@ async def make_video(topic: str, minutes: int = 2, brief: str = "", sources: lis
     clips: short stock clips, at most 6, the same way, with the https:// address find_clips gave.
     sounds: leave true; false only when the user asks for no sound effects.
     voice_name: leave empty; only when the user asks for a voice, one of the Settings engine's voices.
+    style: leave empty; only when the user says how the narrator should sound, one line up to 300 characters, like
+    "Curious science narrator. Calm, but lift slightly at the payoff. Slow down on numbers." Only OpenAI's voices
+    follow it.
     It returns at once. {"error": …}: fix exactly that and call again. {"result": …}: the video is being made; reply
     in one or two lines as the result says, and don't repeat the brief."""
     if find.browser_binary() is None:
@@ -164,6 +177,7 @@ async def make_video(topic: str, minutes: int = 2, brief: str = "", sources: lis
     topic = chat.text_or_empty(topic)
     brief = chat.text_or_empty(brief)
     voice_name = chat.text_or_empty(voice_name)
+    style = style_as_given(style)
     minutes = chat.minutes_as_given(minutes, DEFAULT_MINUTES)
 
     title = topic.strip()
@@ -210,6 +224,7 @@ async def make_video(topic: str, minutes: int = 2, brief: str = "", sources: lis
     whole_brief = making_sources.brief_with_sources(brief, found)
     data = {"given": given, "private": sorted(private_sites())}  # the job fetches as this chat would
     data["sounds"] = sounds_as_given(sounds)  # the making step mixes the page's sound cues only when this is True
+    data["style"] = style  # how the OpenAI narrator sounds; "" keeps Odie's usual (odie.voice.tts_style)
     job = jobs.Job(kind="video", slug=folder.name, title=title, topic=title, minutes=minutes, brief=whole_brief,
                    session_id=session_id_of(tool_context), voice_name=voice_id, folder=folder, data=data)
     place = jobs.submit(job)

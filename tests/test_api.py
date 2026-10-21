@@ -138,6 +138,10 @@ async def test_voice_routes_without_key(client, monkeypatch):
     assert (await c.post("/api/tts", json={"text": "hi"})).status_code == 200
     assert (await c.post("/api/stt", files={"file": ("a.webm", b"x", "audio/webm")})).status_code == 503  # dictation needs OpenAI
     assert (await c.put("/api/voice", json={"voice": "cedar"})).json()["voice"] == "af_heart"  # no OpenAI voices without its key
+    import dataclasses
+    monkeypatch.setattr(v.config, "settings", dataclasses.replace(v.config.settings, tts_model="gpt-next-tts", stt_model="gpt-transcribe"))
+    models = (await c.get("/api/voice")).json()["models"]
+    assert (models["tts"], models["stt"]) == ("gpt-next-tts", "gpt-transcribe")  # the models in use, from settings
 
 
 async def test_read_aloud_says_why_local_voice_is_off(client, monkeypatch, tmp_path):
