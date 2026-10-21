@@ -20,7 +20,7 @@ from odie.browser import find
 from odie.decks import photos
 from odie.making import chat, jobs
 from odie.making import sources as making_sources
-from odie.video import assets, kind, timeline
+from odie.video import assets, kind, minute, timeline
 
 NARRATING_SPEED = 10  # seconds of speech the voice narrates in a second
 JOINING_SECONDS = 10  # joining the segments and the sound into the MP4
@@ -169,7 +169,8 @@ async def make_video(topic: str, minutes: int = 2, brief: str = "", sources: lis
     """Make a narrated, animated explainer video that plays in this chat. A separate writer makes the narration and
     the animation from your brief, in the background; it can't see this chat, the user's notes, memory or the web.
     topic: what the video is about, short ("How attention works").
-    minutes: its length, from 1 to 6: the user's length, else 2.
+    minutes: its length, from 1 to 6: the user's length, else 2. 1 is a one-minute video: its voice fitted to exactly
+    60 s, opening silent on the question card, with a narration clock a countdown character can show.
     brief: the plan: who it's for and their level, the key points in order, the look, examples, numbers or formulas
     that must appear, and any facts you found. Up to 20,000 characters.
     sources: what the user gave, passed to the writer word for word (never retype it): "my message" (the user's
@@ -184,7 +185,7 @@ async def make_video(topic: str, minutes: int = 2, brief: str = "", sources: lis
     "Curious science narrator. Calm, but lift slightly at the payoff. Slow down on numbers." Only OpenAI's voices
     follow it.
     aspect: leave empty (a wide video); "vertical" when the user says insta, reel, shorts, vertical or mobile (a
-    1080 x 1920 reel). Never put the aspect in the brief.
+    1080 x 1920 reel, always a one-minute video). Never put the aspect in the brief.
     It returns at once. {"error": …}: fix exactly that and call again. {"result": …}: the video is being made; reply
     in one or two lines as the result says, and don't repeat the brief."""
     if find.browser_binary() is None:
@@ -196,6 +197,8 @@ async def make_video(topic: str, minutes: int = 2, brief: str = "", sources: lis
     style = style_as_given(style)
     aspect = aspect_as_given(aspect)
     minutes = chat.minutes_as_given(minutes, DEFAULT_MINUTES)
+    if minute.is_one_minute(minutes, aspect):
+        minutes = 1  # a reel is a one-minute video, whatever length came with it (odie.video.minute)
 
     title = topic.strip()
     if not title:

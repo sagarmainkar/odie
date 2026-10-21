@@ -24,7 +24,7 @@ from odie.agent import turn as chat_turn
 from odie.agent.tools.files import hand_over
 from odie.browser.engine import BrowserError
 from odie.making import jobs
-from odie.video import assets, sounds, timeline, writer
+from odie.video import assets, minute, sounds, timeline, writer
 from odie.video.encode import EncodeError, mux, probe
 from odie.video.narrate import narrate
 from odie.video.page import assemble, credits_scene
@@ -54,6 +54,12 @@ def aspect_of(job: jobs.Job) -> str:
     if aspect in timeline.SIZES:
         return aspect
     return "landscape"
+
+
+def is_one_minute(job: jobs.Job) -> bool:
+    """Decides whether this job is a one-minute video (odie.video.minute): asked for at one minute, or a reel. A job of
+    1 minute -> True; a vertical job of 2 -> True; a landscape job of 3 -> False, made as before."""
+    return minute.is_one_minute(job.minutes, aspect_of(job))
 
 
 def given_lines(job: jobs.Job) -> tuple[list[str], list[str]]:
@@ -103,8 +109,13 @@ async def write(job: jobs.Job, turn, browser) -> None:
     job.data["dropped"] = dropped
     listing = assets.listing(gathered, dropped)
     assets_script = assets.staple(gathered)  # the writer's page check draws the same pictures the render will
-    written = await writer.write(job.topic, job.minutes, job.brief, job.folder, turn, browser, listing=listing,
-                                 assets_script=assets_script, aspect=aspect_of(job))
+    aspect = aspect_of(job)
+    one_minute = is_one_minute(job)
+    minutes = job.minutes
+    if one_minute:
+        minutes = 1  # a reel asked for without a length is still a minute
+    written = await writer.write(job.topic, minutes, job.brief, job.folder, turn, browser, listing=listing,
+                                 assets_script=assets_script, aspect=aspect, one_minute=one_minute)
     job.title = jobs.title_after_writing(written.title, job)
     job.data["narration"] = written.narration
     job.data["body"] = written.body
@@ -118,16 +129,34 @@ def wants_sounds(job: jobs.Job) -> bool:
     return job.data.get("sounds", True)
 
 
+def end_chime(timings: dict, narrated_scenes: int) -> list[sounds.Placed]:
+    """Odie's chime for a one-minute video, as its narration clock reaches 0 on the last word; it plays through the
+    blink (minute.END) and stops where the video is cut. Timings with a clock {"start": 2.5, "length": 60.0} -> [the
+    chime at 62.5 s]; any other video (no clock) -> []."""
+    clock = timings.get("clock")
+    if not clock:
+        return []
+    last = narrated_scenes - 1
+    zero = clock["start"] + clock["length"]
+    at = round(zero - timings["starts"][last], 3)  # seconds into the last narrated scene
+    chime = sounds.place(0, {"scene": narrated_scenes, "at": at, "name": "chime"}, timings, narrated_scenes)
+    if chime is None:
+        return []
+    return [chime]
+
+
 async def voice_track(job: jobs.Job, narration_wav: Path, timings: dict) -> Path:
     """The sound mux lays under the picture: the narration with the page's sound cues mixed under it (mix.wav), or
     the narration as it is when there is nothing to mix. A job without cues, with sounds off, or whose cues all drop
     (odie.video.sounds.resolve) -> narration.wav, and ffmpeg doesn't run for it. A mix that fails is logged and the
-    video keeps its narration: a sound never fails a video."""
+    video keeps its narration: a sound never fails a video. A one-minute video also gets Odie's chime as its clock
+    reaches 0 (end_chime)."""
     if not wants_sounds(job):
         return narration_wav
     cues = job.data.get("cues", [])
     narrated_scenes = len(job.data["narration"])  # the timings may end with Odie's silent credits card
     placed = sounds.resolve(cues, timings, narrated_scenes)
+    placed += end_chime(timings, narrated_scenes)
     if not placed:
         return narration_wav
     mixed_wav = job.folder / "mix.wav"
@@ -144,14 +173,25 @@ async def make_video(job: jobs.Job, browser, transport) -> Path:
     web pictures or clips, their credits get a card of Odie's own after the writer's last scene (CREDITS_SECONDS,
     silent): one more scene in the timings than the narration has, and the voice padded to the picture's end. The
     page's sound cues are mixed under the narration (voice_track) before mux. The video is drawn at its aspect's size
-    (aspect_of, timeline.size_of), and a finished file of any other size is refused."""
+    (aspect_of, timeline.size_of), and a finished file of any other size is refused. A one-minute video
+    (is_one_minute, odie.video.minute) has its voice fitted to exactly 60 s (minute.fit; too far from a minute fails
+    the video in words), opens silent on the question card, carries the narration clock in its timings, and ends with
+    the blink and the chime; every other video keeps its free length, as before."""
     folder = job.folder
     narration = job.data["narration"]
     body = job.data["body"]
     size = timeline.size_of(aspect_of(job))
+    one_minute = is_one_minute(job)
     style = job.data.get("style", "")  # a job queued before styles has none: Odie's usual voice
     wav, lengths, beats = await narrate(jobs.hooks["store"], narration, job.voice_name, transport=transport,
                                         style=style)
+    breath = timeline.BREATH
+    if one_minute:
+        fitted = await minute.fit(wav, lengths, beats, folder)
+        wav = fitted.wav
+        lengths = fitted.lengths
+        beats = fitted.beats
+        breath = fitted.breath  # the breaths were sped or slowed with the voice
 
     gathered = assets_from(job)
     credits = assets.credits(gathered)
@@ -159,8 +199,11 @@ async def make_video(job: jobs.Job, browser, transport) -> Path:
     if credits:
         lengths = lengths + [CREDITS_SECONDS]
         beats = beats + [[0.0]]
-    starts, _total = timeline.scene_starts(lengths, timeline.BREATH)
+    starts, _total = timeline.scene_starts(lengths, breath)
     timings = {"starts": starts, "lengths": lengths, "beats": beats}
+    if one_minute:
+        timings = minute.on_the_clock(timings, len(narration))
+        wav = minute.framed(wav)  # silent before the first word and through the blink
 
     narration_wav = folder / "narration.wav"
     narration_wav.write_bytes(wav)

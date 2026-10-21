@@ -10,7 +10,9 @@
 // loaded, and a frame that draws a clip returns a promise, settled once the clip shows its moment. Odie's credits
 // card calls Video.closing({...}) before the page's script: it plays after the page's last scene (see closing). A
 // video with sound effects calls Video.sounds([...]) next to its scenes (see sounds); Odie reads the cues back with
-// Video.soundCues() and mixes them under the narration. The kit draws and plays nothing for them.
+// Video.soundCues() and mixes them under the narration. The kit draws and plays nothing for them. A one-minute video's
+// timings also carry clock = {start, length} (seconds: the first word, and the narration's measured length): s.left()
+// and Video.clockAt(T) give the seconds left on it, from the length at the first word to 0 at the last, null before.
 //
 // Rules that keep frames deterministic (frame k always draws the same picture, whatever order frames are drawn in):
 // draw(t, s) is a pure function of t; no requestAnimationFrame, no clock, no Math.random (use s.random(seed)); set
@@ -709,6 +711,24 @@
   // it at which each phrase starts (the first 0). s.beat(t, 1) is the eased progress across the second phrase;
   // s.beatAt(t) is the phrase being spoken. Textures are kept per scene, made the first time s.texture asks. Then
   // each extension adds its own (s.map and the rest from map.js).
+  // ---- The narration clock: a one-minute video's countdown (odie.video.minute), read from window.__timings.clock ----
+
+  let frameTime = 0;  // seconds into the video of the frame being drawn (drawFrame sets it), for s.left()
+
+  // Seconds left on the narration clock at T seconds into the video: the narration's measured length at its first
+  // word, 0 at its last word and after, null before the first word (the silent cold open) and in a video without a
+  // clock (every video but a one-minute one). Clock {start: 2.5, length: 60}: T 1.0 -> null; T 2.5 -> 60; T 32.5 -> 30;
+  // T 62.5 or 63.4 -> 0.
+  function clockAt(T) {
+    const timings = window.__timings;
+    const clock = timings && timings.clock;
+    if (!clock || T < clock.start) {
+      return null;
+    }
+    const left = clock.length - (T - clock.start);
+    return Math.max(0, Math.round(left * 1000) / 1000);
+  }
+
   function helpersFor(length, beats) {
     const textures = new Map();  // picture name -> its THREE.Texture
     const s = {
@@ -724,6 +744,11 @@
       },
       beatAt: function (t) {
         return beatIndex(beats, t);
+      },
+      // Seconds left on the narration clock in this frame (clockAt): 60 at the first word down to 0 at the last;
+      // null in the silent cold open and in a video without a clock. A countdown draws only when it isn't null.
+      left: function () {
+        return clockAt(frameTime);
       },
     };
     for (const extension of extensions) {
@@ -771,6 +796,7 @@
   // past the last scene's end) it holds its last picture. `again` is true for the second drawing of a frame whose
   // clips have just been seeked: they are drawn as they now are.
   function drawFrame(T, again) {
+    frameTime = T;
     const current = sceneAt(T);
     const t = Math.min(Math.max(T - current.start, 0), current.s.length);
     hideAllElements();
@@ -902,5 +928,5 @@
   }
 
   window.Video = {scenes: scenes, closing: closing, assets: registerAssets, sounds: sounds, soundCues: soundCues,
-                  extend: extend, colors: colors, W: W, H: H, safe: SAFE, SANS: SANS};
+                  extend: extend, clockAt: clockAt, colors: colors, W: W, H: H, safe: SAFE, SANS: SANS};
 })();
