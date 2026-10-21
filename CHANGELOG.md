@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.2.10 (2026-10-21)
+
+- A video can have its own narration style for OpenAI's voice: `make_video` takes `style`, one line up to 300
+  characters ("Curious science narrator. Calm, but lift slightly at the payoff."); without one, nothing changes.
+  Kokoro is untouched.
+- `ODIE_VIDEO_VOICE` pins the voice videos are narrated in, so changing the read-aloud voice leaves videos alone.
+- OpenAI's voice models are settings: `ODIE_TTS_MODEL` and `ODIE_STT_MODEL`, so a retired model is a `.env` change.
+- Settings → Mac apps no longer offers Contacts (held back for now).
+
 ## v0.2.9 (2026-10-21)
 
 - On a Mac, Odie reads Apple Mail, Calendar, Reminders and Contacts directly, with no MCP server: allow each app
