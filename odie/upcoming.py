@@ -2,11 +2,12 @@
 calendar, the SMS ledger, confirmation mails), merged into one list for Today."""
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
-import time
 from datetime import date, datetime, timedelta
 
+from odie.photos import cards
 from odie.store.db import Store
 
 log = logging.getLogger("odie.upcoming")
@@ -137,4 +138,6 @@ async def build(store: Store, now: datetime, days: int = DAYS) -> dict:
                 items.append(it)
         if card.get("events"):
             sources["calendar"] = True
-    return {"items": merge(items), "sources": sources}
+    merged = merge(items)
+    await asyncio.to_thread(cards.add_pictures, store, merged)  # a birthday's person, an event's thing, from Photos
+    return {"items": merged, "sources": sources}

@@ -617,6 +617,23 @@ class VaultIndex:
             r = c.execute("select * from photos where uuid=?", (uuid,)).fetchone()
         return dict(r) if r else None
 
+    def card_pictures(self) -> list[dict]:
+        """Every photo that could go on an Up next card (odie.photos.cards): not a video, not a screenshot, and with a
+        large copy on this Mac. Each as uuid, people and labels (JSON lists), extras (JSON), favorite and taken."""
+        with self._db() as c:
+            rows = c.execute("select uuid, people, labels, extras, favorite, taken from photos "
+                             "where kind = 'photo' and not screenshot and coalesce(big, '') != ''").fetchall()
+        return [dict(r) for r in rows]
+
+    def photos_read_at(self) -> str:
+        """When the photos were last read from the library ("" before the first read): a picture chosen from them
+        stays right until this changes."""
+        with self._db() as c:
+            got = c.execute("select value from meta where key = 'photos_at'").fetchone()
+        if got is None or got["value"] is None:
+            return ""
+        return str(got["value"])
+
     def search_photos(self, query: str, k: int = 8, kind: str | None = None, people: list[str] | None = None,
                       place: str | None = None, since: str | None = None, until: str | None = None,
                       album: str | None = None) -> list[PhotoHit]:
