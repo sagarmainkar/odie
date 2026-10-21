@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.2.5 (2026-10-21)
+
+- Share a reply or a made file to WhatsApp, Messages and the rest: every file, deck, podcast, picture, video and
+  sound card has a Share button for the phone's share sheet; under each reply, Share and a WhatsApp chip.
+- History lines carry their turn (`inv`), so the Mac app folds a turn's "Let me check…" lines into one answer.
+
 ## v0.2.4 (2026-10-20)
 
 - `odie open` right after an install waits for the service's setup link instead of opening a second, blank tab.
