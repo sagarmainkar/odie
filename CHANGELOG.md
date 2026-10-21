@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.2.8 (2026-10-21)
+
+- The mail watch keeps a check's mail for the next check when its model turn times out, instead of marking it
+  seen; and it may put a bill's due date or a deadline on the calendar without a tap (`calendar_create_event`).
+
 ## v0.2.7 (2026-10-21)
 
 - The WhatsApp chip under replies is gone; Share is the one way out. After a share, a line says when the words
