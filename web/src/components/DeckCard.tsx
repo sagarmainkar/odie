@@ -4,6 +4,7 @@ import { createPortal } from "react-dom";
 import { clampPan, deckLine, pinchScale, step, swipe, visible, type DeckPage } from "../deck";
 import { size } from "../files";
 import { mediaUrl, type Media } from "../media";
+import { ShareFile } from "./ShareButton";
 import { Icon, Tile } from "./Tile";
 
 type Download = { id: string; filename: string; size: number; label: string };
@@ -57,6 +58,7 @@ export function DeckCard({ m }: { m: Media }) {
       )}
       <div className="flex flex-wrap gap-2 px-3.5 pt-2 pb-3">
         {files.map((d) => <DownloadButton key={d.id} d={d} />)}
+        <ShareFile file={files[0]} />
       </div>
       {deck.note && <div className="px-3.5 pb-3 -mt-1 text-[12px] leading-[16px] text-muted">{deck.note}</div>}
       {createPortal(  // on the page itself: a card's backdrop filter would trap a fixed overlay inside the card
@@ -147,6 +149,7 @@ function DeckViewer({ pages, at, setAt, files, title }: { pages: DeckPage[]; at:
         </div>
         <div className="flex flex-wrap justify-center gap-2">
           {files.map((d) => <DownloadButton key={d.id} d={d} dark />)}
+          <ShareFile file={files[0]} dark />
         </div>
       </div>
     </motion.div>

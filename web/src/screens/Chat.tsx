@@ -19,6 +19,7 @@ import { replyLine, type ReplyUsage } from "../usage";
 import { ToBody } from "../components/ToBody";
 import { CodeBlock } from "../components/CodeBlock";
 import { CopyButton } from "../components/CopyButton";
+import { ShareWords } from "../components/ShareButton";
 import { YourMessage } from "../components/YourMessage";
 import { howChatShowsFence } from "../blocks/fenceShown";
 import { Enlarge } from "../components/Enlarge";
@@ -684,6 +685,7 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
                               {speakingId === m.id ? <SpeakingBars /> : preparingId === m.id ? <span className="spinner" /> : <Glyph name="speaker" size={17} />}
                             </button>
                             <CopyButton text={m.text} />
+                            <ShareWords text={m.text} title={name} />
                             {m.usage && <span className="ml-1 text-[12px] text-dim">{replyLine(m.usage)}</span>}
                           </motion.div>
                         )}
