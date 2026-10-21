@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.2.9 (2026-10-21)
+
+- On a Mac, Odie reads Apple Mail, Calendar, Reminders and Contacts directly, with no MCP server: allow each app
+  once in Settings → Mac apps. Eight tools (new mail, one mail in full, an attachment saved, events, an event added,
+  reminders, a reminder added, people by name); adding asks for a tap in chat. The watch reads the Mac's mail and
+  calendar beside a connector's, shows a message or event seen through both once, and badges where each came from.
+
 ## v0.2.8 (2026-10-21)
 
 - The mail watch keeps a check's mail for the next check when its model turn times out, instead of marking it
