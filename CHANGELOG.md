@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.2.13 (2026-10-21)
+
+- Reels end on the countdown character's blink, never on a credits card: when a reel used web pictures, the chat's ready message
+  gives their credits as a line for the post's caption. Reels use web pictures only when the topic needs a real one.
+  Longer videos keep the credits card.
+
 ## v0.2.12 (2026-10-21)
 
 - One-minute videos (asked at one minute, or any reel): the narration is fitted to exactly 60 s, the video opens
