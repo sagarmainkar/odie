@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.2.14 (2026-10-21)
+
+- A video can have one timed segment of exactly N seconds (`make_video(timed_segment_seconds=60)`), with untimed
+  scenes before and after it: only the segment's narration is fitted (±10%), and the page's clock counts N to 0 from
+  its first word to its last. Vertical is only the frame size now; videos keep their asked length (1–6 minutes).
+- The mail watch can write to the calendar app it reads (each check starts with that app's tools), so a bill or an
+  order now reaches Google Calendar; its catch-up runs once more. Mail is sorted by when it came, whatever the
+  app's date format.
+
 ## v0.2.13 (2026-10-21)
 
 - Reels end on the countdown character's blink, never on a credits card: when a reel used web pictures, the chat's ready message
