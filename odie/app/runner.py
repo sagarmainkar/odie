@@ -895,11 +895,12 @@ class OdieRunner:
 
     async def background_turn(self, prompt: str, timeout: float = 300, tools: list | None = None,
                               instruction: str | None = None, guard=None, bare: bool = False,
-                              free: frozenset[str] = frozenset()) -> str:
+                              free: frozenset[str] = frozenset(), skills: tuple[str, ...] | list[str] = ()) -> str:
         """One agent turn nobody watches (a tracker check, a watch check): the model, Odie's current tools (plus
         `tools`), a fresh in-memory session, and a guard that refuses anything needing the user's tap. Returns the reply.
         bare: no tools at all (a signed-in tracker's check reads text only). free: tool names that run without the
-        tap in this turn (odie.agent.free; the watch's calendar_create_event)."""
+        tap in this turn (odie.agent.free; the watch's calendar_create_event). skills: skills already loaded when the
+        turn starts, so their apps' tools are there at once (the watch's calendar app: it never calls load_skill)."""
         from google.adk.agents import LlmAgent
         from google.adk.sessions import InMemorySessionService
 
@@ -915,7 +916,9 @@ class OdieRunner:
                          instruction=(f"{instruction}\n\n" if instruction else "") + BACKGROUND_INSTRUCTION,
                          generate_content_config=types.GenerateContentConfig(temperature=BACKGROUND_TEMPERATURE))
         sessions = InMemorySessionService()
-        sess = await sessions.create_session(app_name="odie_tracker", user_id=s.user_id)
+        from odie.skills import loaded_skills_state
+        state = loaded_skills_state(agent.name, skills)
+        sess = await sessions.create_session(app_name="odie_tracker", user_id=s.user_id, state=state)
         from odie.agent.usage import CACHE
         runner = Runner(app=App(name="odie_tracker", root_agent=agent, context_cache_config=CACHE), session_service=sessions)
         out: list[str] = []

@@ -73,7 +73,8 @@ async def test_an_apps_tools_join_when_its_skill_loads_and_stay_after_a_restart(
 
 async def test_a_background_turn_loads_an_app_like_a_chat_does(isolated_settings, tmp_path, monkeypatch):
     """A background check starts without the app's tools and gets them by loading its skill, as a chat does (the mail
-    watch reads mail through its own tools, odie.watch.fetch, so it doesn't need them)."""
+    watch reads mail through its own tools, odie.watch.fetch, and starts with its calendar app already loaded:
+    tests/test_watch_calendar_tools.py)."""
     from odie.app import runner as runner_mod
     from odie.plugins import mcp
     mcp.write_config({"tester": TESTER})
