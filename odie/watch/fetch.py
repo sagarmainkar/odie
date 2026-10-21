@@ -17,6 +17,7 @@ from odie.watch.sources import Source, saved
 
 log = logging.getLogger("odie.watch")
 STATE = "watch.state"
+MAX_RETRIES = 2  # a check whose model turn failed leaves its mail for the next check, this many times per mail
 MAX_MAIL = 25
 SNIPPET = 300
 BODY = 6000
@@ -429,11 +430,26 @@ class Fetcher:
                     continue
         raise CallError("The app didn't send the file (it gives no download for attachments).")
 
-    def commit(self) -> None:
+    def commit(self, turn_failed: bool = False) -> None:
         """Save where this check got to, for the next one: the mail ids seen, each event's start, and each source's
-        run of failed checks and its last good read."""
+        run of failed checks and its last good read. turn_failed: the model's turn raised (a timeout), so nobody
+        looked at this check's mail: it is left unseen, and the mail sources' last good read stays where it was, so
+        the next check reads the same mail again; a mail left this way MAX_RETRIES times is marked seen after all,
+        so a model that keeps failing doesn't read the same bill forever.
+          turn ok, mail m1 -> seen [m1], last_ok now;  turn failed, m1 (1st time) -> seen [], last_ok as before;
+          turn failed again, m1 (3rd time) -> seen [m1]"""
         seen_before = self.state.get("seen") or []
-        seen = list(dict.fromkeys([*self._mail, *seen_before]))[:500]  # this check's ids first, no repeats
+        retries = {k: int(v) for k, v in (self.state.get("retries") or {}).items()}
+        kept: list[str] = []  # this check's mail left for the next check
+        if turn_failed:
+            for mail_id in self._mail:
+                tries = retries.get(mail_id, 0) + 1
+                if tries <= MAX_RETRIES:
+                    retries[mail_id] = tries
+                    kept.append(mail_id)
+        seen_now = [mail_id for mail_id in self._mail if mail_id not in kept]
+        seen = list(dict.fromkeys([*seen_now, *seen_before]))[:500]  # this check's ids first, no repeats
+        retries = {mail_id: tries for mail_id, tries in retries.items() if mail_id in kept}
 
         if self._calendar_ok:
             # Every calendar answered: what they showed now is the list (a cancelled event drops out).
@@ -452,10 +468,13 @@ class Fetcher:
             prev = srcs.get(sid) or {}
             if st["ok"]:
                 fails = 0
-                last_ok = st["at"]
+                # mail kept for the next check must come back from the source: its last good read stays put
+                holds_mail = bool(kept) and st.get("kind") == "mail"
+                last_ok = prev.get("last_ok") if holds_mail else st["at"]
             else:
                 fails = int(prev.get("fails", 0)) + 1
                 last_ok = prev.get("last_ok")
             srcs[sid] = {**st, "fails": fails, "last_ok": last_ok}
 
-        self.store.set_setting(STATE, {"last_check": self.now.isoformat(timespec="seconds"), "seen": seen, "events": events, "sources": srcs})
+        self.store.set_setting(STATE, {"last_check": self.now.isoformat(timespec="seconds"), "seen": seen, "events": events, "sources": srcs,
+                                       "retries": retries})

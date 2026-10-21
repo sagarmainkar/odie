@@ -894,10 +894,12 @@ class OdieRunner:
         return n
 
     async def background_turn(self, prompt: str, timeout: float = 300, tools: list | None = None,
-                              instruction: str | None = None, guard=None, bare: bool = False) -> str:
+                              instruction: str | None = None, guard=None, bare: bool = False,
+                              free: frozenset[str] = frozenset()) -> str:
         """One agent turn nobody watches (a tracker check, a watch check): the model, Odie's current tools (plus
         `tools`), a fresh in-memory session, and a guard that refuses anything needing the user's tap. Returns the reply.
-        bare: no tools at all (a signed-in tracker's check reads text only)."""
+        bare: no tools at all (a signed-in tracker's check reads text only). free: tool names that run without the
+        tap in this turn (odie.agent.free; the watch's calendar_create_event)."""
         from google.adk.agents import LlmAgent
         from google.adk.sessions import InMemorySessionService
 
@@ -906,8 +908,9 @@ class OdieRunner:
         s = config.settings
         sel = resolve_selection(self.store, "chat")
         now = datetime.now(self.tz).strftime("%A %d %B %Y, %H:%M")
+        from odie.agent.free import free_tools
         chat_only = [t for t in self.agent.tools if not getattr(t, "_odie_signin", False)]  # signing in is the user's, in chat
-        agent = LlmAgent(name="odie_tracker", model=model_for(sel, False), tools=[] if bare else [*chat_only, *(tools or [])],
+        agent = LlmAgent(name="odie_tracker", model=model_for(sel, False), tools=[] if bare else free_tools([*chat_only, *(tools or [])], free),
                          before_tool_callback=guard or trackers_guard, after_tool_callback=background_after_tool(self.plugin),
                          instruction=(f"{instruction}\n\n" if instruction else "") + BACKGROUND_INSTRUCTION,
                          generate_content_config=types.GenerateContentConfig(temperature=BACKGROUND_TEMPERATURE))

@@ -15,6 +15,9 @@ from odie.watch.tools import Check, watch_tools
 
 log = logging.getLogger("odie.watch")
 INTERVAL = timedelta(minutes=30)
+# What the watch may change without the user's tap (the owner's choice, 21 Oct 2026): adding an event to the calendar
+# for a bill's due date or a deadline a mail names. Nothing else that writes: no sending, replying, paying or deleting.
+MAY_WRITE = frozenset({"calendar_create_event"})
 SKILL = Path(__file__).parent / "skill" / "SKILL.md"
 WATCH_FOR = "Watch for"
 
@@ -45,8 +48,10 @@ def guard(tool, args, tool_context) -> dict | None:
     """before_tool_callback for the watch's turn: what a background check refuses (odie.trackers.guard), and also
     changing memory, the shell, handing files over, closing tasks and the browser.
     Example: new_mail -> None (runs); update_memory -> refused; browser_open -> refused (the browser keeps signed-in
-    sites); task_update -> refused (tasks are the user's to close)."""
+    sites); task_update -> refused (tasks are the user's to close); calendar_create_event -> None (MAY_WRITE)."""
     from odie.trackers import guard as trackers_guard
+    if tool.name in MAY_WRITE:
+        return None
     refused = trackers_guard(tool, args, tool_context)
     if refused:
         return refused
@@ -109,7 +114,9 @@ async def run_check(store, now: datetime, turn, post, push, memory=None, memory_
         else:
             to_push = rep.apply(store, now, r["needs_you"], r["line"], check.mails, check.events, fetcher.statuses, first)
     finally:
-        fetcher.commit()  # the check's place is saved first: a post that fails never makes it run again every 5 minutes
+        # the check's place is saved first: a post that fails never makes it run again every 5 minutes. A turn that
+        # raised (a timeout) and left no report leaves its mail for the next check (fetch.Fetcher.commit)
+        fetcher.commit(turn_failed=bool(reason) and r is None)
 
     async def say(text: str, media=None) -> None:
         try:
