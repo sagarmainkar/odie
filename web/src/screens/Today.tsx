@@ -16,6 +16,7 @@ import { InlineText } from "../blocks/InlineText";
 import { avatarColour, initialOf } from "../blocks/rowAvatar";
 import { TrackingSection } from "../components/TrackingSection";
 import { UpNext } from "../components/UpNext";
+import { WatchClosed, type WatchClosedItem } from "../components/WatchClosed";
 import { busyDates, dayEvents, type UpItem } from "../upnext";
 import { MoneyCard } from "../components/MoneyCard";
 import { has, useCaps } from "../capabilities";
@@ -139,6 +140,7 @@ export function Today() {
   const [upLoading, setUpLoading] = useState(true);
   const [approvals, setApprovals] = useState<Approval[]>([]);
   const [closed, setClosed] = useState(0);
+  const [watchClosed, setWatchClosed] = useState<WatchClosedItem[]>([]);
   const [watch, setWatch] = useState<WatchCardData | null>(null);
   const loadWatch = useCallback(() => {
     getJSON<WatchCardData>("/api/watch").then((w) => { setWatch(w); if (w.unseen) void postJSON("/api/watch/seen", {}).catch(() => {}); }).catch(() => {});
@@ -147,6 +149,7 @@ export function Today() {
   const loadApprovals = useCallback(() => { getJSON<Approval[]>("/api/approvals").then(setApprovals).catch(() => {}); }, []);
   const loadTasks = useCallback(() => {
     getJSON<Task[]>("/api/tasks").then(setTasks).catch(() => {});
+    getJSON<WatchClosedItem[]>("/api/tasks/closed_by_watch").then(setWatchClosed).catch(() => {});
     void closedTodayCount(() => getJSON<{ count: number }>("/api/tasks/closed_today")).then(setClosed);
   }, []);
   const loadUp = useCallback(() => {
@@ -161,6 +164,10 @@ export function Today() {
     if (el) await dissolve(el);
     setTasks((t) => t.filter((x) => x.id !== id)); setClosed((c) => c + 1);
     try { await postJSON(`/api/tasks/${id}/done`, {}); } catch { loadTasks(); }
+  }
+  async function reopen(id: number) {
+    setWatchClosed((items) => items.filter((x) => x.id !== id));
+    try { await postJSON(`/api/tasks/${id}/reopen`, {}); } finally { loadTasks(); }
   }
   async function snooze(id: number) {
     const until = `${isoDay(1)}T09:00`;
@@ -235,6 +242,7 @@ export function Today() {
             ) : (
               <AnimatePresence initial={false}>{open.map((t) => <TaskRow key={t.id} t={t} onDone={done} onSnooze={snooze} />)}</AnimatePresence>
             )}
+            <WatchClosed items={watchClosed} onReopen={reopen} />
           </section>
         </div>
         <div className="contents lg:flex lg:flex-col lg:gap-[18px]">

@@ -63,8 +63,11 @@ def _mail_fields(ref: str, mails: list[Mail], statuses: dict | None = None) -> d
             "badges": badges_of(mail.sources or [mail.source], statuses or {})}
 
 
+CARD_EVENTS = 20  # Today's two weeks: Up next shows a big card and up to 14 small ones
+
+
 def _events(events: list[Event], statuses: dict | None = None) -> list[dict]:
-    return [{**e.brief(), "badges": badges_of(e.sources or [e.source], statuses or {})} for e in events if e.change != "cancelled"][:8]
+    return [{**e.brief(), "badges": badges_of(e.sources or [e.source], statuses or {})} for e in events if e.change != "cancelled"][:CARD_EVENTS]
 
 
 def apply(store, now: datetime, needs_you: list[dict], line: str, mails: list[Mail], events: list[Event],

@@ -551,6 +551,32 @@ async def task_done(task_id: int, request: Request):
     return {"ok": True, "ledger": note}
 
 
+@router.get("/tasks/closed_by_watch")
+async def tasks_closed_by_watch(request: Request):
+    """The reminders the watch closed in the last three days (a bill it saw paid, an order delivered), with why, for
+    Today's To close; the user can reopen one."""
+    from datetime import datetime, timedelta
+    from zoneinfo import ZoneInfo
+
+    from odie.watch import bills
+    since = datetime.now(ZoneInfo(config.settings.timezone)) - timedelta(days=3)
+    return bills.closed_by_watch(request.app.state.store, since)
+
+
+@router.post("/tasks/{task_id}/reopen")
+async def task_reopen(task_id: int, request: Request):
+    """The watch closed it, wrongly: open again, without the watch's note."""
+    from odie.watch import bills
+    store = request.app.state.store
+    row = store.one("select * from tasks where id=?", (task_id,))
+    if row is None:
+        raise HTTPException(404, "no such task")
+    bills.reopen(store, task_id)
+    store.audit("user", "task_reopen", result_summary=row["title"], approval_id=None)
+    await _publish(request, {"type": "task", "id": task_id, "status": "open"})
+    return {"ok": True}
+
+
 @router.post("/tasks/{task_id}/snooze")
 async def task_snooze(task_id: int, body: SnoozeIn, request: Request):
     from zoneinfo import ZoneInfo
