@@ -149,3 +149,46 @@ def test_gmail_mcp_lines_on_one_day_and_none():
     assert [(e.id, e.title, e.start, e.where, e.attendees) for e in got] == [
         ("a1", "Run", "2026-10-09T07:00:00+05:30", "Park", []), ("b2", "Holiday", "2026-10-09", "", ["x@example.com"])]
     assert fetch.parse_events("No events on 2026-10-09.", "calendar:g", "2026-10-09", IST) == []
+
+
+async def test_a_failed_turn_leaves_its_mail_for_the_next_check(store, tmp_path):
+    """The model's turn timed out: nobody looked at the mail, so the next check reads it again (and the source's last
+    good read stays put so it comes back); after MAX_RETRIES such checks it is marked seen after all."""
+    from odie.plugins import mcp
+    mcp.write_config({"zapier": spec_for("zapier", tmp_path, mail=ZAP_MAIL, events=EVENTS)})
+    await sources.detect_and_save(store)
+    f = fetch.Fetcher(store, NOW)
+    assert [m.id for m in await f.new_mail()] == ["m1", "m0"]
+    f.commit(turn_failed=True)
+    state = store.get_setting(fetch.STATE)
+    assert state["seen"] == [] and state["retries"] == {"m1": 1, "m0": 1}
+    assert state["sources"]["mail:zapier"]["last_ok"] is None and state["sources"]["mail:zapier"]["fails"] == 0
+
+    again = fetch.Fetcher(store, NOW + timedelta(minutes=30))
+    assert [m.id for m in await again.new_mail()] == ["m1", "m0"]  # read again, a day back as before
+    again.commit(turn_failed=True)
+    assert store.get_setting(fetch.STATE)["retries"] == {"m1": 2, "m0": 2}
+
+    third = fetch.Fetcher(store, NOW + timedelta(minutes=60))
+    assert [m.id for m in await third.new_mail()] == ["m1", "m0"]
+    third.commit(turn_failed=True)
+    state = store.get_setting(fetch.STATE)
+    assert sorted(state["seen"]) == ["m0", "m1"] and state["retries"] == {}  # enough: seen after all
+    assert state["sources"]["mail:zapier"]["last_ok"] == third.statuses["mail:zapier"]["at"]
+
+    fourth = fetch.Fetcher(store, NOW + timedelta(minutes=90))
+    assert await fourth.new_mail() == []
+
+
+async def test_a_good_turn_after_a_failed_one_clears_the_retries(store, tmp_path):
+    from odie.plugins import mcp
+    mcp.write_config({"zapier": spec_for("zapier", tmp_path, mail=ZAP_MAIL, events=EVENTS)})
+    await sources.detect_and_save(store)
+    f = fetch.Fetcher(store, NOW)
+    await f.new_mail()
+    f.commit(turn_failed=True)
+    g = fetch.Fetcher(store, NOW + timedelta(minutes=30))
+    await g.new_mail()
+    g.commit()
+    state = store.get_setting(fetch.STATE)
+    assert sorted(state["seen"]) == ["m0", "m1"] and state["retries"] == {}

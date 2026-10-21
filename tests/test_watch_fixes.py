@@ -96,6 +96,9 @@ def test_the_watcher_cant_drive_the_browser_or_close_tasks():
     for name in ("browser_open", "browser_click", "browser_type", "browser_scroll", "task_update"):
         assert check.guard(SimpleNamespace(name=name), {}, None) is not None, name
     assert check.guard(SimpleNamespace(name="task_add"), {}, None) is None
+    # the one write the owner allows in the background: a calendar event for a bill or a deadline
+    assert check.guard(SimpleNamespace(name="calendar_create_event", _require_confirmation=True), {}, None) is None
+    assert check.guard(SimpleNamespace(name="gmail_send_draft", _require_confirmation=True), {}, None) is not None
 
 
 async def test_mail_missed_during_a_failed_check_is_read_next_time(store, tmp_path):

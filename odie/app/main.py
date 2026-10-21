@@ -129,7 +129,8 @@ def background_for(store: Store, runner):
         from odie.memory.index import build_index
 
         async def turn(prompt, tools, instruction):
-            return await runner.background_turn(prompt, timeout=280, tools=tools, instruction=instruction, guard=watch.guard)
+            return await runner.background_turn(prompt, timeout=280, tools=tools, instruction=instruction, guard=watch.guard,
+                                                free=watch.MAY_WRITE)
 
         def push(title, body):
             try:
