@@ -1,11 +1,11 @@
 ---
 name: mac-apps
-description: The Mac's own Mail, Calendar, Reminders and Contacts, read and written directly (no cloud connector). Use for "what came in the mail", "what's on my calendar", "put it on the calendar", "remind me", "find Asha's number" when the user's mail and calendar live on this Mac (iCloud).
+description: The Mac's own Mail, Calendar and Reminders, read and written directly (no cloud connector). Use for "what came in the mail", "what's on my calendar", "put it on the calendar", "remind me" when the user's mail and calendar live on this Mac (iCloud).
 metadata:
   title: Mac apps
-  summary: "Mail, Calendar, Reminders and Contacts on this Mac, no cloud needed."
+  summary: "Mail, Calendar and Reminders on this Mac, no cloud needed."
   platform: darwin
-  adk_additional_tools: [mac_mail_new, mac_mail_read, mac_mail_save_attachment, mac_calendar_events, mac_calendar_add, mac_reminders, mac_reminder_add, mac_contacts]
+  adk_additional_tools: [mac_mail_new, mac_mail_read, mac_mail_save_attachment, mac_calendar_events, mac_calendar_add, mac_reminders, mac_reminder_add]
 ---
 # Mac apps
 
@@ -20,7 +20,6 @@ the apps the user has allowed in Settings → Mac apps (a tool says so when one 
   chat); give it a start and an end, and a calendar's name only when the user names one.
 - `mac_reminders`: open reminders due by a time. `mac_reminder_add` makes one (asks first). Odie's own `task_add`
   is the reminder that pings the phone; use the Reminders app only when the user wants it there.
-- `mac_contacts`: people by name, with emails, phones and birthday.
 
 Times are local, ISO 8601 ("2026-10-29T09:00"). A bill's due date goes on the calendar as a short event at 9:00
 that day unless the user says otherwise.

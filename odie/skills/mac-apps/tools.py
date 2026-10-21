@@ -119,5 +119,5 @@ TOOLS = [
     FunctionTool(mac_mail_new), FunctionTool(mac_mail_read), FunctionTool(mac_mail_save_attachment),
     FunctionTool(mac_calendar_events), FunctionTool(mac_calendar_add, require_confirmation=True),
     FunctionTool(mac_reminders), FunctionTool(mac_reminder_add, require_confirmation=True),
-    FunctionTool(mac_contacts),
+    # mac_contacts is held back with Contacts (odie.mac.permissions.HELD_BACK); add it here to offer it again
 ]

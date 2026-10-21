@@ -54,7 +54,7 @@ async def test_rows_allow_and_the_calendar_choice(store, monkeypatch):
     app, c = client(store)
     async with c, app.router.lifespan_context(app):
         got = (await c.get("/api/mac/apps")).json()
-        assert got["mac"] is True and {r["id"]: r["status"] for r in got["apps"]} == {"mail": "granted", "calendar": "unknown", "reminders": "unknown", "contacts": "unknown"}
+        assert got["mac"] is True and {r["id"]: r["status"] for r in got["apps"]} == {"mail": "granted", "calendar": "unknown", "reminders": "unknown"}
         assert (await c.get("/api/mac/calendars")).json() == {"calendars": []}  # not granted yet: nothing asked of Calendar
         after = (await c.post("/api/mac/apps/calendar/allow")).json()
         assert asked == ["Calendar"] and sources_forgotten == [True]
@@ -67,6 +67,7 @@ async def test_rows_allow_and_the_calendar_choice(store, monkeypatch):
         assert (await c.put("/api/mac/calendar", json={"name": "Work"})).json()["default_calendar"] == "Work"
         assert (await c.get("/api/mac/apps")).json()["default_calendar"] == "Work"
         assert (await c.post("/api/mac/apps/nothing/allow")).status_code == 404
+        assert (await c.post("/api/mac/apps/contacts/allow")).status_code == 404  # held back: no row, no dialog
     assert calendar.chosen(store) == "Work"
     permissions.forget()
 
@@ -80,7 +81,7 @@ async def test_the_apps_step_shows_the_mac_rows_on_a_mac(store, monkeypatch):
     permissions.forget()
     monkeypatch.setattr(permissions, "_determine", lambda bundle: -1744)
     p = await panels.panel(store, "apps", transport=no_models())
-    assert p["mac_apps"]["mac"] is True and [r["id"] for r in p["mac_apps"]["apps"]] == ["mail", "calendar", "reminders", "contacts"]
+    assert p["mac_apps"]["mac"] is True and [r["id"] for r in p["mac_apps"]["apps"]] == ["mail", "calendar", "reminders"]
     permissions.forget()
 
 

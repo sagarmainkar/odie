@@ -26,7 +26,7 @@ def test_the_tools_and_their_taps(store, tmp_path):
     entry = next(e for e in discover(store, BUILTIN, tmp_path / "none", system="Darwin") if e.name == "mac-apps")
     asks = {t.name: bool(getattr(t, "_require_confirmation", False)) for t in entry.tool_objs}
     assert asks == {"mac_mail_new": False, "mac_mail_read": False, "mac_mail_save_attachment": False, "mac_calendar_events": False,
-                    "mac_calendar_add": True, "mac_reminders": False, "mac_reminder_add": True, "mac_contacts": False}
+                    "mac_calendar_add": True, "mac_reminders": False, "mac_reminder_add": True}
 
 
 async def test_a_tool_without_permission_says_where_to_allow_it(store, tmp_path, monkeypatch):

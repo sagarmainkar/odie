@@ -18,6 +18,9 @@ log = logging.getLogger("odie.mac")
 APPS: dict[str, str] = {"mail": "Mail", "calendar": "Calendar", "reminders": "Reminders", "contacts": "Contacts"}
 BUNDLES: dict[str, str] = {"mail": "com.apple.mail", "calendar": "com.apple.iCal", "reminders": "com.apple.reminders",
                            "contacts": "com.apple.AddressBook"}
+# Apps Odie doesn't offer yet: no Settings row, no Allow, no tool. Contacts (21 Oct 2026): its Allow came back
+# refused on the owner's Mac without a dialog, and nothing needs it yet. odie.mac.contacts and its script stay.
+HELD_BACK = frozenset({"contacts"})
 GRANTED, DENIED, UNKNOWN = "granted", "denied", "unknown"
 CACHE_FOR = 60.0
 _cache: dict[str, tuple[float, str]] = {}
@@ -148,6 +151,12 @@ async def request(app_id: str, run=scripts.run) -> str:
     return got
 
 
+def offered(app_id: str) -> bool:
+    """Whether Settings shows the app and its Allow may ask macOS: "mail" -> True; "contacts" (held back) -> False;
+    "notes" (no such app) -> False."""
+    return app_id in APPS and app_id not in HELD_BACK
+
+
 def rows(determine=None) -> list[AppRow]:
-    """Every app with its status, in the Settings order."""
-    return [AppRow(app_id, name, status(app_id, determine)) for app_id, name in APPS.items()]
+    """Every offered app with its status, in the Settings order."""
+    return [AppRow(app_id, name, status(app_id, determine)) for app_id, name in APPS.items() if offered(app_id)]
