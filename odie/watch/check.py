@@ -67,6 +67,19 @@ def guard(tool, args, tool_context) -> dict | None:
     return None
 
 
+def calendar_skills(store) -> list[str]:
+    """The connected apps' skills a watch check starts with loaded, so it can write to their calendars: one per
+    calendar source that is an app (MCP); the Mac's own calendar tools are always there. Gmail and Calendar plus the
+    Mac's Calendar -> ["mcp-gmail-calendar"]; only a mail app -> []."""
+    names: list[str] = []
+    for src in sources.saved(store):
+        is_calendar_app = src.kind == "calendar" and src.style != "native"
+        name = f"mcp-{src.server}"
+        if is_calendar_app and name not in names:
+            names.append(name)
+    return names
+
+
 def needs_catch_up(fetcher) -> bool:
     """Whether this check also reads the last month's bills, payments and orders: once per catch-up version, until a
     check that ran it reports. Never run -> True; ran bills.CATCH_UP -> False; ran an older one -> True."""

@@ -4,6 +4,7 @@ Composio and common MCP servers use into short records; raw copies and long bodi
 from __future__ import annotations
 
 import base64
+import email.utils
 import json
 import logging
 import re
@@ -164,6 +165,28 @@ def _same_mail_key(m: Mail) -> tuple[str, str, str]:
     """What makes two sources' copies of one mail the same: the sender's address, the subject (case and spaces
     aside) and the minute it arrived."""
     return (_address(m.frm), " ".join(m.subject.lower().split()), m.at[:16])
+
+
+def when_of(at: str) -> datetime:
+    """When a mail came, from either date form the apps send; one that can't be read counts as the earliest time, so
+    it sorts last. "2026-10-21T12:00:00+05:30" -> that time; "Wed, 21 Oct 2026 08:00:00 +0530" (Gmail) -> that time;
+    "sometime" -> the earliest time."""
+    text = (at or "").strip()
+    try:
+        got = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        try:
+            got = email.utils.parsedate_to_datetime(text)
+        except (TypeError, ValueError, IndexError):
+            return datetime.min.replace(tzinfo=UTC)
+    if got.tzinfo is None:
+        got = got.replace(tzinfo=UTC)
+    return got
+
+
+def newest_first(mails: list[Mail]) -> list[Mail]:
+    """The mail newest first by when it came (when_of), not by its date's text, which put Wednesday before Tuesday."""
+    return sorted(mails, key=lambda m: when_of(m.at), reverse=True)
 
 
 def fold_mail(mails: list[Mail]) -> list[Mail]:
@@ -414,7 +437,7 @@ class Fetcher:
         got = fold_mail(got)  # Gmail's and Apple Mail's copies of one message: one row, both badges
         for m in got:
             self._mail[m.id] = m
-        got.sort(key=lambda m: m.at, reverse=True)
+        got = newest_first(got)
         log.info("watch: %d new mails", len(got))
         return got[:MAX_MAIL]
 
@@ -441,9 +464,7 @@ class Fetcher:
                 log.info("watch: the catch-up couldn't read %s: %s", src.id, e)
                 continue
             got += [m for m in parse_mail(res.text, src.id) if bills.looks_like_bill_or_order(m.subject)]
-        got = fold_mail(got)
-        got.sort(key=lambda m: m.at, reverse=True)
-        got = got[:bills.CATCH_UP_MOST]
+        got = newest_first(fold_mail(got))[:bills.CATCH_UP_MOST]
         for m in got:
             self._mail[m.id] = m
         return got

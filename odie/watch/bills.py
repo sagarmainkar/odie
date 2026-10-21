@@ -8,7 +8,8 @@ from __future__ import annotations
 import re
 from datetime import UTC, datetime
 
-CATCH_UP = "2026-10-21"  # the catch-up's version: a check runs it once while the watch state holds an older one
+CATCH_UP = "2026-10-21b"  # the catch-up's version: a check runs it once while the watch state holds another one
+# ("b": again, now that the check can write to the calendar app; the first ran without its tools)
 CATCH_UP_DAYS = 30
 CATCH_UP_MOST = 25  # the most catch-up mails one check reads (its turn has the usual 280 s)
 CATCH_UP_TRIES = 2  # a catch-up whose turn fails this many times is given up: new mail only from then on

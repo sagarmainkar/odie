@@ -72,6 +72,17 @@ class FixedToolsSkillToolset(SkillToolset):
         return [by_name[n] for n in wanted if n in by_name]
 
 
+def loaded_skills_state(agent_name: str, skills) -> dict:
+    """Session state in which these skills count as already loaded for the agent (ADK keeps their names under
+    "_adk_activated_skill_<agent>"), so their apps' tools are there from the first request without a load_skill.
+    ("odie_tracker", ["mcp-gmail-calendar"]) -> {"_adk_activated_skill_odie_tracker": ["mcp-gmail-calendar"]};
+    no skills -> {}."""
+    names = list(skills or ())
+    if not names:
+        return {}
+    return {f"_adk_activated_skill_{agent_name}": names}
+
+
 def build_skill_toolset(entries=None, extra_skills=(), extra_tools=()) -> SkillToolset:
     """One toolset for every usable skill (plus synthetic ones, e.g. MCP servers): the catalog goes into the prompt,
     every skill's own tools are declared all the time, and an app's from the moment its skill loads
