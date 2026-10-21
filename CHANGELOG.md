@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.2.6 (2026-10-21)
+
+- A shared reply carries its charts, tables and heat maps as pictures: each drawn piece goes through the share
+  sheet as a PNG card with the words as the caption.
+
 ## v0.2.5 (2026-10-21)
 
 - Share a reply or a made file to WhatsApp, Messages and the rest: every file, deck, podcast, picture, video and
