@@ -1,6 +1,8 @@
 """The Mac's apps as watch sources: found only on a Mac with the permission, read through odie.mac.native, their
 mail and events folded with a connector's copies, attachments saved through Mail."""
 import json
+import os
+import time
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -15,6 +17,21 @@ from tests.test_watch_calls import spec_for
 from tests.test_watch_fetch import EVENTS, ZAP_MAIL
 
 NOW = datetime(2026, 10, 21, 13, 0, tzinfo=ZoneInfo("Asia/Kolkata"))
+
+
+@pytest.fixture
+def india_clock():
+    """Sets this process's local time to India's, whatever the machine's own zone (CI runs on UTC).
+    With it, 12:30+05:30 reads as 12:30 local time; on a UTC clock it would read as 07:00."""
+    before = os.environ.get("TZ")
+    os.environ["TZ"] = "Asia/Kolkata"
+    time.tzset()
+    yield
+    if before is None:
+        del os.environ["TZ"]
+    else:
+        os.environ["TZ"] = before
+    time.tzset()
 
 
 @pytest.fixture
@@ -52,7 +69,7 @@ def test_the_same_event_in_both_calendars_is_one_row_with_the_connectors_id():
     assert out[0].sources == ["calendar:mac", "calendar:google"] and out[0].brief()["sources"] == ["calendar:mac", "calendar:google"]
 
 
-async def test_native_call_reads_mail_and_events_and_says_when_not_allowed(monkeypatch):
+async def test_native_call_reads_mail_and_events_and_says_when_not_allowed(monkeypatch, india_clock):
     from odie.mac import calendar, mail, permissions
 
     async def fake_mail(since, limit=25, run=None):
@@ -147,6 +164,7 @@ async def test_up_next_keeps_the_events_badges(store, monkeypatch):
 
 def test_the_watch_may_add_to_the_macs_calendar():
     from types import SimpleNamespace
+
     from odie.watch import check
     assert check.guard(SimpleNamespace(name="mac_calendar_add", _require_confirmation=True), {}, None) is None
     assert check.guard(SimpleNamespace(name="mac_reminder_add", _require_confirmation=True), {}, None) is not None

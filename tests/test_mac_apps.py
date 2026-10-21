@@ -1,7 +1,6 @@
 """The four app modules with a fake runner: arguments as the scripts expect them, JSON back as records, and the
 checks each does before running anything."""
 from datetime import datetime
-from pathlib import Path
 
 import pytest
 

@@ -90,6 +90,11 @@ Settings → Connected apps, or in `~/.odie/mcp.json`, running on the Mac or ove
 gives Odie your mail and calendar. Zapier and Composio are built-in shortcuts that link many apps at once, but you
 don't need them. Tools the server marks read-only run at once; anything that writes asks for a tap.
 
+On a Mac, Odie also reads **Apple Mail, Calendar, Reminders and Contacts** directly, with no MCP server: allow each
+app once in Settings → Mac apps, and macOS asks with its own dialog. Odie reads mail and saves attachments but never
+sends from Mail. In chat, adding an event or a reminder asks for a tap; the watch may put a bill's due date on the
+calendar by itself. When mail or an event comes through both the Mac and an MCP server, Odie shows it once.
+
 ### Working for you in the background
 
 - **Trackers:** "tell me when this drops under ₹20,000", "watch this order", "the score at half time". Checks from
@@ -122,7 +127,7 @@ with an OpenAI key.
 | Search by meaning | On, with EmbeddingGemma 2 (Google's local model) | Notes, photos and videos found by meaning, all on the Mac |
 | Photos | Allowed | Pictures and videos join the same search |
 | Phone | Tailscale (free), then Odie added to the Home Screen | Odie in your pocket from anywhere, over HTTPS, private to you |
-| Mail and calendar | Any Gmail and Calendar MCP server | Odie reads, drafts and watches; sending asks first |
+| Mail and calendar | On a Mac, its own Mail and Calendar (Settings → Mac apps); or any Gmail and Calendar MCP server | Odie reads, drafts and watches; sending asks first |
 | Web search | A Tavily key (free tier), or Brave or Ollama | Better results than the free fallback |
 
 ## How much computer you need
@@ -285,6 +290,7 @@ hiccups.
 | Photos and videos | ✓ | by people, place, date and Photos' own words; by meaning only with a cloud embedder | no (it reads Apple Photos) |
 | Local voices (Kokoro) | ✓ | no (it runs on Apple's MLX); cloud voices with a key | not yet (it runs on Apple's MLX) |
 | Signed-in browsing | ✓ | ✓ | not yet (it keeps logins in the macOS Keychain) |
+| Apple Mail, Calendar, Reminders and Contacts | ✓ | ✓ | no (it uses the Mac apps' own scripting); a Gmail or Calendar MCP server instead |
 
 Contributions are very welcome, for other operating systems and for new features alike: a Linux service, voices and
 sign-ins on Linux, a folder of pictures in place of Apple Photos, and anything that makes Odie more fun. See

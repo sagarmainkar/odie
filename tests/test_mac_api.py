@@ -36,12 +36,15 @@ async def test_rows_allow_and_the_calendar_choice(store, monkeypatch):
     permissions.forget()
     monkeypatch.setattr(permissions, "_determine", lambda bundle: 0 if bundle == "com.apple.mail" else -1744)
     asked = []
+    real_request = permissions.request
 
-    async def fake_request(app_id, run=None):
-        asked.append(app_id)
-        permissions.remember(app_id, "granted")
-        return "granted"
-    monkeypatch.setattr(permissions, "request", fake_request)
+    async def dialog_allowed(name, *args, app="", timeout=0):
+        asked.append(app)  # the probe that raises macOS's dialog; here the person clicks Allow
+        return ""
+
+    async def request_with_dialog_allowed(app_id):
+        return await real_request(app_id, run=dialog_allowed)
+    monkeypatch.setattr(permissions, "request", request_with_dialog_allowed)
 
     async def fake_calendars(run=None):
         return [{"name": "Home", "writable": True}, {"name": "Work", "writable": True}]
@@ -54,7 +57,9 @@ async def test_rows_allow_and_the_calendar_choice(store, monkeypatch):
         assert got["mac"] is True and {r["id"]: r["status"] for r in got["apps"]} == {"mail": "granted", "calendar": "unknown", "reminders": "unknown", "contacts": "unknown"}
         assert (await c.get("/api/mac/calendars")).json() == {"calendars": []}  # not granted yet: nothing asked of Calendar
         after = (await c.post("/api/mac/apps/calendar/allow")).json()
-        assert asked == ["calendar"] and sources_forgotten == [True]
+        assert asked == ["Calendar"] and sources_forgotten == [True]
+        statuses_after = {r["id"]: r["status"] for r in after["apps"]}
+        assert statuses_after["calendar"] == "granted"  # the answer comes back with the rows
         permissions.forget()
         monkeypatch.setattr(permissions, "_determine", lambda bundle: -600)  # Calendar closed now: the remembered grant holds
         assert {r["id"]: r["status"] for r in (await c.get("/api/mac/apps")).json()["apps"]}["calendar"] == "granted"
