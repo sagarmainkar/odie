@@ -264,9 +264,21 @@ input, button, textarea { font-family: inherit; }
 .kind-card { background: linear-gradient(160deg, var(--ka) 0%, var(--kb) 100%); border-color: rgba(255,255,255,.7); }
 .kind-inner { background: rgba(255,255,255,.65); border-color: rgba(255,255,255,.8); }
 .kind-chip { background: rgba(255,255,255,.7); }
+/* A card with a picture from Photos (odie.photos.cards): the photo fills it under a veil in the kind's evening colours,
+   darker at the bottom; the words turn light with a raised edge; the kind's drawing stays on top. */
+.kind-photo { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.kind-veil { position: absolute; inset: 0;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--kda) 30%, transparent) 0%, color-mix(in srgb, var(--kdb) 84%, transparent) 100%); }
+.has-photo > :not(.kind-photo):not(.kind-veil) { position: relative; }
+.kind-card.has-photo { border-color: transparent; color: #fff; --color-ink: #fff; --color-ink-2: rgba(255,255,255,.92); --color-muted: rgba(255,255,255,.8);
+  --color-ember-text: #ffd9a3; text-shadow: 0 1px 0 rgba(255,255,255,.18), 0 2px 10px rgba(0,0,0,.45); }
+.has-photo .kind-inner { background: rgba(255,255,255,.16); border-color: rgba(255,255,255,.32); }
+.has-photo .kind-chip { background: rgba(255,255,255,.85); color: #2a2238; text-shadow: none; }
 :root[data-tod="night"] .kind-card { background: linear-gradient(160deg, var(--kda) 0%, var(--kdb) 100%); border-color: rgba(255,255,255,.08); }
 :root[data-tod="night"] .kind-inner { background: rgba(255,255,255,.07); border-color: rgba(255,255,255,.1); }
 :root[data-tod="night"] .kind-chip { background: rgba(255,255,255,.12); }
+:root[data-tod="night"] .has-photo .kind-inner { background: rgba(0,0,0,.24); border-color: rgba(255,255,255,.14); }
+:root[data-tod="night"] .has-photo .kind-chip { background: rgba(255,255,255,.85); }
 
 /* Trace, questions and changes blocks (motion after Beautiful UI, MIT) */
 @keyframes trace-up { from { opacity: 0; transform: translateY(4px); } }

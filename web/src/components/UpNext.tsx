@@ -1,4 +1,5 @@
 import { motion } from "framer-motion";
+import { useState } from "react";
 import { dateParts, relative, sourceText, subline, timeText, type UpItem } from "../upnext";
 import { EventArt, KIND_LABEL, kindVars } from "./EventArt";
 import { Icon } from "./Tile";
@@ -6,13 +7,36 @@ import { SourceBadges } from "./SourceBadges";
 
 const ask = (q: string) => { location.hash = `#chat?q=${encodeURIComponent(q)}`; };
 
-/** The next thing coming up, large: its kind's illustration, the title, and a date card with the day as a big number. */
+/** Whether a card shows its picture: when it has one, until the picture fails to load. A birthday with Asha's photo
+ * -> shown; a card without a photo, or one whose copy is gone from the Mac (a 404) -> the card as it was. */
+function usePhoto(src?: string) {
+  const [broken, setBroken] = useState(false);
+  const shown = Boolean(src) && !broken;
+  return { shown, broke: () => setBroken(true) };
+}
+
+/** The picture filling a card, and the veil in the kind's colours that keeps the words readable over it. */
+function CardPhoto({ src, onError }: { src: string; onError: () => void }) {
+  return (
+    <>
+      <img className="kind-photo" src={src} alt="" aria-hidden="true" decoding="async" onError={onError} />
+      <div className="kind-veil" aria-hidden="true" />
+    </>
+  );
+}
+
+/** The next thing coming up, large: its kind's illustration, the title, and a date card with the day as a big number;
+ * the photo of who or what it's about behind it all when Photos has one. */
 function Hero({ it }: { it: UpItem }) {
   const d = dateParts(it.date);
   const line = subline(it);
+  const photo = usePhoto(it.photo);
+  const withPhoto = photo.shown ? " has-photo" : "";
   return (
     <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.35, ease: [0.2, 0.8, 0.2, 1] }}
-      className="kind-card relative rounded-[30px] p-4 overflow-hidden border shadow-[0_18px_40px_-24px_rgba(40,30,70,.45)]" style={kindVars(it.kind) as React.CSSProperties}>
+      className={`kind-card relative rounded-[30px] p-4 overflow-hidden border shadow-[0_18px_40px_-24px_rgba(40,30,70,.45)]${withPhoto}`}
+      style={kindVars(it.kind) as React.CSSProperties}>
+      {photo.shown && it.photo && <CardPhoto src={it.photo} onError={photo.broke} />}
       <div className="flex items-start gap-2">
         <div className="flex-1 min-w-0 pt-1">
           <div className="flex items-center gap-1.5 flex-wrap">
@@ -45,9 +69,13 @@ function Hero({ it }: { it: UpItem }) {
 
 function Mini({ it }: { it: UpItem }) {
   const d = dateParts(it.date);
+  const photo = usePhoto(it.photo);
+  const withPhoto = photo.shown ? " has-photo" : "";
   return (
-    <button type="button" onClick={() => ask(it.ask)} className="kind-card snap-start shrink-0 w-[152px] rounded-[24px] p-3 text-left border flex flex-col active:scale-[.98] transition-transform"
+    <button type="button" onClick={() => ask(it.ask)}
+      className={`kind-card relative overflow-hidden snap-start shrink-0 w-[152px] rounded-[24px] p-3 text-left border flex flex-col active:scale-[.98] transition-transform${withPhoto}`}
       style={kindVars(it.kind) as React.CSSProperties}>
+      {photo.shown && it.photo && <CardPhoto src={it.photo} onError={photo.broke} />}
       <div className="flex items-start justify-between">
         <div>
           <div className="text-[11.5px] font-semibold text-muted">{d.short}</div>

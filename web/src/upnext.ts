@@ -3,6 +3,7 @@ export type UpItem = {
   id: string; source: "calendar" | "sms" | "mail" | "task"; sources: string[]; kind: string; title: string;
   date: string; time: string | null; end: string | null; place: string | null; people: string[] | null; amount: number | null; ask: string;
   badges?: { kind: string; app: string }[];  // a calendar event: which calendars hold it (Gmail, iCloud)
+  photo?: string;  // a picture of the person or thing it names, from Photos (odie.photos.cards): "/api/photos/<uuid>/big"
 };
 
 const SOURCE_LABEL: Record<string, string> = { calendar: "Calendar", sms: "SMS", mail: "Mail", task: "Task" };
