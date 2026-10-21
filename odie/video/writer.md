@@ -630,6 +630,9 @@ For everything you draw. With pictures, the film grammar above comes first, and 
 - **Move the camera slowly** (eased, over several seconds); never jump.
 - **Few words on screen:** a title or short labels (at most about 8 words), never the narration's sentences.
   Formulas with `s.tex`.
+- **No countdown, no lead-in:** never open on 3-2-1, a blank stage or anything before the first card: the first frame
+  is the opening card, already drawn (a video that asks a question opens on the question card, its words on screen
+  at t = 0, not typed or faded in), and the narration starts at once.
 - **Readable at 1080p:** labels at least 40 px, titles 72–96 px, formulas 64–110 px; about 100 px of margin; nothing
   overlaps. Fade out what is done (`s.fade` with outAt) before the next thing takes its place.
 

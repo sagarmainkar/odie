@@ -218,7 +218,8 @@ async def test_a_good_call_queues_a_job_with_the_topic_minutes_and_brief(world, 
     job = submitted[0]
     assert (job.topic, job.title, job.minutes, job.brief) == ("How attention works", "How attention works", 3, brief)
     assert job.kind == "video" and job.voice_name == ""
-    assert job.data == {"given": {"images": [], "clips": []}, "private": [], "sounds": True, "style": ""}  # no page yet
+    assert job.data == {"given": {"images": [], "clips": []}, "private": [], "sounds": True, "style": "",
+                        "aspect": "landscape"}  # no page yet
     assert job.slug == "how-attention-works" and job.session_id == "chat-7"
     assert job.folder.is_dir() and str(job.folder).startswith(str(tmp_path))
     assert kind.needs_writing(job)
@@ -310,10 +311,11 @@ def test_the_skill_offers_only_make_video_without_an_approval_card(isolated_sett
     assert not any(tool._require_confirmation for tool in entry.tool_objs)
 
 
-def test_the_declaration_has_exactly_topic_minutes_brief_sources_images_clips_sounds_voice_name_and_style():
+def test_the_declaration_has_exactly_topic_minutes_brief_sources_images_clips_sounds_voice_style_and_aspect():
     declaration = FunctionTool(tools.make_video)._get_declaration()
     properties = declaration.parameters_json_schema["properties"]
-    assert list(properties) == ["topic", "minutes", "brief", "sources", "images", "clips", "sounds", "voice_name", "style"]
+    assert list(properties) == ["topic", "minutes", "brief", "sources", "images", "clips", "sounds", "voice_name", "style",
+                                "aspect"]
     assert properties["sounds"] == {"default": True, "title": "Sounds", "type": "boolean"}
     assert "sounds: leave true; false only when the user asks for no sound effects" in declaration.description
     for name in ("sources", "images", "clips"):

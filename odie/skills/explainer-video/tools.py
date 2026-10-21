@@ -42,6 +42,8 @@ NO_TOPIC = 'Give the topic: a few words saying what the video is about, like "Ho
 LEFT_OUT = ("Left out: {pictures}. Add that to the reply in a few words, with what the user can do; the video goes "
             "on without them.")
 SOUNDS_OFF = ("false", "no", "off", "0")  # sounds sent as text that turn them off, after strip and lower case
+# The words for a 9:16 reel, after strip and lower case; any other word ("landscape", "wide", "16:9", "") is landscape.
+VERTICAL_WORDS = ("vertical", "portrait", "reel", "insta", "shorts", "9:16")
 
 
 def making_seconds(speech_seconds: float, frames: int) -> float:
@@ -149,9 +151,21 @@ def style_as_given(style) -> str:
     return one_line[:MAX_STYLE_CHARACTERS]
 
 
+def aspect_as_given(aspect) -> str:
+    """Decides the video's shape from the aspect argument as the model sent it: "vertical" (1080 x 1920, a reel) for
+    "vertical", "portrait", "reel", "insta", "shorts" or "9:16", in any case and spacing; "landscape" (1920 x 1080,
+    as every video before) for "landscape", "wide", "16:9", "", None, or any other word. " Reel " -> "vertical";
+    "square" -> "landscape"."""
+    said = chat.text_or_empty(aspect).strip().lower()
+    if said in VERTICAL_WORDS:
+        return "vertical"
+    return "landscape"
+
+
 async def make_video(topic: str, minutes: int = 2, brief: str = "", sources: list[str] | None = None,
                      images: list[str] | None = None, clips: list[str] | None = None, sounds: bool = True,
-                     voice_name: str = "", style: str = "", tool_context: ToolContext | None = None) -> dict:
+                     voice_name: str = "", style: str = "", aspect: str = "",
+                     tool_context: ToolContext | None = None) -> dict:
     """Make a narrated, animated explainer video that plays in this chat. A separate writer makes the narration and
     the animation from your brief, in the background; it can't see this chat, the user's notes, memory or the web.
     topic: what the video is about, short ("How attention works").
@@ -169,6 +183,8 @@ async def make_video(topic: str, minutes: int = 2, brief: str = "", sources: lis
     style: leave empty; only when the user says how the narrator should sound, one line up to 300 characters, like
     "Curious science narrator. Calm, but lift slightly at the payoff. Slow down on numbers." Only OpenAI's voices
     follow it.
+    aspect: leave empty (a wide video); "vertical" when the user says insta, reel, shorts, vertical or mobile (a
+    1080 x 1920 reel). Never put the aspect in the brief.
     It returns at once. {"error": …}: fix exactly that and call again. {"result": …}: the video is being made; reply
     in one or two lines as the result says, and don't repeat the brief."""
     if find.browser_binary() is None:
@@ -178,6 +194,7 @@ async def make_video(topic: str, minutes: int = 2, brief: str = "", sources: lis
     brief = chat.text_or_empty(brief)
     voice_name = chat.text_or_empty(voice_name)
     style = style_as_given(style)
+    aspect = aspect_as_given(aspect)
     minutes = chat.minutes_as_given(minutes, DEFAULT_MINUTES)
 
     title = topic.strip()
@@ -225,6 +242,7 @@ async def make_video(topic: str, minutes: int = 2, brief: str = "", sources: lis
     data = {"given": given, "private": sorted(private_sites())}  # the job fetches as this chat would
     data["sounds"] = sounds_as_given(sounds)  # the making step mixes the page's sound cues only when this is True
     data["style"] = style  # how the OpenAI narrator sounds; "" keeps Odie's usual (odie.voice.tts_style)
+    data["aspect"] = aspect  # "landscape" or "vertical": the stage's size (odie.video.timeline.size_of)
     job = jobs.Job(kind="video", slug=folder.name, title=title, topic=title, minutes=minutes, brief=whole_brief,
                    session_id=session_id_of(tool_context), voice_name=voice_id, folder=folder, data=data)
     place = jobs.submit(job)

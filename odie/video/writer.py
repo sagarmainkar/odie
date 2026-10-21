@@ -24,7 +24,17 @@ from odie.video import sounds, timeline
 from odie.video.limits import narration_problem, page_problem
 
 INSTRUCTION = Path(__file__).with_name("writer.md").read_text(encoding="utf-8")
+VERTICAL_RULES = Path(__file__).with_name("writer-vertical.md").read_text(encoding="utf-8")
 log = logging.getLogger("odie.video")
+
+
+def instruction_for(aspect: str) -> str:
+    """The writer's instruction for the video's aspect: writer.md for a landscape video (the guide is written for its
+    1920 x 1080 stage); for a vertical one, writer.md and then writer-vertical.md (the 1080 x 1920 stage, the safe
+    area, one idea a screen). "landscape" -> INSTRUCTION; "vertical" -> INSTRUCTION + the vertical rules."""
+    if aspect == "vertical":
+        return INSTRUCTION.rstrip() + "\n\n" + VERTICAL_RULES
+    return INSTRUCTION
 
 HANG = "The page didn't finish drawing in time (a loop that never ends?): "
 NOT_A_LIST = ('narration is a list of strings, one string of plain speech per scene, in order: ["The first scene\'s '
@@ -214,7 +224,8 @@ def unknown_name_problem(body: str, assets_script: str) -> str | None:
     return None
 
 
-async def checked_submission(narration, body: str, browser, assets_script: str = "") -> Judged:
+async def checked_submission(narration, body: str, browser, assets_script: str = "",
+                             size: tuple[int, int] = timeline.LANDSCAPE) -> Judged:
     """Decides whether a video can be accepted: the page's first problem as words to fix, or None, then the sound
     cues' first problem apart from it (the tool refuses on cues only once; see cues_answer), with the cues the page
     placed. In this order: a page over 300 KB -> the limit; narration that isn't a list of strings ->
@@ -226,8 +237,8 @@ async def checked_submission(narration, body: str, browser, assets_script: str =
     "Video.sounds: cue 1: there is no sound called 'wooosh'; …"; {at: "1.5", …} -> "Video.sounds: cue 1 has at
     '1.5'; …", see odie.video.sounds.cue_problem). The worked example with two narration strings -> no
     problem and no cues. The page is drawn with the video's pictures and clips (`assets_script`), so s.photo("img1")
-    draws when img1 was gathered. A browser that fails in another way (it won't start) is not the page's problem: its
-    BrowserError goes up to the check."""
+    draws when img1 was gathered, at the video's `size` (1080 x 1920 for a vertical video). A browser that fails in
+    another way (it won't start) is not the page's problem: its BrowserError goes up to the check."""
     problem = page_problem(body)
     if problem:
         return Judged(problem=problem)
@@ -240,7 +251,7 @@ async def checked_submission(narration, body: str, browser, assets_script: str =
     if problem:
         return Judged(problem=problem)
     try:
-        drawn = await video_page.check_with_cues(body, narration, browser, assets_script)
+        drawn = await video_page.check_with_cues(body, narration, browser, assets_script, size=size)
     except BrowserTimeout as e:
         return Judged(problem=HANG + str(e))
     if drawn.problem:
@@ -290,14 +301,13 @@ def cues_answer(desk: Desk, judged: Judged, narration: list[str]) -> str | None:
     return None
 
 
-def tools_for(desk: Desk, browser, assets_script: str = "") -> list:
+def tools_for(desk: Desk, browser, assets_script: str = "", size: tuple[int, int] = timeline.LANDSCAPE) -> list:
     """The writer's one tool, submit_video (title, narration, page), built by the shared harness on `desk`. Its check
     keeps the page under desk.pages first, then judges it (checked_submission, drawn with the video's pictures and
-    clips, `assets_script`); a page that drew fine is answered from its cues (cues_answer: they refuse it at most
-    once, then the ones that don't fit are dropped), which puts the cues to keep on the desk; a browser that fails
-    is no refusal:
-    the job ends with the browser's own words. Accepting makes the Written video with those cues (the harness accepts
-    right after the check that passed), the title falling back to the topic."""
+    clips, `assets_script`, at the video's `size`); a page that drew fine is answered from its cues (cues_answer: they
+    refuse it at most once, then the ones that don't fit are dropped), which puts the cues to keep on the desk; a
+    browser that fails is no refusal: the job ends with the browser's own words. Accepting makes the Written video
+    with those cues (the harness accepts right after the check that passed), the title falling back to the topic."""
 
     async def check(fields: dict) -> str | None:
         body = text_or_empty(fields["page"])
@@ -305,7 +315,7 @@ def tools_for(desk: Desk, browser, assets_script: str = "") -> list:
         narration = narration_as_given(fields["narration"])
         desk.cues = []
         try:
-            judged = await checked_submission(narration, body, browser, assets_script)
+            judged = await checked_submission(narration, body, browser, assets_script, size=size)
         except BrowserError as e:
             words = str(e).strip()
             if not words:
@@ -325,14 +335,16 @@ def tools_for(desk: Desk, browser, assets_script: str = "") -> list:
 
 
 async def write(topic: str, minutes: int, brief: str, folder: Path, turn, browser, listing: str = "",
-                assets_script: str = "") -> Written:
+                assets_script: str = "", aspect: str = "landscape") -> Written:
     """Writes the video in one focused turn: `turn(prompt, instruction, tools, timeout, follow_up=…)` is
     runner.focused_turn in Odie, `browser` the one page.check draws in (render_browser()), `listing` the pictures and
     clips the writer may use, by name (see prompt_for), and `assets_script` those same pictures and clips stapled
-    (odie.video.assets.staple), so the check draws them. Every submitted page is kept under folder/pages. Returns the
+    (odie.video.assets.staple), so the check draws them. `aspect` ("landscape" or "vertical") picks the instruction
+    (instruction_for) and the size the page is checked at. Every submitted page is kept under folder/pages. Returns the
     accepted video; raises WriterFailed when there's none, with the video's words (LINES), or the harness's time-limit
     line (see odie.making.writer.write)."""
     desk = Desk(topic=topic, pages=folder / "pages")
-    [tool] = tools_for(desk, browser, assets_script)
+    size = timeline.size_of(aspect)
+    [tool] = tools_for(desk, browser, assets_script, size=size)
     prompt = prompt_for(topic, minutes, brief, listing)
-    return await harness.write(desk, prompt, INSTRUCTION, tool, LINES, turn)
+    return await harness.write(desk, prompt, instruction_for(aspect), tool, LINES, turn)
