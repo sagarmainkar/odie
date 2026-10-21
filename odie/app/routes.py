@@ -1311,7 +1311,7 @@ async def voice_get(request: Request):
     return {"available": openai_ok, "engine": engine, "voice": current, "talk_voice": voice.get_voice(store), "engines": engines,
             "local_voice": machine.local_voice_wanted(),
             "reminders_spoken": voice.reminders_spoken(store),
-            "voices": voice.VOICES, "models": {"tts": voice.TTS_MODEL, "stt": voice.STT_MODEL, "realtime": voice.REALTIME_MODEL}}
+            "voices": voice.VOICES, "models": {"tts": voice.tts_model(), "stt": voice.stt_model(), "realtime": voice.REALTIME_MODEL}}
 
 
 @router.put("/voice")

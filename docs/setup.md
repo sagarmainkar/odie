@@ -163,6 +163,8 @@ Besides the keys (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `OPEN
 | `OPENAI_BASE_URL`, `OPENROUTER_BASE_URL`, `GEMINI_BASE_URL`, `ANTHROPIC_BASE_URL` | A provider's address | the provider's own |
 | `ODIE_TIMEZONE`, `ODIE_LOCALE`, `ODIE_CURRENCY` | The clock, number and money formats in the prompt | from the Mac |
 | `ODIE_VOICE` | `off`: no local voice worker | on |
+| `ODIE_TTS_MODEL`, `ODIE_STT_MODEL` | OpenAI's read-aloud and transcription models, for when OpenAI retires one | `gpt-4o-mini-tts`, `gpt-4o-mini-transcribe` |
+| `ODIE_VIDEO_VOICE` | The voice explainer videos are narrated in (a voice's id or name, any engine), kept when the read-aloud voice changes | the read-aloud voice |
 | `ODIE_PORT` | The port the service listens on | 8000 |
 | `ODIE_EMBED` | `off`: no local embedding service | on |
 | `ODIE_EMBED_PORT` | The embedding service's port | Odie's port + 772 |

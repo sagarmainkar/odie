@@ -60,7 +60,7 @@ def make_job(slug="attention", title="Attention", session_id="chat-1"):
                     folder=folder)
 
 
-async def stand_in_narrate(store, narration, voice_name="", transport=None):
+async def stand_in_narrate(store, narration, voice_name="", transport=None, style=""):
     return make_wav(2.0), [1.0, 0.5], [[0.0, 0.4], [0.0]]
 
 
@@ -136,7 +136,7 @@ async def test_the_page_is_timed_from_the_spoken_lengths(world, fast, monkeypatc
 async def test_a_voice_that_cant_speak_is_said_in_the_chat(world, monkeypatch):
     chat, pushes, _store = world
 
-    async def silent_voice(store, narration, voice_name="", transport=None):
+    async def silent_voice(store, narration, voice_name="", transport=None, style=""):
         raise voice.VoiceUnavailable("Odie's local voice isn't running")
 
     monkeypatch.setattr(kind, "narrate", silent_voice)

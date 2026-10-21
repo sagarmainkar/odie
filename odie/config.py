@@ -1,7 +1,8 @@
 """Runtime settings, from the environment or the .env in Odie's folder (KEY=value lines, like the keys).
 Odie's own: ODIE_HOME, ODIE_DATA_DIR, ODIE_CONFIG_DIR, ODIE_MODEL, ODIE_MEMORY_FILE, ODIE_PREFETCH, ODIE_HOST,
 ODIE_PORT, ODIE_PUBLIC_URL, ODIE_APP_NAME, ODIE_USER_ID, ODIE_TIMEZONE, ODIE_EMBED_IDLE_MINUTES,
-ODIE_LOCALE, ODIE_CURRENCY, ODIE_ADDONS, ODIE_VOICE (off: no local voice worker), ODIE_VOICE_PORT (8771). Others: each
+ODIE_LOCALE, ODIE_CURRENCY, ODIE_ADDONS, ODIE_VOICE (off: no local voice worker), ODIE_VOICE_PORT (8771), ODIE_TTS_MODEL
+and ODIE_STT_MODEL (OpenAI's voice models, odie.voice), ODIE_VIDEO_VOICE (the voice videos are narrated in). Others: each
 built-in provider's address, LM_STUDIO_BASE_URL, OLLAMA_BASE_URL, OPENAI_BASE_URL, OPENROUTER_BASE_URL, GEMINI_BASE_URL and
 ANTHROPIC_BASE_URL (odie.models.provider_base_url, read on every request). Add-ons read their own."""
 from __future__ import annotations
@@ -113,6 +114,10 @@ class Settings:
     memory_file: Path = field(default_factory=_memory_file)
     review_every_turns: int = 10
     public_url: str = field(default_factory=lambda: _get("PUBLIC_URL", "http://localhost:8000"))  # the phone's HTTPS address
+    # OpenAI's voice models, so a retired model is a settings change; empty: odie.voice's TTS_MODEL and STT_MODEL
+    tts_model: str = field(default_factory=lambda: _get("TTS_MODEL", ""))
+    stt_model: str = field(default_factory=lambda: _get("STT_MODEL", ""))
+    video_voice: str = field(default_factory=lambda: _get("VIDEO_VOICE", ""))  # empty: videos speak in the read-aloud voice
 
     @property
     def country(self) -> str:

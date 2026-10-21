@@ -8,15 +8,19 @@ Odie turn (Gemma, all tools, approvals, memory). So OpenAI sees the spoken conve
 data, and every real action still gets an approval card."""
 from __future__ import annotations
 
+import logging
+
 import httpx
 
 from odie import config, machine
 from odie.secrets import load_secret
 from odie.store.db import Store
 
+log = logging.getLogger("odie.voice")
+
 API = "https://api.openai.com/v1"
-TTS_MODEL = "gpt-4o-mini-tts"
-STT_MODEL = "gpt-4o-mini-transcribe"
+TTS_MODEL = "gpt-4o-mini-tts"  # the default; the tts_model setting (ODIE_TTS_MODEL) names another
+STT_MODEL = "gpt-4o-mini-transcribe"  # the default; stt_model (ODIE_STT_MODEL). Deprecated 26 Feb 2027: gpt-transcribe
 REALTIME_MODEL = "gpt-realtime-2.1-mini"
 DEFAULT_VOICE = "marin"
 # Voices that work for BOTH read-aloud and realtime (checked against the API on 2026-10-01), so one choice covers both.
@@ -24,6 +28,22 @@ DEFAULT_VOICE = "marin"
 _GROUPS = {"female": ["marin", "coral", "sage", "shimmer"], "male": ["cedar", "ash", "ballad", "echo", "verse"], "neutral": ["alloy"]}
 VOICES = [{"id": v, "label": v.capitalize(), "group": g} for g, ids in _GROUPS.items() for v in ids]
 _VOICE_IDS = {v["id"] for v in VOICES}
+
+
+def tts_model() -> str:
+    """The OpenAI read-aloud model: the tts_model setting, else TTS_MODEL, so a retired model is a settings change.
+    No setting -> "gpt-4o-mini-tts"; ODIE_TTS_MODEL=gpt-next-tts -> "gpt-next-tts"."""
+    chosen = config.settings.tts_model.strip()
+    return chosen or TTS_MODEL
+
+
+def stt_model() -> str:
+    """The OpenAI model dictation and live talk transcribe with: the stt_model setting, else STT_MODEL.
+    No setting -> "gpt-4o-mini-transcribe"; ODIE_STT_MODEL=gpt-transcribe -> "gpt-transcribe"."""
+    chosen = config.settings.stt_model.strip()
+    return chosen or STT_MODEL
+
+
 def tts_style(country: str) -> str:
     """How OpenAI voice should sound; amounts read the local way."""
     base = "Warm, calm and unhurried, like a thoughtful friend."
@@ -115,6 +135,26 @@ def get_tts(store: Store) -> tuple[str, str]:
     return engine, (v if v in ids else _DEFAULT_VOICE[engine])
 
 
+def video_tts(store: Store) -> tuple[str, str]:
+    """(engine, voice) videos are narrated in. The video_voice setting (ODIE_VIDEO_VOICE) pins the channel's voice apart
+    from read-aloud, so changing the read-aloud voice leaves videos alone; unset, videos speak in the read-aloud voice,
+    as before. The pinned voice is found by its id or name in any engine offered here, and stays even when it is
+    OpenAI's and the key is gone (the video then says the key is missing rather than change voice).
+    ODIE_VIDEO_VOICE=cedar, read-aloud Kokoro Heart -> ("openai", "cedar"); unset -> ("kokoro", "af_heart");
+    "nobody", or a Kokoro voice on an Intel Mac (no Kokoro there) -> the read-aloud voice, and the log says why."""
+    pinned = config.settings.video_voice.strip().lower()
+    if not pinned:
+        return get_tts(store)
+    for engine in ENGINES:
+        if engine in disabled():
+            continue
+        for v in engine_voices(engine):
+            if pinned in (v["id"], v["label"].lower()):
+                return engine, v["id"]
+    log.warning("video_voice %r isn't a voice offered here; videos speak in the read-aloud voice", pinned)
+    return get_tts(store)
+
+
 def set_tts(store: Store, engine: str | None = None, voice: str | None = None) -> tuple[str, str]:
     s = dict(store.get_setting("voice") or {})
     if engine in ENGINES and engine not in disabled():
@@ -197,13 +237,17 @@ async def speak(store: Store, text: str, engine: str | None = None, voice: str |
     return await local_tts(eng, text, v), "audio/wav"
 
 
-async def speak_wav(store: Store, text: str, voice: str | None = None, transport: httpx.AsyncBaseTransport | None = None) -> bytes:
+async def speak_wav(store: Store, text: str, voice: str | None = None, transport: httpx.AsyncBaseTransport | None = None,
+                    engine: str | None = None, style: str = "") -> bytes:
     """`text` as a 16-bit WAV in the chosen engine (a voice memo, a podcast's turn). OpenAI is asked for raw PCM, so
-    both engines' audio joins alike."""
+    both engines' audio joins alike. `engine` with `voice` speaks in that engine instead (a video's own voice,
+    video_tts). `style` steers an OpenAI voice for this text (tts); Kokoro has no steering and never sees it."""
     from odie.media import pcm_to_wav
     eng, v = get_tts(store)
+    if engine and voice:
+        eng, v = engine, voice
     if eng == "openai":
-        return pcm_to_wav(await tts(text, voice or v, transport=transport, fmt="pcm"))
+        return pcm_to_wav(await tts(text, voice or v, transport=transport, fmt="pcm", style=style))
     return await local_tts("kokoro", text, voice or (v if eng == "kokoro" else _DEFAULT_VOICE["kokoro"]), transport=transport)
 
 
@@ -307,10 +351,14 @@ def set_voice(store: Store, v: str) -> str:
     return get_voice(store)
 
 
-async def tts(text: str, voice: str, key: str | None = None, transport: httpx.AsyncBaseTransport | None = None, fmt: str = "mp3") -> bytes:
+async def tts(text: str, voice: str, key: str | None = None, transport: httpx.AsyncBaseTransport | None = None,
+              fmt: str = "mp3", style: str = "") -> bytes:
+    """OpenAI speech. `style` is how the voice should sound for this text (a video's own narration style); empty means
+    Odie's usual tts_style."""
+    instructions = style or tts_style(config.settings.country)
     async with httpx.AsyncClient(timeout=60, transport=transport) as c:
         r = await c.post(f"{API}/audio/speech", headers={"Authorization": f"Bearer {key or api_key()}"},
-                         json={"model": TTS_MODEL, "voice": voice, "input": text[:4000], "instructions": tts_style(config.settings.country), "response_format": fmt})
+                         json={"model": tts_model(), "voice": voice, "input": text[:4000], "instructions": instructions, "response_format": fmt})
         r.raise_for_status()
         return r.content
 
@@ -318,7 +366,7 @@ async def tts(text: str, voice: str, key: str | None = None, transport: httpx.As
 async def stt(audio: bytes, filename: str, mime: str, key: str | None = None, transport: httpx.AsyncBaseTransport | None = None) -> str:
     async with httpx.AsyncClient(timeout=60, transport=transport) as c:
         r = await c.post(f"{API}/audio/transcriptions", headers={"Authorization": f"Bearer {key or api_key()}"},
-                         data={"model": STT_MODEL}, files={"file": (filename, audio, mime)})
+                         data={"model": stt_model()}, files={"file": (filename, audio, mime)})
         r.raise_for_status()
         return (r.json().get("text") or "").strip()
 
@@ -366,7 +414,7 @@ async def dictation_session(key: str | None = None, transport: httpx.AsyncBaseTr
     body = {"session": {
         "type": "transcription",
         "audio": {"input": {"noise_reduction": {"type": "near_field"},
-                            "transcription": {"model": STT_MODEL, "language": "en",
+                            "transcription": {"model": stt_model(), "language": "en",
                                               **({"prompt": p} if (p := transcription_prompt(config.settings.country)) else {})},
                             "turn_detection": {"type": "server_vad", "silence_duration_ms": 600}}}}}
     async with httpx.AsyncClient(timeout=20, transport=transport) as c:
@@ -387,7 +435,7 @@ async def realtime_session(store: Store, context: str, soul: str | None = None, 
         "instructions": persona.apply_name(realtime_instructions(name, soul, context, user, caps), name),
         # Low eagerness + near-field noise reduction: a phone held close, and no turn taken on stray sound or its own echo.
         "audio": {"input": {"noise_reduction": {"type": "near_field"},
-                            "transcription": {"model": STT_MODEL, "language": "en",
+                            "transcription": {"model": stt_model(), "language": "en",
                                               **({"prompt": p} if (p := transcription_prompt(config.settings.country)) else {})},
                             "turn_detection": {"type": "semantic_vad", "eagerness": "low"}},
                   "output": {"voice": v}},
