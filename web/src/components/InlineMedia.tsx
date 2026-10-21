@@ -2,6 +2,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { useState } from "react";
 import { size } from "../files";
 import { mediaUrl, type Media } from "../media";
+import { ShareFile } from "./ShareButton";
 import { ToBody } from "./ToBody";
 
 /** A picture a tool made (png, jpg, webp, gif, svg): shown under the reply, a tap shows it large. An SVG goes through
@@ -10,11 +11,14 @@ export function PictureCard({ m }: { m: Media }) {
   const [open, setOpen] = useState(false);
   const name = m.filename || m.title;
   return (
-    <figure className="my-1" data-media="picture">
-      <button type="button" onClick={() => setOpen(true)} aria-label={`Show ${name} larger`} className="glass glass-solid rounded-[22px] p-2 max-w-[460px] text-left">
+    <figure className="my-1 glass glass-solid rounded-[22px] p-2 max-w-[460px]" data-media="picture">
+      <button type="button" onClick={() => setOpen(true)} aria-label={`Show ${name} larger`} className="block text-left">
         <img src={mediaUrl(m)} alt={name} loading="lazy" className="block max-w-full max-h-[360px] object-contain rounded-[16px] bg-well" />
-        <figcaption className="px-2 pt-2 pb-1 text-[12.5px] text-muted truncate">{name} · {size(m.size)}</figcaption>
       </button>
+      <div className="flex items-center gap-2 pl-2 pr-1 pt-2 pb-1">
+        <figcaption className="flex-1 min-w-0 text-[12.5px] text-muted truncate">{name} · {size(m.size)}</figcaption>
+        <ShareFile file={m} />
+      </div>
       <ToBody>
         <AnimatePresence>
           {open && (
@@ -36,7 +40,10 @@ export function VideoCard({ m }: { m: Media }) {
   return (
     <figure className="my-1 glass glass-solid rounded-[22px] p-2 max-w-[460px]" data-media="video">
       <video src={mediaUrl(m)} controls playsInline preload="metadata" className="block w-full max-h-[360px] rounded-[16px] bg-black" aria-label={name} />
-      <figcaption className="px-2 pt-2 pb-1 text-[12.5px] text-muted truncate">{name} · {size(m.size)}</figcaption>
+      <div className="flex items-center gap-2 pl-2 pr-1 pt-2 pb-1">
+        <figcaption className="flex-1 min-w-0 text-[12.5px] text-muted truncate">{name} · {size(m.size)}</figcaption>
+        <ShareFile file={m} />
+      </div>
     </figure>
   );
 }
@@ -46,7 +53,10 @@ export function AudioCard({ m }: { m: Media }) {
   const name = m.filename || m.title;
   return (
     <figure className="my-1 glass glass-solid rounded-[22px] px-3 py-2.5 max-w-[460px]" data-media="audio">
-      <figcaption className="text-[13.5px] font-semibold truncate mb-1.5">{name} <span className="font-normal text-muted">· {size(m.size)}</span></figcaption>
+      <div className="flex items-center gap-2 mb-1.5">
+        <figcaption className="flex-1 min-w-0 text-[13.5px] font-semibold truncate">{name} <span className="font-normal text-muted">· {size(m.size)}</span></figcaption>
+        <ShareFile file={m} />
+      </div>
       <audio src={mediaUrl(m)} controls preload="metadata" className="block w-full" aria-label={name} />
     </figure>
   );

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { HOST_TEXT, HOST_TONES, clock, hostInitial, speakingAt, turnAt, type Media } from "../media";
 import { PlayPause, usePlayer } from "./VoiceMemo";
+import { ShareFile } from "./ShareButton";
 
 
 /** A podcast: a wider card, unlike the memo pill. The two hosts (the one speaking lit), the title, a scrubber, play
@@ -33,6 +34,7 @@ export function Podcast({ m }: { m: Media }) {
           <div className="text-[15.5px] font-semibold leading-5 truncate">{m.title}</div>
           <div className="text-[12.5px] text-muted truncate">{who >= 0 ? `${hosts[who].name} is speaking` : hosts.map((h) => h.name).join(" and ")}</div>
         </div>
+        <ShareFile file={m} />
       </div>
       <div>
         <div onClick={p.seekAt} role="slider" aria-label="Podcast position" aria-valuemin={0} aria-valuemax={Math.round(p.duration)} aria-valuenow={Math.round(p.time)}
