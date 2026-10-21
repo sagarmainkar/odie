@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.2.11 (2026-10-21)
+
+- Up next: a birthday's or an event's card wears a photo from Photos of the person it names (or of a holiday or thing
+  a word names), under a veil in the card's colours, with the kind's drawing kept. No match, no photo.
+- Where each card came from is a clear coloured mark on every card: Gmail's M in red, iCloud's cloud in blue.
+- Vertical 9:16 videos for Instagram reels: `make_video` takes `aspect` ("insta", "reel", "shorts", "vertical" →
+  1080×1920), with safe areas and vertical composition rules for the writer. Landscape frames are unchanged.
+- No countdown lead-in: a video opens on its first card and the narration starts at once.
+
 ## v0.2.10 (2026-10-21)
 
 - A video can have its own narration style for OpenAI's voice: `make_video` takes `style`, one line up to 300
