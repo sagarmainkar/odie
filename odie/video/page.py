@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from odie.browser.engine import BrowserError, BrowserTimeout
-from odie.video import beats, timeline
+from odie.video import beats, minute, timeline
 
 KIT = Path(__file__).parent / "kit"
 
@@ -254,7 +254,7 @@ class CheckResult:
 
 
 async def check_with_cues(body: str, narration: list[str], browser, assets_script: str = "",
-                          size: tuple[int, int] = timeline.LANDSCAPE) -> CheckResult:
+                          size: tuple[int, int] = timeline.LANDSCAPE, one_minute: bool = False) -> CheckResult:
     """Loads the page in a sealed tab of the video's size (1920x1080, or 1080x1920 for a vertical video) with estimated
     timings and the video's pictures and clips
     (`assets_script`, as the render will have them) and draws three moments of every scene, so the chat turn hears
@@ -262,8 +262,12 @@ async def check_with_cues(body: str, narration: list[str], browser, assets_scrip
     is None when the page is fine, else the first one as a paragraph to act on (see first_problem). A page that
     reaches for the network is a problem too, and so is one whose Video.sounds threw (given something other than a
     list: "Video.sounds takes a list: …" comes back as an error while loading). The cues come back as the page gave
-    them, right or wrong: whether they fit, shape included, is odie.video.sounds.cue_problem's to say."""
+    them, right or wrong: whether they fit, shape included, is odie.video.sounds.cue_problem's to say. A one-minute
+    video (`one_minute`, odie.video.minute) is checked with the timings it will have: the silent opening, the narration
+    clock (s.left()), and one more moment drawn first, its opening at 0 s, where s.left() is null."""
     timings = estimated_timings(narration)
+    if one_minute:
+        timings = minute.on_the_clock(timings, len(narration))
     try:
         html = assemble(body, timings, assets_script, size=size)
     except ValueError as e:
@@ -276,7 +280,14 @@ async def check_with_cues(body: str, narration: list[str], browser, assets_scrip
         if problem:
             return CheckResult(problem=problem)
         draw_errors = []
+        if one_minute:
+            error = await _draw_error(tab, 0.0)  # the silent opening: scene 1 at t = 0, the clock not started
+            if error:
+                draw_errors.append((1, 0.0, f"{error} (in the silent opening, before the first word, where s.left() "
+                                            "is null)"))
         for number, seconds in enumerate(probe_times(timings)):
+            if draw_errors:
+                break
             error = await _draw_error(tab, seconds)
             if error:
                 scene_index = number // PROBES_PER_SCENE
