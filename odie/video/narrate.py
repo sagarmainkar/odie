@@ -3,6 +3,7 @@ read-aloud voice chosen in Settings), and the length of each spoken scene (not a
 A scene marked with "|" (odie.video.beats) is spoken one phrase at a time, and the measured phrases give the seconds
 at which each beat starts. A scene's first word comes at once: a voice's quiet before it is cut to MAX_LEAD."""
 import array
+import asyncio
 import io
 import math
 import wave
@@ -79,6 +80,30 @@ async def speak(store: Store, text: str, engine: str, voice_id: str, transport: 
         raise voice.VoiceUnavailable(NO_ANSWER + first_line(e)) from e
 
 
+OPENAI_AT_ONCE = 6  # OpenAI phrases asked at once: one slow answer then holds up only its own phrase
+
+
+async def speak_all(store: Store, phrases: list[str], engine: str, voice_id: str,
+                    transport: httpx.AsyncBaseTransport | None, style: str = "") -> list[bytes]:
+    """Every phrase as a WAV, in the order given. OpenAI's are asked OPENAI_AT_ONCE at a time; the local voice's one at a
+    time (its worker speaks one thing at once). 25 phrases at ~40 s each through OpenAI -> about 5 rounds, not 25.
+    The first failure stops the rest and is raised."""
+    at_once = OPENAI_AT_ONCE if engine == "openai" else 1
+    gate = asyncio.Semaphore(at_once)
+
+    async def one(phrase: str) -> bytes:
+        async with gate:
+            return await speak(store, phrase, engine, voice_id, transport, style)
+
+    tasks = [asyncio.create_task(one(phrase)) for phrase in phrases]
+    try:
+        return list(await asyncio.gather(*tasks))
+    except BaseException:
+        for task in tasks:
+            task.cancel()
+        raise
+
+
 def beat_starts(piece_lengths: list[float]) -> list[float]:
     """Where each phrase starts, in seconds into its scene, from the phrases' lengths: [1.0, 2.0, 0.5] ->
     [0.0, 1.0, 3.0]; one phrase -> [0.0]."""
@@ -109,16 +134,16 @@ async def narrate(store: Store, narration: list[str], voice_name: str = "",
     else:
         engine, voice_id = voice.video_tts(store)
 
+    scene_phrases = [beats.phrases(text) for text in narration]
+    every_phrase = [phrase for phrases in scene_phrases for phrase in phrases]
+    spoken = iter(await speak_all(store, every_phrase, engine, voice_id, transport, style))
+
     scenes = []
     lengths = []
     scene_beats = []
-    for text in narration:
-        pieces = []
-        for number, phrase in enumerate(beats.phrases(text)):
-            piece = await speak(store, phrase, engine, voice_id, transport, style)
-            if number == 0:
-                piece = lead_cut(piece)
-            pieces.append(piece)
+    for phrases in scene_phrases:
+        pieces = [next(spoken) for _phrase in phrases]
+        pieces[0] = lead_cut(pieces[0])
         scene, _piece_starts = media.join_wavs(pieces, gap_ms=0)
         piece_lengths = [wav_seconds(piece) for piece in pieces]
         scenes.append(scene)

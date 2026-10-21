@@ -8,6 +8,7 @@ Odie turn (Gemma, all tools, approvals, memory). So OpenAI sees the spoken conve
 data, and every real action still gets an approval card."""
 from __future__ import annotations
 
+import asyncio
 import logging
 
 import httpx
@@ -351,16 +352,41 @@ def set_voice(store: Store, v: str) -> str:
     return get_voice(store)
 
 
+# OpenAI's speech can be slow on its own side: on 21 Oct 2026 gpt-4o-mini-tts took 40-50 s for a 2-second clip on about
+# half the requests. So each try waits TTS_WAIT seconds, and a timeout or a busy answer is tried again after each pause.
+TTS_WAIT = 120.0
+RETRY_PAUSES = (2.0, 5.0)  # the pause before each retry: two retries, three tries in all
+
+
+def try_again(error: Exception) -> bool:
+    """Whether a failed OpenAI speech request is worth another try: a timeout, a dropped or refused connection, "too
+    many requests" (429) or a server error (5xx) -> True; a wrong key (401), a bad request (400) -> False."""
+    if isinstance(error, httpx.HTTPStatusError):
+        code = error.response.status_code
+        return code == 429 or code >= 500
+    return isinstance(error, (httpx.TimeoutException, httpx.TransportError))
+
+
 async def tts(text: str, voice: str, key: str | None = None, transport: httpx.AsyncBaseTransport | None = None,
               fmt: str = "mp3", style: str = "") -> bytes:
     """OpenAI speech. `style` is how the voice should sound for this text (a video's own narration style); empty means
-    Odie's usual tts_style."""
+    Odie's usual tts_style. A slow or busy answer is tried again (try_again, RETRY_PAUSES); the last failure is raised."""
     instructions = style or tts_style(config.settings.country)
-    async with httpx.AsyncClient(timeout=60, transport=transport) as c:
-        r = await c.post(f"{API}/audio/speech", headers={"Authorization": f"Bearer {key or api_key()}"},
-                         json={"model": tts_model(), "voice": voice, "input": text[:4000], "instructions": instructions, "response_format": fmt})
-        r.raise_for_status()
-        return r.content
+    body = {"model": tts_model(), "voice": voice, "input": text[:4000], "instructions": instructions, "response_format": fmt}
+    headers = {"Authorization": f"Bearer {key or api_key()}"}
+    for pause in (*RETRY_PAUSES, None):
+        try:
+            async with httpx.AsyncClient(timeout=TTS_WAIT, transport=transport) as c:
+                r = await c.post(f"{API}/audio/speech", headers=headers, json=body)
+                r.raise_for_status()
+                return r.content
+        except httpx.HTTPError as e:
+            last_try = pause is None
+            if last_try or not try_again(e):
+                raise
+            log.info("OpenAI speech didn't answer (%s); trying again in %.0f s", type(e).__name__, pause)
+            await asyncio.sleep(pause)
+    raise AssertionError("unreachable: the last try returns or raises")
 
 
 async def stt(audio: bytes, filename: str, mime: str, key: str | None = None, transport: httpx.AsyncBaseTransport | None = None) -> str:
