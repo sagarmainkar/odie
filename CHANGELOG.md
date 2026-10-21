@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.2.12 (2026-10-21)
+
+- One-minute videos (asked at one minute, or any reel): the narration is fitted to exactly 60 s, the video opens
+  silent on the question card, and a narration clock (60 at the first word, 0 at the last) drives the countdown character; then a
+  blink, a chime and a cut. Longer videos keep their free length.
+- The watch keeps bills, payments and orders on the calendar: a bill gets an event and a reminder, a payment for the
+  same amount closes it and marks the event paid, an order's event follows its delivery. A one-time catch-up reads
+  the last 30 days of such mail. Today shows two weeks of the calendar, paid and delivered items in green, and what
+  the watch closed (with Reopen).
+
 ## v0.2.11 (2026-10-21)
 
 - Up next: a birthday's or an event's card wears a photo from Photos of the person it names (or of a holiday or thing
