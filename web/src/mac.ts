@@ -1,4 +1,4 @@
-/** Settings → Mac apps: whether Odie may read each of the Mac's own apps (Mail, Calendar, Reminders, Contacts), as
+/** Settings → Mac apps: whether Odie may read each of the Mac's own apps (Mail, Calendar, Reminders), as
  * macOS grants it. The dialog that grants it appears only on the Mac itself, so a phone can only look. */
 export type MacAppStatus = "granted" | "denied" | "unknown";
 export type MacAppRow = { id: "mail" | "calendar" | "reminders" | "contacts" | string; name: string; status: MacAppStatus };

@@ -319,23 +319,6 @@
     }
   },
   {
-    "description": "People in the Mac's Contacts whose name holds `query`: name, emails, phones, birthday.",
-    "name": "mac_contacts",
-    "parameters_json_schema": {
-      "properties": {
-        "query": {
-          "title": "Query",
-          "type": "string"
-        }
-      },
-      "required": [
-        "query"
-      ],
-      "title": "mac_contactsParams",
-      "type": "object"
-    }
-  },
-  {
     "description": "New mail in the Mac's Mail app since a local time (\"2026-10-21T09:00\"), newest first, at most `limit`:\nid, from, subject, at, snippet, attachments. Read one in full with mac_mail_read.",
     "name": "mac_mail_new",
     "parameters_json_schema": {

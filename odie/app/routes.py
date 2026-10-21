@@ -612,7 +612,7 @@ async def push_test(request: Request):
     return {"sent": n}
 
 
-# --- Mac apps: Mail, Calendar, Reminders and Contacts on this Mac, and the permission macOS asks for each ---
+# --- Mac apps: Mail, Calendar and Reminders on this Mac, and the permission macOS asks for each ---
 class CalendarIn(BaseModel):
     name: str
 
@@ -639,7 +639,7 @@ async def mac_apps_allow(app_id: str, request: Request) -> dict:
     from odie.watch import sources
     if not scripts.available():
         raise HTTPException(400, "This Odie isn't on a Mac.")
-    if app_id not in permissions.APPS:
+    if not permissions.offered(app_id):
         raise HTTPException(404, "no such app")
     await permissions.request(app_id)
     sources.forget(request.app.state.store)

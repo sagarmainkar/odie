@@ -63,10 +63,10 @@ async def test_request_runs_the_probe_and_keeps_the_answer():
     permissions.forget()
 
 
-def test_rows_list_the_four_apps_in_order():
+def test_rows_list_the_shown_apps_in_order_and_hold_contacts_back():
     permissions.forget()
     got = permissions.rows(determine=lambda b: 0 if b == "com.apple.mail" else -1744)
-    assert [(r.id, r.status) for r in got] == [("mail", "granted"), ("calendar", "unknown"), ("reminders", "unknown"), ("contacts", "unknown")]
+    assert [(r.id, r.status) for r in got] == [("mail", "granted"), ("calendar", "unknown"), ("reminders", "unknown")]
     permissions.forget()
 
 

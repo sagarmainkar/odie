@@ -90,7 +90,7 @@ Settings → Connected apps, or in `~/.odie/mcp.json`, running on the Mac or ove
 gives Odie your mail and calendar. Zapier and Composio are built-in shortcuts that link many apps at once, but you
 don't need them. Tools the server marks read-only run at once; anything that writes asks for a tap.
 
-On a Mac, Odie also reads **Apple Mail, Calendar, Reminders and Contacts** directly, with no MCP server: allow each
+On a Mac, Odie also reads **Apple Mail, Calendar and Reminders** directly, with no MCP server: allow each
 app once in Settings → Mac apps, and macOS asks with its own dialog. Odie reads mail and saves attachments but never
 sends from Mail. In chat, adding an event or a reminder asks for a tap; the watch may put a bill's due date on the
 calendar by itself. When mail or an event comes through both the Mac and an MCP server, Odie shows it once.
@@ -290,7 +290,7 @@ hiccups.
 | Photos and videos | ✓ | by people, place, date and Photos' own words; by meaning only with a cloud embedder | no (it reads Apple Photos) |
 | Local voices (Kokoro) | ✓ | no (it runs on Apple's MLX); cloud voices with a key | not yet (it runs on Apple's MLX) |
 | Signed-in browsing | ✓ | ✓ | not yet (it keeps logins in the macOS Keychain) |
-| Apple Mail, Calendar, Reminders and Contacts | ✓ | ✓ | no (it uses the Mac apps' own scripting); a Gmail or Calendar MCP server instead |
+| Apple Mail, Calendar and Reminders | ✓ | ✓ | no (it uses the Mac apps' own scripting); a Gmail or Calendar MCP server instead |
 
 Contributions are very welcome, for other operating systems and for new features alike: a Linux service, voices and
 sign-ins on Linux, a folder of pictures in place of Apple Photos, and anything that makes Odie more fun. See
