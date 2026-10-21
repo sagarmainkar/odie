@@ -98,15 +98,24 @@ def media_of(response: Any) -> dict[str, Any] | None:
 
 
 def events_to_history(events: list[Any]) -> list[dict[str, Any]]:
-    """Session events -> [{role, text, tools, ts, media?, key?}], tool calls (and what they made) folded into the
+    """Session events -> [{role, text, tools, ts, inv?, media?, key?}], tool calls (and what they made) folded into the
     following Odie text. key: the id of the event an Odie text came from, which names that reply for good (its saved
-    checklist ticks hang off it; see reply_key)."""
+    checklist ticks hang off it; see reply_key). inv: the turn the line came from (the event's invocation id), so an
+    app can fold a turn's lines into one answer; a message Odie posted on its own is a turn of its own."""
     out: list[dict[str, Any]] = []
     hidden = GATED_TOOLS | addons.gated_tools()  # gated calls are shown by their approval card
+
+    def line(role: str, text: str, tools: list[str], ts: float, inv: str, **more: Any) -> dict[str, Any]:
+        item: dict[str, Any] = {"role": role, "text": text, "tools": tools, "ts": ts, **more}
+        if inv:
+            item["inv"] = inv
+        return item
+
     for ev in events:
         if not ev.content or not ev.content.parts or getattr(ev, "partial", False):
             continue
         ts = float(getattr(ev, "timestamp", 0) or 0)
+        inv = str(getattr(ev, "invocation_id", "") or "")
         texts = [p.text for p in ev.content.parts if p.text and not getattr(p, "thought", False)]  # a model's reasoning is its own, not a reply
         tools = [p.function_call.name for p in ev.content.parts if p.function_call and p.function_call.name != CONFIRM and p.function_call.name not in hidden]
         made = [m for p in ev.content.parts if p.function_response and (m := media_of(p.function_response.response))]
@@ -114,25 +123,25 @@ def events_to_history(events: list[Any]) -> list[dict[str, Any]]:
             if out and out[-1]["role"] == "odie" and not out[-1]["text"]:
                 out[-1].setdefault("media", []).extend(made)
             else:
-                out.append({"role": "odie", "text": "", "tools": [], "ts": ts, "media": made})
+                out.append(line("odie", "", [], ts, inv, media=made))
             continue
         if ev.author == "user":
             if texts and "".join(texts).startswith(CHECK_PREFIX):
                 continue  # a code-made nudge, not something the user said
             if texts:
                 clean, imgs = split_images(strip_trailer("".join(texts)))
-                out.append({"role": "user", "text": clean, "tools": [], "ts": ts, "images": imgs})
+                out.append(line("user", clean, [], ts, inv, images=imgs))
             continue
         if tools:
             if out and out[-1]["role"] == "odie" and not out[-1]["text"]:
                 out[-1]["tools"] += tools
             else:
-                out.append({"role": "odie", "text": "", "tools": tools, "ts": ts})
+                out.append(line("odie", "", tools, ts, inv))
         if texts:
             if out and out[-1]["role"] == "odie" and not out[-1]["text"]:
                 out[-1]["text"] = "".join(texts)
             else:
-                out.append({"role": "odie", "text": "".join(texts), "tools": [], "ts": ts})
+                out.append(line("odie", "".join(texts), [], ts, inv))
             key = reply_key(ev)
             if key:
                 out[-1]["key"] = key
