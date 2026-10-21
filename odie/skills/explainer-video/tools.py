@@ -20,7 +20,7 @@ from odie.browser import find
 from odie.decks import photos
 from odie.making import chat, jobs
 from odie.making import sources as making_sources
-from odie.video import assets, kind, minute, timeline
+from odie.video import assets, kind, timed, timeline
 
 NARRATING_SPEED = 10  # seconds of speech the voice narrates in a second
 JOINING_SECONDS = 10  # joining the segments and the sound into the MP4
@@ -162,15 +162,32 @@ def aspect_as_given(aspect) -> str:
     return "landscape"
 
 
+def timed_seconds_as_given(value, minutes: int) -> int | None:
+    """The timed segment's seconds from the argument as the model sent it, or None for no segment; ValueError, in
+    words, for one that can't be. None, "" or 0 -> None; 60 or "60" -> 60; "soon" or -5 -> "… a whole number of
+    seconds …"; 90 in a 1-minute video -> "… longer than the video …"."""
+    if value is None or value == "" or value == 0:
+        return None
+    try:
+        seconds = int(str(value).strip())
+    except ValueError:
+        seconds = -1
+    if seconds <= 0:
+        raise ValueError(f"timed_segment_seconds is a whole number of seconds, like 60 (got {value!r}).")
+    if seconds > minutes * 60:
+        raise ValueError(f"timed_segment_seconds is {seconds}, longer than the video ({minutes} min): ask for a "
+                         "longer video or a shorter segment.")
+    return seconds
+
+
 async def make_video(topic: str, minutes: int = 2, brief: str = "", sources: list[str] | None = None,
                      images: list[str] | None = None, clips: list[str] | None = None, sounds: bool = True,
-                     voice_name: str = "", style: str = "", aspect: str = "",
+                     voice_name: str = "", style: str = "", aspect: str = "", timed_segment_seconds: int | None = None,
                      tool_context: ToolContext | None = None) -> dict:
     """Make a narrated, animated explainer video that plays in this chat. A separate writer makes the narration and
     the animation from your brief, in the background; it can't see this chat, the user's notes, memory or the web.
     topic: what the video is about, short ("How attention works").
-    minutes: its length, from 1 to 6: the user's length, else 2. 1 is a one-minute video: its voice fitted to exactly
-    60 s, opening silent on the question card, with a narration clock a countdown character can show.
+    minutes: its length, from 1 to 6: the user's length, else 2.
     brief: the plan: who it's for and their level, the key points in order, the look, examples, numbers or formulas
     that must appear, and any facts you found. Up to 20,000 characters.
     sources: what the user gave, passed to the writer word for word (never retype it): "my message" (the user's
@@ -178,8 +195,8 @@ async def make_video(topic: str, minutes: int = 2, brief: str = "", sources: lis
     images: pictures for the film, at most 20, each one line "address — what it shows": the address a tool gave
     (https://… from find_images, photo:<id>, upload:<id>, screenshot:<id>), then what the picture shows, its mood, its
     orientation if unusual, and a web picture's credit in brackets at the end. The writer sees only these words.
-    For a one-minute video or a reel, find web pictures and clips only when the topic needs a real one (a place, a
-    person, a real thing); the writer draws the rest.
+    For a reel, find web pictures and clips only when the topic needs a real one (a place, a person, a real thing);
+    the writer draws the rest.
     clips: short stock clips, at most 6, the same way, with the https:// address find_clips gave.
     sounds: leave true; false only when the user asks for no sound effects.
     voice_name: leave empty; only when the user asks for a voice, one of the Settings engine's voices.
@@ -187,7 +204,10 @@ async def make_video(topic: str, minutes: int = 2, brief: str = "", sources: lis
     "Curious science narrator. Calm, but lift slightly at the payoff. Slow down on numbers." Only OpenAI's voices
     follow it.
     aspect: leave empty (a wide video); "vertical" when the user says insta, reel, shorts, vertical or mobile (a
-    1080 x 1920 reel, always a one-minute video). Never put the aspect in the brief.
+    1080 x 1920 reel; only the frame changes, its length is still `minutes`). Never put the aspect in the brief.
+    timed_segment_seconds: leave empty; only when the brief says a segment must last exactly N seconds (a countdown
+    character's 60 seconds inside a longer video): N. The writer marks that segment, and Odie fits its voice to exactly
+    N seconds, first word to last; the rest of the video keeps its natural length.
     It returns at once. {"error": …}: fix exactly that and call again. {"result": …}: the video is being made; reply
     in one or two lines as the result says, and don't repeat the brief."""
     if find.browser_binary() is None:
@@ -199,8 +219,6 @@ async def make_video(topic: str, minutes: int = 2, brief: str = "", sources: lis
     style = style_as_given(style)
     aspect = aspect_as_given(aspect)
     minutes = chat.minutes_as_given(minutes, DEFAULT_MINUTES)
-    if minute.is_one_minute(minutes, aspect):
-        minutes = 1  # a reel is a one-minute video, whatever length came with it (odie.video.minute)
 
     title = topic.strip()
     if not title:
@@ -209,6 +227,11 @@ async def make_video(topic: str, minutes: int = 2, brief: str = "", sources: lis
     problem = chat.minutes_problem(minutes, MIN_MINUTES, timeline.MAX_MINUTES, WORD, DEFAULT_MINUTES)
     if problem:
         return {"error": problem}
+
+    try:
+        timed_seconds = timed_seconds_as_given(timed_segment_seconds, minutes)
+    except ValueError as e:
+        return {"error": str(e)}
 
     problem = chat.brief_problem(brief, WORD, MAX_BRIEF_CHARACTERS)
     if problem:
@@ -248,6 +271,8 @@ async def make_video(topic: str, minutes: int = 2, brief: str = "", sources: lis
     data["sounds"] = sounds_as_given(sounds)  # the making step mixes the page's sound cues only when this is True
     data["style"] = style  # how the OpenAI narrator sounds; "" keeps Odie's usual (odie.voice.tts_style)
     data["aspect"] = aspect  # "landscape" or "vertical": the stage's size (odie.video.timeline.size_of)
+    if timed_seconds is not None:  # a segment of exactly that many seconds (odie.video.timed)
+        data["timed_segment"] = {"seconds": timed_seconds, "tolerance": timed.TOLERANCE}
     job = jobs.Job(kind="video", slug=folder.name, title=title, topic=title, minutes=minutes, brief=whole_brief,
                    session_id=session_id_of(tool_context), voice_name=voice_id, folder=folder, data=data)
     place = jobs.submit(job)

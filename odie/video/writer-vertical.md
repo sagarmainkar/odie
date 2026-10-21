@@ -12,7 +12,9 @@ area: `s.safe` gives it in pixels (`top` 140, `bottom` 340, `side` 72), and the 
 - **One idea per screen, centred;** never two columns, never side by side.
 - **Type at 64 px or larger;** at heading size, no line longer than 20 characters: break a longer title over lines.
 - **Wide diagrams are re-laid out stacked,** one part above the next, never scaled down to fit the width.
-- **A mascot or recurring character (when the brief has one) sits lower right, but above `--safe-bottom`:**
-  its lowest point at y `s.H - s.safe.bottom` or higher.
+- **A mascot or recurring character (a countdown character, when the brief has one) sits lower right, but above
+  `--safe-bottom`:** its lowest point at y `s.H - s.safe.bottom` or higher.
 - **The question card and the payoff card are full-bleed:** their background fills the whole stage, edge to edge;
   their words stay inside the safe area.
+- **Draw with the kit.** Use a web picture or clip only when the topic needs a real one (a place, a person, a real
+  thing): a reel's credits go in the post's caption, not on screen.
