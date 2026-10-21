@@ -1,3 +1,4 @@
+import type { MacApps } from "./mac";
 /** Onboarding: the checklist, and what each piece of the Setup screen needs to know. */
 export const STEPS = ["brain", "names", "vault", "embeddings", "photos", "search", "voice", "apps", "phone"] as const;
 export type Step = (typeof STEPS)[number];
@@ -11,6 +12,7 @@ export type Phone = { tailscale: boolean; serving: boolean; address: string; pai
 export type Panel = {
   step: Step; label: string; question: string; explain: string; choices: Choice[]; skip: string | null;
   fields: { id: string; label: string; value: string }[]; phone: Phone | null;
+  mac_apps?: MacApps | null;  // the apps step on a Mac: the Mac's own apps, allowed right here
 };
 export type SetupState = { done: boolean; can_leave?: boolean; current: Step | null; steps: Record<Step, "todo" | "done" | "skipped">; thread: Line[]; panel?: Panel | null };
 export type Turn = { reply: string; cards: Card[]; state: SetupState; panel?: Panel | null; error?: string };

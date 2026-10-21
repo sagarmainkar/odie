@@ -76,6 +76,7 @@ class Mail:
     attachments: list[dict]
     source: str
     body: str = ""
+    sources: list[str] = field(default_factory=list)  # every source that showed this mail (Gmail and Apple Mail)
 
     def brief(self) -> dict:
         return {"id": self.id, "from": self.frm, "subject": self.subject, "at": self.at, "snippet": self.snippet,
@@ -92,10 +93,11 @@ class Event:
     attendees: list[str]
     source: str
     change: str | None = None
+    sources: list[str] = field(default_factory=list)  # every calendar source that showed it (Google and the Mac)
 
     def brief(self) -> dict:
         return {"id": self.id, "title": self.title, "start": self.start, "end": self.end, "where": self.where,
-                "attendees": self.attendees, "change": self.change}
+                "attendees": self.attendees, "change": self.change, "sources": self.sources or [self.source]}
 
 
 # Why each field below is looked up under several names: every mail app answers in its own shape, so the same field
@@ -145,9 +147,78 @@ def parse_mail(text: str, source: str) -> list[Mail]:
                 atts.append(_attachment(a))
         sender = _who(_first(r, "from", "sender", "from_email", "from__email"))
         subject = str(_first(r, "subject", "title"))
-        at = str(_first(r, "date", "messageTimestamp", "internalDate", "received_at"))
+        at = str(_first(r, "date", "messageTimestamp", "internalDate", "received_at", "at"))
         out.append(Mail(id=mid, frm=sender, subject=subject, at=at, snippet=body[:SNIPPET], attachments=atts,
-                        source=source, body=body[:BODY]))
+                        source=source, body=body[:BODY], sources=[source]))
+    return out
+
+
+def _address(frm: str) -> str:
+    """The address in a From line, lower-case: "Axis <cc@axis.bank.in>" -> "cc@axis.bank.in"; "a@b.c" -> "a@b.c"."""
+    m = re.search(r"<([^>]+)>", frm)
+    return (m.group(1) if m else frm).strip().lower()
+
+
+def _same_mail_key(m: Mail) -> tuple[str, str, str]:
+    """What makes two sources' copies of one mail the same: the sender's address, the subject (case and spaces
+    aside) and the minute it arrived."""
+    return (_address(m.frm), " ".join(m.subject.lower().split()), m.at[:16])
+
+
+def fold_mail(mails: list[Mail]) -> list[Mail]:
+    """One Mail per real message across sources: Gmail's copy and Apple Mail's copy of the same message (same sender,
+    subject and minute) become the connector's one, with both sources on it; the rest stay as they are.
+    [gmail m1 "Statement" 13:47, mac m9 "Statement" 13:47, mac m8 "Hi" 13:50] -> [m1 (sources gmail, mac), m8]"""
+    out: list[Mail] = []
+    by_key: dict[tuple, int] = {}
+    for m in mails:
+        key = _same_mail_key(m)
+        if key in by_key:
+            kept = out[by_key[key]]
+            if kept.source.endswith(":mac") and not m.source.endswith(":mac"):
+                m.sources = list(dict.fromkeys([*kept.sources, *m.sources]))
+                out[by_key[key]] = m  # the connector's copy carries the id the rest of the check will use
+            else:
+                kept.sources = list(dict.fromkeys([*kept.sources, *m.sources]))
+            continue
+        by_key[key] = len(out)
+        out.append(m)
+    return out
+
+
+def _minutes(iso: str) -> float | None:
+    try:
+        return datetime.fromisoformat(iso.replace("Z", "+00:00")).timestamp() / 60
+    except ValueError:
+        return None
+
+
+def fold_events(events: list[Event], minutes: float = 5) -> list[Event]:
+    """One Event per real event across calendars: the same title (case and spaces aside) starting within `minutes`
+    of each other, from different sources, become one, keeping the connector's id (stable for the watch's change
+    detection) and listing both sources. Two events in one calendar never merge.
+    [google e1 "Dentist" 10:00, mac u7 "dentist" 10:02] -> [e1 (sources google, mac)]"""
+    out: list[Event] = []
+    for e in events:
+        title = " ".join(e.title.lower().split())
+        at = _minutes(e.start)
+        twin = None
+        for o in out:
+            if e.source in (o.sources or [o.source]) or " ".join(o.title.lower().split()) != title:
+                continue  # a calendar's own second copy is its own event
+            ot = _minutes(o.start)
+            if at is None or ot is None or abs(at - ot) > minutes:
+                continue
+            twin = o
+            break
+        if twin is None:
+            out.append(e)
+            continue
+        if twin.source.endswith(":mac") and not e.source.endswith(":mac"):
+            e.sources = list(dict.fromkeys([*twin.sources, *e.sources]))
+            out[out.index(twin)] = e
+        else:
+            twin.sources = list(dict.fromkeys([*twin.sources, *e.sources]))
     return out
 
 
@@ -203,7 +274,7 @@ def _event_lines(text: str, source: str, day: str, tz) -> list[Event]:
                 ends = ends + timedelta(days=1)
             start, end = starts.isoformat(), ends.isoformat()
         attendees = [w.strip() for w in who.split(",") if w.strip()][:5]
-        out.append(Event(id=eid, title=title.strip(), start=start, end=end, where=where.strip(), attendees=attendees,
+        out.append(Event(id=eid, title=title.strip(), start=start, end=end, where=where.strip(), attendees=attendees, sources=[source],
                          source=source))
     return out
 
@@ -225,7 +296,7 @@ def parse_events(text: str, source: str, day: str = "", tz=None) -> list[Event]:
         start = _when(_first(r, "start", "start_time", "startTime"))
         end = _when(_first(r, "end", "end_time", "endTime"))
         where = str(_first(r, "location", "where"))
-        out.append(Event(id=eid, title=title, start=start, end=end, where=where, attendees=who, source=source))
+        out.append(Event(id=eid, title=title, start=start, end=end, where=where, attendees=who, source=source, sources=[source]))
     return out
 
 
@@ -289,6 +360,13 @@ class Fetcher:
             raise CallError(f"{src.app} isn't connected any more")
         return spec
 
+    async def _call(self, src: Source, tool: str, args: dict):
+        """One read through the source: a connector through its MCP server, the Mac's own apps through odie.mac."""
+        if src.style == "native":
+            from odie.mac import native
+            return await native.call(tool, args)
+        return await call_tool(self._spec(src), tool, args)
+
     def _ok(self, src: Source, ok: bool, reason: str = "") -> None:
         self.statuses[src.id] = {"ok": ok, "at": self.now.isoformat(timespec="seconds"), "reason": reason, "app": src.app, "kind": src.kind}
         if src.id not in self.state["sources"]:
@@ -314,12 +392,14 @@ class Fetcher:
             since_dt = self._since(src)
             args = dict(src.fixed)
             query = f"after:{int(since_dt.timestamp())}"
-            if src.style == "zapier":
+            if src.style == "native":
+                args = {"since": since_dt.isoformat(timespec="seconds"), "limit": MAX_MAIL}
+            elif src.style == "zapier":
                 args["params"] = {**(args.get("params") or {}), src.query_param: query}
             elif src.query_param:
                 args[src.query_param] = query
             try:
-                res = await call_tool(self._spec(src), src.tool, args)
+                res = await self._call(src, src.tool, args)
                 if res.is_error:
                     raise CallError(res.text[:200] or "the app said no")
                 mails = parse_mail(res.text, src.id)
@@ -328,6 +408,7 @@ class Fetcher:
                 self._ok(src, False, str(e))
                 continue
             got += [m for m in mails if m.id not in seen]
+        got = fold_mail(got)  # Gmail's and Apple Mail's copies of one message: one row, both badges
         for m in got:
             self._mail[m.id] = m
         got.sort(key=lambda m: m.at, reverse=True)
@@ -349,7 +430,7 @@ class Fetcher:
             else:
                 args.update(window)
             try:
-                res = await call_tool(self._spec(src), src.tool, args)
+                res = await self._call(src, src.tool, args)
                 if res.is_error:
                     raise CallError(res.text[:200] or "the app said no")
                 found = parse_events(res.text, src.id, start.date().isoformat(), start.tzinfo)
@@ -359,6 +440,7 @@ class Fetcher:
                 self._ok(src, True)
             except CallError as e:
                 self._ok(src, False, str(e))
+        got = fold_events(got)  # one row for an event both calendars hold
         before: dict[str, str] = self.state.get("events") or {}
         cals = [s.id for s in saved(self.store) if s.kind == "calendar"]
         self._calendar_ok = bool(cals) and all(self.statuses.get(c, {}).get("ok") for c in cals)
@@ -381,6 +463,14 @@ class Fetcher:
             raise CallError("That isn't a file name.")
         mail = self._mail.get(mail_id)
         src = next((s for s in saved(self.store) if mail and s.id == mail.source), None)
+        if src is not None and src.style == "native":
+            from odie.mac import mail as mac_mail
+            from odie.mac import scripts as mac_scripts
+            folder = (workspace() / "watch" / re.sub(r"[^A-Za-z0-9_-]", "_", mail_id)[:80]).resolve()
+            try:
+                return await mac_mail.save_attachment(mail_id, name, folder)
+            except mac_scripts.MacError as e:
+                raise CallError(str(e)) from None
         if src is None or not src.attachment:
             raise CallError("This app can't fetch attachments.")
         a = src.attachment

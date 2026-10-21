@@ -255,6 +255,192 @@
     "name": "list_trackers"
   },
   {
+    "description": "Adds an event to the Mac's calendar (the first writable one, or `calendar_name`). Local times. Returns the\nevent's id and the calendar it went into.",
+    "name": "mac_calendar_add",
+    "parameters_json_schema": {
+      "properties": {
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "start": {
+          "title": "Start",
+          "type": "string"
+        },
+        "end": {
+          "title": "End",
+          "type": "string"
+        },
+        "calendar_name": {
+          "default": "",
+          "title": "Calendar Name",
+          "type": "string"
+        },
+        "where": {
+          "default": "",
+          "title": "Where",
+          "type": "string"
+        },
+        "notes": {
+          "default": "",
+          "title": "Notes",
+          "type": "string"
+        }
+      },
+      "required": [
+        "title",
+        "start",
+        "end"
+      ],
+      "title": "mac_calendar_addParams",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Events in every calendar on this Mac between two local times (\"2026-10-21T00:00\", \"2026-10-28T00:00\"):\nid, title, start, end, where, attendees, calendar, all_day.",
+    "name": "mac_calendar_events",
+    "parameters_json_schema": {
+      "properties": {
+        "start": {
+          "title": "Start",
+          "type": "string"
+        },
+        "end": {
+          "title": "End",
+          "type": "string"
+        }
+      },
+      "required": [
+        "start",
+        "end"
+      ],
+      "title": "mac_calendar_eventsParams",
+      "type": "object"
+    }
+  },
+  {
+    "description": "People in the Mac's Contacts whose name holds `query`: name, emails, phones, birthday.",
+    "name": "mac_contacts",
+    "parameters_json_schema": {
+      "properties": {
+        "query": {
+          "title": "Query",
+          "type": "string"
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "title": "mac_contactsParams",
+      "type": "object"
+    }
+  },
+  {
+    "description": "New mail in the Mac's Mail app since a local time (\"2026-10-21T09:00\"), newest first, at most `limit`:\nid, from, subject, at, snippet, attachments. Read one in full with mac_mail_read.",
+    "name": "mac_mail_new",
+    "parameters_json_schema": {
+      "properties": {
+        "since": {
+          "title": "Since",
+          "type": "string"
+        },
+        "limit": {
+          "default": 25,
+          "title": "Limit",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "since"
+      ],
+      "title": "mac_mail_newParams",
+      "type": "object"
+    }
+  },
+  {
+    "description": "One message from the Mac's Mail app in full, by the id mac_mail_new gave (\"mac:123\").",
+    "name": "mac_mail_read",
+    "parameters_json_schema": {
+      "properties": {
+        "mail_id": {
+          "title": "Mail Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "mail_id"
+      ],
+      "title": "mac_mail_readParams",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Saves one attachment of a Mail message (by the message's id and the attachment's name) into Odie's workspace;\nreturns its path.",
+    "name": "mac_mail_save_attachment",
+    "parameters_json_schema": {
+      "properties": {
+        "mail_id": {
+          "title": "Mail Id",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "mail_id",
+        "name"
+      ],
+      "title": "mac_mail_save_attachmentParams",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Adds a reminder to the Reminders app, due at a local time, in the default list or `list_name`.",
+    "name": "mac_reminder_add",
+    "parameters_json_schema": {
+      "properties": {
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "due": {
+          "title": "Due",
+          "type": "string"
+        },
+        "list_name": {
+          "default": "",
+          "title": "List Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "title",
+        "due"
+      ],
+      "title": "mac_reminder_addParams",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Open reminders in the Reminders app due before a local time: id, title, due, list.",
+    "name": "mac_reminders",
+    "parameters_json_schema": {
+      "properties": {
+        "before": {
+          "title": "Before",
+          "type": "string"
+        }
+      },
+      "required": [
+        "before"
+      ],
+      "title": "mac_remindersParams",
+      "type": "object"
+    }
+  },
+  {
     "description": "Make a designed deck: a PDF and an editable PowerPoint with slide previews, posted to this chat. A separate\nwriter writes the slides from your brief, in the background; it can't see this chat, the user's notes, memory or\nthe web, and can't search for photos.\ntopic: what it's about, short (\"A weekend in Coorg\", \"Nvidia's Q2\").\nbrief: the angle, the slides' points in order, the facts it must use, and the photo addresses with their credits\nthat find_images or the browser gave you (only those can go on the slides). Up to 6,000 characters.\ntheme: editorial (dark, great with photos), minimal (clean white: research, business), warm (cream), bold (strong\ncolour: pitches).\nrevise: to change a deck made earlier, its name (\"Meghalaya Trip Guide\"); the brief then says what to change.\nsources: what the user gave, passed to the writer word for word (never retype it): \"my message\" (the user's\nlatest message), a note's name or path in their vault, or a text file's path in Odie's workspace. Up to 5.\nIt returns at once. {\"error\": …}: fix exactly that and call again. {\"result\": …}: the deck is being made; reply in\none or two lines as the result says, and don't repeat the brief.",
     "name": "make_deck",
     "parameters_json_schema": {

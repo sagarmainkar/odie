@@ -17,7 +17,7 @@ log = logging.getLogger("odie.watch")
 INTERVAL = timedelta(minutes=30)
 # What the watch may change without the user's tap (the owner's choice, 21 Oct 2026): adding an event to the calendar
 # for a bill's due date or a deadline a mail names. Nothing else that writes: no sending, replying, paying or deleting.
-MAY_WRITE = frozenset({"calendar_create_event"})
+MAY_WRITE = frozenset({"calendar_create_event", "mac_calendar_add"})
 SKILL = Path(__file__).parent / "skill" / "SKILL.md"
 WATCH_FOR = "Watch for"
 

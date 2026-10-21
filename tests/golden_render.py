@@ -36,7 +36,8 @@ def _tool_declarations(tmp: Path) -> str:
              *make_local_tools(store, "Asia/Kolkata"), *make_media_tools(store), *make_file_tools()]
     tools += [t for a in addons.active() for t in addons.tools_of(a, store) if isinstance(t, FunctionTool)]  # MCP ones list online
     from odie.skills.registry import discover
-    tools += [t for e in discover(store) if e.status == "ok" for t in e.tool_objs]  # declared from the start (odie.skills)
+    # declared from the start (odie.skills); as on a Mac, Odie's first home, so the golden is the same on Linux CI
+    tools += [t for e in discover(store, system="Darwin") if e.status == "ok" for t in e.tool_objs]
     decls = [t._get_declaration().model_dump(exclude_none=True, mode="json") for t in tools]
     return json.dumps(sorted(decls, key=lambda d: d["name"]), indent=2, ensure_ascii=False)
 

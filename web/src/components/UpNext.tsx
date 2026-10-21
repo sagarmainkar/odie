@@ -2,6 +2,7 @@ import { motion } from "framer-motion";
 import { dateParts, relative, sourceText, subline, timeText, type UpItem } from "../upnext";
 import { EventArt, KIND_LABEL, kindVars } from "./EventArt";
 import { Icon } from "./Tile";
+import { SourceBadges } from "./SourceBadges";
 
 const ask = (q: string) => { location.hash = `#chat?q=${encodeURIComponent(q)}`; };
 
@@ -16,7 +17,7 @@ function Hero({ it }: { it: UpItem }) {
         <div className="flex-1 min-w-0 pt-1">
           <div className="flex items-center gap-1.5 flex-wrap">
             <span className="chip kind-chip text-ink-2">{KIND_LABEL[it.kind] ?? "Event"}</span>
-            <span className="text-[11.5px] text-muted">{sourceText(it)}</span>
+            <span className="text-[11.5px] text-muted">{sourceText(it)}<SourceBadges badges={it.badges} /></span>
           </div>
           <div className="mt-2.5 text-[27px] leading-[1.08] font-extrabold italic tracking-[-0.02em] text-ink line-clamp-3">{it.title}</div>
           {line && <div className="mt-1.5 text-[13.5px] text-ink-2 truncate">{line}</div>}
