@@ -612,6 +612,61 @@ async def push_test(request: Request):
     return {"sent": n}
 
 
+# --- Mac apps: Mail, Calendar, Reminders and Contacts on this Mac, and the permission macOS asks for each ---
+class CalendarIn(BaseModel):
+    name: str
+
+
+def _mac_view(store) -> dict:
+    from odie.mac import calendar as mac_calendar
+    from odie.mac import permissions, scripts
+    on_mac = scripts.available()
+    return {"mac": on_mac, "apps": [r.as_dict() for r in permissions.rows()] if on_mac else [],
+            "default_calendar": mac_calendar.chosen(store)}
+
+
+@router.get("/mac/apps")
+async def mac_apps(request: Request) -> dict:
+    """Each Mac app with whether Odie may read it (granted, denied, unknown), and the calendar events go into."""
+    return _mac_view(request.app.state.store)
+
+
+@router.post("/mac/apps/{app_id}/allow")
+async def mac_apps_allow(app_id: str, request: Request) -> dict:
+    """Asks macOS for the app: its dialog appears on this Mac's screen; the answer comes back with the rows. A grant
+    or a refusal makes the watch find its sources again."""
+    from odie.mac import permissions, scripts
+    from odie.watch import sources
+    if not scripts.available():
+        raise HTTPException(400, "This Odie isn't on a Mac.")
+    if app_id not in permissions.APPS:
+        raise HTTPException(404, "no such app")
+    await permissions.request(app_id)
+    sources.forget(request.app.state.store)
+    return _mac_view(request.app.state.store)
+
+
+@router.get("/mac/calendars")
+async def mac_calendars(request: Request) -> dict:
+    """The Mac's calendars events may go into (opens Calendar if it isn't running), for the Settings picker."""
+    from odie.mac import calendar as mac_calendar
+    from odie.mac import permissions, scripts
+    if not scripts.available() or permissions.status("calendar") != permissions.GRANTED:
+        return {"calendars": []}
+    try:
+        return {"calendars": await mac_calendar.calendars()}
+    except scripts.MacError as e:
+        raise HTTPException(502, str(e)) from None
+
+
+@router.put("/mac/calendar")
+async def mac_calendar_choose(body: CalendarIn, request: Request) -> dict:
+    """The calendar events Odie adds go into ("" = the first writable one)."""
+    from odie.mac import calendar as mac_calendar
+    request.app.state.store.set_setting(mac_calendar.SETTING, body.name.strip()[:120])
+    return {"ok": True, "default_calendar": body.name.strip()[:120]}
+
+
 @router.get("/capabilities")
 async def capabilities_get(request: Request) -> dict[str, Any]:
     """What this install can do (the web app shows only what's there), and each add-on's state."""

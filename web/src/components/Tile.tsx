@@ -1,6 +1,8 @@
 // Line icons and the glossy "tile" spheres that mark where a thing comes from (mail, money, calendar…).
 const P: Record<IconName, string> = {
   mail: '<path d="M4 6h16v12H4z"/><path d="m4 7 8 6 8-6"/>',
+  gmail: '<path d="M4 19V7l8 6 8-6v12"/><path d="M4 7l8 6 8-6"/>',
+  icloud: '<path d="M7 18a4 4 0 0 1-.5-8 5.5 5.5 0 0 1 10.6 1.3A3.4 3.4 0 0 1 17 18H7z"/>',
   rupee: '<path d="M7 5h10M7 9h10M13 19 8 13h2a4 4 0 0 0 0-8"/>',
   bell: '<path d="M6 16V11a6 6 0 1 1 12 0v5l1.5 2h-15z"/><path d="M10 20a2 2 0 0 0 4 0"/>',
   cal: '<rect x="4" y="5" width="16" height="15" rx="3"/><path d="M8 3v4M16 3v4M4 10h16"/>',
@@ -48,7 +50,7 @@ const P: Record<IconName, string> = {
   alert: '<path d="M12 4.5 21 19.5H3z"/><path d="M12 10.5v4M12 17v.01"/>',
 };
 
-export type IconName = "mail" | "rupee" | "bell" | "cal" | "check" | "clock" | "mic" | "up" | "plus" | "back" | "menu" | "play" | "speaker" | "copy" | "search" | "note" | "globe" | "terminal" | "chart" | "photo" | "spark" | "chat" | "gear" | "x" | "brain" | "sun" | "moon" | "sunset" | "trash" | "send" | "refresh" | "wave"
+export type IconName = "mail" | "gmail" | "icloud" | "rupee" | "bell" | "cal" | "check" | "clock" | "mic" | "up" | "plus" | "back" | "menu" | "play" | "speaker" | "copy" | "search" | "note" | "globe" | "terminal" | "chart" | "photo" | "spark" | "chat" | "gear" | "x" | "brain" | "sun" | "moon" | "sunset" | "trash" | "send" | "refresh" | "wave"
   | "heart" | "plane" | "bed" | "food" | "walk" | "pin" | "trophy" | "lock" | "star" | "leaf" | "flame" | "ticket" | "info" | "alert";
 export type TileColor = "blue" | "orange" | "violet" | "yellow" | "green" | "pink" | "ink";
 

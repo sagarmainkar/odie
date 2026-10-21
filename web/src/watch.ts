@@ -5,6 +5,7 @@ import { userLocale } from "./locale";
 export type WatchItem = {
   ref: string; title: string; why: string; at: string; done?: boolean; seen?: boolean;
   from?: string; subject?: string; when?: string; gist?: string;  // a mail item: the mail behind it (odie.watch.report)
+  badges?: { kind: string; app: string }[];  // where it came from: Gmail, iCloud, another app
 };
 export type WatchCardData = {
   checked_at?: string; line?: string; needs_you: WatchItem[];

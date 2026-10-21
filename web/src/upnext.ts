@@ -2,6 +2,7 @@ import { userLocale } from "./locale";
 export type UpItem = {
   id: string; source: "calendar" | "sms" | "mail" | "task"; sources: string[]; kind: string; title: string;
   date: string; time: string | null; end: string | null; place: string | null; people: string[] | null; amount: number | null; ask: string;
+  badges?: { kind: string; app: string }[];  // a calendar event: which calendars hold it (Gmail, iCloud)
 };
 
 const SOURCE_LABEL: Record<string, string> = { calendar: "Calendar", sms: "SMS", mail: "Mail", task: "Task" };

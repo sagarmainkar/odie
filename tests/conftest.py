@@ -121,3 +121,15 @@ def fresh_signin_boxes():
     box._boxes.clear()
     browser_tools._carded.clear()
     guard.READ.clear()
+
+
+@pytest.fixture(autouse=True)
+def no_mac_apps(monkeypatch):
+    """No test drives the developer's own Mail, Calendar, Reminders or Contacts: the AppleScript runner refuses, and
+    the watch finds no Mac sources. A test of those paths passes its own fakes (odie.mac.* take `run=`;
+    odie.watch.sources.native_sources takes `available=` and `status=`)."""
+    from odie.mac import scripts
+    from odie.watch import sources
+    monkeypatch.setattr(scripts, "ALLOWED", False)
+    monkeypatch.setattr(scripts, "available", lambda: False)  # routes and setup see "not a Mac" unless a test says so
+    monkeypatch.setattr(sources, "native_sources", lambda available=None, status=None: [])

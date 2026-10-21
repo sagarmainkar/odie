@@ -22,6 +22,8 @@ import { notesRow, type VaultInfo } from "../vault";
 import { photosRow, type PhotosInfo } from "../photos";
 import { LABEL, type Panel, type Step, type Turn } from "../setup";
 import { PhoneBlock, StepPanel } from "./Setup";
+import { MacAppsBlock } from "../components/MacAppsBlock";
+import type { MacApps } from "../mac";
 
 type Health = { status: string; version?: string; model: string; provider?: string; leaves_mini?: boolean; lm_studio: boolean; connections: { gmail: boolean; vault: boolean }; brain_chosen?: boolean; brain_reachable?: boolean };
 type Google = { client_configured: boolean; connected: boolean; email?: string; redirect_uri: string; setup: string; account: string; services?: { gmail: boolean; calendar: boolean } | null; connected_at?: string | null };
@@ -423,11 +425,13 @@ export function Settings() {
   const [soulOpen, setSoulOpen] = useState(false);
   const [soulSaved, setSoulSaved] = useState("");
   const flash = location.hash.includes("google=connected") ? "Connected. Gmail and Calendar are ready." : location.hash.includes("google=error") ? "Google said no. Try again." : "";
+  const [macApps, setMacApps] = useState<MacApps | null>(null);
   const pushSupported = typeof Notification !== "undefined" && "serviceWorker" in navigator && "PushManager" in window;
   const standalone = typeof window !== "undefined" && (window.matchMedia("(display-mode: standalone)").matches || (navigator as any).standalone === true);
 
   useEffect(() => {
     getJSON<Health>("/api/health").then(setH).catch(() => {});
+    getJSON<MacApps>("/api/mac/apps").then(setMacApps).catch(() => {});
     getJSON<Google>("/api/google/status").then(setG).catch(() => {});
     getJSON<{ text: string; custom: boolean; path: string }>("/api/soul").then((x) => { setSoul(x); setSoulDraft(x.text); }).catch(() => {});
     if (pushSupported) navigator.serviceWorker.ready.then((r) => r.pushManager.getSubscription()).then((s) => setSubscribed(!!s)).catch(() => {});
@@ -507,6 +511,12 @@ export function Settings() {
 
           <PluginsSection />
           <a href="#sample" className="-mt-3 px-1.5 py-2.5 self-start text-[13px] text-ember-text font-medium">See a sample chat →</a>
+
+          {macApps?.mac && (
+            <Section title="Mac apps">
+              <MacAppsBlock data={macApps} onChange={setMacApps} />
+            </Section>
+          )}
 
           <Section title="Look">
             <div className="p-1 m-3 mb-2 rounded-full bg-well flex gap-1" role="radiogroup" aria-label="Look">

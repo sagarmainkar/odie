@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import platform
 import types
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -114,7 +115,17 @@ def _entry(d: Path, source: str, store: Store) -> SkillEntry:
         return SkillEntry(name, "", source, "error", [], reason=f"{type(ex).__name__}: {str(ex)[:160]}", path=d)
 
 
-def discover(store: Store, builtin_dir: Path = BUILTIN, user_dir: Path | None = None) -> list[SkillEntry]:
+def for_this_platform(entry: SkillEntry, system: str | None = None) -> bool:
+    """Whether a skill belongs on this computer: one whose SKILL.md names a platform (metadata.platform: darwin) is
+    for that system only; the rest are for every system. mac-apps on a Mac -> True; on Linux -> False; documents
+    anywhere -> True."""
+    wanted = (getattr(entry.skill, "frontmatter", None) and entry.skill.frontmatter.metadata.get("platform")) or ""
+    if not wanted:
+        return True
+    return str(wanted).lower() == (system or platform.system()).lower()
+
+
+def discover(store: Store, builtin_dir: Path = BUILTIN, user_dir: Path | None = None, system: str | None = None) -> list[SkillEntry]:
     user_dir = user_dir if user_dir is not None else config.settings.config_dir / "skills"
     found: dict[str, SkillEntry] = {}
     for source, root in (("builtin", builtin_dir), ("user", user_dir)):
@@ -122,6 +133,8 @@ def discover(store: Store, builtin_dir: Path = BUILTIN, user_dir: Path | None = 
             continue
         for d in sorted(p for p in root.iterdir() if p.is_dir() and (p / "SKILL.md").exists()):
             e = _entry(d, source, store)
+            if not for_this_platform(e, system):
+                continue  # a Mac-only skill is not listed on Linux at all
             found[e.name] = e  # a user skill with a built-in's name replaces it
     return sorted(found.values(), key=lambda e: e.name)
 

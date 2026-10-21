@@ -212,6 +212,29 @@ def _config_hash() -> str:
     return hashlib.sha256(json.dumps(servers, sort_keys=True).encode()).hexdigest()[:16]
 
 
+def native_sources(available=None, status=None) -> list[Source]:
+    """Apple Mail and the Mac's calendars as sources, on a Mac, for each app the user has allowed. A Linux box, or
+    a Mac where neither is allowed -> []; Mail allowed only -> [mail:mac]."""
+    from odie.mac import permissions, scripts
+    if not (available or scripts.available)():
+        return []
+    ask = status or permissions.status
+    out: list[Source] = []
+    if ask("mail") == permissions.GRANTED:
+        out.append(Source("mail", "mac", "Apple Mail", "native", "mac_mail_new", {}))
+    if ask("calendar") == permissions.GRANTED:
+        out.append(Source("calendar", "mac", "Calendar", "native", "mac_calendar_events", {}, start_param="start", end_param="end"))
+    return out
+
+
+find_native_sources = native_sources  # the function itself, for tests (the name above is switched off under pytest)
+
+
+def forget(store) -> None:
+    """Drops the saved sources, so the next check finds them again (a Mac app was just allowed or refused)."""
+    store.set_setting(KEY, None)
+
+
 async def detect_and_save(store) -> list[Source]:
     from odie import addons
     from odie.plugins.mcp import read_config
@@ -219,6 +242,7 @@ async def detect_and_save(store) -> list[Source]:
     found = await detect(servers)
     for got in addons.call("watch_sources", store):
         found += list(got or [])
+    found += native_sources()
     store.set_setting(KEY, {"at": datetime.now(UTC).isoformat(timespec="seconds"), "config": _config_hash(), "v": VERSION,
                             "sources": [s.as_dict() for s in found]})
     return found

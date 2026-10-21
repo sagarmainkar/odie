@@ -131,8 +131,10 @@ async def build(store: Store, now: datetime, days: int = DAYS) -> dict:
         for e in card.get("events", []):
             start = str(e.get("start") or "")
             if len(start) >= 10:
-                items.append(_item("calendar", f"watch:{e.get('id')}", str(e.get("title") or ""), start[:10], now.date(),
-                                   start[11:16] if len(start) >= 16 else None, str(e.get("end") or "")[11:16] or None, e.get("where") or None))
+                it = _item("calendar", f"watch:{e.get('id')}", str(e.get("title") or ""), start[:10], now.date(),
+                           start[11:16] if len(start) >= 16 else None, str(e.get("end") or "")[11:16] or None, e.get("where") or None)
+                it["badges"] = list(e.get("badges") or [])  # where the event came from (Gmail, iCloud), for its row
+                items.append(it)
         if card.get("events"):
             sources["calendar"] = True
     return {"items": merge(items), "sources": sources}

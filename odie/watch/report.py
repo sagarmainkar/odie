@@ -26,7 +26,31 @@ def sender_name(frm: str) -> str:
     return name or frm.strip()
 
 
-def _mail_fields(ref: str, mails: list[Mail]) -> dict:
+def badge_of(source_id: str, statuses: dict) -> dict:
+    """Where an item came from, for the little mark on its row: {"kind": "gmail" | "icloud" | "app", "app": name}.
+    "mail:mac" -> icloud, "Apple Mail"; "mail:gmail-calendar" with app "Gmail and Calendar" -> gmail; a Zapier
+    Outlook source -> app, "Zapier"."""
+    app = str((statuses.get(source_id) or {}).get("app") or "")
+    if source_id.endswith(":mac"):
+        return {"kind": "icloud", "app": app or ("Apple Mail" if source_id.startswith("mail") else "Calendar")}
+    words = f"{source_id} {app}".lower()
+    kind = "gmail" if "gmail" in words or "google" in words else "app"
+    return {"kind": kind, "app": app or source_id.split(":", 1)[-1]}
+
+
+def badges_of(source_ids: list[str], statuses: dict) -> list[dict]:
+    """One badge per source, in order, none repeated."""
+    out, seen = [], set()
+    for sid in source_ids:
+        b = badge_of(sid, statuses)
+        if b["kind"] in seen and b["kind"] != "app":
+            continue
+        seen.add(b["kind"])
+        out.append(b)
+    return out
+
+
+def _mail_fields(ref: str, mails: list[Mail], statuses: dict | None = None) -> dict:
     """What Today's row needs from the mail behind an item (web: watchRow): the sender's name, the subject, the mail's
     time and its gist. {} for an event, or a mail that isn't in this check's list (an older item keeps what it had).
       "mail:m9" with m9 from "Priya Nair <priya@…>", "Lease renewal", at 06:00, snippet "Sign by Friday please."
@@ -35,11 +59,12 @@ def _mail_fields(ref: str, mails: list[Mail]) -> dict:
     mail = next((m for m in mails if f"mail:{m.id}" == ref), None)
     if mail is None:
         return {}
-    return {"from": sender_name(mail.frm), "subject": mail.subject[:120], "when": mail.at, "gist": (mail.snippet or "")[:160]}
+    return {"from": sender_name(mail.frm), "subject": mail.subject[:120], "when": mail.at, "gist": (mail.snippet or "")[:160],
+            "badges": badges_of(mail.sources or [mail.source], statuses or {})}
 
 
-def _events(events: list[Event]) -> list[dict]:
-    return [e.brief() for e in events if e.change != "cancelled"][:8]
+def _events(events: list[Event], statuses: dict | None = None) -> list[dict]:
+    return [{**e.brief(), "badges": badges_of(e.sources or [e.source], statuses or {})} for e in events if e.change != "cancelled"][:8]
 
 
 def apply(store, now: datetime, needs_you: list[dict], line: str, mails: list[Mail], events: list[Event],
@@ -54,13 +79,17 @@ def apply(store, now: datetime, needs_you: list[dict], line: str, mails: list[Ma
         if ref not in known or ref in have:
             continue
         it = {"ref": ref, "title": str(n.get("title") or "")[:120], "why": str(n.get("why") or "")[:200],
-              "at": now.isoformat(timespec="seconds"), "done": False, **_mail_fields(ref, mails)}
+              "at": now.isoformat(timespec="seconds"), "done": False, **_mail_fields(ref, mails, statuses)}
+        if ref.startswith("event:"):
+            event = next((e for e in events if f"event:{e.id}" == ref), None)
+            if event is not None:
+                it["badges"] = badges_of(event.sources or [event.source], statuses)
         items.append(it)
         have.add(ref)
         if n.get("push"):
             fresh.append(it)
     store.set_setting(CARD, {"checked_at": now.isoformat(timespec="seconds"), "line": str(line or "")[:200], "needs_you": items[-30:],
-                             "events": _events(events), "sources": statuses, "off": "", "done": card.get("done", [])})
+                             "events": _events(events, statuses), "sources": statuses, "off": "", "done": card.get("done", [])})
     flagged = list(store.get_setting(FLAGGED) or [])
     push = [i for i in fresh if i["ref"] not in flagged]
     if first or not push:
@@ -81,7 +110,7 @@ def fallback(store, now: datetime, mails: list[Mail], events: list[Event], statu
     card = store.get_setting(CARD) or {}
     store.set_setting(CARD, {"checked_at": now.isoformat(timespec="seconds"), "line": ", ".join(bits),
                              "needs_you": [i for i in card.get("needs_you", []) if not i.get("done")],
-                             "events": _events(events), "sources": statuses, "off": f"couldn't check properly: {reason}"[:200],
+                             "events": _events(events, statuses), "sources": statuses, "off": f"couldn't check properly: {reason}"[:200],
                              "done": card.get("done", [])})
 
 

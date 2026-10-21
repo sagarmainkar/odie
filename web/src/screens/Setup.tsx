@@ -7,6 +7,8 @@ import { Orb } from "../components/Orb";
 import { needsPasscode, type PairStatus } from "../devices";
 import { checkSummary, linkCarriesToken } from "../plugins";
 import { BY_HAND, LABEL, STEPS, brainDone, chipState, firstPick, formFor, keyRoute, modelRows, visibleThread, type AppCard, type Card, type KeyCard, type Panel, type Phone, type SetupState, type Turn } from "../setup";
+import { MacAppsBlock } from "../components/MacAppsBlock";
+import type { MacApps } from "../mac";
 
 type Models = { providers: { id: string; name: string; local: boolean; error: string | null; models: { id: string; local: boolean }[] }[] };
 const CLOUD = [
@@ -238,6 +240,7 @@ export function StepPanel({ panel, onChoose, onCheck, busy }: { panel: Panel; on
   const [fields, setFields] = useState<Record<string, string>>(Object.fromEntries(panel.fields.map((f) => [f.id, f.value])));
   const [path, setPath] = useState("");
   const [error, setError] = useState("");
+  const [macApps, setMacApps] = useState<MacApps | null>(null);
   // A new step, or the same step with other choices (Check again found Tailscale): start from its recommended choice.
   const shape = `${panel.step}:${panel.choices.map((c) => c.id).join(",")}`;
   useEffect(() => { setPick(firstPick(panel)); setFields(Object.fromEntries(panel.fields.map((f) => [f.id, f.value]))); setError(""); }, [shape]);  // eslint-disable-line react-hooks/exhaustive-deps
@@ -259,6 +262,13 @@ export function StepPanel({ panel, onChoose, onCheck, busy }: { panel: Panel; on
         </div>
       )}
       {panel.phone && <PhoneBlock phone={panel.phone} onCheck={onCheck} />}
+      {panel.mac_apps?.mac && (
+        <div className="flex flex-col gap-2">
+          <div className="text-[13px] font-bold text-muted px-1.5">This Mac's own apps</div>
+          <div className="rounded-[20px] border border-line overflow-hidden"><MacAppsBlock data={macApps ?? panel.mac_apps} onChange={setMacApps} /></div>
+          <div className="text-[12.5px] text-muted px-1.5">Allow Mail and Calendar and Odie reads them here, no account needed; a connector below adds Gmail.</div>
+        </div>
+      )}
       {/* The choices as a list: more than one, or a lone one that needs a form first (OpenAI's voice on an Intel Mac,
           20 Oct 2026: the only choice needed a key, and nothing showed but Skip). A lone plain choice is the button below. */}
       {(panel.choices.length > 1 || (panel.choices.length === 1 && form !== null)) && (

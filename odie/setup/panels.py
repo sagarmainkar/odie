@@ -131,6 +131,9 @@ async def panel(store, step: str | None = None, transport=None) -> dict | None:
     elif step == "apps":
         out["choices"] = [_choice("zapier", "Zapier", "mcp.zapier.com", needs=_app_card("zapier")),
                           _choice("composio", "Composio", "dashboard.composio.dev", needs=_app_card("composio"))]
+        from odie.mac import permissions, scripts
+        if scripts.available():  # the Mac's own apps first: no account, just macOS's permission for each
+            out["mac_apps"] = {"mac": True, "apps": [r.as_dict() for r in permissions.rows()], "default_calendar": ""}
     elif step == "phone":
         from odie import devices
         installed = tailscale_installed()

@@ -2,6 +2,7 @@ import { postJSON, todayISO } from "../api";
 import { InlineText } from "../blocks/InlineText";
 import { footer, watchRow, type WatchCardData } from "../watch";
 import { Icon, Tile } from "./Tile";
+import { SourceBadges } from "./SourceBadges";
 
 const ask = (q: string) => { location.hash = `#chat?q=${encodeURIComponent(q)}`; };
 
@@ -37,7 +38,7 @@ export function WatchCard({ card, onChange }: { card: WatchCardData; onChange: (
                   <span className="w-9 h-9 shrink-0 rounded-full grid place-items-center text-white text-[15px] font-bold" style={{ background: row.lead.colour }} aria-hidden="true">{row.lead.letter}</span>
                 )}
                 <button type="button" onClick={() => ask(row.run)} className="flex-1 min-w-0 text-left">
-                  <div className="text-[14.5px] font-semibold leading-5 break-words">{row.title}</div>
+                  <div className="text-[14.5px] font-semibold leading-5 break-words">{row.title}<SourceBadges badges={i.badges} /></div>
                   {row.subtitle && <div className="text-[12.5px] leading-[17px] text-muted mt-0.5 line-clamp-2"><InlineText text={row.subtitle} /></div>}
                 </button>
                 {row.value && <span className="shrink-0 text-[12.5px] text-muted tabular-nums">{row.value}</span>}
