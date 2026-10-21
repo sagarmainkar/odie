@@ -189,7 +189,7 @@ async def test_a_vertical_job_renders_a_minute_at_1080_by_1920_opening_on_the_qu
         await browser.close()
     info = await encode.probe(mp4)
     assert (info["width"], info["height"]) == (1080, 1920)
-    assert 62.0 <= info["seconds"] <= 64.0  # a reel is a one-minute video: 60 s of narration after the silent card
+    assert info["seconds"] == pytest.approx(60.0, abs=0.6)  # vertical is only the frame: the narration's own length
     frame = first_frame(mp4)
     assert frame.size == (1080, 1920)
     assert near(frame.getpixel((540, 200)), "#FFB020")  # the question card, from the very first frame
@@ -249,7 +249,7 @@ async def test_the_encoder_is_asked_exactly_as_before(tmp_path, monkeypatch):
 
 
 async def test_a_finished_file_at_the_wrong_size_is_refused(making, monkeypatch, tmp_path):
-    making["lengths"] = [4.0, 55.5]  # a reel is a one-minute video: a minute of narration, so it fits as it is
+    making["lengths"] = [4.0, 55.5]
 
     async def tiny_render(browser, body, timings, folder, fps, tabs, progress=None, assets_script="",
                           credits_script="", size=None):
@@ -289,7 +289,7 @@ def test_no_countdown_and_the_first_frame_is_the_opening_card_in_both_aspects():
 async def test_a_vertical_videos_page_is_checked_at_1080_by_1920(tmp_path, monkeypatch):
     seen = []
 
-    async def check(body, narration, browser, assets_script="", size=timeline.LANDSCAPE, one_minute=False):
+    async def check(body, narration, browser, assets_script="", size=timeline.LANDSCAPE, timed_seconds=None):
         seen.append(size)
         return page.CheckResult(problem=None)
 
@@ -302,7 +302,7 @@ async def test_the_writing_step_tells_the_writer_the_aspect(store, monkeypatch, 
     asked = {}
 
     async def stand_in_write(topic, minutes, brief, folder, turn, browser, listing="", assets_script="",
-                             aspect="landscape", one_minute=False):
+                             aspect="landscape", timed_seconds=None):
         asked["aspect"] = aspect
         return writer.Written(title="Ice", narration=["One.", "Two."], body="<div></div>")
 

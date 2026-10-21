@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from odie.browser.engine import BrowserError, BrowserTimeout
-from odie.video import beats, minute, timeline
+from odie.video import beats, timed, timeline
 
 KIT = Path(__file__).parent / "kit"
 
@@ -137,12 +137,19 @@ def credits_scene(credits: list[str]) -> str:
     return script.replace("__PER_COLUMN__", str(CREDITS_PER_COLUMN))
 
 
+def scene_timings(timings: dict) -> dict:
+    """The scenes' own timings, as window.__timings carries them: everything but a timed segment's clock ("timed"),
+    which the page gets as window.ODIE_TIMED instead."""
+    return {key: value for key, value in timings.items() if key != "timed"}
+
+
 def assemble(body: str, timings: dict, assets_script: str = "", credits_script: str = "",
              size: tuple[int, int] = timeline.LANDSCAPE) -> str:
     """The whole HTML document for a video on a stage of `size` (timeline.LANDSCAPE or VERTICAL; base_style and
     `window.__stage`): KaTeX's CSS, three.js, KaTeX, video.js, the map's data (`window.__geo`)
     and map.js, then `window.__timings`
-    ({"starts": [...], "lengths": [...], "beats": [[...], ...]}, in seconds, passed through as given), then the
+    ({"starts": [...], "lengths": [...], "beats": [[...], ...]}, in seconds, passed through as given), and for a video
+    with a timed segment `window.ODIE_TIMED` (timings["timed"]: {"start", "seconds", "end"}, odie.video.timed), then the
     video's pictures and clips (`assets_script`, odie.video.assets.staple's `<script>Video.assets({...})</script>`,
     when there are any), then Odie's credits card (`credits_script`, credits_scene's, when there is one), then `body`
     (the model's markup and script), in that order. The credits card comes before the body but plays after it: it
@@ -160,8 +167,10 @@ def assemble(body: str, timings: dict, assets_script: str = "", credits_script: 
         f"<script>{kit['video']}</script>",
         f"<script>{kit['geo']}</script>",
         f"<script>{kit['map']}</script>",
-        f"<script>window.__timings = {json.dumps(timings)};</script>",
+        f"<script>window.__timings = {json.dumps(scene_timings(timings))};</script>",
     ]
+    if "timed" in timings:
+        head.append(f"<script>window.ODIE_TIMED = {json.dumps(timings['timed'])};</script>")
     if assets_script:
         head.append(assets_script)
     if credits_script:
@@ -245,16 +254,20 @@ def first_problem(scene_count: int | None, narration_count: int, load_errors: li
 
 @dataclass
 class CheckResult:
-    """What the page check found: the first problem as a paragraph to act on (None when the page is fine), and the
+    """What the page check found: the first problem as a paragraph to act on (None when the page is fine), the
     sound cues the page placed with Video.sounds([...]), as Video.soundCues() gives them back: a list of
     {"scene": 2, "at": 1.5 or "beat": 1, "name": "whoosh", "seconds"?: 6, "gain"?: 0.4}, each with only the keys the
-    writer gave. [] when the page placed none, and whenever there is a problem (they aren't read then)."""
+    writer gave ([] when the page placed none, and whenever there is a problem: they aren't read then), and, for a
+    video with a timed segment, the segment's first and last scene, 0-based ((1, 2) for scenes 2 to 3; None for any
+    other video, and whenever there is a problem)."""
     problem: str | None
     cues: list[dict] = field(default_factory=list)
+    segment: tuple[int, int] | None = None
 
 
 async def check_with_cues(body: str, narration: list[str], browser, assets_script: str = "",
-                          size: tuple[int, int] = timeline.LANDSCAPE, one_minute: bool = False) -> CheckResult:
+                          size: tuple[int, int] = timeline.LANDSCAPE,
+                          timed_seconds: float | None = None) -> CheckResult:
     """Loads the page in a sealed tab of the video's size (1920x1080, or 1080x1920 for a vertical video) with estimated
     timings and the video's pictures and clips
     (`assets_script`, as the render will have them) and draws three moments of every scene, so the chat turn hears
@@ -262,12 +275,11 @@ async def check_with_cues(body: str, narration: list[str], browser, assets_scrip
     is None when the page is fine, else the first one as a paragraph to act on (see first_problem). A page that
     reaches for the network is a problem too, and so is one whose Video.sounds threw (given something other than a
     list: "Video.sounds takes a list: …" comes back as an error while loading). The cues come back as the page gave
-    them, right or wrong: whether they fit, shape included, is odie.video.sounds.cue_problem's to say. A one-minute
-    video (`one_minute`, odie.video.minute) is checked with the timings it will have: the silent opening, the narration
-    clock (s.left()), and one more moment drawn first, its opening at 0 s, where s.left() is null."""
+    them, right or wrong: whether they fit, shape included, is odie.video.sounds.cue_problem's to say. A video with a
+    timed segment of `timed_seconds` must mark it in Video.scenes (odie.video.timed.marks_problem: no marks -> how to
+    mark it), and is drawn with its segment clock running (s.left()) from the marked scenes' estimated start to their
+    end; the marks are ignored for any other video."""
     timings = estimated_timings(narration)
-    if one_minute:
-        timings = minute.on_the_clock(timings, len(narration))
     try:
         html = assemble(body, timings, assets_script, size=size)
     except ValueError as e:
@@ -279,15 +291,17 @@ async def check_with_cues(body: str, narration: list[str], browser, assets_scrip
         problem = first_problem(scene_count, len(narration), load_errors, [])
         if problem:
             return CheckResult(problem=problem)
+        segment = None
+        if timed_seconds:
+            marks = await tab.eval("Video.timedScenes()")
+            problem = timed.marks_problem(marks["starts"], marks["ends"], timed_seconds)
+            if problem:
+                return CheckResult(problem=problem)
+            segment = timed.segment_scenes(marks["starts"], marks["ends"])
+            clock = timed.clock_from(timings, segment[0], segment[1], timed_seconds)
+            await tab.eval(f"window.ODIE_TIMED = {json.dumps(clock)}")
         draw_errors = []
-        if one_minute:
-            error = await _draw_error(tab, 0.0)  # the silent opening: scene 1 at t = 0, the clock not started
-            if error:
-                draw_errors.append((1, 0.0, f"{error} (in the silent opening, before the first word, where s.left() "
-                                            "is null)"))
         for number, seconds in enumerate(probe_times(timings)):
-            if draw_errors:
-                break
             error = await _draw_error(tab, seconds)
             if error:
                 scene_index = number // PROBES_PER_SCENE
@@ -298,7 +312,7 @@ async def check_with_cues(body: str, narration: list[str], browser, assets_scrip
         if problem:
             return CheckResult(problem=problem)
         cues = await tab.eval("Video.soundCues()")
-        return CheckResult(problem=None, cues=cues)
+        return CheckResult(problem=None, cues=cues, segment=segment)
 
 
 async def check(body: str, narration: list[str], browser, assets_script: str = "",

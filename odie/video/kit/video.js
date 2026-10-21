@@ -10,9 +10,11 @@
 // loaded, and a frame that draws a clip returns a promise, settled once the clip shows its moment. Odie's credits
 // card calls Video.closing({...}) before the page's script: it plays after the page's last scene (see closing). A
 // video with sound effects calls Video.sounds([...]) next to its scenes (see sounds); Odie reads the cues back with
-// Video.soundCues() and mixes them under the narration. The kit draws and plays nothing for them. A one-minute video's
-// timings also carry clock = {start, length} (seconds: the first word, and the narration's measured length): s.left()
-// and Video.clockAt(T) give the seconds left on it, from the length at the first word to 0 at the last, null before.
+// Video.soundCues() and mixes them under the narration. The kit draws and plays nothing for them. A video with a timed
+// segment (odie.video.timed) marks its first and last scene in Video.scenes ({timed_start: true, ...}, {timed_end:
+// true, ...}; Odie reads them back with Video.timedScenes()), and Odie sets window.ODIE_TIMED = {start, seconds, end}
+// (the segment's first word, its length, its last word): s.left() and Video.clockAt(T) count from `seconds` at the
+// first word to 0 at the last, null before.
 //
 // Rules that keep frames deterministic (frame k always draws the same picture, whatever order frames are drawn in):
 // draw(t, s) is a pure function of t; no requestAnimationFrame, no clock, no Math.random (use s.random(seed)); set
@@ -711,22 +713,34 @@
   // it at which each phrase starts (the first 0). s.beat(t, 1) is the eased progress across the second phrase;
   // s.beatAt(t) is the phrase being spoken. Textures are kept per scene, made the first time s.texture asks. Then
   // each extension adds its own (s.map and the rest from map.js).
-  // ---- The narration clock: a one-minute video's countdown (odie.video.minute), read from window.__timings.clock ----
+  // ---- The segment clock: a timed segment's countdown (odie.video.timed), read from window.ODIE_TIMED ----
 
   let frameTime = 0;  // seconds into the video of the frame being drawn (drawFrame sets it), for s.left()
 
-  // Seconds left on the narration clock at T seconds into the video: the narration's measured length at its first
-  // word, 0 at its last word and after, null before the first word (the silent cold open) and in a video without a
-  // clock (every video but a one-minute one). Clock {start: 2.5, length: 60}: T 1.0 -> null; T 2.5 -> 60; T 32.5 -> 30;
-  // T 62.5 or 63.4 -> 0.
+  // Seconds left on the segment clock at T seconds into the video: `seconds` at the segment's first word, 0 at its last
+  // word and after, null before the first word and in a video without a timed segment. The clock runs from the first
+  // word to the last as measured, so it reaches 0 exactly on the last word. {start: 6.5, seconds: 60, end: 66.5}:
+  // T 3 -> null; T 6.5 -> 60; T 36.5 -> 30; T 66.5 or 70 -> 0.
   function clockAt(T) {
-    const timings = window.__timings;
-    const clock = timings && timings.clock;
-    if (!clock || T < clock.start) {
+    const timed = window.ODIE_TIMED;
+    if (!timed || T < timed.start) {
       return null;
     }
-    const left = clock.length - (T - clock.start);
+    const span = timed.end - timed.start;
+    if (!(span > 0) || T >= timed.end) {
+      return 0;
+    }
+    const left = timed.seconds * (timed.end - T) / span;
     return Math.max(0, Math.round(left * 1000) / 1000);
+  }
+
+  let timedMarks = {starts: [], ends: []};  // the scenes (from 1) the page marked timed_start and timed_end
+
+  // The scenes the page marked as its timed segment's first and last, from 1, as Video.scenes was given them; Odie
+  // checks there is one of each. {timed_start: true} on scene 2 and {timed_end: true} on scene 3 -> {starts: [2],
+  // ends: [3]}; no marks -> {starts: [], ends: []}.
+  function timedScenes() {
+    return {starts: timedMarks.starts.slice(), ends: timedMarks.ends.slice()};
   }
 
   function helpersFor(length, beats) {
@@ -745,8 +759,8 @@
       beatAt: function (t) {
         return beatIndex(beats, t);
       },
-      // Seconds left on the narration clock in this frame (clockAt): 60 at the first word down to 0 at the last;
-      // null in the silent cold open and in a video without a clock. A countdown draws only when it isn't null.
+      // Seconds left on the segment clock in this frame (clockAt): 60 at the segment's first word down to 0 at its
+      // last; null before it and in a video without a timed segment. A countdown draws only when it isn't null.
       left: function () {
         return clockAt(frameTime);
       },
@@ -903,6 +917,15 @@
   // matches against the narration. Video.scenes([{setup(s) {...}, draw(t, s) {...}}, {draw(t, s) {...}}])
   function scenes(list) {
     window.__sceneCount = list.length;
+    timedMarks = {starts: [], ends: []};
+    list.forEach(function (scene, i) {
+      if (scene && scene.timed_start === true) {
+        timedMarks.starts.push(i + 1);
+      }
+      if (scene && scene.timed_end === true) {
+        timedMarks.ends.push(i + 1);
+      }
+    });
     const timings = window.__timings;
     if (!timings || !timings.starts || !timings.lengths) {
       throw new Error("window.__timings is missing: the tool sets it from the narration before the page runs");
@@ -928,5 +951,6 @@
   }
 
   window.Video = {scenes: scenes, closing: closing, assets: registerAssets, sounds: sounds, soundCues: soundCues,
-                  extend: extend, clockAt: clockAt, colors: colors, W: W, H: H, safe: SAFE, SANS: SANS};
+                  timedScenes: timedScenes, extend: extend, clockAt: clockAt, colors: colors, W: W, H: H, safe: SAFE,
+                  SANS: SANS};
 })();

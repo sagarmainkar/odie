@@ -10,8 +10,10 @@ page.html (the accepted page as it was drawn, with its timings, pictures and cre
 
 job.data carries, from make_video: "given" ({"images": [...], "clips": [...]}, the chat's lines), "private" (the
 signed-in sites the asking chat had read), "sounds" (False when the user asked for no sound effects), "style" (how
-an OpenAI narrator should sound, "" for Odie's usual; older jobs have none) and "aspect" ("landscape" or "vertical",
-see aspect_of; older jobs have none and are landscape); from the writing step: "assets" (each
+an OpenAI narrator should sound, "" for Odie's usual; older jobs have none), "aspect" ("landscape" or "vertical",
+see aspect_of; older jobs have none and are landscape) and, when asked, "timed_segment" ({"seconds": 60,
+"tolerance": 0.1}, odie.video.timed); from the writing step: "timed_scenes" (the segment's first and last scene,
+0-based, when it has one), "assets" (each
 prepared one's name, kind, words, credit, size, length and file; never its data), "dropped" (the lines the writer
 was told about the ones that couldn't be used), "narration" (one string per scene), "body" (the page) and "cues" (the
 sound cues the page placed with Video.sounds, as odie.video.page.CheckResult gives them; [] when none). job.json never
@@ -24,7 +26,7 @@ from odie.agent import turn as chat_turn
 from odie.agent.tools.files import hand_over
 from odie.browser.engine import BrowserError
 from odie.making import jobs
-from odie.video import assets, minute, sounds, timeline, writer
+from odie.video import assets, sounds, timed, timeline, writer
 from odie.video.encode import EncodeError, mux, probe
 from odie.video.narrate import narrate
 from odie.video.page import assemble, credits_scene
@@ -56,18 +58,12 @@ def aspect_of(job: jobs.Job) -> str:
     return "landscape"
 
 
-def is_one_minute(job: jobs.Job) -> bool:
-    """Decides whether this job is a one-minute video (odie.video.minute): asked for at one minute, or a reel. A job of
-    1 minute -> True; a vertical job of 2 -> True; a landscape job of 3 -> False, made as before."""
-    return minute.is_one_minute(job.minutes, aspect_of(job))
-
-
 def credits_on_screen(job: jobs.Job, credits: list[str]) -> list[str]:
-    """Decides which credits get Odie's card at the video's end. A one-minute video (a reel) ends on its blink, so it
-    shows none and keeps them as job.data["caption_credits"] for the ready message (the owner's choice: credits in
-    the caption); every other video shows them all. A reel with ["Photo by A on Unsplash"] -> [] (and the caption
-    line); a 3-minute video -> ["Photo by A on Unsplash"]."""
-    if not is_one_minute(job):
+    """Decides which credits get Odie's card at the video's end. A reel (a vertical video, whatever its length) shows
+    none and keeps them as job.data["caption_credits"] for the ready message (the owner's choice: credits in the
+    caption); a landscape video shows them all. A reel with ["Photo by A on Unsplash"] -> [] (and the caption line); a
+    landscape video -> ["Photo by A on Unsplash"]."""
+    if aspect_of(job) != "vertical":
         return credits
     if credits:
         job.data["caption_credits"] = credits
@@ -132,16 +128,18 @@ async def write(job: jobs.Job, turn, browser) -> None:
     listing = assets.listing(gathered, dropped)
     assets_script = assets.staple(gathered)  # the writer's page check draws the same pictures the render will
     aspect = aspect_of(job)
-    one_minute = is_one_minute(job)
-    minutes = job.minutes
-    if one_minute:
-        minutes = 1  # a reel asked for without a length is still a minute
-    written = await writer.write(job.topic, minutes, job.brief, job.folder, turn, browser, listing=listing,
-                                 assets_script=assets_script, aspect=aspect, one_minute=one_minute)
+    segment = timed.segment_of(job.data)
+    timed_seconds = None
+    if segment is not None:
+        timed_seconds = segment.seconds
+    written = await writer.write(job.topic, job.minutes, job.brief, job.folder, turn, browser, listing=listing,
+                                 assets_script=assets_script, aspect=aspect, timed_seconds=timed_seconds)
     job.title = jobs.title_after_writing(written.title, job)
     job.data["narration"] = written.narration
     job.data["body"] = written.body
     job.data["cues"] = written.cues
+    if written.segment is not None:
+        job.data["timed_scenes"] = list(written.segment)
 
 
 def wants_sounds(job: jobs.Job) -> bool:
@@ -151,19 +149,28 @@ def wants_sounds(job: jobs.Job) -> bool:
     return job.data.get("sounds", True)
 
 
-def end_chime(timings: dict, narrated_scenes: int) -> list[sounds.Placed]:
-    """Odie's chime for a one-minute video, as its narration clock reaches 0 on the last word; it plays through the
-    blink (minute.END) and stops where the video is cut. Timings with a clock {"start": 2.5, "length": 60.0} -> [the
-    chime at 62.5 s]; any other video (no clock) -> []."""
-    clock = timings.get("clock")
+def end_chime(timings: dict) -> list[sounds.Placed]:
+    """Odie's chime for a video with a timed segment, as its clock reaches 0 on the segment's last word; it rings on
+    past that scene's end (into the blink, the pause or the closing card after it) and stops where the video does.
+    Timings with {"timed": {"start": 6.5, "seconds": 60, "end": 66.5}} -> [the chime at 66.5 s]; any other video ->
+    []."""
+    clock = timings.get("timed")
     if not clock:
         return []
-    last = narrated_scenes - 1
-    zero = clock["start"] + clock["length"]
-    at = round(zero - timings["starts"][last], 3)  # seconds into the last narrated scene
-    chime = sounds.place(0, {"scene": narrated_scenes, "at": at, "name": "chime"}, timings, narrated_scenes)
-    if chime is None:
+    sound_path = sounds.path("chime")
+    file = sounds.readable_format(sound_path)
+    if file is None:
+        log.info("video: the chime's file is missing, so the segment ends without it")
         return []
+    zero = clock["end"]
+    video_end = timings["starts"][-1] + timings["lengths"][-1]
+    file_seconds = file.frames / file.rate
+    seconds = round(min(file_seconds, video_end - zero), 3)
+    if seconds <= 0:
+        return []
+    chime = sounds.Placed(start=zero, path=sound_path, seconds=seconds, gain=sounds.cue_gain({}, "hit"), kind="hit",
+                          name="chime", frames=file.frames, cut=seconds < round(file_seconds, 3))
+    sounds.loudness_dbfs(chime)  # measured now, and remembered for the mix
     return [chime]
 
 
@@ -171,14 +178,14 @@ async def voice_track(job: jobs.Job, narration_wav: Path, timings: dict) -> Path
     """The sound mux lays under the picture: the narration with the page's sound cues mixed under it (mix.wav), or
     the narration as it is when there is nothing to mix. A job without cues, with sounds off, or whose cues all drop
     (odie.video.sounds.resolve) -> narration.wav, and ffmpeg doesn't run for it. A mix that fails is logged and the
-    video keeps its narration: a sound never fails a video. A one-minute video also gets Odie's chime as its clock
-    reaches 0 (end_chime)."""
+    video keeps its narration: a sound never fails a video. A video with a timed segment also gets Odie's chime as its
+    clock reaches 0 (end_chime)."""
     if not wants_sounds(job):
         return narration_wav
     cues = job.data.get("cues", [])
     narrated_scenes = len(job.data["narration"])  # the timings may end with Odie's silent credits card
     placed = sounds.resolve(cues, timings, narrated_scenes)
-    placed += end_chime(timings, narrated_scenes)
+    placed += end_chime(timings)
     if not placed:
         return narration_wav
     mixed_wav = job.folder / "mix.wav"
@@ -196,25 +203,37 @@ async def make_video(job: jobs.Job, browser, transport) -> Path:
     caption instead, credits_on_screen; CREDITS_SECONDS,
     silent): one more scene in the timings than the narration has, and the voice padded to the picture's end. The
     page's sound cues are mixed under the narration (voice_track) before mux. The video is drawn at its aspect's size
-    (aspect_of, timeline.size_of), and a finished file of any other size is refused. A one-minute video
-    (is_one_minute, odie.video.minute) has its voice fitted to exactly 60 s (minute.fit; too far from a minute fails
-    the video in words), opens silent on the question card, carries the narration clock in its timings, and ends with
-    the blink and the chime; every other video keeps its free length, as before."""
+    (aspect_of, timeline.size_of), and a finished file of any other size is refused. A video with a timed segment
+    (odie.video.timed: job.data["timed_segment"], and the scenes the writer marked, "timed_scenes") has only that
+    segment's voice fitted to its seconds, first word to last (timed.fit; too far off fails the video in words), the
+    segment clock in its timings (the page's window.ODIE_TIMED), and the chime at 0; when the segment ends the
+    narration, its last scene holds timed.BLINK longer for the blink. Every other scene, and every other video, keeps
+    its natural length."""
     folder = job.folder
     narration = job.data["narration"]
     body = job.data["body"]
     size = timeline.size_of(aspect_of(job))
-    one_minute = is_one_minute(job)
     style = job.data.get("style", "")  # a job queued before styles has none: Odie's usual voice
     wav, lengths, beats = await narrate(jobs.hooks["store"], narration, job.voice_name, transport=transport,
                                         style=style)
-    breath = timeline.BREATH
-    if one_minute:
-        fitted = await minute.fit(wav, lengths, beats, folder)
+    gaps = [timeline.BREATH] * (len(lengths) - 1)
+    clock = None
+    segment = timed.segment_of(job.data)
+    marked = job.data.get("timed_scenes")
+    if segment is not None and not marked:
+        log.warning("video %r: a timed segment was asked for but no scenes are marked; made at its free length",
+                    job.slug)
+    if segment is not None and marked:
+        first, last = marked
+        fitted = await timed.fit(wav, lengths, beats, first, last, segment, folder)
         wav = fitted.wav
         lengths = fitted.lengths
         beats = fitted.beats
-        breath = fitted.breath  # the breaths were sped or slowed with the voice
+        gaps = fitted.gaps  # the segment's breaths were sped or slowed with it
+        clock = fitted.clock
+        if timed.ends_the_video(last, len(narration)):
+            lengths[last] = round(lengths[last] + timed.BLINK, 3)
+            wav = timed.blink_silence(wav)
 
     gathered = assets_from(job)
     credits = credits_on_screen(job, assets.credits(gathered))  # a reel's go in the caption instead
@@ -222,11 +241,11 @@ async def make_video(job: jobs.Job, browser, transport) -> Path:
     if credits:
         lengths = lengths + [CREDITS_SECONDS]
         beats = beats + [[0.0]]
-    starts, _total = timeline.scene_starts(lengths, breath)
+        gaps = gaps + [timeline.BREATH]
+    starts, _total = timed.starts_with_gaps(lengths, gaps)
     timings = {"starts": starts, "lengths": lengths, "beats": beats}
-    if one_minute:
-        timings = minute.on_the_clock(timings, len(narration))
-        wav = minute.framed(wav)  # silent before the first word and through the blink
+    if clock is not None:
+        timings["timed"] = clock
 
     narration_wav = folder / "narration.wav"
     narration_wav.write_bytes(wav)
