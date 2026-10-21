@@ -35,6 +35,14 @@ describe("Up next pictures", () => {
     expect(html).toContain('title="Calendar"');  // the app's name on a long press or hover
   });
 
+  it("draw a paid bill or a delivered order as done, with its stamp", () => {
+    const html = draw([item({ kind: "bill", title: "Pay electricity bill", done: "paid" }),
+      item({ id: "cal:2", kind: "delivery", title: "Order: Wireless Earbuds", done: "delivered" })]);
+    expect(html.match(/is-done/g)).toHaveLength(2);
+    expect(html).toContain("Paid");
+    expect(html).toContain("Delivered");
+  });
+
   it("leave a card without one as it was", () => {
     const html = draw([item()]);
     expect(html).not.toContain("<img");

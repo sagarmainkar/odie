@@ -1,5 +1,6 @@
-"""The watcher's five tools (spec part 2), bound to one check: they read through the Fetcher and keep what the model
-reports, so check.py applies it with the push rules after the turn."""
+"""The watcher's tools (spec part 2), bound to one check: they read through the Fetcher and keep what the model
+reports, so check.py applies it with the push rules after the turn; bills_and_orders and close_reminder keep the
+user's bills and orders (odie.watch.bills)."""
 from __future__ import annotations
 
 import json
@@ -7,8 +8,11 @@ import json
 from google.adk.tools import FunctionTool
 
 from odie.agent.callbacks import wrap_untrusted
+from odie.watch import bills
 from odie.watch.calls import CallError
 from odie.watch.fetch import Event, Fetcher, Mail
+
+BILLS_DAYS = 45  # how far ahead bills_and_orders looks for a bill's or an order's event
 
 
 class Check:
@@ -56,6 +60,22 @@ def watch_tools(check: Check) -> list[FunctionTool]:
         except CallError as e:
             return {"error": str(e)}
 
+    async def bills_and_orders() -> dict:
+        """The open reminders that are bills or orders (id, title, due) and the next 45 days' calendar events that are
+        (id, title, start): what a payment confirmation or an order update is matched to. A payment closes a bill
+        only when the biller and the amount both match."""
+        store = check.fetcher.store
+        reminders = bills.open_bills_and_orders(store)
+        ahead = await check.fetcher.events_ahead(BILLS_DAYS)
+        events = [e.brief() for e in ahead if bills.is_bill_or_order(e.title)]
+        return {"result": json.dumps({"reminders": reminders, "events": events}, ensure_ascii=False)}
+
+    def close_reminder(task_id: int, why: str) -> dict:
+        """Close an open bill or order reminder because a mail shows it's done: a payment confirmation for the same
+        biller and amount, or a delivery. why: which mail showed it, e.g. "paid: MSEDCL confirmation mail 21 Oct". The
+        user sees why on Today and can reopen it."""
+        return {"result": bills.close(check.fetcher.store, task_id, why)}
+
     def report(needs_you: list[dict], line: str, done: list[dict] | None = None) -> dict:
         """Finish the check. needs_you: [{ref: "mail:<id>" or "event:<id>", title, why, push}] (push only for what
         needs the user soon). line: one sentence for Today. done: what you did for a Watch for entry: [{message,
@@ -65,4 +85,5 @@ def watch_tools(check: Check) -> list[FunctionTool]:
         check.report = {"needs_you": needs_you or [], "line": line or "", "done": done or []}
         return {"result": "Reported. The check is over."}
 
-    return [FunctionTool(f) for f in (new_mail, upcoming_events, read_mail, save_attachment, report)]
+    return [FunctionTool(f) for f in (new_mail, upcoming_events, read_mail, save_attachment, bills_and_orders, close_reminder,
+                                       report)]

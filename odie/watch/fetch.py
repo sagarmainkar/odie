@@ -12,6 +12,7 @@ from datetime import datetime, time, timedelta, UTC
 from pathlib import Path
 
 
+from odie.watch import bills
 from odie.watch.calls import CallError, call_tool
 from odie.watch.sources import Source, saved
 
@@ -345,6 +346,8 @@ class Fetcher:
         self.store, self.now = store, now
         self._calendar_ok = False
         self.state = store.get_setting(STATE) or {"last_check": None, "seen": [], "events": {}, "sources": {}}
+        self.caught_up: str = str(self.state.get("caught_up") or "")  # the bills catch-up this watch last ran (bills.CATCH_UP)
+        self.catch_up_tries = int(self.state.get("catch_up_tries") or 0)  # its turns that failed so far
         self.statuses: dict[str, dict] = {}
         self.first: set[str] = set()
         self._mail: dict[str, Mail] = {}
@@ -415,8 +418,59 @@ class Fetcher:
         log.info("watch: %d new mails", len(got))
         return got[:MAX_MAIL]
 
+    async def catch_up_mail(self, days: int = bills.CATCH_UP_DAYS) -> list[Mail]:
+        """The last `days` of mail whose subject looks like a bill, a payment or an order, seen or not, newest first,
+        at most bills.CATCH_UP_MOST: the watch's once-only catch-up (bills that came before it knew to look). Each is
+        readable in full with read_mail, like new mail."""
+        since_dt = self.now - timedelta(days=days)
+        got: list[Mail] = []
+        for src in (s for s in saved(self.store) if s.kind == "mail"):
+            args = dict(src.fixed)
+            query = f"after:{int(since_dt.timestamp())} {bills.CATCH_UP_QUERY}"
+            if src.style == "native":
+                args = {"since": since_dt.isoformat(timespec="seconds"), "limit": 100}
+            elif src.style == "zapier":
+                args["params"] = {**(args.get("params") or {}), src.query_param: query}
+            elif src.query_param:
+                args[src.query_param] = query
+            try:
+                res = await self._call(src, src.tool, args)
+                if res.is_error:
+                    raise CallError(res.text[:200] or "the app said no")
+            except CallError as e:
+                log.info("watch: the catch-up couldn't read %s: %s", src.id, e)
+                continue
+            got += [m for m in parse_mail(res.text, src.id) if bills.looks_like_bill_or_order(m.subject)]
+        got = fold_mail(got)
+        got.sort(key=lambda m: m.at, reverse=True)
+        got = got[:bills.CATCH_UP_MOST]
+        for m in got:
+            self._mail[m.id] = m
+        return got
+
     async def upcoming_events(self, hours: int = 24) -> list[Event]:
         start, end = self.now, self.now + timedelta(hours=hours)
+        got = await self._read_events(start, end)
+        before: dict[str, str] = self.state.get("events") or {}
+        cals = [s.id for s in saved(self.store) if s.kind == "calendar"]
+        self._calendar_ok = bool(cals) and all(self.statuses.get(c, {}).get("ok") for c in cals)
+        now_ids = {e.id for e in got}
+        for e in got:
+            e.change = _change_of(e, before)
+        if self._calendar_ok:  # a calendar that didn't answer cancels nothing
+            for eid, st in before.items():
+                if eid not in now_ids and _within(st, start, end):  # gone from the window, not just over
+                    got.append(Event(eid, "(cancelled)", st, "", "", [], "", change="cancelled"))
+        self._events = got
+        return got
+
+    async def events_ahead(self, days: int) -> list[Event]:
+        """Every calendar's events from now to `days` ahead, for Today's card and for matching bills and orders. Only
+        a read: the check's own list (what moved or was cancelled, upcoming_events) stays as it was."""
+        return await self._read_events(self.now, self.now + timedelta(days=days))
+
+    async def _read_events(self, start: datetime, end: datetime) -> list[Event]:
+        """Every calendar's events between start and end, one row for an event two calendars hold."""
         got: list[Event] = []
         for src in (s for s in saved(self.store) if s.kind == "calendar"):
             args = dict(src.fixed)
@@ -440,19 +494,7 @@ class Fetcher:
                 self._ok(src, True)
             except CallError as e:
                 self._ok(src, False, str(e))
-        got = fold_events(got)  # one row for an event both calendars hold
-        before: dict[str, str] = self.state.get("events") or {}
-        cals = [s.id for s in saved(self.store) if s.kind == "calendar"]
-        self._calendar_ok = bool(cals) and all(self.statuses.get(c, {}).get("ok") for c in cals)
-        now_ids = {e.id for e in got}
-        for e in got:
-            e.change = _change_of(e, before)
-        if self._calendar_ok:  # a calendar that didn't answer cancels nothing
-            for eid, st in before.items():
-                if eid not in now_ids and _within(st, start, end):  # gone from the window, not just over
-                    got.append(Event(eid, "(cancelled)", st, "", "", [], "", change="cancelled"))
-        self._events = got
-        return got
+        return fold_events(got)  # one row for an event both calendars hold
 
     def read_mail(self, mail_id: str) -> Mail | None:
         return self._mail.get(mail_id)
@@ -567,4 +609,5 @@ class Fetcher:
             srcs[sid] = {**st, "fails": fails, "last_ok": last_ok}
 
         self.store.set_setting(STATE, {"last_check": self.now.isoformat(timespec="seconds"), "seen": seen, "events": events, "sources": srcs,
-                                       "retries": retries})
+                                       "retries": retries, "caught_up": self.caught_up,
+                                       "catch_up_tries": self.catch_up_tries})

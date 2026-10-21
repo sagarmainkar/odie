@@ -7,6 +7,14 @@ import { SourceBadges } from "./SourceBadges";
 
 const ask = (q: string) => { location.hash = `#chat?q=${encodeURIComponent(q)}`; };
 
+const DONE_LABEL: Record<string, string> = { paid: "Paid", delivered: "Delivered", cancelled: "Cancelled" };
+
+/** The stamp on a card the watch marked done: "Paid" or "Delivered" with a tick, "Cancelled" with a cross. */
+function DoneStamp({ done }: { done: string }) {
+  const icon = done === "cancelled" ? "x" : "check";
+  return <span className={`done-stamp done-${done}`}><Icon name={icon} size={12} stroke={2.8} />{DONE_LABEL[done] ?? "Done"}</span>;
+}
+
 /** Whether a card shows its picture: when it has one, until the picture fails to load. A birthday with Asha's photo
  * -> shown; a card without a photo, or one whose copy is gone from the Mac (a 404) -> the card as it was. */
 function usePhoto(src?: string) {
@@ -32,15 +40,17 @@ function Hero({ it }: { it: UpItem }) {
   const line = subline(it);
   const photo = usePhoto(it.photo);
   const withPhoto = photo.shown ? " has-photo" : "";
+  const isDone = it.done ? " is-done" : "";
   return (
     <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.35, ease: [0.2, 0.8, 0.2, 1] }}
-      className={`kind-card relative rounded-[30px] p-4 overflow-hidden border shadow-[0_18px_40px_-24px_rgba(40,30,70,.45)]${withPhoto}`}
+      className={`kind-card relative rounded-[30px] p-4 overflow-hidden border shadow-[0_18px_40px_-24px_rgba(40,30,70,.45)]${withPhoto}${isDone}`}
       style={kindVars(it.kind) as React.CSSProperties}>
       {photo.shown && it.photo && <CardPhoto src={it.photo} onError={photo.broke} />}
       <div className="flex items-start gap-2">
         <div className="flex-1 min-w-0 pt-1">
           <div className="flex items-center gap-1.5 flex-wrap">
             <span className="chip kind-chip text-ink-2">{KIND_LABEL[it.kind] ?? "Event"}</span>
+            {it.done && <DoneStamp done={it.done} />}
             <span className="text-[11.5px] text-muted">{sourceText(it)}<SourceBadges badges={it.badges} /></span>
           </div>
           <div className="mt-2.5 text-[27px] leading-[1.08] font-extrabold italic tracking-[-0.02em] text-ink line-clamp-3">{it.title}</div>
@@ -71,9 +81,10 @@ function Mini({ it }: { it: UpItem }) {
   const d = dateParts(it.date);
   const photo = usePhoto(it.photo);
   const withPhoto = photo.shown ? " has-photo" : "";
+  const isDone = it.done ? " is-done" : "";
   return (
     <button type="button" onClick={() => ask(it.ask)}
-      className={`kind-card relative overflow-hidden snap-start shrink-0 w-[152px] rounded-[24px] p-3 text-left border flex flex-col active:scale-[.98] transition-transform${withPhoto}`}
+      className={`kind-card relative overflow-hidden snap-start shrink-0 w-[152px] rounded-[24px] p-3 text-left border flex flex-col active:scale-[.98] transition-transform${withPhoto}${isDone}`}
       style={kindVars(it.kind) as React.CSSProperties}>
       {photo.shown && it.photo && <CardPhoto src={it.photo} onError={photo.broke} />}
       <div className="flex items-start justify-between">
@@ -84,7 +95,8 @@ function Mini({ it }: { it: UpItem }) {
         <EventArt kind={it.kind} size={54} />
       </div>
       <div className="mt-2 text-[14px] leading-[18px] font-semibold line-clamp-2 min-h-[36px]">{it.title}</div>
-      <div className="mt-1 text-[12px] text-muted truncate">{it.amount != null ? subline(it) : timeText(it)}</div>
+      {it.done ? <div className="mt-1"><DoneStamp done={it.done} /></div>
+        : <div className="mt-1 text-[12px] text-muted truncate">{it.amount != null ? subline(it) : timeText(it)}</div>}
     </button>
   );
 }

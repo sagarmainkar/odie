@@ -8,6 +8,7 @@ import logging
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from odie.watch import bills
 from odie.watch import report as rep
 from odie.watch import sources
 from odie.watch.fetch import STATE, Fetcher
@@ -17,7 +18,10 @@ log = logging.getLogger("odie.watch")
 INTERVAL = timedelta(minutes=30)
 # What the watch may change without the user's tap (the owner's choice, 21 Oct 2026): adding an event to the calendar
 # for a bill's due date or a deadline a mail names. Nothing else that writes: no sending, replying, paying or deleting.
-MAY_WRITE = frozenset({"calendar_create_event", "mac_calendar_add"})
+# Bills and orders (the owner's choice, 21 Oct 2026): also updating that event, to mark a bill paid or an order delivered
+# or moved. Closing a paid bill's reminder goes through the watch's own close_reminder, never task_update.
+MAY_WRITE = frozenset({"calendar_create_event", "mac_calendar_add", "calendar_update_event"})
+CARD_DAYS = 14  # Today's Up next shows two weeks of the calendar
 SKILL = Path(__file__).parent / "skill" / "SKILL.md"
 WATCH_FOR = "Watch for"
 
@@ -48,7 +52,8 @@ def guard(tool, args, tool_context) -> dict | None:
     """before_tool_callback for the watch's turn: what a background check refuses (odie.trackers.guard), and also
     changing memory, the shell, handing files over, closing tasks and the browser.
     Example: new_mail -> None (runs); update_memory -> refused; browser_open -> refused (the browser keeps signed-in
-    sites); task_update -> refused (tasks are the user's to close); calendar_create_event -> None (MAY_WRITE)."""
+    sites); task_update -> refused (the watch closes a paid bill's reminder with its own close_reminder);
+    calendar_create_event, calendar_update_event -> None (MAY_WRITE)."""
     from odie.trackers import guard as trackers_guard
     if tool.name in MAY_WRITE:
         return None
@@ -60,6 +65,34 @@ def guard(tool, args, tool_context) -> dict | None:
     if not_for_the_watch or is_browser:
         return {"error": "Not allowed in the background watch: report it as a needs-you item instead."}
     return None
+
+
+def needs_catch_up(fetcher) -> bool:
+    """Whether this check also reads the last month's bills, payments and orders: once per catch-up version, until a
+    check that ran it reports. Never run -> True; ran bills.CATCH_UP -> False; ran an older one -> True."""
+    return fetcher.caught_up != bills.CATCH_UP
+
+
+def finish_catch_up(fetcher, reported: bool) -> None:
+    """After a check that caught up: done when it reported; a failed turn tries again at the next check, up to
+    bills.CATCH_UP_TRIES, then it's given up so a slow model doesn't fail every check. Reported -> done; 1st failure ->
+    again next time; 2nd failure -> given up (logged)."""
+    if reported:
+        fetcher.caught_up = bills.CATCH_UP
+        return
+    fetcher.catch_up_tries += 1
+    if fetcher.catch_up_tries >= bills.CATCH_UP_TRIES:
+        log.warning("watch: the bills catch-up failed %d times; given up", fetcher.catch_up_tries)
+        fetcher.caught_up = bills.CATCH_UP
+
+
+def catch_up_prompt(prompt: str, older: list[dict]) -> str:
+    """The check's prompt with the catch-up's mail after it: the watch handles these like new mail, once."""
+    return (f"{prompt}\n\nThis check is also a one-time catch-up: these are the last {bills.CATCH_UP_DAYS} days' bills, "
+            "payments and orders, from before the watch kept them. Handle them as the skill says (an event and a "
+            "reminder for a bill still due, a paid one closed, an order's event on its delivery day, a delivered or "
+            "cancelled one marked), skip what's over, and make needs-you items only for what still needs the user. "
+            "read_mail reads any of them in full.\n" + json.dumps(older, ensure_ascii=False))
 
 
 def _instruction(memory_text: str, watch: str) -> str:
@@ -80,6 +113,11 @@ async def run_check(store, now: datetime, turn, post, push, memory=None, memory_
     tools = watch_tools(check)
     instruction = _instruction(memory_index, watch_for(memory) if memory is not None else "")
     prompt = "Run the watch check."  # the background turn puts the time before it (odie.app.runner.background_turn)
+    catching_up = needs_catch_up(check.fetcher)
+    if catching_up:
+        older = await check.fetcher.catch_up_mail()
+        if older:
+            prompt = catch_up_prompt(prompt, [check.fenced(m) for m in older])
     reason = ""
     last_task_before = _last_task_id(store)
     try:
@@ -102,6 +140,9 @@ async def run_check(store, now: datetime, turn, post, push, memory=None, memory_
         except Exception as e:  # noqa: BLE001
             reason = f"{type(e).__name__}: {e}"[:160]
             log.warning("watch nudge failed", exc_info=True)
+    if catching_up:
+        finish_catch_up(fetcher, reported=check.report is not None)
+    card_events = await fetcher.events_ahead(CARD_DAYS)
     added_task = _last_task_id(store) > last_task_before  # task_add ran during the check: a reminder for the user
     first = bool(fetcher.first)
     failing = rep.failing_now(store, fetcher.statuses)  # read against the last check, so before commit()
@@ -110,9 +151,9 @@ async def run_check(store, now: datetime, turn, post, push, memory=None, memory_
     to_push: list[dict] = []
     try:
         if r is None:
-            rep.fallback(store, now, check.mails, check.events, fetcher.statuses, reason or "no report from the model")
+            rep.fallback(store, now, check.mails, card_events, fetcher.statuses, reason or "no report from the model")
         else:
-            to_push = rep.apply(store, now, r["needs_you"], r["line"], check.mails, check.events, fetcher.statuses, first)
+            to_push = rep.apply(store, now, r["needs_you"], r["line"], check.mails, card_events, fetcher.statuses, first)
     finally:
         # the check's place is saved first: a post that fails never makes it run again every 5 minutes. A turn that
         # raised (a timeout) and left no report leaves its mail for the next check (fetch.Fetcher.commit)

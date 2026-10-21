@@ -270,6 +270,12 @@ input, button, textarea { font-family: inherit; }
 .badge-gmail { color: #d93025; }
 .badge-icloud { color: #1a73e8; }
 .badge-app { padding: 0 6px; font-size: 10px; font-weight: 700; letter-spacing: .03em; text-transform: uppercase; color: #3c3450; }
+/* A card the watch marked done (odie.watch.bills): a bill paid or an order delivered turns green; cancelled goes grey */
+.kind-card.is-done { background: linear-gradient(160deg, #e3f7e8 0%, #bfe9cc 100%); }
+:root[data-tod="night"] .kind-card.is-done { background: linear-gradient(160deg, #18392a 0%, #0f2a1d 100%); }
+.done-stamp { display: inline-flex; align-items: center; gap: 4px; height: 22px; padding: 0 9px 0 7px; border-radius: 999px;
+  font-size: 11.5px; font-weight: 700; color: #fff; background: #1f9d55; text-shadow: none; }
+.done-stamp.done-cancelled { background: #7a7488; }
 /* A card with a picture from Photos (odie.photos.cards): the photo fills it under a veil in the kind's evening colours,
    darker at the bottom; the words turn light with a raised edge; the kind's drawing stays on top. */
 .kind-photo { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }

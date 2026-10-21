@@ -8,6 +8,7 @@ import re
 from datetime import date, datetime, timedelta
 
 from odie.photos import cards
+from odie.watch import bills
 from odie.store.db import Store
 
 log = logging.getLogger("odie.upcoming")
@@ -132,9 +133,12 @@ async def build(store: Store, now: datetime, days: int = DAYS) -> dict:
         for e in card.get("events", []):
             start = str(e.get("start") or "")
             if len(start) >= 10:
-                it = _item("calendar", f"watch:{e.get('id')}", str(e.get("title") or ""), start[:10], now.date(),
+                done, title = bills.done_state(str(e.get("title") or ""))  # "✓ Paid · Pay bill" -> paid, "Pay bill"
+                it = _item("calendar", f"watch:{e.get('id')}", title, start[:10], now.date(),
                            start[11:16] if len(start) >= 16 else None, str(e.get("end") or "")[11:16] or None, e.get("where") or None)
                 it["badges"] = list(e.get("badges") or [])  # where the event came from (Gmail, iCloud), for its row
+                if done:
+                    it["done"] = done  # paid, delivered or cancelled: Today shows it done
                 items.append(it)
         if card.get("events"):
             sources["calendar"] = True
