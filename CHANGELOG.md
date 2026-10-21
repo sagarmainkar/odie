@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.2.7 (2026-10-21)
+
+- The WhatsApp chip under replies is gone; Share is the one way out. After a share, a line says when the words
+  went alone and why. Pictures are drawn twice for Safari.
+
 ## v0.2.6 (2026-10-21)
 
 - A shared reply carries its charts, tables and heat maps as pictures: each drawn piece goes through the share
