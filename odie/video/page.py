@@ -13,8 +13,27 @@ from odie.video import beats, timeline
 
 KIT = Path(__file__).parent / "kit"
 
-# The page around the kit: a black page with no margin; video.js puts its 1920x1080 stage at the top left.
-BASE_STYLE = "html, body { margin: 0; background: #000; overflow: hidden; width: 1920px; height: 1080px; }"
+def base_style(size: tuple[int, int]) -> str:
+    """The page around the kit: a black page with no margin, the stage's size; video.js puts its stage at the top
+    left. The landscape stage -> "html, body { margin: 0; background: #000; overflow: hidden; width: 1920px; height:
+    1080px; }", as before aspects; the vertical one -> 1080 x 1920, with Instagram's safe area as CSS variables
+    (":root { --safe-top: 140px; --safe-bottom: 340px; --safe-side: 72px; }") for the writer's page to use."""
+    width, height = size
+    style = f"html, body {{ margin: 0; background: #000; overflow: hidden; width: {width}px; height: {height}px; }}"
+    if size != timeline.VERTICAL:
+        return style
+    safe = timeline.safe_area(size)
+    variables = f"--safe-top: {safe['top']}px; --safe-bottom: {safe['bottom']}px; --safe-side: {safe['side']}px;"
+    return f":root {{ {variables} }} {style}"
+
+
+def stage_script(size: tuple[int, int]) -> str:
+    """The stage video.js draws on, as a script for the page: the vertical stage -> 'window.__stage = {"width": 1080,
+    "height": 1920, "safe": {"top": 140, "bottom": 340, "side": 72}};' (the kit gives the safe area to scenes as
+    s.safe). video.js falls back to 1920 x 1080 with no safe area when a page has none."""
+    width, height = size
+    stage = {"width": width, "height": height, "safe": timeline.safe_area(size)}
+    return f"window.__stage = {json.dumps(stage)};"
 
 # A src= or href= attribute, or a CSS url(), that points at http(s) or a protocol-relative "//" address.
 NETWORK_LINK = re.compile(r"""(?:\b(?:src|href)\s*=\s*["']?|\burl\(\s*["']?)\s*((?:https?:)?//[^"'\s)>]*)""",
@@ -90,8 +109,8 @@ CREDITS_SCENE = """<script>Video.closing({
     const columns = Math.ceil(credits.length / perColumn);
     const rows = Math.min(credits.length, perColumn);
     const lineGap = 46;
-    const top = 540 - (90 + rows * lineGap) / 2;  // the title and the lines together, centred on the stage
-    const columnWidth = 1680 / columns;
+    const top = s.H / 2 - (90 + rows * lineGap) / 2;  // the title and the lines together, centred on the stage
+    const columnWidth = (s.W - 240) / columns;  // 120 px of margin on each side
     s.text("odie-credits-title", "Pictures", {y: top + 24, size: 44, weight: 600, opacity: s.fade(t, 0.1)});
     for (let i = 0; i < credits.length; i++) {
       const column = Math.floor(i / perColumn);
@@ -118,8 +137,10 @@ def credits_scene(credits: list[str]) -> str:
     return script.replace("__PER_COLUMN__", str(CREDITS_PER_COLUMN))
 
 
-def assemble(body: str, timings: dict, assets_script: str = "", credits_script: str = "") -> str:
-    """The whole HTML document for a video: KaTeX's CSS, three.js, KaTeX, video.js, the map's data (`window.__geo`)
+def assemble(body: str, timings: dict, assets_script: str = "", credits_script: str = "",
+             size: tuple[int, int] = timeline.LANDSCAPE) -> str:
+    """The whole HTML document for a video on a stage of `size` (timeline.LANDSCAPE or VERTICAL; base_style and
+    `window.__stage`): KaTeX's CSS, three.js, KaTeX, video.js, the map's data (`window.__geo`)
     and map.js, then `window.__timings`
     ({"starts": [...], "lengths": [...], "beats": [[...], ...]}, in seconds, passed through as given), then the
     video's pictures and clips (`assets_script`, odie.video.assets.staple's `<script>Video.assets({...})</script>`,
@@ -132,9 +153,10 @@ def assemble(body: str, timings: dict, assets_script: str = "", credits_script: 
     head = [
         '<!doctype html><html><head><meta charset="utf-8"><title>video</title>',
         f"<style>{kit['katex_css']}</style>",
-        f"<style>{BASE_STYLE}</style>",
+        f"<style>{base_style(size)}</style>",
         f"<script>{kit['three']}</script>",
         f"<script>{kit['katex']}</script>",
+        f"<script>{stage_script(size)}</script>",
         f"<script>{kit['video']}</script>",
         f"<script>{kit['geo']}</script>",
         f"<script>{kit['map']}</script>",
@@ -231,8 +253,10 @@ class CheckResult:
     cues: list[dict] = field(default_factory=list)
 
 
-async def check_with_cues(body: str, narration: list[str], browser, assets_script: str = "") -> CheckResult:
-    """Loads the page in a sealed 1920x1080 tab with estimated timings and the video's pictures and clips
+async def check_with_cues(body: str, narration: list[str], browser, assets_script: str = "",
+                          size: tuple[int, int] = timeline.LANDSCAPE) -> CheckResult:
+    """Loads the page in a sealed tab of the video's size (1920x1080, or 1080x1920 for a vertical video) with estimated
+    timings and the video's pictures and clips
     (`assets_script`, as the render will have them) and draws three moments of every scene, so the chat turn hears
     about a broken page now and not after minutes of rendering; then reads back the sound cues it placed. The problem
     is None when the page is fine, else the first one as a paragraph to act on (see first_problem). A page that
@@ -241,10 +265,11 @@ async def check_with_cues(body: str, narration: list[str], browser, assets_scrip
     them, right or wrong: whether they fit, shape included, is odie.video.sounds.cue_problem's to say."""
     timings = estimated_timings(narration)
     try:
-        html = assemble(body, timings, assets_script)
+        html = assemble(body, timings, assets_script, size=size)
     except ValueError as e:
         return CheckResult(problem=str(e))
-    async with browser.sealed_page(html, 1920, 1080) as tab:
+    width, height = size
+    async with browser.sealed_page(html, width, height) as tab:
         load_errors = list(tab.errors)
         scene_count = await tab.eval("window.__sceneCount === undefined ? null : window.__sceneCount")
         problem = first_problem(scene_count, len(narration), load_errors, [])
@@ -265,10 +290,11 @@ async def check_with_cues(body: str, narration: list[str], browser, assets_scrip
         return CheckResult(problem=None, cues=cues)
 
 
-async def check(body: str, narration: list[str], browser, assets_script: str = "") -> str | None:
+async def check(body: str, narration: list[str], browser, assets_script: str = "",
+                size: tuple[int, int] = timeline.LANDSCAPE) -> str | None:
     """The page check without the sound cues (see check_with_cues): None when the page is fine, else the first
     problem as a paragraph to act on."""
-    result = await check_with_cues(body, narration, browser, assets_script)
+    result = await check_with_cues(body, narration, browser, assets_script, size=size)
     return result.problem
 
 

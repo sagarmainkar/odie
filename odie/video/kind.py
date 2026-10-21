@@ -9,8 +9,9 @@ page.html (the accepted page as it was drawn, with its timings, pictures and cre
 (the narration with the page's sound cues under it, when it placed any), the segment files, <slug>.mp4 and job.json.
 
 job.data carries, from make_video: "given" ({"images": [...], "clips": [...]}, the chat's lines), "private" (the
-signed-in sites the asking chat had read), "sounds" (False when the user asked for no sound effects) and "style" (how
-an OpenAI narrator should sound, "" for Odie's usual; older jobs have none); from the writing step: "assets" (each
+signed-in sites the asking chat had read), "sounds" (False when the user asked for no sound effects), "style" (how
+an OpenAI narrator should sound, "" for Odie's usual; older jobs have none) and "aspect" ("landscape" or "vertical",
+see aspect_of; older jobs have none and are landscape); from the writing step: "assets" (each
 prepared one's name, kind, words, credit, size, length and file; never its data), "dropped" (the lines the writer
 was told about the ones that couldn't be used), "narration" (one string per scene), "body" (the page) and "cues" (the
 sound cues the page placed with Video.sounds, as odie.video.page.CheckResult gives them; [] when none). job.json never
@@ -43,6 +44,16 @@ def needs_writing(job: jobs.Job) -> bool:
     body = job.data.get("body")
     has_page = bool(narration) and bool(body)
     return not has_page
+
+
+def aspect_of(job: jobs.Job) -> str:
+    """Decides the video's shape from its job: "vertical" (a 1080 x 1920 reel) only when make_video stored it; a job
+    with no "aspect" (every video before aspects) or an unknown one is "landscape". {"aspect": "vertical"} ->
+    "vertical"; {} -> "landscape"; {"aspect": "square"} -> "landscape"."""
+    aspect = job.data.get("aspect", "landscape")
+    if aspect in timeline.SIZES:
+        return aspect
+    return "landscape"
 
 
 def given_lines(job: jobs.Job) -> tuple[list[str], list[str]]:
@@ -93,7 +104,7 @@ async def write(job: jobs.Job, turn, browser) -> None:
     listing = assets.listing(gathered, dropped)
     assets_script = assets.staple(gathered)  # the writer's page check draws the same pictures the render will
     written = await writer.write(job.topic, job.minutes, job.brief, job.folder, turn, browser, listing=listing,
-                                 assets_script=assets_script)
+                                 assets_script=assets_script, aspect=aspect_of(job))
     job.title = jobs.title_after_writing(written.title, job)
     job.data["narration"] = written.narration
     job.data["body"] = written.body
@@ -132,12 +143,15 @@ async def make_video(job: jobs.Job, browser, transport) -> Path:
     """The steps from narration to a checked MP4 file; returns the MP4's path. Any step may raise. When the video has
     web pictures or clips, their credits get a card of Odie's own after the writer's last scene (CREDITS_SECONDS,
     silent): one more scene in the timings than the narration has, and the voice padded to the picture's end. The
-    page's sound cues are mixed under the narration (voice_track) before mux."""
+    page's sound cues are mixed under the narration (voice_track) before mux. The video is drawn at its aspect's size
+    (aspect_of, timeline.size_of), and a finished file of any other size is refused."""
     folder = job.folder
     narration = job.data["narration"]
     body = job.data["body"]
+    size = timeline.size_of(aspect_of(job))
     style = job.data.get("style", "")  # a job queued before styles has none: Odie's usual voice
-    wav, lengths, beats = await narrate(jobs.hooks["store"], narration, job.voice_name, transport=transport, style=style)
+    wav, lengths, beats = await narrate(jobs.hooks["store"], narration, job.voice_name, transport=transport,
+                                        style=style)
 
     gathered = assets_from(job)
     credits = assets.credits(gathered)
@@ -152,17 +166,20 @@ async def make_video(job: jobs.Job, browser, transport) -> Path:
     narration_wav.write_bytes(wav)
     sound_wav = await voice_track(job, narration_wav, timings)
     assets_script = assets.staple(gathered)
-    page_html = assemble(body, timings, assets_script, credits_script)
+    page_html = assemble(body, timings, assets_script, credits_script, size=size)
     (folder / "page.html").write_text(page_html, encoding="utf-8")
 
     segments = await render(browser, body, timings, folder, timeline.FPS, timeline.TABS, assets_script=assets_script,
-                            credits_script=credits_script)
+                            credits_script=credits_script, size=size)
     mp4 = folder / f"{job.slug}.mp4"
     await mux(segments, sound_wav, mp4)
 
     info = await probe(mp4)
     if not info["video"] or not info["audio"]:
         raise EncodeError("The finished file is missing its picture or its sound.")
+    made = (info["width"], info["height"])
+    if made != size:
+        raise EncodeError(f"The finished file is {made[0]}x{made[1]}, not {size[0]}x{size[1]}.")
     return mp4
 
 

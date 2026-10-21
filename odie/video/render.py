@@ -9,8 +9,6 @@ from odie.video import timeline
 from odie.video.encode import Segment
 from odie.video.page import assemble
 
-WIDTH = 1920
-HEIGHT = 1080
 JPEG_QUALITY = 92
 
 
@@ -47,10 +45,12 @@ class Counter:
 
 
 async def render_range(browser: Browser, html: str, path: Path, fps: int, first: int, end: int,
-                       counter: Counter) -> Path:
-    """One tab: its own sealed page, frames first..end-1 drawn in order into one segment. A frame that draws a clip
-    returns a promise (the clip is seeked first); `page.eval` awaits it, so each picture is of the finished frame."""
-    async with browser.sealed_page(html, WIDTH, HEIGHT) as page, Segment(path, fps) as segment:
+                       counter: Counter, size: tuple[int, int] = timeline.LANDSCAPE) -> Path:
+    """One tab of the video's size: its own sealed page, frames first..end-1 drawn in order into one segment (the
+    segment takes the frames' size as it is). A frame that draws a clip returns a promise (the clip is seeked first);
+    `page.eval` awaits it, so each picture is of the finished frame."""
+    width, height = size
+    async with browser.sealed_page(html, width, height) as page, Segment(path, fps) as segment:
         for k in range(first, end):
             await page.eval(f"__frame({k / fps})")
             jpeg = await page.shot("jpeg", JPEG_QUALITY)
@@ -61,12 +61,12 @@ async def render_range(browser: Browser, html: str, path: Path, fps: int, first:
 
 async def render(browser: Browser, body: str, timings: dict, folder: Path, fps: int, tabs: int,
                  progress: Callable[[int, int], None] | None = None, assets_script: str = "",
-                 credits_script: str = "") -> list[Path]:
-    """Draws every frame of the video and returns the segment files (`segment-0.mp4`, ...) in order; every tab's page
-    carries the pictures and clips (`assets_script`) and Odie's credits card (`credits_script`, whose scene the
-    timings include), see page.assemble. If any tab fails, the others are stopped and the error comes out: no
-    half-written segment is handed back."""
-    html = assemble(body, timings, assets_script, credits_script)
+                 credits_script: str = "", size: tuple[int, int] = timeline.LANDSCAPE) -> list[Path]:
+    """Draws every frame of the video at `size` (timeline.LANDSCAPE, or VERTICAL for a reel) and returns the segment
+    files (`segment-0.mp4`, ...) in order; every tab's page carries the pictures and clips (`assets_script`) and Odie's
+    credits card (`credits_script`, whose scene the timings include), see page.assemble. If any tab fails, the others
+    are stopped and the error comes out: no half-written segment is handed back."""
+    html = assemble(body, timings, assets_script, credits_script, size=size)
     total_seconds = timings["starts"][-1] + timings["lengths"][-1]
     frames = timeline.frame_count(total_seconds, fps)
     counter = Counter(frames, progress)
@@ -74,7 +74,7 @@ async def render(browser: Browser, body: str, timings: dict, folder: Path, fps: 
     jobs = []
     for i, (first, end) in enumerate(frame_ranges(frames, tabs)):
         path = folder / f"segment-{i}.mp4"
-        jobs.append(asyncio.create_task(render_range(browser, html, path, fps, first, end, counter)))
+        jobs.append(asyncio.create_task(render_range(browser, html, path, fps, first, end, counter, size=size)))
 
     try:
         return list(await asyncio.gather(*jobs))

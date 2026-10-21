@@ -3,7 +3,9 @@
 // How a video is drawn: the tool sets window.__timings = {starts: [...], lengths: [...], beats: [[...], ...]}
 // (seconds, measured from the narration; beats are where each "|"-marked phrase starts, seconds into its scene), and
 // the page calls Video.scenes([...]) with one {setup(s)?, draw(t, s)} per scene. The server then calls
-// window.__frame(T) for every frame (T = frame / fps) and takes a picture of the 1920x1080 stage. A video with pictures
+// window.__frame(T) for every frame (T = frame / fps) and takes a picture of the stage: 1920x1080, or the size the
+// page sets in window.__stage = {width, height, safe} before this script (1080x1920 for a vertical video, whose safe
+// area, the room Instagram's buttons cover, scenes read as s.safe = {top, bottom, side}). A video with pictures
 // or clips calls Video.assets({...}) before Video.scenes (see registerAssets); the first frame waits until they are
 // loaded, and a frame that draws a clip returns a promise, settled once the clip shows its moment. Odie's credits
 // card calls Video.closing({...}) before the page's script: it plays after the page's last scene (see closing). A
@@ -24,8 +26,13 @@
 (function () {
   "use strict";
 
-  const W = 1920;
-  const H = 1080;
+  // The stage the page asked for (odie.video.page.stage_script), else the landscape one with nothing covered.
+  // {width: 1080, height: 1920, safe: {top: 140, bottom: 340, side: 72}} -> W 1080, H 1920, that safe area;
+  // no window.__stage -> W 1920, H 1080, safe {top: 0, bottom: 0, side: 0}.
+  const STAGE = window.__stage || {width: 1920, height: 1080, safe: {top: 0, bottom: 0, side: 0}};
+  const W = STAGE.width;
+  const H = STAGE.height;
+  const SAFE = Object.freeze(Object.assign({top: 0, bottom: 0, side: 0}, STAGE.safe));
   const FADE = 0.6;  // seconds a fade in (or out) takes
   const SANS = '-apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif';
   const colors = {bg: "#0e1117", blue: "#58C4DD", yellow: "#FFFF00", green: "#83C167", red: "#FC6255", text: "#ECECEC"};
@@ -711,7 +718,7 @@
         return textureFor(textures, name);
       },
       three: {scene: litScene(), camera: camera, renderer: renderer},
-      ctx: ctx, colors: colors, W: W, H: H, length: length, beats: beats,
+      ctx: ctx, colors: colors, W: W, H: H, safe: SAFE, length: length, beats: beats,
       beat: function (t, i) {
         return beatProgress(beats, length, t, i);
       },
@@ -895,5 +902,5 @@
   }
 
   window.Video = {scenes: scenes, closing: closing, assets: registerAssets, sounds: sounds, soundCues: soundCues,
-                  extend: extend, colors: colors, W: W, H: H, SANS: SANS};
+                  extend: extend, colors: colors, W: W, H: H, safe: SAFE, SANS: SANS};
 })();
