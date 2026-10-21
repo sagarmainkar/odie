@@ -43,17 +43,23 @@ function cardFor(piece: HTMLElement, name: string): { frame: HTMLElement; card: 
   return { frame, card };
 }
 
-/** The piece as a PNG file at twice the screen's scale; null when the browser could not draw it (the share then
- * goes on with the words). `name` is the assistant's name, on the line under the picture. */
-export async function renderPicture(piece: HTMLElement, name: string, fileName: string): Promise<File | null> {
+/** What a render gives: the PNG file, or why there is none (the words then go alone and the button says so). */
+export type Drawn = { file: File | null; why?: string };
+
+/** The piece as a PNG file at twice the screen's scale, or why it could not be drawn. `name` is the assistant's
+ * name, on the line under the picture. Drawn twice: Safari fills in fonts and pictures only on a second pass. */
+export async function renderPicture(piece: HTMLElement, name: string, fileName: string): Promise<Drawn> {
   const { toBlob } = await import("html-to-image");
   const { frame, card } = cardFor(piece, name);
   document.body.append(frame);
   try {
+    await toBlob(card, { pixelRatio: 2, cacheBust: false });
     const blob = await toBlob(card, { pixelRatio: 2, cacheBust: false });
-    return blob ? new File([blob], fileName, { type: "image/png" }) : null;
-  } catch {
-    return null;
+    if (!blob) return { file: null, why: "the browser gave no picture" };
+    return { file: new File([blob], fileName, { type: "image/png" }) };
+  } catch (error) {
+    const said = (error as { message?: string } | null)?.message || String(error);
+    return { file: null, why: said.slice(0, 120) };
   } finally {
     frame.remove();
   }

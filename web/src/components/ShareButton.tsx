@@ -1,8 +1,6 @@
 import { useState } from "react";
-import { isPhone } from "../install";
 import { renderPicture } from "../picture";
-import { SMALL_PIECE, canShareHere, shareFile, shareReply, shareWords, visualsIn, whatsappLink, type ShareableFile } from "../share";
-import { Icon as Glyph } from "./Tile";
+import { SMALL_PIECE, canShareHere, shareFile, shareReply, shareWords, visualsIn, type ShareableFile } from "../share";
 
 function ShareIcon({ size = 16 }: { size?: number }) {
   return (
@@ -17,37 +15,41 @@ function Cross({ size = 16 }: { size?: number }) {
 }
 
 /** Under a reply: the share sheet with its words and, when the bubble (`bubbleId`, the reply's data-bubble) holds
- * charts, tables or other drawn pieces, those as pictures too (where the browser has a sheet); on a phone a WhatsApp
- * chip that opens the app with the words ready to send. Nothing at all where neither works (Firefox on a Mac). */
-export function ShareWords({ text, title, bubbleId, sheet = canShareHere(), phone = isPhone() }:
-                           { text: string; title?: string; bubbleId?: string; sheet?: boolean; phone?: boolean }) {
+ * charts, tables or other drawn pieces, those as pictures too. Nothing where the browser has no sheet (Firefox on a
+ * Mac). When the pictures could not go, a line under the row says so and why, for a while. */
+export function ShareWords({ text, title, bubbleId, sheet = canShareHere() }: { text: string; title?: string; bubbleId?: string; sheet?: boolean }) {
+  const [note, setNote] = useState("");
   const [failed, setFailed] = useState(false);
   const [drawing, setDrawing] = useState(false);
   const words = shareWords(text);
-  if (!words || (!sheet && !phone)) return null;
+  if (!words || !sheet) return null;
   async function toSheet() {
     const bubble = bubbleId ? document.querySelector(`[data-bubble="${bubbleId}"]`) : null;
+    const visuals = visualsIn(bubble, SMALL_PIECE);
     setDrawing(true);
-    const outcome = await shareReply({ text: words, title, visuals: visualsIn(bubble, SMALL_PIECE), name: title || "Odie" }, renderPicture);
+    const went = await shareReply({ text: words, title, visuals, name: title || "Odie" }, renderPicture);
     setDrawing(false);
-    setFailed(outcome === "failed");
-    setTimeout(() => setFailed(false), 1500);
+    setFailed(went.outcome === "failed");
+    setNote(wordsAloneNote(visuals.length, went));
+    setTimeout(() => { setFailed(false); setNote(""); }, 6000);
   }
   return (
     <>
-      {sheet && (
-        <button type="button" aria-label={failed ? "Couldn't share" : "Share"} title={failed ? "Couldn't share" : "Share"} disabled={drawing}
-          className="hit w-7 h-7 rounded-full flex items-center justify-center text-muted active:text-ink" onClick={() => void toSheet()}>
-          {failed ? <span className="text-ember-text"><Cross /></span> : drawing ? <span className="spinner" /> : <ShareIcon />}
-        </button>
-      )}
-      {phone && (
-        <a href={whatsappLink(words)} aria-label="Send on WhatsApp" className="hit h-7 pl-1.5 pr-2.5 rounded-full flex items-center gap-1 text-[12px] font-semibold text-muted active:text-ink">
-          <Glyph name="chat" size={14} />WhatsApp
-        </a>
-      )}
+      <button type="button" aria-label={failed ? "Couldn't share" : "Share"} title={failed ? "Couldn't share" : "Share"} disabled={drawing}
+        className="hit w-7 h-7 rounded-full flex items-center justify-center text-muted active:text-ink" onClick={() => void toSheet()}>
+        {failed ? <span className="text-ember-text"><Cross /></span> : drawing ? <span className="spinner" /> : <ShareIcon />}
+      </button>
+      {note && <span className="text-[12px] text-muted">{note}</span>}
     </>
   );
+}
+
+/** The line under the row after a share: nothing when the pictures went (or there were none to send); otherwise
+ * that the words went alone, and why. (2 pieces, {shared, 0, why "the browser gave no picture"}) ->
+ * "Words only: the browser gave no picture"; (0 pieces, {shared, 0}) -> ""; (2, {cancelled, 0, why}) -> "" */
+export function wordsAloneNote(pieces: number, went: { outcome: string; pictures: number; why?: string }): string {
+  if (!pieces || went.pictures > 0 || went.outcome !== "shared") return "";
+  return `Words only: ${went.why || "the pictures couldn't be drawn"}`;
 }
 
 /** On a made file's card (a deck's PDF, a podcast, a picture): the share sheet with the file attached, so it can go to

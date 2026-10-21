@@ -2,25 +2,26 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it } from "vitest";
 import { FileCard } from "./FileCard";
-import { ShareFile, ShareWords } from "./ShareButton";
+import { ShareFile, ShareWords, wordsAloneNote } from "./ShareButton";
 
 const withSheet = (on: boolean) => Object.defineProperty(navigator, "share", { value: on ? async () => {} : undefined, configurable: true });
 afterEach(() => withSheet(false));
 
 describe("sharing a reply", () => {
-  it("shows nothing where the browser can neither share nor open WhatsApp", () => {
-    expect(renderToStaticMarkup(<ShareWords text="Three colleges offer it." sheet={false} phone={false} />)).toBe("");
-    expect(renderToStaticMarkup(<ShareWords text={"```chart\n{}\n```"} sheet={true} phone={true} />)).toBe("");  // no words to send
-  });
-
-  it("opens WhatsApp with the reply's words on a phone, and the sheet where there is one", () => {
-    const phone = renderToStaticMarkup(<ShareWords text={"## Colleges\n\n**COEP** — Pune"} sheet={false} phone={true} />);
-    expect(phone).toContain('href="whatsapp://send?text=Colleges%0A%0ACOEP%20%E2%80%94%20Pune"');
-    expect(phone).toContain("WhatsApp");
-    expect(phone).not.toContain('aria-label="Share"');
-    const mac = renderToStaticMarkup(<ShareWords text="Hi" sheet={true} phone={false} />);
+  it("is a share button only where the browser has a sheet, and only for a reply with words", () => {
+    expect(renderToStaticMarkup(<ShareWords text="Three colleges offer it." sheet={false} />)).toBe("");
+    expect(renderToStaticMarkup(<ShareWords text={"```chart\n{}\n```"} sheet={true} />)).toBe("");  // no words to send
+    const mac = renderToStaticMarkup(<ShareWords text="Hi" sheet={true} />);
     expect(mac).toContain('aria-label="Share"');
     expect(mac).not.toContain("whatsapp://");
+  });
+
+  it("says when the words went alone, and why", () => {
+    expect(wordsAloneNote(2, { outcome: "shared", pictures: 0, why: "the browser gave no picture" })).toBe("Words only: the browser gave no picture");
+    expect(wordsAloneNote(2, { outcome: "shared", pictures: 0 })).toBe("Words only: the pictures couldn't be drawn");
+    expect(wordsAloneNote(2, { outcome: "shared", pictures: 2 })).toBe("");
+    expect(wordsAloneNote(0, { outcome: "shared", pictures: 0 })).toBe("");
+    expect(wordsAloneNote(2, { outcome: "cancelled", pictures: 0, why: "x" })).toBe("");
   });
 });
 

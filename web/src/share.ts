@@ -39,12 +39,6 @@ export function canShareHere(nav: Sharer = typeof navigator !== "undefined" ? (n
   return typeof nav.share === "function";
 }
 
-/** WhatsApp with the words ready to send; the person picks the chat there.
- *  "Three colleges offer it." -> "whatsapp://send?text=Three%20colleges%20offer%20it." */
-export function whatsappLink(text: string): string {
-  return "whatsapp://send?text=" + encodeURIComponent(text);
-}
-
 /** A reply's words as they read in a chat app: fenced blocks (a chart's JSON, code) left out, headings and emphasis
  * marks dropped, a link kept as its words, a picture dropped, runs of blank lines closed up.
  *  "## Colleges\n\n- **COEP** — Pune\n\n```chart\n{}\n```\n\nSee [the list](https://x.y)." -> "Colleges\n\n- COEP — Pune\n\nSee the list." */
@@ -79,26 +73,38 @@ export async function shareText(text: string, title?: string, nav: Sharer = type
   }
 }
 
+/** What became of a reply's pictures: "pictures" when they went, else why the words went alone. */
+export type ReplyShared = { outcome: ShareOutcome; pictures: number; why?: string };
+
 /** A reply to the sheet: its words, and its visual pieces as pictures when the sheet takes files. `render` draws
- * one piece (renderPicture); a piece that can't be drawn is left out. Pictures first with the words as their
- * caption; words alone where files can't go (an older sheet), or when nothing could be drawn.
- *  a reply with a chart on an iPhone -> share({files: [chart.png], text, title}) -> "shared"
- *  the same on a sheet without canShare -> share({text, title}) */
+ * one piece (renderPicture); a piece that can't be drawn is left out, and the reason kept. Pictures first with
+ * the words as their caption; words alone where files can't go (an older sheet), or when nothing could be drawn.
+ *  a reply with a chart on an iPhone -> share({files: [chart.png], text, title}) -> {shared, 1 picture}
+ *  the same on a sheet without canShare -> share({text, title}) -> {shared, 0, why "this browser's sheet can't take files"} */
 export async function shareReply(reply: { text: string; title?: string; visuals: HTMLElement[]; name: string },
-                                 render: (piece: HTMLElement, name: string, fileName: string) => Promise<File | null>,
-                                 nav: Sharer = typeof navigator !== "undefined" ? (navigator as Sharer) : {}): Promise<ShareOutcome> {
-  if (typeof nav.share !== "function") return "unsupported";
+                                 render: (piece: HTMLElement, name: string, fileName: string) => Promise<{ file: File | null; why?: string }>,
+                                 nav: Sharer = typeof navigator !== "undefined" ? (navigator as Sharer) : {}): Promise<ReplyShared> {
+  if (typeof nav.share !== "function") return { outcome: "unsupported", pictures: 0 };
   let files: File[] = [];
-  if (reply.visuals.length && typeof nav.canShare === "function") {
-    const drawn = await Promise.all(reply.visuals.map((piece, n) => render(piece, reply.name, pictureName(reply.name, n))));
-    files = drawn.filter((file): file is File => file !== null);
-    if (files.length && !nav.canShare({ files })) files = [];
+  let why: string | undefined;
+  if (reply.visuals.length) {
+    if (typeof nav.canShare !== "function") {
+      why = "this browser's sheet can't take files";
+    } else {
+      const drawn = await Promise.all(reply.visuals.map((piece, n) => render(piece, reply.name, pictureName(reply.name, n))));
+      files = drawn.map((d) => d.file).filter((file): file is File => file !== null);
+      why = drawn.find((d) => d.why)?.why;
+      if (files.length && !nav.canShare({ files })) {
+        files = [];
+        why = "this browser's sheet can't take files";
+      }
+    }
   }
   try {
     await nav.share(files.length ? { files, text: reply.text, title: reply.title } : { text: reply.text, title: reply.title });
-    return "shared";
+    return files.length ? { outcome: "shared", pictures: files.length } : { outcome: "shared", pictures: 0, why };
   } catch (error) {
-    return outcomeOf(error);
+    return { outcome: outcomeOf(error), pictures: files.length, why };
   }
 }
 
