@@ -10,3 +10,5 @@
 - **A countdown character (when the brief has one)** is drawn only when `s.left()` is not `null`: he enters
   at the first word showing `Math.ceil(s.left())` (60), counts down with the voice to 0 on the last word, then blinks
   once. Odie plays the chime and cuts there: nothing after 0, no outro card, no 3-2-1.
+- **Draw with the kit.** Use a web picture or clip only when the topic needs a real one (a place, a person, a real
+  thing): a reel ends on the blink, so their credits go in the post's caption, not on screen.

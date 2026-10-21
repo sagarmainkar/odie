@@ -62,6 +62,28 @@ def is_one_minute(job: jobs.Job) -> bool:
     return minute.is_one_minute(job.minutes, aspect_of(job))
 
 
+def credits_on_screen(job: jobs.Job, credits: list[str]) -> list[str]:
+    """Decides which credits get Odie's card at the video's end. A one-minute video (a reel) ends on its blink, so it
+    shows none and keeps them as job.data["caption_credits"] for the ready message (the owner's choice: credits in
+    the caption); every other video shows them all. A reel with ["Photo by A on Unsplash"] -> [] (and the caption
+    line); a 3-minute video -> ["Photo by A on Unsplash"]."""
+    if not is_one_minute(job):
+        return credits
+    if credits:
+        job.data["caption_credits"] = credits
+    return []
+
+
+def ready_text(job: jobs.Job) -> str:
+    """The chat's ready message: "The video about Ice is ready.", and for a reel with web pictures, their credits as
+    a line to paste into the post's caption: "For the caption: Photo by A on Unsplash · Pexels, by B"."""
+    line = jobs.ready_line("video", job.title)
+    credits = job.data.get("caption_credits") or []
+    if not credits:
+        return line
+    return f"{line}\n\nFor the caption: {' · '.join(credits)}"
+
+
 def given_lines(job: jobs.Job) -> tuple[list[str], list[str]]:
     """The picture and clip lines the chat gave make_video; a job made before pictures (no "given") has none."""
     given = job.data.get("given", {})
@@ -170,7 +192,8 @@ async def voice_track(job: jobs.Job, narration_wav: Path, timings: dict) -> Path
 
 async def make_video(job: jobs.Job, browser, transport) -> Path:
     """The steps from narration to a checked MP4 file; returns the MP4's path. Any step may raise. When the video has
-    web pictures or clips, their credits get a card of Odie's own after the writer's last scene (CREDITS_SECONDS,
+    web pictures or clips, their credits get a card of Odie's own after the writer's last scene (a reel's go in the
+    caption instead, credits_on_screen; CREDITS_SECONDS,
     silent): one more scene in the timings than the narration has, and the voice padded to the picture's end. The
     page's sound cues are mixed under the narration (voice_track) before mux. The video is drawn at its aspect's size
     (aspect_of, timeline.size_of), and a finished file of any other size is refused. A one-minute video
@@ -194,7 +217,7 @@ async def make_video(job: jobs.Job, browser, transport) -> Path:
         breath = fitted.breath  # the breaths were sped or slowed with the voice
 
     gathered = assets_from(job)
-    credits = assets.credits(gathered)
+    credits = credits_on_screen(job, assets.credits(gathered))  # a reel's go in the caption instead
     credits_script = credits_scene(credits)
     if credits:
         lengths = lengths + [CREDITS_SECONDS]
@@ -237,5 +260,5 @@ async def make(job: jobs.Job, browser, transport) -> dict:
 # pictures over what a video can carry.
 KNOWN_ERRORS = (voice.VoiceUnavailable, EncodeError, BrowserError, assets.AssetProblem)
 KIND = jobs.Kind(word="video", folder=FOLDER, write=write, make=make, known_errors=KNOWN_ERRORS,
-                 needs_writing=needs_writing)
+                 needs_writing=needs_writing, ready_text=ready_text)
 jobs.KINDS["video"] = KIND

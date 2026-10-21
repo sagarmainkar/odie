@@ -178,6 +178,8 @@ async def make_video(topic: str, minutes: int = 2, brief: str = "", sources: lis
     images: pictures for the film, at most 20, each one line "address — what it shows": the address a tool gave
     (https://… from find_images, photo:<id>, upload:<id>, screenshot:<id>), then what the picture shows, its mood, its
     orientation if unusual, and a web picture's credit in brackets at the end. The writer sees only these words.
+    For a one-minute video or a reel, find web pictures and clips only when the topic needs a real one (a place, a
+    person, a real thing); the writer draws the rest.
     clips: short stock clips, at most 6, the same way, with the https:// address find_clips gave.
     sounds: leave true; false only when the user asks for no sound effects.
     voice_name: leave empty; only when the user asks for a voice, one of the Settings engine's voices.
