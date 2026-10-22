@@ -13,7 +13,11 @@
   ],
   "expect": {
     "mm1": {
-      "outcome": "needs_you"
+      "outcome": "needs_you",
+      "pile": [
+        "events",
+        "alerts"
+      ]
     }
   }
 }

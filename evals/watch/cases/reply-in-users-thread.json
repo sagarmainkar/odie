@@ -14,7 +14,13 @@
   ],
   "expect": {
     "r1": {
-      "outcome": "needs_you"
+      "outcome": "needs_you",
+      "pile": [
+        "alerts",
+        "personal",
+        "bills"
+      ],
+      "track": "reply"
     }
   },
   "threads": {

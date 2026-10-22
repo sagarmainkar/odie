@@ -1,0 +1,46 @@
+{
+  "id": "reply-already-sent",
+  "about": "A reply the watch was following: the thread now holds the user's answer, so the thread should close.",
+  "mails": [
+    {
+      "id": "rsp1",
+      "from": "Shop Deals <deals@shop.example.com>",
+      "subject": "Weekend sale",
+      "at": "2026-10-22T02:00:00Z",
+      "snippet": "Up to 30% off",
+      "body": "Up to 30% off this weekend."
+    }
+  ],
+  "expect": {
+    "rsp1": {
+      "outcome": "not"
+    }
+  },
+  "threads_open": [
+    {
+      "ref": "mail:rs1",
+      "kind": "reply",
+      "title": "Reply: workshop fee",
+      "stage": "owed",
+      "due": "2026-10-24",
+      "thread": "th-rs"
+    }
+  ],
+  "threads": {
+    "th-rs": [
+      {
+        "from": "Tom Reyes <tom@learnhub.example.org>",
+        "date": "2026-10-20T08:00:00Z",
+        "body": "Could you tell me your fee for the workshop?"
+      },
+      {
+        "from": "Me <me@example.com>",
+        "date": "2026-10-21T19:00:00Z",
+        "body": "Hi Tom, my fee is 40,000 for the two hours. Either date works."
+      }
+    ]
+  },
+  "threads_expect": {
+    "mail:rs1": "closed"
+  }
+}

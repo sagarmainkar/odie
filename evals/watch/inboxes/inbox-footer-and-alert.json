@@ -94,10 +94,17 @@
   "expect": {
     "fa1": {
       "outcome": "needs_you",
-      "must_open": true
+      "must_open": true,
+      "pile": [
+        "alerts",
+        "personal"
+      ]
     },
     "fa2": {
-      "outcome": "needs_you"
+      "outcome": "needs_you",
+      "pile": [
+        "alerts"
+      ]
     },
     "pr6": {
       "outcome": "not"
