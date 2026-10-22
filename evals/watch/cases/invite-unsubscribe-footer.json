@@ -1,0 +1,20 @@
+{
+  "id": "invite-unsubscribe-footer",
+  "about": "A person asks for availability for a paid workshop by Friday; generic preview, unsubscribe footer.",
+  "mails": [
+    {
+      "id": "u1",
+      "from": "Tom Reyes <tom@learnhub.example.org>",
+      "subject": "Quick note from our team",
+      "at": "2026-10-22T02:30:00Z",
+      "snippet": "Hope you're well! A quick note from the LearnHub team about an upcoming",
+      "body": "Hope you're well! A quick note from the LearnHub team about an upcoming session. We'd like you to lead a paid two-hour workshop on data privacy for our members. Could you tell me by Friday whether you're available on 6 or 7 November, and your fee?\n\nThanks,\nTom\n\nYou are receiving this because you joined LearnHub. Unsubscribe."
+    }
+  ],
+  "expect": {
+    "u1": {
+      "outcome": "needs_you",
+      "must_open": true
+    }
+  }
+}

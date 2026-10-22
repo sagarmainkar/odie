@@ -1,0 +1,19 @@
+{
+  "id": "social-notification",
+  "about": "A social network notification.",
+  "mails": [
+    {
+      "id": "sn1",
+      "from": "Social <notify@social.example.com>",
+      "subject": "Ravi and 3 others liked your post",
+      "at": "2026-10-22T02:30:00Z",
+      "snippet": "See who liked your post",
+      "body": "Ravi and 3 others liked your post."
+    }
+  ],
+  "expect": {
+    "sn1": {
+      "outcome": "not"
+    }
+  }
+}

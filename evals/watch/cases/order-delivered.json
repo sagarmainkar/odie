@@ -1,0 +1,19 @@
+{
+  "id": "order-delivered",
+  "about": "An order delivered.",
+  "mails": [
+    {
+      "id": "o3",
+      "from": "Shop Orders <orders@shop.example.com>",
+      "subject": "Delivered: desk lamp",
+      "at": "2026-10-22T02:30:00Z",
+      "snippet": "Your package was delivered",
+      "body": "Your desk lamp was delivered at 11:40."
+    }
+  ],
+  "expect": {
+    "o3": {
+      "outcome": "not"
+    }
+  }
+}

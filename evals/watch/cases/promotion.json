@@ -1,0 +1,19 @@
+{
+  "id": "promotion",
+  "about": "A shop's sale.",
+  "mails": [
+    {
+      "id": "p1",
+      "from": "Shop Deals <deals@shop.example.com>",
+      "subject": "Festive sale: 40% off everything",
+      "at": "2026-10-22T02:30:00Z",
+      "snippet": "Our biggest sale of the year starts now",
+      "body": "Our biggest sale of the year starts now. 40% off everything until Sunday. Shop now."
+    }
+  ],
+  "expect": {
+    "p1": {
+      "outcome": "not"
+    }
+  }
+}

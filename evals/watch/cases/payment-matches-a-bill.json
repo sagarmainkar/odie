@@ -1,0 +1,22 @@
+{
+  "id": "payment-matches-a-bill",
+  "about": "A payment confirmation for an open bill reminder: the watch closes it.",
+  "mails": [
+    {
+      "id": "pm1",
+      "from": "Power Company <noreply@power.example.com>",
+      "subject": "Payment received",
+      "at": "2026-10-22T02:30:00Z",
+      "snippet": "Payment of Rs 4,280 received for consumer 1100",
+      "body": "Payment of Rs 4,280 received for consumer 1100 on 21-Oct-2026. Thank you."
+    }
+  ],
+  "expect": {
+    "pm1": {
+      "outcome": "not"
+    }
+  },
+  "open_tasks": [
+    "Pay electricity bill — ₹4,280, due 9 Nov"
+  ]
+}

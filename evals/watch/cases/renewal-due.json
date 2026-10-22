@@ -1,0 +1,19 @@
+{
+  "id": "renewal-due",
+  "about": "An insurance renewal with a deadline.",
+  "mails": [
+    {
+      "id": "rn1",
+      "from": "Insure <renewals@insure.example.com>",
+      "subject": "Your car insurance renews on 2 Nov",
+      "at": "2026-10-22T02:30:00Z",
+      "snippet": "Renew now to stay covered",
+      "body": "Your car insurance policy ends on 2 Nov. Renew before then to stay covered."
+    }
+  ],
+  "expect": {
+    "rn1": {
+      "outcome": "needs_you"
+    }
+  }
+}

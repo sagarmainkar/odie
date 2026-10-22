@@ -1,0 +1,19 @@
+{
+  "id": "order-placed",
+  "about": "An order placed.",
+  "mails": [
+    {
+      "id": "o1",
+      "from": "Shop Orders <orders@shop.example.com>",
+      "subject": "Order confirmed: desk lamp",
+      "at": "2026-10-22T02:30:00Z",
+      "snippet": "Thanks for your order",
+      "body": "Thanks for your order of a desk lamp. Arriving by Monday."
+    }
+  ],
+  "expect": {
+    "o1": {
+      "outcome": "not"
+    }
+  }
+}

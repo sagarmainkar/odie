@@ -1,0 +1,19 @@
+{
+  "id": "delivery-failed",
+  "about": "A delivery failed and needs rescheduling.",
+  "mails": [
+    {
+      "id": "df1",
+      "from": "Courier <track@courier.example.com>",
+      "subject": "Delivery attempt failed",
+      "at": "2026-10-22T02:30:00Z",
+      "snippet": "We couldn't deliver your parcel",
+      "body": "We couldn't deliver your parcel today. Reschedule by tomorrow or it goes back to the sender."
+    }
+  ],
+  "expect": {
+    "df1": {
+      "outcome": "needs_you"
+    }
+  }
+}

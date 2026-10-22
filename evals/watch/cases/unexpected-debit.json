@@ -1,0 +1,19 @@
+{
+  "id": "unexpected-debit",
+  "about": "A debit the user may not have made.",
+  "mails": [
+    {
+      "id": "d1",
+      "from": "Bank Alerts <alerts@bank.example.com>",
+      "subject": "Debit of Rs 9,999 from your account",
+      "at": "2026-10-22T02:30:00Z",
+      "snippet": "Rs 9,999 debited to MERCHANT XYZ",
+      "body": "Rs 9,999 was debited from account ending 2210 to MERCHANT XYZ on 22-Oct at 01:12. If this wasn't you, call us immediately to block your card."
+    }
+  ],
+  "expect": {
+    "d1": {
+      "outcome": "needs_you"
+    }
+  }
+}

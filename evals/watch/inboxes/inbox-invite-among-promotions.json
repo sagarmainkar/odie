@@ -1,0 +1,141 @@
+{
+  "id": "inbox-invite-among-promotions",
+  "about": "The 22 Oct shape: one person's invitation among sales and digests.",
+  "mails": [
+    {
+      "id": "ia1",
+      "from": "Maya Lin <maya.lin@expertcircle.example.com>",
+      "subject": "Workflow software market - new consultation",
+      "at": "2026-10-22T03:18:00Z",
+      "snippet": "Thanks for being part of the Expert Circle network! Given your experience, I thought you could",
+      "body": "Hi,\n\nThanks for being part of the Expert Circle network! Given your experience, I thought you could support a client researching the market for workflow software: trends, competition and budgets.\n\nIf this is a good fit, please answer the screening questions below:\n1. Are you familiar with the main vendors in this market?\n2. Who competes most head-to-head?\n3. Would you be comfortable with a recorded call? (Yes/No)\n4. Your availability over the next week?\n\nBest,\nMaya\nAnalyst, Expert Call Services\n\nClick unsubscribe to be removed from all future consulting opportunities."
+    },
+    {
+      "id": "ia2",
+      "from": "Green Valley School <office@greenvalley.example.org>",
+      "subject": "Sports day on 31 Oct",
+      "at": "2026-10-22T02:30:00Z",
+      "snippet": "Dear parents, sports day is on 31 October",
+      "body": "Dear parents, sports day is on 31 October. Please reply by Tuesday if your child will take part."
+    },
+    {
+      "id": "pr1",
+      "from": "Fashion <news@fashion.example.com>",
+      "subject": "Flash sale",
+      "at": "2026-10-22T01:01:00Z",
+      "snippet": "Flash sale: this week only",
+      "body": "Flash sale: this week only. Shop now."
+    },
+    {
+      "id": "pr2",
+      "from": "Gadgets <news@gadgets.example.com>",
+      "subject": "New phone launch",
+      "at": "2026-10-22T02:02:00Z",
+      "snippet": "New phone launch: this week only",
+      "body": "New phone launch: this week only. Shop now."
+    },
+    {
+      "id": "pr3",
+      "from": "Grocer <news@grocer.example.com>",
+      "subject": "Weekend offers",
+      "at": "2026-10-22T03:03:00Z",
+      "snippet": "Weekend offers: this week only",
+      "body": "Weekend offers: this week only. Shop now."
+    },
+    {
+      "id": "ib1",
+      "from": "Weekly Bytes <digest@weeklybytes.example.org>",
+      "subject": "This week in tech",
+      "at": "2026-10-22T02:30:00Z",
+      "snippet": "Ten links",
+      "body": "Ten links."
+    },
+    {
+      "id": "ib2",
+      "from": "Accounts <no-reply@accounts.example.com>",
+      "subject": "Your sign-in code",
+      "at": "2026-10-22T02:30:00Z",
+      "snippet": "Code 551203",
+      "body": "Code 551203."
+    },
+    {
+      "id": "ib3",
+      "from": "Shop Orders <orders@shop.example.com>",
+      "subject": "Shipped: headphones",
+      "at": "2026-10-22T02:30:00Z",
+      "snippet": "On its way",
+      "body": "Arrives Friday."
+    },
+    {
+      "id": "ib4",
+      "from": "Social <notify@social.example.com>",
+      "subject": "You have 4 new followers",
+      "at": "2026-10-22T02:30:00Z",
+      "snippet": "See them",
+      "body": "See them."
+    },
+    {
+      "id": "pr4",
+      "from": "Travel <news@travel.example.com>",
+      "subject": "Fares from Rs 1,999",
+      "at": "2026-10-22T04:04:00Z",
+      "snippet": "Fares from Rs 1,999: this week only",
+      "body": "Fares from Rs 1,999: this week only. Shop now."
+    },
+    {
+      "id": "pr5",
+      "from": "Books <news@books.example.com>",
+      "subject": "Festive reading list",
+      "at": "2026-10-22T05:05:00Z",
+      "snippet": "Festive reading list: this week only",
+      "body": "Festive reading list: this week only. Shop now."
+    },
+    {
+      "id": "ib5",
+      "from": "Video <hello@stream.example.com>",
+      "subject": "New this week",
+      "at": "2026-10-22T02:30:00Z",
+      "snippet": "Shows you might like",
+      "body": "Shows you might like."
+    }
+  ],
+  "expect": {
+    "ia1": {
+      "outcome": "needs_you",
+      "must_open": true
+    },
+    "ia2": {
+      "outcome": "needs_you"
+    },
+    "pr1": {
+      "outcome": "not"
+    },
+    "pr2": {
+      "outcome": "not"
+    },
+    "pr3": {
+      "outcome": "not"
+    },
+    "ib1": {
+      "outcome": "not"
+    },
+    "ib2": {
+      "outcome": "not"
+    },
+    "ib3": {
+      "outcome": "not"
+    },
+    "ib4": {
+      "outcome": "not"
+    },
+    "pr4": {
+      "outcome": "not"
+    },
+    "pr5": {
+      "outcome": "not"
+    },
+    "ib5": {
+      "outcome": "not"
+    }
+  }
+}

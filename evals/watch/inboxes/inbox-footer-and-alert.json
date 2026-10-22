@@ -1,0 +1,130 @@
+{
+  "id": "inbox-footer-and-alert",
+  "about": "A person's request with an unsubscribe footer and a security alert among notifications.",
+  "mails": [
+    {
+      "id": "fa1",
+      "from": "Tom Reyes <tom@learnhub.example.org>",
+      "subject": "Quick note from our team",
+      "at": "2026-10-22T02:30:00Z",
+      "snippet": "Hope you're well! A quick note from the LearnHub team about an upcoming",
+      "body": "Hope you're well! We'd like you to lead a paid workshop on 6 or 7 November. Could you confirm by Friday?\n\nUnsubscribe."
+    },
+    {
+      "id": "fa2",
+      "from": "CloudHost Security <security@cloudhost.example.com>",
+      "subject": "Action needed: rotate your API keys",
+      "at": "2026-10-22T02:30:00Z",
+      "snippet": "Unusual activity detected",
+      "body": "Unusual activity detected. Rotate your keys from the dashboard."
+    },
+    {
+      "id": "pr6",
+      "from": "Shoes <news@shoes.example.com>",
+      "subject": "Buy one get one",
+      "at": "2026-10-22T06:00:00Z",
+      "snippet": "Buy one get one: this week only",
+      "body": "Buy one get one: this week only. Shop now."
+    },
+    {
+      "id": "pr7",
+      "from": "Electronics <news@electronics.example.com>",
+      "subject": "Prices dropped",
+      "at": "2026-10-22T07:01:00Z",
+      "snippet": "Prices dropped: this week only",
+      "body": "Prices dropped: this week only. Shop now."
+    },
+    {
+      "id": "fb1",
+      "from": "Bank Cards <statements@bank.example.com>",
+      "subject": "Your statement is ready",
+      "at": "2026-10-22T02:30:00Z",
+      "snippet": "Amount due Rs 3,200 by 8 Nov",
+      "body": "Amount due Rs 3,200 by 8 Nov."
+    },
+    {
+      "id": "fb2",
+      "from": "Social <notify@social.example.com>",
+      "subject": "Ravi commented on your photo",
+      "at": "2026-10-22T02:30:00Z",
+      "snippet": "See comment",
+      "body": "Nice!"
+    },
+    {
+      "id": "fb3",
+      "from": "Weekly Bytes <digest@weeklybytes.example.org>",
+      "subject": "Deep dive: caching",
+      "at": "2026-10-22T02:30:00Z",
+      "snippet": "A long read",
+      "body": "A long read."
+    },
+    {
+      "id": "pr8",
+      "from": "Furniture <news@furniture.example.com>",
+      "subject": "Clearance sale",
+      "at": "2026-10-22T08:02:00Z",
+      "snippet": "Clearance sale: this week only",
+      "body": "Clearance sale: this week only. Shop now."
+    },
+    {
+      "id": "fb4",
+      "from": "Jobs <alerts@jobs.example.com>",
+      "subject": "8 new jobs for you",
+      "at": "2026-10-22T02:30:00Z",
+      "snippet": "Matching your profile",
+      "body": "8 new jobs."
+    },
+    {
+      "id": "fb5",
+      "from": "Shop Orders <orders@shop.example.com>",
+      "subject": "Delivered: notebook",
+      "at": "2026-10-22T02:30:00Z",
+      "snippet": "Delivered",
+      "body": "Delivered at 10:05."
+    },
+    {
+      "id": "fb6",
+      "from": "Calendar <calendar-notification@calendar.example.com>",
+      "subject": "Reminder: gym at 7 am",
+      "at": "2026-10-22T02:30:00Z",
+      "snippet": "Gym",
+      "body": "Gym at 7."
+    }
+  ],
+  "expect": {
+    "fa1": {
+      "outcome": "needs_you",
+      "must_open": true
+    },
+    "fa2": {
+      "outcome": "needs_you"
+    },
+    "pr6": {
+      "outcome": "not"
+    },
+    "pr7": {
+      "outcome": "not"
+    },
+    "fb1": {
+      "outcome": "not"
+    },
+    "fb2": {
+      "outcome": "not"
+    },
+    "fb3": {
+      "outcome": "not"
+    },
+    "pr8": {
+      "outcome": "not"
+    },
+    "fb4": {
+      "outcome": "not"
+    },
+    "fb5": {
+      "outcome": "not"
+    },
+    "fb6": {
+      "outcome": "not"
+    }
+  }
+}

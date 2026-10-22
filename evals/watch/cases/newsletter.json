@@ -1,0 +1,19 @@
+{
+  "id": "newsletter",
+  "about": "A weekly tech digest.",
+  "mails": [
+    {
+      "id": "n1",
+      "from": "Weekly Bytes <digest@weeklybytes.example.org>",
+      "subject": "This week: faster databases, new chips",
+      "at": "2026-10-22T02:30:00Z",
+      "snippet": "Ten links worth your time this week",
+      "body": "Ten links worth your time this week: database speedups, a new chip, and a long read on caching."
+    }
+  ],
+  "expect": {
+    "n1": {
+      "outcome": "not"
+    }
+  }
+}

@@ -1,0 +1,34 @@
+{
+  "id": "reply-in-users-thread",
+  "about": "A contractor replies in a thread the user started, asking for confirmation.",
+  "mails": [
+    {
+      "id": "r1",
+      "from": "Build Co <hello@buildco.example.com>",
+      "subject": "Re: Quote for the kitchen work",
+      "at": "2026-10-22T02:30:00Z",
+      "snippet": "Here's the quote you asked for",
+      "body": "Here's the quote you asked for: Rs 1,80,000 for the kitchen. Can you confirm by Saturday so we can book the team?",
+      "thread": "th-kitchen"
+    }
+  ],
+  "expect": {
+    "r1": {
+      "outcome": "needs_you"
+    }
+  },
+  "threads": {
+    "th-kitchen": [
+      {
+        "from": "Me <me@example.com>",
+        "date": "2026-10-18T10:00:00Z",
+        "body": "Could you send a quote for redoing the kitchen?"
+      },
+      {
+        "from": "Build Co <hello@buildco.example.com>",
+        "date": "2026-10-22T02:30:00Z",
+        "body": "Here's the quote you asked for."
+      }
+    ]
+  }
+}

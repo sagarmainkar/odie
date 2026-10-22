@@ -1,0 +1,19 @@
+{
+  "id": "subscription-invoice",
+  "about": "A subscription invoice already charged.",
+  "mails": [
+    {
+      "id": "si1",
+      "from": "Cloud Plan <billing@cloudplan.example.com>",
+      "subject": "Invoice #1042: $58.25",
+      "at": "2026-10-22T02:30:00Z",
+      "snippet": "Your invoice for October",
+      "body": "Your invoice #1042 for October: $58.25, charged to your card ending 7811. No action needed."
+    }
+  ],
+  "expect": {
+    "si1": {
+      "outcome": "not"
+    }
+  }
+}
