@@ -1,0 +1,19 @@
+{
+  "id": "cold-sales-pitch",
+  "about": "A person selling a service the user didn't ask about.",
+  "mails": [
+    {
+      "id": "cp1",
+      "from": "Alex Kim <alex@growfast.example.net>",
+      "subject": "Grow your traffic 3x",
+      "at": "2026-10-22T02:30:00Z",
+      "snippet": "I noticed your website could rank higher",
+      "body": "Hi, I noticed your website could rank higher. We help businesses triple their traffic. Want a free audit?"
+    }
+  ],
+  "expect": {
+    "cp1": {
+      "outcome": "not"
+    }
+  }
+}

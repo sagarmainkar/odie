@@ -124,6 +124,9 @@ elif MODE == "gmailmcp":  # a line-style Gmail and Calendar server: its schema a
     def gmail_search(query: Annotated[str, Field(description="Gmail search query")], max_results: int = 10) -> str:
         """Search Gmail."""
         _log("gmail_search", {"query": query, "max_results": max_results})
+        hits = DATA.get("query_hits", {})
+        if query in hits:
+            return json.dumps({"messages": hits[query][:max_results]})
         return json.dumps({"messages": DATA["mail"]})
 
     @s.tool()
@@ -146,6 +149,22 @@ elif MODE == "gmailmcp":  # a line-style Gmail and Calendar server: its schema a
             where = f" @ {e['location']}" if e.get("location") else ""
             out.append(f"{e['id']} | {when} | {e['summary']}{who}{where}")
         return "\n".join(out)
+
+    @s.tool()
+    def gmail_read(message_id: str) -> str:
+        """Read one message in full."""
+        _log("gmail_read", {"message_id": message_id})
+        if DATA.get("read_fails"):
+            raise RuntimeError("the mail service is busy")
+        row = next((m for m in DATA["mail"] if m.get("id") == message_id), {})
+        return json.dumps({"ok": True, "id": message_id, "threadId": row.get("threadId", ""),
+                           "body": DATA.get("bodies", {}).get(message_id, "")})
+
+    @s.tool()
+    def gmail_read_thread(thread_id: str) -> str:
+        """Read a whole thread, oldest first."""
+        _log("gmail_read_thread", {"thread_id": thread_id})
+        return json.dumps({"ok": True, "thread_id": thread_id, "messages": DATA.get("threads", {}).get(thread_id, [])})
 
     @s.tool()
     def calendar_create_event(summary: str, start: str, end: str) -> str:

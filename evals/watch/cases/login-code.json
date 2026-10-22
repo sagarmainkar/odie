@@ -1,0 +1,19 @@
+{
+  "id": "login-code",
+  "about": "A sign-in code.",
+  "mails": [
+    {
+      "id": "l1",
+      "from": "Accounts <no-reply@accounts.example.com>",
+      "subject": "Your sign-in code",
+      "at": "2026-10-22T02:30:00Z",
+      "snippet": "Your code is 482913",
+      "body": "Your code is 482913. It expires in 10 minutes."
+    }
+  ],
+  "expect": {
+    "l1": {
+      "outcome": "not"
+    }
+  }
+}

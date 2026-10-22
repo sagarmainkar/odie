@@ -1,0 +1,19 @@
+{
+  "id": "job-alerts",
+  "about": "Automated job alerts.",
+  "mails": [
+    {
+      "id": "j1",
+      "from": "Jobs <alerts@jobs.example.com>",
+      "subject": "12 new jobs for you",
+      "at": "2026-10-22T02:30:00Z",
+      "snippet": "Jobs matching your profile",
+      "body": "12 new jobs matching your profile this week."
+    }
+  ],
+  "expect": {
+    "j1": {
+      "outcome": "not"
+    }
+  }
+}

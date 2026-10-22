@@ -10,9 +10,10 @@ from odie.watch.calls import CallError, call_tool, list_tools
 FIXTURE = Path(__file__).parent / "fixtures" / "mcp_mail.py"
 
 
-def spec_for(mode, tmp_path, mail=(), events=()):
+def spec_for(mode, tmp_path, mail=(), events=(), **extra):
+    """A fake mail server over stdio. extra: more of its data, e.g. bodies={"m1": "…"} for gmail_read, threads={…}."""
     data = tmp_path / "mail.json"
-    data.write_text(json.dumps({"mail": list(mail), "events": list(events)}))
+    data.write_text(json.dumps({"mail": list(mail), "events": list(events), **extra}))
     return {"command": sys.executable, "args": [str(FIXTURE), mode], "env": {"MAIL_DATA": str(data), "MAIL_LOG": str(tmp_path / "calls.log")}}
 
 

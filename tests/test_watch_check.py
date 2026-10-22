@@ -227,3 +227,31 @@ async def test_two_turns_without_report_fall_back(store, tmp_path):
         calls.append(prompt)
         return "no"
     assert await check.run_check(store, DAY, turn, post, push) == "fallback" and len(calls) == 2
+
+
+def test_the_nudge_carries_what_the_check_read():
+    # A turn that ended without report is asked again WITH the mail and events it read (a fresh turn has no memory).
+    from odie.watch import check as watch_check
+    from odie.watch.fetch import Event, Mail
+    from odie.watch.tools import Check
+
+    class Reads:
+        pass
+    c = Check(Reads())
+    c.mails = [Mail("m1", "A <a@example.com>", "Hello", "2026-10-22T08:00:00Z", "hi", [], "mail:x")]
+    c.events = [Event("e1", "Standup", "2026-10-22T10:00:00+05:30", "", "", [], "calendar:x")]
+    text = watch_check.nudge_text(c)
+    assert "call report now" in text and '"m1"' in text and "Standup" in text
+
+
+def test_the_watch_reads_like_an_assistant():
+    # The rules the eval showed matter: assume the user isn't reading, open what's unclear, a person asking is a reply
+    # owed, look around with the reads, finish with report even after a refused tool. It runs every 30 minutes.
+    from odie.watch import check as watch_check
+    text = watch_check.SKILL.read_text()
+    assert "may not be reading" in text
+    assert "read_mail" in text and "before deciding" in text
+    assert "a reply owed" in text and "unsubscribe footer" in text and "opportunity for the user" in text
+    assert "read_thread" in text and "sent_to" in text and "search_mail" in text
+    assert "Always finish with `report`" in text and "refused" in text
+    assert len(text.split()) <= 800

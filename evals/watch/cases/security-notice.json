@@ -1,0 +1,19 @@
+{
+  "id": "security-notice",
+  "about": "A provider asks the user to rotate credentials after suspicious activity.",
+  "mails": [
+    {
+      "id": "s1",
+      "from": "CloudHost Security <security@cloudhost.example.com>",
+      "subject": "Action needed: rotate your API keys",
+      "at": "2026-10-22T02:30:00Z",
+      "snippet": "We detected unusual activity on systems that store customer secrets",
+      "body": "We detected unusual activity on systems that store customer secrets. As a precaution, rotate any API keys and passwords stored with us from your dashboard. Don't use links in email."
+    }
+  ],
+  "expect": {
+    "s1": {
+      "outcome": "needs_you"
+    }
+  }
+}

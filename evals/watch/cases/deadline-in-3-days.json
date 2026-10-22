@@ -1,0 +1,19 @@
+{
+  "id": "deadline-in-3-days",
+  "about": "The user's accountant asks for documents by a date.",
+  "mails": [
+    {
+      "id": "dl1",
+      "from": "R. Shah <rshah@accounts.example.org>",
+      "subject": "Documents needed by 25 Oct",
+      "at": "2026-10-22T02:30:00Z",
+      "snippet": "Please send the remaining documents",
+      "body": "Please send the remaining bank statements and the rent receipts by 25 October so I can file on time."
+    }
+  ],
+  "expect": {
+    "dl1": {
+      "outcome": "needs_you"
+    }
+  }
+}

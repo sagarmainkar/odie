@@ -1,0 +1,19 @@
+{
+  "id": "friend-asks",
+  "about": "A friend asks a question.",
+  "mails": [
+    {
+      "id": "f1",
+      "from": "Sam <sam@friends.example.net>",
+      "subject": "Dinner on Saturday?",
+      "at": "2026-10-22T02:30:00Z",
+      "snippet": "Are you free Saturday evening?",
+      "body": "Are you free Saturday evening? Thinking of the new place near the park."
+    }
+  ],
+  "expect": {
+    "f1": {
+      "outcome": "needs_you"
+    }
+  }
+}

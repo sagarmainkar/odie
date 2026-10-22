@@ -1,0 +1,19 @@
+{
+  "id": "meeting-moved",
+  "about": "A colleague moves a meeting.",
+  "mails": [
+    {
+      "id": "mm1",
+      "from": "Priya Nair <priya@acme.example.com>",
+      "subject": "Moved: project review now Thursday 3 pm",
+      "at": "2026-10-22T02:30:00Z",
+      "snippet": "Can we do Thursday 3 pm instead?",
+      "body": "Hi, something came up. Can we move the project review to Thursday 3 pm? Let me know if that works."
+    }
+  ],
+  "expect": {
+    "mm1": {
+      "outcome": "needs_you"
+    }
+  }
+}

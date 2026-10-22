@@ -79,6 +79,8 @@ class Mail:
     source: str
     body: str = ""
     sources: list[str] = field(default_factory=list)  # every source that showed this mail (Gmail and Apple Mail)
+    thread: str = ""  # the app's thread id, when its listing gives one
+    opened: bool = False  # body is the whole message (open_mail), not the listing's preview
 
     def brief(self) -> dict:
         return {"id": self.id, "from": self.frm, "subject": self.subject, "at": self.at, "snippet": self.snippet,
@@ -150,8 +152,9 @@ def parse_mail(text: str, source: str) -> list[Mail]:
         sender = _who(_first(r, "from", "sender", "from_email", "from__email"))
         subject = str(_first(r, "subject", "title"))
         at = str(_first(r, "date", "messageTimestamp", "internalDate", "received_at", "at"))
+        thread = str(_first(r, "threadId", "thread_id"))
         out.append(Mail(id=mid, frm=sender, subject=subject, at=at, snippet=body[:SNIPPET], attachments=atts,
-                        source=source, body=body[:BODY], sources=[source]))
+                        source=source, body=body[:BODY], sources=[source], thread=thread))
     return out
 
 
@@ -208,6 +211,50 @@ def fold_mail(mails: list[Mail]) -> list[Mail]:
         by_key[key] = len(out)
         out.append(m)
     return out
+
+
+ADDRESS = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
+NOT_FOR_APPLE_MAIL = "not available for Apple Mail"
+SEARCH_LIMIT = 10
+READ_SECONDS = 30  # one read (open, thread, search) may take this long: the whole check has 280 s
+
+
+def address_of(frm: str) -> str:
+    """The bare address in a From line, for a search: '"A Person" <a@example.com>' -> "a@example.com";
+    "a@example.com" -> itself; "A Person" (no address) -> ""."""
+    found = ADDRESS.search(frm or "")
+    if found is None:
+        return ""
+    return found.group(0)
+
+
+def thread_rows(text: str) -> list[dict]:
+    """A thread from an app's reply, oldest first as the app gives it, each {from, at, body}:
+    '{"messages": [{"from": "A", "date": "…", "body": "Hi"}]}' -> [{"from": "A", "at": "…", "body": "Hi"}]."""
+    try:
+        rows = _list_in(json.loads(text))
+    except ValueError:
+        return []
+    out = []
+    for r in rows:
+        body = str(_first(r, "body", "body_plain", "text", "messageText", "snippet"))[:BODY]
+        out.append({"from": _who(_first(r, "from", "sender")), "at": str(_first(r, "date", "at", "messageTimestamp")),
+                    "body": body})
+    return out
+
+
+def body_of(text: str) -> str:
+    """A message's text from an app's read reply: its JSON's body field, or the reply itself when it is plain text.
+    '{"id": "m1", "body": "Hi there"}' -> "Hi there"; 'Hi there' -> "Hi there"; '{"data": {"messageText": "x"}}' -> "x"."""
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return text.strip()
+    if isinstance(data, dict) and isinstance(data.get("data"), dict):
+        data = data["data"]
+    if not isinstance(data, dict):
+        return ""
+    return str(_first(data, "body", "body_plain", "text", "messageText", "message_text"))
 
 
 def _minutes(iso: str) -> float | None:
@@ -373,7 +420,8 @@ class Fetcher:
         self.catch_up_tries = int(self.state.get("catch_up_tries") or 0)  # its turns that failed so far
         self.statuses: dict[str, dict] = {}
         self.first: set[str] = set()
-        self._mail: dict[str, Mail] = {}
+        self._mail: dict[str, Mail] = {}  # this check's new mail: marked seen at commit
+        self._found: dict[str, Mail] = {}  # older mail a search turned up: openable, never marked seen
         self._events: list[Event] = []
         self._servers = None
 
@@ -386,12 +434,15 @@ class Fetcher:
             raise CallError(f"{src.app} isn't connected any more")
         return spec
 
-    async def _call(self, src: Source, tool: str, args: dict):
-        """One read through the source: a connector through its MCP server, the Mac's own apps through odie.mac."""
+    async def _call(self, src: Source, tool: str, args: dict, timeout: float | None = None):
+        """One read through the source: a connector through its MCP server (within `timeout` seconds when given), the
+        Mac's own apps through odie.mac."""
         if src.style == "native":
             from odie.mac import native
             return await native.call(tool, args)
-        return await call_tool(self._spec(src), tool, args)
+        if timeout is None:
+            return await call_tool(self._spec(src), tool, args)
+        return await call_tool(self._spec(src), tool, args, timeout=timeout)
 
     def _ok(self, src: Source, ok: bool, reason: str = "") -> None:
         self.statuses[src.id] = {"ok": ok, "at": self.now.isoformat(timespec="seconds"), "reason": reason, "app": src.app, "kind": src.kind}
@@ -518,7 +569,128 @@ class Fetcher:
         return fold_events(got)  # one row for an event both calendars hold
 
     def read_mail(self, mail_id: str) -> Mail | None:
-        return self._mail.get(mail_id)
+        """A mail this check knows: one of its new mails, or one a search turned up."""
+        mail = self._mail.get(mail_id)
+        if mail is None:
+            mail = self._found.get(mail_id)
+        return mail
+
+    def _source_of(self, mail: Mail) -> Source | None:
+        """The saved source whose id the mail carries (a mail folded from two apps keeps the connector's id)."""
+        return next((s for s in saved(self.store) if s.id == mail.source), None)
+
+    async def open_mail(self, mail_id: str) -> Mail | None:
+        """A mail of this check with its whole body, read once through the app that holds its id and then kept: Apple
+        Mail through its own read, a connector through its read tool (Source.reader). A listing often carries only a
+        preview, so this is what "reading the mail" means. None for an id not in this check; the mail as it was when
+        the app has no read tool or the read fails (its `opened` stays False, so the caller can say so)."""
+        mail = self.read_mail(mail_id)
+        if mail is None or mail.opened:
+            return mail
+        src = self._source_of(mail)
+        if src is None:
+            return mail
+        try:
+            body = await self._whole_body(src, mail_id)
+        except CallError as e:
+            log.info("watch: %s couldn't open %s: %s", src.app, mail_id, e)
+            return mail
+        if body:
+            mail.body = body[:BODY]
+            mail.opened = True
+        return mail
+
+    async def read_thread(self, mail_id: str) -> list[dict] | str:
+        """The whole thread a mail of this check belongs to, oldest first, through the app that holds it; or why it
+        can't be read (Apple Mail, an app without a thread tool, a mail whose thread isn't known)."""
+        mail = self.read_mail(mail_id)
+        if mail is None:
+            return "No message with that id in this check: call new_mail first."
+        src = self._source_of(mail)
+        if src is not None and src.style == "native":
+            return f"Reading a thread is {NOT_FOR_APPLE_MAIL}."
+        if src is None or not src.thread:
+            return "This mail's app can't read a whole thread."
+        if not mail.thread:
+            return "This mail's thread isn't known."
+        params = {src.thread["id_param"]: mail.thread}
+        args: dict = {}
+        if src.style == "zapier":
+            args["params"] = params
+        else:
+            args.update(params)
+        try:
+            res = await self._call(src, src.thread["tool"], args, timeout=READ_SECONDS)
+        except CallError as e:
+            return f"The thread couldn't be read: {e}"
+        if res.is_error:
+            return f"The thread couldn't be read: {res.text[:200]}"
+        return thread_rows(res.text)
+
+    async def search_mail(self, query: str, limit: int = SEARCH_LIMIT) -> list[Mail] | str:
+        """Older mail matching `query` (the app's own search words, e.g. "from:bills@power.example.com") across the
+        connected mail apps that can search, newest first, at most `limit`; found mails can then be opened with
+        open_mail. Only Apple Mail connected -> why not."""
+        searchable = [s for s in saved(self.store) if s.kind == "mail" and s.style != "native" and s.query_param]
+        if not searchable:
+            return f"Searching older mail is {NOT_FOR_APPLE_MAIL}, and no other connected mail app can search."
+        got: list[Mail] = []
+        answered = 0
+        for src in searchable:
+            args = dict(src.fixed)
+            if "max_results" in args:
+                args["max_results"] = limit
+            if src.style == "zapier":
+                args["params"] = {**(args.get("params") or {}), src.query_param: query}
+            else:
+                args[src.query_param] = query
+            try:
+                res = await self._call(src, src.tool, args, timeout=READ_SECONDS)
+            except CallError as e:
+                log.info("watch: %s couldn't search: %s", src.app, e)
+                continue
+            if res.is_error:
+                continue
+            answered += 1
+            got += parse_mail(res.text, src.id)
+        if answered == 0:
+            return "The mail apps couldn't search just now; don't read this as no mail."
+        found = newest_first(fold_mail(got))[:limit]
+        for m in found:
+            if m.id not in self._mail:
+                self._found.setdefault(m.id, m)
+        return found
+
+    async def sent_to(self, address: str, limit: int = 5) -> list[Mail] | str:
+        """The user's own recent mail to this address (newest first): have they written to this person before, and
+        in what tone. A From line works too; no address in it -> why not."""
+        bare = address_of(address)
+        if not bare:
+            return "That isn't an email address."
+        return await self.search_mail(f"in:sent to:{bare}", limit)
+
+    async def _whole_body(self, src: Source, mail_id: str) -> str:
+        """The whole text of one message from its app: "" when the app has no way to open one."""
+        if src.style == "native":
+            from odie.mac import mail as mac_mail
+            from odie.mac import scripts as mac_scripts
+            try:
+                row = await mac_mail.read(mail_id)
+            except (mac_scripts.MacError, ValueError) as e:  # ValueError: Mail's reply wasn't JSON
+                raise CallError(str(e)) from None
+            return str(_first(row, "body", "text"))
+        if not src.reader:
+            return ""
+        params = {src.reader["id_param"]: mail_id}
+        args: dict = {}
+        if src.style == "zapier":
+            args["params"] = params
+        else:
+            args.update(params)
+        res = await self._call(src, src.reader["tool"], args, timeout=READ_SECONDS)
+        if res.is_error:
+            raise CallError(res.text[:200] or "the app said no")
+        return body_of(res.text)
 
     async def save_attachment(self, mail_id: str, name: str) -> Path:
         from odie.agent.tools.files import workspace

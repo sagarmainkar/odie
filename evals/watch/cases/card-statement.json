@@ -1,0 +1,19 @@
+{
+  "id": "card-statement",
+  "about": "A card statement: the watch puts it on the calendar with a reminder; nothing to decide now.",
+  "mails": [
+    {
+      "id": "c1",
+      "from": "Bank Cards <statements@bank.example.com>",
+      "subject": "Your credit card statement is ready",
+      "at": "2026-10-22T02:30:00Z",
+      "snippet": "Total amount due Rs 12,400, due date 05-Nov-2026",
+      "body": "Your statement for card ending 4411 is ready. Total amount due Rs 12,400. Minimum due Rs 620. Due date 05-Nov-2026."
+    }
+  ],
+  "expect": {
+    "c1": {
+      "outcome": "not"
+    }
+  }
+}

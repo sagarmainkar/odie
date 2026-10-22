@@ -1,0 +1,19 @@
+{
+  "id": "school-notice",
+  "about": "A school notice asking parents for something by a date.",
+  "mails": [
+    {
+      "id": "sc1",
+      "from": "Green Valley School <office@greenvalley.example.org>",
+      "subject": "Annual day on 30 Oct: costume and consent form",
+      "at": "2026-10-22T02:30:00Z",
+      "snippet": "Dear parents, our annual day is on 30 October",
+      "body": "Dear parents, our annual day is on 30 October. Please send the signed consent form and a white costume by Monday 26 October."
+    }
+  ],
+  "expect": {
+    "sc1": {
+      "outcome": "needs_you"
+    }
+  }
+}

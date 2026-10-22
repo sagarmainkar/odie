@@ -21,6 +21,7 @@ INTERVAL = timedelta(minutes=30)
 # Bills and orders (the owner's choice, 21 Oct 2026): also updating that event, to mark a bill paid or an order delivered
 # or moved. Closing a paid bill's reminder goes through the watch's own close_reminder, never task_update.
 MAY_WRITE = frozenset({"calendar_create_event", "mac_calendar_add", "calendar_update_event"})
+REACHES_OUT = frozenset({"web_fetch", "web_search", "find_images"})  # tools that send words to the web
 CARD_DAYS = 14  # Today's Up next shows two weeks of the calendar
 SKILL = Path(__file__).parent / "skill" / "SKILL.md"
 WATCH_FOR = "Watch for"
@@ -53,10 +54,17 @@ def guard(tool, args, tool_context) -> dict | None:
     changing memory, the shell, handing files over, closing tasks and the browser.
     Example: new_mail -> None (runs); update_memory -> refused; browser_open -> refused (the browser keeps signed-in
     sites); task_update -> refused (the watch closes a paid bill's reminder with its own close_reminder);
-    calendar_create_event, calendar_update_event -> None (MAY_WRITE)."""
+    calendar_create_event, calendar_update_event -> None (MAY_WRITE); web_fetch -> None, but refused once the turn
+    has read mail beyond this check's (search_mail, sent_to, read_thread): a mail's hidden instructions could
+    otherwise carry what the search found out to a web address."""
     from odie.trackers import guard as trackers_guard
+    from odie.watch.tools import READ_BEYOND
     if tool.name in MAY_WRITE:
         return None
+    state = getattr(tool_context, "state", None) or {}  # a context without a turn state has read nothing beyond
+    read_beyond = bool(state.get(READ_BEYOND))
+    if read_beyond and tool.name in REACHES_OUT:
+        return {"error": "Not after reading older mail in this check: report it as a needs-you item instead."}
     refused = trackers_guard(tool, args, tool_context)
     if refused:
         return refused
@@ -113,6 +121,15 @@ def _instruction(memory_text: str, watch: str) -> str:
     return (f"{body}\n\n## Watch for\n{watch or '(nothing yet)'}\n\n## What you remember about the user\n{memory_text or '(nothing)'}")
 
 
+def nudge_text(check) -> str:
+    """The second ask for a turn that ended without report: the mail and events the check read, because the nudge
+    runs as a fresh turn that remembers nothing."""
+    return ("You ended the watch check without calling report. This is what the check read; call report now "
+            "(an empty needs_you list when nothing needs the user, and a one-sentence line for Today).\n"
+            f"Mail: {json.dumps([check.fenced(m) for m in check.mails], ensure_ascii=False)}\n"
+            f"Events: {json.dumps([e.brief() for e in check.events], ensure_ascii=False)}")
+
+
 async def run_check(store, now: datetime, turn, post, push, memory=None, memory_index: str = "") -> str:
     if sources.stale(store, now):
         await sources.detect_and_save(store)
@@ -144,12 +161,8 @@ async def run_check(store, now: datetime, turn, post, push, memory=None, memory_
         check.events = await fetcher.upcoming_events()
         check.read = True
     if check.report is None:  # small models often stop short of report: one nudge, with what the check read
-        nudge = ("You ended the watch check without calling report. This is what the check read; call report now "
-                 "(an empty needs_you list when nothing needs the user, and a one-sentence line for Today).\n"
-                 f"Mail: {json.dumps([check.fenced(m) for m in check.mails], ensure_ascii=False)}\n"
-                 f"Events: {json.dumps([e.brief() for e in check.events], ensure_ascii=False)}")
         try:
-            await turn(nudge, tools, instruction)
+            await turn(nudge_text(check), tools, instruction)
         except Exception as e:  # noqa: BLE001
             reason = f"{type(e).__name__}: {e}"[:160]
             log.warning("watch nudge failed", exc_info=True)

@@ -1,0 +1,19 @@
+{
+  "id": "appointment-confirmed",
+  "about": "A confirmed appointment: the watch puts it on the calendar.",
+  "mails": [
+    {
+      "id": "ap1",
+      "from": "City Clinic <appointments@cityclinic.example.org>",
+      "subject": "Appointment confirmed: 28 Oct, 10:30",
+      "at": "2026-10-22T02:30:00Z",
+      "snippet": "Your appointment is confirmed",
+      "body": "Your appointment with Dr Rao is confirmed for 28 Oct at 10:30."
+    }
+  ],
+  "expect": {
+    "ap1": {
+      "outcome": "not"
+    }
+  }
+}
