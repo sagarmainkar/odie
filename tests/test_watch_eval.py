@@ -93,3 +93,14 @@ def test_the_entry_point_loads_no_settings_before_the_throwaway_home():
     code = "import sys, odie.watch_eval; print('odie.config' in sys.modules)"
     out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=60, check=True)
     assert out.stdout.strip() == "False"
+
+
+def test_the_eval_offers_a_calendar_that_only_records():
+    # The live watch can write to the user's calendar; the eval gives the same tool names, which only record.
+    writes = []
+    tools = {t.name: t for t in watch_eval.calendar_fakes(writes)}
+    assert set(tools) == {"calendar_create_event", "calendar_update_event"}
+    got = tools["calendar_create_event"].func(summary="Pay card bill — ₹12,400", start="2026-11-05",
+                                                     end="2026-11-05")
+    assert "created" in got["result"] and writes == [{"tool": "calendar_create_event", "summary": "Pay card bill — ₹12,400",
+                                                      "start": "2026-11-05", "end": "2026-11-05"}]

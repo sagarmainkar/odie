@@ -113,6 +113,15 @@ def _instruction(memory_text: str, watch: str) -> str:
     return (f"{body}\n\n## Watch for\n{watch or '(nothing yet)'}\n\n## What you remember about the user\n{memory_text or '(nothing)'}")
 
 
+def nudge_text(check) -> str:
+    """The second ask for a turn that ended without report: the mail and events the check read, because the nudge
+    runs as a fresh turn that remembers nothing."""
+    return ("You ended the watch check without calling report. This is what the check read; call report now "
+            "(an empty needs_you list when nothing needs the user, and a one-sentence line for Today).\n"
+            f"Mail: {json.dumps([check.fenced(m) for m in check.mails], ensure_ascii=False)}\n"
+            f"Events: {json.dumps([e.brief() for e in check.events], ensure_ascii=False)}")
+
+
 async def run_check(store, now: datetime, turn, post, push, memory=None, memory_index: str = "") -> str:
     if sources.stale(store, now):
         await sources.detect_and_save(store)
@@ -144,12 +153,8 @@ async def run_check(store, now: datetime, turn, post, push, memory=None, memory_
         check.events = await fetcher.upcoming_events()
         check.read = True
     if check.report is None:  # small models often stop short of report: one nudge, with what the check read
-        nudge = ("You ended the watch check without calling report. This is what the check read; call report now "
-                 "(an empty needs_you list when nothing needs the user, and a one-sentence line for Today).\n"
-                 f"Mail: {json.dumps([check.fenced(m) for m in check.mails], ensure_ascii=False)}\n"
-                 f"Events: {json.dumps([e.brief() for e in check.events], ensure_ascii=False)}")
         try:
-            await turn(nudge, tools, instruction)
+            await turn(nudge_text(check), tools, instruction)
         except Exception as e:  # noqa: BLE001
             reason = f"{type(e).__name__}: {e}"[:160]
             log.warning("watch nudge failed", exc_info=True)

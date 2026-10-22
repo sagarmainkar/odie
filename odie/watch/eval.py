@@ -24,8 +24,6 @@ INBOXES_DIR = EVAL_DIR / "inboxes"
 FREE: frozenset[str] = frozenset()  # no tool runs without its tap in the eval: a mail may ask the assistant to act
 TURN_SECONDS = 280  # as the live watch
 PROMPT = "Run the watch check."
-NUDGE = ("You ended the watch check without calling report. Call report now (an empty needs_you list when nothing "
-         "needs the user, and a one-sentence line for Today).")
 EVAL_SOURCE = "mail:eval"
 
 
@@ -100,6 +98,25 @@ class EvalFetcher(Fetcher):
         return None
 
 
+def calendar_fakes(writes: list[dict]) -> list:
+    """The calendar writes the live watch may make without a tap (a connected calendar's create and update), as tools
+    that only record into `writes`: the eval has no calendar, and a watch with nowhere to write behaves unlike the
+    live one."""
+    from google.adk.tools import FunctionTool
+
+    def calendar_create_event(summary: str, start: str, end: str) -> dict:
+        """Create an event on the user's calendar (start/end: YYYY-MM-DD for all day, else YYYY-MM-DDTHH:MM)."""
+        writes.append({"tool": "calendar_create_event", "summary": summary, "start": start, "end": end})
+        return {"result": f"created: {summary}"}
+
+    def calendar_update_event(event_id: str, summary: str = "", start: str = "", end: str = "") -> dict:
+        """Change an event on the user's calendar: its title or its times."""
+        writes.append({"tool": "calendar_update_event", "event_id": event_id, "summary": summary, "start": start,
+                       "end": end})
+        return {"result": f"updated: {event_id}"}
+    return [FunctionTool(calendar_create_event), FunctionTool(calendar_update_event)]
+
+
 def score(case: dict, report: dict | None, opened: set[str]) -> dict:
     """One case's result against what it expects. Flagged = the report's needs_you names the mail.
     Example: expect m1 needs_you (must_open), m2 not; report flags m1, m1 was opened -> right 2 of 2, opened 1 of 1;
@@ -138,21 +155,22 @@ async def run_case(runner, store, case: dict, now: datetime) -> dict:
     for title in case.get("open_tasks", []):
         store.add_task(title, "reminder", origin="agent")
     check = Check(EvalFetcher(store, now, case))
-    tools = watch_tools(check)
+    writes: list[dict] = []
+    tools = watch_tools(check) + calendar_fakes(writes)
     instruction = watch_check._instruction("", case.get("watch_for", ""))
     started = time.monotonic()
     error = ""
     try:
         await runner.background_turn(PROMPT, timeout=TURN_SECONDS, tools=tools, instruction=instruction,
                                      guard=watch_check.guard, free=FREE)
-        if check.report is None:
-            await runner.background_turn(NUDGE, timeout=TURN_SECONDS, tools=tools, instruction=instruction,
-                                         guard=watch_check.guard, free=FREE)
+        if check.report is None:  # as the live watch: one nudge, with what the check read
+            await runner.background_turn(watch_check.nudge_text(check), timeout=TURN_SECONDS, tools=tools,
+                                         instruction=instruction, guard=watch_check.guard, free=FREE)
     except Exception as e:  # noqa: BLE001 (a failed case is recorded, the rest still run)
         error = f"{type(e).__name__}: {e}"[:200]
     fetcher = check.fetcher
     return {"id": case["id"], "kind": case["kind"], "seconds": round(time.monotonic() - started, 1), "error": error,
-            "report": check.report, "opened": sorted(fetcher.opened),
+            "report": check.report, "opened": sorted(fetcher.opened), "writes": writes,
             "score": score(case, check.report, fetcher.opened)}
 
 

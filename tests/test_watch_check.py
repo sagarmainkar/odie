@@ -227,3 +227,18 @@ async def test_two_turns_without_report_fall_back(store, tmp_path):
         calls.append(prompt)
         return "no"
     assert await check.run_check(store, DAY, turn, post, push) == "fallback" and len(calls) == 2
+
+
+def test_the_nudge_carries_what_the_check_read():
+    # A turn that ended without report is asked again WITH the mail and events it read (a fresh turn has no memory).
+    from odie.watch import check as watch_check
+    from odie.watch.fetch import Event, Mail
+    from odie.watch.tools import Check
+
+    class Reads:
+        pass
+    c = Check(Reads())
+    c.mails = [Mail("m1", "A <a@example.com>", "Hello", "2026-10-22T08:00:00Z", "hi", [], "mail:x")]
+    c.events = [Event("e1", "Standup", "2026-10-22T10:00:00+05:30", "", "", [], "calendar:x")]
+    text = watch_check.nudge_text(c)
+    assert "call report now" in text and '"m1"' in text and "Standup" in text
