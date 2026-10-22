@@ -36,3 +36,9 @@ def test_rules_handle_declined_actions_without_retry():
     from odie.agent.prompt import Who, rules_text
     rules = rules_text(Who(), gated=True).lower()
     assert "declined" in rules and "never retry" in rules
+
+
+def test_the_memory_review_never_saves_what_the_assistant_can_or_cant_do():
+    # "Its mail tools aren't available in chat" was one bad turn's guess; saved, it misled every chat after it.
+    from odie.memory.review import SYSTEM
+    assert "Never record what the assistant itself can or can't do" in SYSTEM

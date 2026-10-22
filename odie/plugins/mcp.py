@@ -367,7 +367,7 @@ SHOW_MAIL = (
     "the gist, value the time (\"11:30am\", \"Sat\"), icon alert (act), rupee (money), cal, ticket (events, travel), star "
     "(important), else mail; badges only where they matter. E.g. {\"title\":\"Asha · Lease renewal\",\"subtitle\":"
     "\":badge[Action] Sign by Friday\",\"value\":\"11:30am\",\"icon\":\"alert\",\"run\":\"Open the email from Asha "
-    "about the lease renewal\"}"
+    "about the lease renewal (id 18f3a2)\"}: run gives the mail's id"
 )
 
 

@@ -107,3 +107,8 @@ def test_a_mail_apps_skill_says_how_to_show_mail_and_others_dont():
     assert mail.instructions.startswith("Tools from the gmail-calendar MCP server: gmail_search, gmail_read")
     assert "How to show mail" not in vault.instructions
     assert len(m.SHOW_MAIL) / 4 <= 160  # ~150 tokens; it's read only after load_skill, but keep it short
+
+
+def test_a_mail_rows_tap_opens_that_mail_by_its_id():
+    # A row's tap is a new chat turn: with the mail's id in it, chat reads that mail instead of searching for it.
+    assert '"run":"Open the email from Asha about the lease renewal (id ' in m.SHOW_MAIL
