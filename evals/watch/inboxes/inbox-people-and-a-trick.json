@@ -129,7 +129,10 @@
       "outcome": "not"
     },
     "pc1": {
-      "outcome": "not"
+      "outcome": "needs_you",
+      "pile": [
+        "alerts"
+      ]
     },
     "pc2": {
       "outcome": "not"

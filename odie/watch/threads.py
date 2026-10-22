@@ -69,6 +69,16 @@ def track(store, ref: str, kind: str, title: str, stage: str, due: str | None = 
     return f"Moved #{row['id']}: {stage_now}."
 
 
+def close(store, ref: str, why: str) -> str:
+    """Closes the watch's open thread for this ref, whatever its kind (the user dismissed its card in chat):
+    ("mail:o1", "delivered") with an open thread -> "Closed thread #12."; no open thread -> "No open thread …"."""
+    row = _own_open(store, ref)
+    if row is None:
+        return f"No open thread for {ref}."
+    kind = _facts(row["notes"]).get("kind") or "reply"
+    return track(store, ref, kind, row["title"], "done", why=why)
+
+
 def _facts(notes: str | None) -> dict:
     """What an open thread remembers about its mail (thread id, source, kind); {} when its notes aren't that."""
     try:

@@ -19,3 +19,18 @@ Before the new reads, `read_mail` on a Gmail-style connector returned the listin
 preview reads like a newsletter could never be understood. A first baseline also showed that a refused tool (a Mac
 reminder needing a tap) could end the turn without a report; the eval now has a recording calendar like the live watch,
 and the instructions say to skip a refused tool and always report.
+
+## Threads, piles and drafts (Plan B, 22 Oct 2026)
+
+The watch now reviews the threads it follows (`open_threads`) before new mail, labels each needs-you item (pile, one
+suggestion, one escape, a drafted reply when one is owed) and tracks orders, bills, replies owed and deadlines with
+`track`. Two lifecycle cases: a reply the user already sent (the thread must close) and one two days overdue (it must
+come back as needing the user).
+
+| Run (ollama/deepseek-v4.1-flash:1017-cloud) | Judged right | Opened | Pile fits | Tracked | Older threads |
+|---|---|---|---|---|---|
+| Run 1 | 62 of 63 | 5 of 5 | 20 of 20 | 7 of 7 | 2 of 2 |
+| Run 2 | 62 of 63 | 5 of 5 | 20 of 20 | 7 of 7 | 2 of 2 |
+
+The one difference in both runs was a "new sign-in to your account" notice the watch flagged; its instructions ask for
+exactly that (a login the user may not have made), so the case now expects it flagged, pile alerts.
