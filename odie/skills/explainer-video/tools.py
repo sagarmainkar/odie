@@ -20,7 +20,7 @@ from odie.browser import find
 from odie.decks import photos
 from odie.making import chat, jobs
 from odie.making import sources as making_sources
-from odie.video import assets, kind, timed, timeline
+from odie.video import assets, brand, kind, timed, timeline
 
 NARRATING_SPEED = 10  # seconds of speech the voice narrates in a second
 JOINING_SECONDS = 10  # joining the segments and the sound into the MP4
@@ -183,7 +183,7 @@ def timed_seconds_as_given(value, minutes: int) -> int | None:
 async def make_video(topic: str, minutes: int = 2, brief: str = "", sources: list[str] | None = None,
                      images: list[str] | None = None, clips: list[str] | None = None, sounds: bool = True,
                      voice_name: str = "", style: str = "", aspect: str = "", timed_segment_seconds: int | None = None,
-                     tool_context: ToolContext | None = None) -> dict:
+                     brand_kit: str = "", tool_context: ToolContext | None = None) -> dict:
     """Make a narrated, animated explainer video that plays in this chat. A separate writer makes the narration and
     the animation from your brief, in the background; it can't see this chat, the user's notes, memory or the web.
     topic: what the video is about, short ("How attention works").
@@ -208,6 +208,8 @@ async def make_video(topic: str, minutes: int = 2, brief: str = "", sources: lis
     timed_segment_seconds: leave empty; only when the brief says a segment must last exactly N seconds (a countdown
     character's 60 seconds inside a longer video): N. The writer marks that segment, and Odie fits its voice to exactly
     N seconds, first word to last; the rest of the video keeps its natural length.
+    brand_kit: leave empty; only when a skill says to use its brand kit: that skill's name. The kit's fixed look,
+    sounds and opening and closing scenes go in as they are, and the writer draws around them.
     It returns at once. {"error": …}: fix exactly that and call again. {"result": …}: the video is being made; reply
     in one or two lines as the result says, and don't repeat the brief."""
     if find.browser_binary() is None:
@@ -232,6 +234,17 @@ async def make_video(topic: str, minutes: int = 2, brief: str = "", sources: lis
         timed_seconds = timed_seconds_as_given(timed_segment_seconds, minutes)
     except ValueError as e:
         return {"error": str(e)}
+
+    kit = None
+    kit_name = chat.text_or_empty(brand_kit).strip()
+    if kit_name:
+        try:
+            kit = brand.find(kit_name)
+        except brand.KitProblem as e:
+            return {"error": str(e)}
+        problem = brand.segment_problem(kit, timed_seconds)
+        if problem:
+            return {"error": problem}
 
     problem = chat.brief_problem(brief, WORD, MAX_BRIEF_CHARACTERS)
     if problem:
@@ -273,6 +286,8 @@ async def make_video(topic: str, minutes: int = 2, brief: str = "", sources: lis
     data["aspect"] = aspect  # "landscape" or "vertical": the stage's size (odie.video.timeline.size_of)
     if timed_seconds is not None:  # a segment of exactly that many seconds (odie.video.timed)
         data["timed_segment"] = {"seconds": timed_seconds, "tolerance": timed.TOLERANCE}
+    if kit is not None:  # the kit as it is now, copied into the job's folder (odie.video.brand)
+        data["brand_kit"] = brand.snapshot(kit, folder)
     job = jobs.Job(kind="video", slug=folder.name, title=title, topic=title, minutes=minutes, brief=whole_brief,
                    session_id=session_id_of(tool_context), voice_name=voice_id, folder=folder, data=data)
     place = jobs.submit(job)

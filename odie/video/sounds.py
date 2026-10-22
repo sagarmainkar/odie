@@ -75,6 +75,19 @@ def is_known(name: str) -> bool:
     return name in SOUNDS
 
 
+def lookup(name: str, kit_sounds: dict[str, Path] | None = None) -> tuple[Sound, Path] | None:
+    """The sound a cue's name plays in this video, and its file: a brand kit's own sound first (a kit sound with a
+    built-in's name plays instead of it, in this video only; a kit sound is a hit), else Odie's. "whoosh" -> Odie's
+    whoosh and kit/sounds/whoosh.wav; "ting" with a kit {"ting": <kit>/ting.wav} -> the kit's ting; "explosion" ->
+    None."""
+    if kit_sounds and name in kit_sounds:
+        return Sound(name, "hit", 0.0, "the brand kit's own sound"), kit_sounds[name]
+    sound = SOUNDS.get(name)
+    if sound is None:
+        return None
+    return sound, path(name)
+
+
 def describe(sound: Sound) -> str:
     """The sound's line in the writer's list: its name, its words and its kind, with a hit's length:
     whoosh -> "whoosh — a fast air sweep, for a cut or a move (hit, 0.8 s)"; whistle -> "... (hit, 2 s)";
@@ -153,13 +166,14 @@ def shape_problem(number: int, cue) -> str | None:
     return None
 
 
-def name_problem(number: int, cue: dict) -> str | None:
-    """Decides whether cue `number` names a sound in the set: "whoosh" -> None; "wooosh" -> "Video.sounds: cue 2:
-    there is no sound called 'wooosh'; the sounds are: whoosh, click, …" (every name, not the whole listing)."""
+def name_problem(number: int, cue: dict, kit_names: tuple[str, ...] = ()) -> str | None:
+    """Decides whether cue `number` names a sound in the set, or one of a brand kit's own (`kit_names`): "whoosh" ->
+    None; "wooosh" -> "Video.sounds: cue 2: there is no sound called 'wooosh'; the sounds are: whoosh, click, …"
+    (every name, the kit's too, not the whole listing)."""
     name = cue["name"]
-    if is_known(name):
+    if is_known(name) or name in kit_names:
         return None
-    names = ", ".join(SOUNDS)
+    names = ", ".join([*SOUNDS, *(kit_name for kit_name in kit_names if kit_name not in SOUNDS)])
     return f"Video.sounds: cue {number}: there is no sound called '{name}'; the sounds are: {names}."
 
 
@@ -239,16 +253,17 @@ def too_many_problem(cues: list[dict]) -> str | None:
             "turns; silence is a choice too.")
 
 
-def cue_problem(cues: list[dict], narration: list[str]) -> str | None:
+def cue_problem(cues: list[dict], narration: list[str], kit_names: tuple[str, ...] = ()) -> str | None:
     """Decides whether the page's sound cues (Video.soundCues(), as the check read them) fit the video: the first
     problem as words the writer can act on, or None. Cue by cue, in list order: its shape, then a name not in the
     set, a scene the video doesn't have, a beat its scene doesn't have, an at past its scene's estimated length; then
     more than MAX_CUES_PER_SCENE in one scene, then more than MAX_CUES in all. A loop asked to play longer than its
     scene is fine (it is cut at the scene's end). [] -> None; [{"scene": 3, "beat": 1, "name": "whoosh"}] where
-    scene 3 is one phrase -> "Video.sounds: cue 1: scene 3 has 1 phrase (beats 0..0), so beat 1 isn't there. …"."""
+    scene 3 is one phrase -> "Video.sounds: cue 1: scene 3 has 1 phrase (beats 0..0), so beat 1 isn't there. …".
+    A brand kit's own sounds (`kit_names`) count as names in the set."""
     lengths = page.estimated_timings(narration)["lengths"]
     for number, cue in enumerate(cues, start=1):
-        problem = own_problem(number, cue, narration, lengths)
+        problem = own_problem(number, cue, narration, lengths, kit_names)
         if problem:
             return problem
     problem = crowded_scene_problem(cues)
@@ -257,7 +272,8 @@ def cue_problem(cues: list[dict], narration: list[str]) -> str | None:
     return too_many_problem(cues)
 
 
-def own_problem(number: int, cue, narration: list[str], lengths: list[float]) -> str | None:
+def own_problem(number: int, cue, narration: list[str], lengths: list[float],
+                kit_names: tuple[str, ...] = ()) -> str | None:
     """Decides whether cue `number` is right on its own, whatever the other cues are: its shape, then its name, its
     scene, its beat and its at, the first thing wrong as words (`lengths` are the scenes' estimated lengths).
     {"scene": 1, "at": 0, "name": "rain"} -> None; {"scene": 1, "at": 0, "name": "wooosh"} -> "Video.sounds: cue 1:
@@ -265,7 +281,7 @@ def own_problem(number: int, cue, narration: list[str], lengths: list[float]) ->
     problem = shape_problem(number, cue)
     if problem:
         return problem
-    problem = name_problem(number, cue)
+    problem = name_problem(number, cue, kit_names)
     if problem:
         return problem
     problem = scene_problem(number, cue, len(narration))
@@ -277,7 +293,7 @@ def own_problem(number: int, cue, narration: list[str], lengths: list[float]) ->
     return at_problem(number, cue, lengths)
 
 
-def good_cues(cues: list, narration: list[str]) -> list[dict]:
+def good_cues(cues: list, narration: list[str], kit_names: tuple[str, ...] = ()) -> list[dict]:
     """The cues that pass cue_problem's rules, in the writer's order, for when the writer has already been told once
     and the video goes on without the rest: a cue with a problem of its own is left out, and so is any cue past the
     first MAX_CUES_PER_SCENE of its scene or past the first MAX_CUES in all.
@@ -287,7 +303,7 @@ def good_cues(cues: list, narration: list[str]) -> list[dict]:
     kept = []
     per_scene = {}
     for number, cue in enumerate(cues, start=1):
-        if own_problem(number, cue, narration, lengths):
+        if own_problem(number, cue, narration, lengths, kit_names):
             continue
         scene = cue["scene"]
         in_scene = per_scene.get(scene, 0)
@@ -414,19 +430,22 @@ def play_seconds(cue: dict, kind: str, file_seconds: float, room: float) -> floa
     return round(room, 3)
 
 
-def place(number: int, cue: dict, timings: dict, narrated_scenes: int) -> Placed | None:
+def place(number: int, cue: dict, timings: dict, narrated_scenes: int,
+          kit_sounds: dict[str, Path] | None = None) -> Placed | None:
     """Cue `number` as the mix plays it, or None (with a log line) when it can't be played: a name not in the set, a
     scene or beat not among the narrated scenes, no room left (a hit at or past its scene's spoken end, a loop at or
     past loop_end; the check only estimated the lengths), a gain of 0, or a file that is missing, isn't a WAV or
     can't be measured (loudness_dbfs: a 16-bit WAV only). A hit stopped before its file's end is marked cut.
     With scene 2 at 6.5 s, 6.0 s long, and scene 3 at 13.0 s: {"scene": 2, "at": 5.9, "name": "ting"} ->
     Placed(start=12.4, seconds=0.1, kind="hit", cut=True, …); {"scene": 2, "at": 1, "name": "crowd"} ->
-    Placed(start=7.5, seconds=5.5, kind="loop", …), through the breath to scene 3's start."""
+    Placed(start=7.5, seconds=5.5, kind="loop", …), through the breath to scene 3's start. A brand kit's sounds
+    (`kit_sounds`) are found first (lookup)."""
     name = cue["name"]
-    sound = SOUNDS.get(name)
-    if sound is None:
+    found = lookup(name, kit_sounds)
+    if found is None:
         log.info("video sound cue %d left out: there is no sound called %r", number, name)
         return None
+    sound, sound_path = found
     problem = where_problem(cue, timings, narrated_scenes)
     if problem:
         log.info("video sound cue %d (%s) left out: %s", number, name, problem)
@@ -445,7 +464,6 @@ def place(number: int, cue: dict, timings: dict, narrated_scenes: int) -> Placed
     if gain <= 0:
         log.info("video sound cue %d (%s) left out: its gain is 0", number, name)
         return None
-    sound_path = path(name)
     file = readable_format(sound_path)
     if file is None:
         log.info("video sound cue %d (%s) left out: %s is missing or isn't a WAV", number, name, sound_path)
@@ -463,19 +481,21 @@ def place(number: int, cue: dict, timings: dict, narrated_scenes: int) -> Placed
     return placed
 
 
-def resolve(cues: list[dict], timings: dict, narrated_scenes: int | None = None) -> list[Placed]:
+def resolve(cues: list[dict], timings: dict, narrated_scenes: int | None = None,
+            kit_sounds: dict[str, Path] | None = None) -> list[Placed]:
     """The page's sound cues as the mix plays them, in the writer's order, from the spoken video's timings
     ({"starts": [...], "lengths": [...], "beats": [[...], ...]}, seconds; each scene's beats start at 0.0).
     `narrated_scenes` is how many of the timings' scenes the narration speaks: fewer than the timings hold when Odie's
     silent credits card follows them; None means all of them. A cue that can't be played is left out with a log line
     (see place), never an error. [] -> []; with scene 1 starting at 0.0 and its beats [0.0, 2.0, 4.1]:
     [{"scene": 1, "beat": 2, "name": "whoosh"}] -> [Placed(start=4.1, seconds=0.8, gain=0.6, kind="hit",
-    name="whoosh", …)]."""
+    name="whoosh", …)]. A brand kit's sounds (`kit_sounds`, {"ting": <kit>/ting.wav}) play instead of Odie's of the
+    same name, and add their own names."""
     if narrated_scenes is None:
         narrated_scenes = len(timings["starts"])
     placed = []
     for number, cue in enumerate(cues, start=1):
-        one = place(number, cue, timings, narrated_scenes)
+        one = place(number, cue, timings, narrated_scenes, kit_sounds)
         if one is not None:
             placed.append(one)
     return placed

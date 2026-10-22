@@ -14,7 +14,9 @@
 // segment (odie.video.timed) marks its first and last scene in Video.scenes ({timed_start: true, ...}, {timed_end:
 // true, ...}; Odie reads them back with Video.timedScenes()), and Odie sets window.ODIE_TIMED = {start, seconds, end}
 // (the segment's first word, its length, its last word): s.left() and Video.clockAt(T) count from `seconds` at the
-// first word to 0 at the last, null before.
+// first word to 0 at the last, null before. A video with a brand kit (odie.video.brand) has the kit's brand.js and
+// Video.brand({...}) before the page's script: the kit's background is drawn under every scene, its character over
+// the timed segment, its fixed scenes (bookends) around the segment and at the end, and window.Brand is frozen.
 //
 // Rules that keep frames deterministic (frame k always draws the same picture, whatever order frames are drawn in):
 // draw(t, s) is a pure function of t; no requestAnimationFrame, no clock, no Math.random (use s.random(seed)); set
@@ -661,19 +663,21 @@
   let camera = null;
   let cameraHome = null;  // a pristine camera, never drawn with: the shared camera is copied back from it every frame
   let ctx = null;
-  let placed = [];  // [{scene, start, s}] in order
+  let placed = [];  // [{scene, label, index, start, s}] in playing order (see layout)
 
-  // Builds the stage (three.js canvas, 2D canvas, text layer) at the top of the page.
+  // Builds the stage (three.js canvas, 2D canvas, text layer) at the top of the page. With a brand kit, its top canvas
+  // (its character and bookends) goes over them all, and, when the kit draws the background, its background canvas
+  // under them all, with the three.js canvas cleared to transparent so the background shows through.
   function buildStage() {
     const style = document.createElement("style");
     style.textContent = STYLE;
     document.head.appendChild(style);
     const stage = document.createElement("div");
     stage.id = "v-stage";
-    renderer = new THREE.WebGLRenderer({antialias: true, preserveDrawingBuffer: true});
+    renderer = new THREE.WebGLRenderer({antialias: true, preserveDrawingBuffer: true, alpha: kitDrawsBackground()});
     renderer.setPixelRatio(1);
     renderer.setSize(W, H);
-    renderer.setClearColor(colors.bg, 1);
+    renderer.setClearColor(colors.bg, clearAlpha());
     cameraHome = new THREE.PerspectiveCamera(45, W / H, 0.1, 1000);
     cameraHome.position.set(0, 0, 10);
     cameraHome.lookAt(0, 0, 0);
@@ -685,7 +689,37 @@
     layer = document.createElement("div");
     layer.id = "v-layer";
     stage.append(renderer.domElement, flat, layer);
+    if (brand !== null) {
+      brand.top = brandCanvas();
+      stage.append(brand.top.canvas);
+    }
+    if (kitDrawsBackground()) {
+      brand.back = brandCanvas();
+      stage.prepend(brand.back.canvas);
+    }
     document.body.prepend(stage);
+  }
+
+  // A canvas the size of the stage for the brand kit, and its 2D context.
+  function brandCanvas() {
+    const canvas = document.createElement("canvas");
+    canvas.width = W;
+    canvas.height = H;
+    return {canvas: canvas, ctx: canvas.getContext("2d")};
+  }
+
+  // Decides whether the brand kit draws the background: a kit set up with {background: true} -> true; a kit without
+  // one, or no kit -> false (the stage's own background colour, as before kits).
+  function kitDrawsBackground() {
+    return brand !== null && brand.settings.background === true;
+  }
+
+  // The three.js canvas's clear alpha: 0 (transparent) over a kit's background, else 1, as before kits.
+  function clearAlpha() {
+    if (kitDrawsBackground()) {
+      return 0;
+    }
+    return 1;
   }
 
   // Each scene gets its own three.js scene (so a cube from scene 1 never shows up in scene 2), lit softly from above.
@@ -776,7 +810,7 @@
   function resetThree() {
     camera.copy(cameraHome, false);  // fov, zoom, near, far, aspect, view offset, position, orientation, up
     camera.updateProjectionMatrix();
-    renderer.setClearColor(colors.bg, 1);
+    renderer.setClearColor(colors.bg, clearAlpha());
     renderer.toneMapping = THREE.NoToneMapping;
     renderer.toneMappingExposure = 1;
     renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -824,8 +858,14 @@
         extension.beforeFrame();
       }
     }
+    if (brand !== null) {
+      brandBefore(T);
+    }
     current.scene.draw(t, current.s);
     renderer.render(current.s.three.scene, camera);
+    if (brand !== null) {
+      brandAfter(T, current);
+    }
   }
 
   // Draws the picture for time T (seconds into the video) and says when it is ready to be photographed: true at once
@@ -912,9 +952,14 @@
     closingScenes.push(scene);
   }
 
-  // Puts the page's scenes on the timeline, then Odie's closing scenes (see closing), and defines window.__frame;
-  // setup(s) (optional) runs once per scene, here. window.__sceneCount is the page's own scenes, which the check
-  // matches against the narration. Video.scenes([{setup(s) {...}, draw(t, s) {...}}, {draw(t, s) {...}}])
+  let pageScenes = [];  // the scenes the page gave Video.scenes, kept until they are laid out
+  let playingLabels = [];  // each laid-out scene's label, in playing order (see playingOrder)
+
+  // Takes the page's scenes and puts them on the timeline (layout), with Odie's closing scenes after them (see
+  // closing). window.__sceneCount is the page's own scenes, which the check matches against the narration. In the
+  // page check of a video with a brand kit (window.__layoutLater), the scenes wait: the check reads the timed marks
+  // first, then gives the timings with the kit's bookends in them to Video.layout.
+  // Video.scenes([{setup(s) {...}, draw(t, s) {...}}, {draw(t, s) {...}}])
   function scenes(list) {
     window.__sceneCount = list.length;
     timedMarks = {starts: [], ends: []};
@@ -926,21 +971,63 @@
         timedMarks.ends.push(i + 1);
       }
     });
-    const timings = window.__timings;
-    if (!timings || !timings.starts || !timings.lengths) {
+    pageScenes = list;
+    if (window.__layoutLater) {
+      return;
+    }
+    layout();
+  }
+
+  // The scenes in playing order, each with its label: the page's own by number (from 1), a brand kit's handoff just
+  // before the timed segment's first scene and its ending right after its last, then Odie's closing scenes (the
+  // credits card "closing", then a kit's "card"). Three scenes, the second the segment, every bookend ->
+  // labels [1, "handoff", 2, "ending", 3, "card"]; no kit -> [1, 2, 3], then "closing" for a credits card.
+  function playingOrder(list) {
+    const around = brandSegment();
+    const order = [];
+    list.forEach(function (scene, i) {
+      if (around && i === around.first && bookends.handoff) {
+        order.push({scene: bookends.handoff, label: "handoff"});
+      }
+      order.push({scene: scene, label: i + 1});
+      if (around && i === around.last && bookends.ending) {
+        order.push({scene: bookends.ending, label: "ending"});
+      }
+    });
+    for (const scene of closingScenes) {
+      order.push({scene: scene, label: scene.label || "closing"});
+    }
+    return order;
+  }
+
+  // Puts the scenes on the timeline in playing order and defines window.__frame; setup(s) (optional) runs once per
+  // scene, here. `timings` (given by the page check once it has read the marks) replaces window.__timings first.
+  // Video.layout({starts: [...], lengths: [...], beats: [[...], ...]})
+  function layout(timings) {
+    if (timings) {
+      window.__timings = timings;
+    }
+    const given = window.__timings;
+    if (!given || !given.starts || !given.lengths) {
       throw new Error("window.__timings is missing: the tool sets it from the narration before the page runs");
     }
-    const all = list.concat(closingScenes);
-    if (timings.lengths.length !== all.length) {
-      const narrated = timings.lengths.length - closingScenes.length;
-      throw new Error(`The page has ${list.length} scenes but the narration has ${narrated}.`);
+    const order = playingOrder(pageScenes);
+    if (given.lengths.length !== order.length) {
+      const narrated = given.lengths.length - (order.length - pageScenes.length);
+      throw new Error(`The page has ${pageScenes.length} scenes but the narration has ${narrated}.`);
     }
     buildStage();
     loadAllFonts();
     placed = [];
-    for (let i = 0; i < all.length; i++) {
-      const s = helpersFor(timings.lengths[i], beatsFor(timings, i));
-      placed.push({scene: all[i], start: timings.starts[i], s: s});
+    for (let i = 0; i < order.length; i++) {
+      const s = helpersFor(given.lengths[i], beatsFor(given, i));
+      placed.push({scene: order[i].scene, label: order[i].label, index: i, start: given.starts[i], s: s});
+    }
+    playingLabels = order.map(function (entry) {
+      return entry.label;
+    });
+    if (brand !== null) {
+      settleBrand();
     }
     for (const p of placed) {
       if (p.scene.setup) {
@@ -950,7 +1037,267 @@
     window.__frame = frame;
   }
 
+  // The scenes' labels in playing order (see playingOrder), for Odie to check against its own order.
+  function order() {
+    return playingLabels.slice();
+  }
+
+  // ---- A brand kit (odie.video.brand): a skill's own fixed drawing, set up by Odie before the page's script ----
+
+  let brand = null;  // {kit, settings, back, top, segment, byNumber, covered} for a video with a kit; null without
+  const bookends = {};  // the kit's handoff and ending scenes, placed around the timed segment (playingOrder)
+  const moveCues = [];  // every item Video.moves was given, in order, as given (a copy)
+  const COVERED_SHARE = 0.95;  // a scene opaque at this share of the grid's points has covered the kit's background
+
+  // Freezes an object and everything under it, so nothing in the page can change it. Returns it.
+  function deepFreeze(value) {
+    const freezable = value !== null && (typeof value === "object" || typeof value === "function");
+    if (!freezable || Object.isFrozen(value)) {
+      return value;
+    }
+    Object.freeze(value);
+    for (const key of Reflect.ownKeys(value)) {
+      const property = Object.getOwnPropertyDescriptor(value, key);
+      if (property && "value" in property) {
+        deepFreeze(property.value);
+      }
+    }
+    return value;
+  }
+
+  // Sets up the kit that brand.js put in window.Brand, with Odie's settings for this video ({background, character,
+  // moves, bookends: {handoff: {seconds}, ...}, vars, timed}): checks Brand has every function the settings call
+  // for, freezes it all and fixes window.Brand so the page can't replace or change it, and makes the bookend scenes
+  // (the card plays after everything, as a closing scene, after the credits card). A kit missing a function ->
+  // Error("brand kit: Brand.background isn't a function"); keep a kit's state in its own variables, not on Brand.
+  function brandKit(settings) {
+    const kit = window.Brand;
+    if (!kit || typeof kit !== "object") {
+      throw new Error("brand kit: brand.js didn't set window.Brand");
+    }
+    const needed = [];
+    if (settings.background) {
+      needed.push(["background", kit.background]);
+    }
+    if (Object.keys(settings.bookends).length > 0) {
+      needed.push(["bookend", kit.bookend]);
+    }
+    if (settings.character) {
+      const character = kit[settings.character];
+      needed.push([settings.character + ".draw", character && character.draw]);
+    }
+    for (const [name, fn] of needed) {
+      if (typeof fn !== "function") {
+        throw new Error(`brand kit: Brand.${name} isn't a function`);
+      }
+    }
+    deepFreeze(kit);
+    Object.defineProperty(window, "Brand", {value: kit, writable: false, configurable: false, enumerable: true});
+    brand = {kit: kit, settings: deepFreeze(JSON.parse(JSON.stringify(settings))), back: null, top: null,
+             segment: null, byNumber: new Map(), covered: new Set()};
+    for (const name of ["handoff", "ending"]) {
+      if (settings.bookends[name]) {
+        bookends[name] = bookendScene(name, settings.bookends[name].seconds);
+      }
+    }
+    if (settings.bookends.card) {
+      closing(bookendScene("card", settings.bookends.card.seconds));
+    }
+  }
+
+  // One of the kit's fixed scenes: Brand.bookend draws it on the kit's top canvas, over the kit's background; its
+  // animation runs for the bookend's seconds, then holds its last frame (a handoff held longer for a long line).
+  function bookendScene(name, seconds) {
+    return {
+      label: name,
+      draw: function (t) {
+        kitCall(function () {
+          brand.kit.bookend(name, brand.top.ctx, Math.min(t, seconds), W, H, brand.settings.vars);
+        });
+      },
+    };
+  }
+
+  // The timed segment's first and last page scene (from 0), for placing a kit's handoff and ending: only for a video
+  // with a kit and a timed segment, and only when the page marked one segment. Marks {starts: [2], ends: [3]} ->
+  // {first: 1, last: 2}; no kit, no timed segment, or marks Odie refuses (none, two starts, an end before the
+  // start) -> null.
+  function brandSegment() {
+    if (brand === null || !brand.settings.timed) {
+      return null;
+    }
+    if (timedMarks.starts.length !== 1 || timedMarks.ends.length !== 1) {
+      return null;
+    }
+    const first = timedMarks.starts[0] - 1;
+    const last = timedMarks.ends[0] - 1;
+    if (last < first) {
+      return null;
+    }
+    return {first: first, last: last};
+  }
+
+  // Once the scenes are laid out: where the timed segment plays among them (for the character) and each page
+  // scene by its number (for the moves).
+  function settleBrand() {
+    for (const p of placed) {
+      if (typeof p.label === "number") {
+        brand.byNumber.set(p.label, p);
+      }
+    }
+    const around = brandSegment();
+    if (around !== null) {
+      brand.segment = {first: brand.byNumber.get(around.first + 1).index,
+                       last: brand.byNumber.get(around.last + 1).index};
+    }
+  }
+
+  // Decides whether the scene drawing now is in the timed segment, where the kit's character is drawn: a scene
+  // between the segment's first and last (the breaths between them too) -> true; the handoff, the ending, any
+  // scene before or after, or a video without a segment -> false.
+  function inSegment(current) {
+    const segment = brand.segment;
+    return segment !== null && current.index >= segment.first && current.index <= segment.last;
+  }
+
+  // Runs one of the kit's own functions; an error in it is told as the kit's ("brand kit: …"), not the page's, so
+  // Odie can tell the user the kit is broken instead of asking the writer to fix what isn't its.
+  function kitCall(fn) {
+    try {
+      return fn();
+    } catch (error) {
+      const words = error && error.message ? error.message : String(error);
+      throw new Error("brand kit: " + words);
+    }
+  }
+
+  // Before the scene draws at T: the kit's top canvas cleared, and its background drawn under everything.
+  function brandBefore(T) {
+    brand.top.ctx.reset();
+    if (brand.back) {
+      brand.back.ctx.reset();
+      kitCall(function () {
+        brand.kit.background(brand.back.ctx, T, W, H);
+      });
+    }
+  }
+
+  // After the scene drew at T: the segment clock given to the kit's timer hooks (Brand.timer and the character's
+  // timer, whichever it has) whenever the clock runs, so a countdown is always the clock's; the character drawn over
+  // the scene through the whole timed segment, with the clock and the moves playing; and, in the page check, whether
+  // the page's scene covered the kit's background.
+  function brandAfter(T, current) {
+    const kit = brand.kit;
+    const left = clockAt(T);
+    let character = null;
+    if (brand.settings.character) {
+      character = kit[brand.settings.character];
+    }
+    if (left !== null) {
+      kitCall(function () {
+        if (typeof kit.timer === "function") {
+          kit.timer(left);
+        }
+        if (character && typeof character.timer === "function") {
+          character.timer(left);
+        }
+      });
+    }
+    if (character && inSegment(current)) {
+      const into = T - placed[brand.segment.first].start;
+      const info = {left: left, moves: activeMoves(T), safe: SAFE};
+      kitCall(function () {
+        character.draw(brand.top.ctx, into, W, H, info);
+      });
+    }
+    if (window.__brandCheck && typeof current.label === "number" && coversBackground(current)) {
+      brand.covered.add(current.label);
+    }
+  }
+
+  // Decides, in the page check, whether the page's scene covered the kit's background: a three.js background or an
+  // opaque clear colour, or a 2D canvas opaque at nearly every point of a 9 x 16 grid (a fill or a picture over the
+  // whole stage) -> true; shapes, text and framed pictures leave most of the grid clear -> false. Only a kit that
+  // draws the background asks.
+  function coversBackground(current) {
+    if (!brand.back) {
+      return false;
+    }
+    if (current.s.three.scene.background || renderer.getClearAlpha() > 0.01) {
+      return true;
+    }
+    const data = ctx.getImageData(0, 0, W, H).data;
+    let opaque = 0;
+    let points = 0;
+    for (let row = 0; row < 16; row++) {
+      for (let column = 0; column < 9; column++) {
+        const x = Math.floor((column + 0.5) * W / 9);
+        const y = Math.floor((row + 0.5) * H / 16);
+        if (data[(y * W + x) * 4 + 3] > 240) {
+          opaque += 1;
+        }
+        points += 1;
+      }
+    }
+    return opaque / points >= COVERED_SHARE;
+  }
+
+  // What the page check found about the kit: the page's scenes (from 1) that covered its background.
+  function brandReport() {
+    if (brand === null) {
+      return {covered: []};
+    }
+    return {covered: Array.from(brand.covered).sort(function (a, b) {
+      return a - b;
+    })};
+  }
+
+  // Cues the kit character's moves in the timed segment; called once in the page, next to Video.scenes. Each cue:
+  // scene (from 1), name (one of the kit's moves), and at (seconds into the scene) or beat (a phrase, from 0). Kept
+  // as given; Odie judges them when the page is submitted. Only something other than a list throws.
+  // Video.moves([{scene: 2, at: 1.5, name: "bounce"}, {scene: 3, beat: 1, name: "bounce"}])
+  function moves(list) {
+    if (!Array.isArray(list)) {
+      throw new Error('Video.moves takes a list: Video.moves([{scene: 2, at: 1.5, name: "bounce"}])');
+    }
+    for (const item of list) {
+      moveCues.push(copyOfItem(item));
+    }
+  }
+
+  // The items Video.moves was given, in order, as copies; [] when the page cued none.
+  function moveCuesGiven() {
+    return moveCues.map(copyOfItem);
+  }
+
+  // The character's moves playing at T, each {name, t (seconds into the move), seconds}. A move cued in scene 2 at
+  // 1.0, scene 2 starting at 10 and the move lasting 0.6 s -> at T 10.3, [{name, t: 0.3, seconds: 0.6}]; at T 11, [].
+  function activeMoves(T) {
+    const playing = [];
+    for (const cue of moveCues) {
+      const seconds = brand.settings.moves[cue.name];
+      const p = brand.byNumber.get(cue.scene);
+      if (!seconds || !p) {
+        continue;
+      }
+      let offset = cue.at;
+      if (typeof cue.beat === "number") {
+        offset = p.s.beats[cue.beat];
+      }
+      if (typeof offset !== "number") {
+        continue;
+      }
+      const start = p.start + offset;
+      if (T >= start && T < start + seconds) {
+        playing.push({name: cue.name, t: T - start, seconds: seconds});
+      }
+    }
+    return playing;
+  }
+
   window.Video = {scenes: scenes, closing: closing, assets: registerAssets, sounds: sounds, soundCues: soundCues,
                   timedScenes: timedScenes, extend: extend, clockAt: clockAt, colors: colors, W: W, H: H, safe: SAFE,
+                  layout: layout, order: order, brand: brandKit, moves: moves, moveCues: moveCuesGiven,
+                  brandReport: brandReport,
                   SANS: SANS};
 })();

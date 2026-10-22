@@ -66,7 +66,7 @@ async def stand_in_narrate(store, narration, voice_name="", transport=None, styl
 
 
 async def stand_in_render(browser, body, timings, folder, fps, tabs, progress=None, assets_script="",
-                          credits_script="", size=None):
+                          credits_script="", size=None, brand_script=""):
     """A real, short segment file (15 red frames at the video's size, 1920x1080 unless told), so the real mux and
     probe have something to join and the finished file has the size the job asked for."""
     width, height = size or timeline.LANDSCAPE
@@ -130,7 +130,7 @@ async def test_the_page_is_timed_from_the_spoken_lengths(world, fast, monkeypatc
     seen = {}
 
     async def watching_render(browser, body, timings, folder, fps, tabs, progress=None, assets_script="",
-                              credits_script="", size=None):
+                              credits_script="", size=None, brand_script=""):
         seen["timings"] = timings
         return await stand_in_render(browser, body, timings, folder, fps, tabs)
 
@@ -159,7 +159,7 @@ async def test_a_browser_error_keeps_its_own_words(world, fast, monkeypatch):
     chat, _pushes, _store = world
 
     async def broken_render(browser, body, timings, folder, fps, tabs, progress=None, assets_script="",
-                            credits_script="", size=None):
+                            credits_script="", size=None, brand_script=""):
         raise BrowserError("no browser is installed\nsecond line that stays out of the chat")
 
     monkeypatch.setattr(kind, "render", broken_render)
@@ -171,7 +171,7 @@ async def test_anything_unexpected_is_a_plain_sentence_and_logged(world, fast, m
     chat, _pushes, _store = world
 
     async def odd_render(browser, body, timings, folder, fps, tabs, progress=None, assets_script="",
-                         credits_script="", size=None):
+                         credits_script="", size=None, brand_script=""):
         raise KeyError("/Users/someone/private/path")
 
     monkeypatch.setattr(kind, "render", odd_render)
@@ -280,7 +280,7 @@ async def test_stopping_mid_render_posts_nothing_and_recover_tells_it_as_interru
     chat, pushes, _store = world
 
     async def render_that_never_ends(browser, body, timings, folder, fps, tabs, progress=None, assets_script="",
-                                     credits_script="", size=None):
+                                     credits_script="", size=None, brand_script=""):
         await asyncio.Event().wait()
 
     monkeypatch.setattr(kind, "render", render_that_never_ends)
@@ -317,7 +317,7 @@ async def test_a_job_with_a_topic_writes_its_page_then_renders_it(world, fast, m
     chat, pushes, _store = world
     asked = {}
 
-    async def stand_in_write(topic, minutes, brief, folder, turn, browser, listing="", assets_script="", aspect=None, timed_seconds=None):
+    async def stand_in_write(topic, minutes, brief, folder, turn, browser, listing="", assets_script="", aspect=None, timed_seconds=None, kit=None):
         asked.update(topic=topic, minutes=minutes, brief=brief, folder=folder, turn=turn)
         return writer.Written(title="  How attention works  ", narration=["One.", "Two."], body="<div>x</div>")
 
@@ -339,7 +339,7 @@ async def test_the_writers_sound_cues_ride_in_job_data_and_never_in_job_json(wor
     cues = [{"scene": 1, "at": 0, "name": "rain", "seconds": 4}, {"scene": 2, "beat": 0, "name": "whoosh"}]
     seen = {}
 
-    async def stand_in_write(topic, minutes, brief, folder, turn, browser, listing="", assets_script="", aspect=None, timed_seconds=None):
+    async def stand_in_write(topic, minutes, brief, folder, turn, browser, listing="", assets_script="", aspect=None, timed_seconds=None, kit=None):
         return writer.Written(title="Tides", narration=["One.", "Two."], body="<div>x</div>", cues=cues)
 
     real_write_job = jobs.write_job
@@ -359,7 +359,7 @@ async def test_the_writers_sound_cues_ride_in_job_data_and_never_in_job_json(wor
 
 
 async def test_a_job_written_without_cues_carries_an_empty_list(world, fast, monkeypatch):
-    async def stand_in_write(topic, minutes, brief, folder, turn, browser, listing="", assets_script="", aspect=None, timed_seconds=None):
+    async def stand_in_write(topic, minutes, brief, folder, turn, browser, listing="", assets_script="", aspect=None, timed_seconds=None, kit=None):
         return writer.Written(title="Tides", narration=["One."], body="<div>x</div>")
 
     monkeypatch.setattr(kind.writer, "write", stand_in_write)
@@ -373,7 +373,7 @@ async def test_the_writer_uses_the_runners_focused_turn_by_default(world, fast, 
     chat.focused_turn = object()
     seen = {}
 
-    async def stand_in_write(topic, minutes, brief, folder, turn, browser, listing="", assets_script="", aspect=None, timed_seconds=None):
+    async def stand_in_write(topic, minutes, brief, folder, turn, browser, listing="", assets_script="", aspect=None, timed_seconds=None, kit=None):
         seen["turn"] = turn
         return writer.Written(title="", narration=["One."], body="<div></div>")
 
@@ -402,7 +402,7 @@ def test_only_a_job_without_a_page_needs_writing():
 async def test_a_page_that_could_not_be_written_is_told_as_it_is(world, fast, monkeypatch, statuses):
     chat, pushes, _store = world
 
-    async def failing_write(topic, minutes, brief, folder, turn, browser, listing="", assets_script="", aspect=None, timed_seconds=None):
+    async def failing_write(topic, minutes, brief, folder, turn, browser, listing="", assets_script="", aspect=None, timed_seconds=None, kit=None):
         raise harness.WriterFailed("I couldn't write a page that passed its check: scene 2 has no words")
 
     monkeypatch.setattr(kind.writer, "write", failing_write)
@@ -417,7 +417,7 @@ async def test_a_page_that_could_not_be_written_is_told_as_it_is(world, fast, mo
 async def test_a_writer_that_breaks_is_a_plain_sentence(world, fast, monkeypatch):
     chat, _pushes, _store = world
 
-    async def broken_write(topic, minutes, brief, folder, turn, browser, listing="", assets_script="", aspect=None, timed_seconds=None):
+    async def broken_write(topic, minutes, brief, folder, turn, browser, listing="", assets_script="", aspect=None, timed_seconds=None, kit=None):
         raise KeyError("/Users/someone/private/path")
 
     monkeypatch.setattr(kind.writer, "write", broken_write)
@@ -428,7 +428,7 @@ async def test_a_writer_that_breaks_is_a_plain_sentence(world, fast, monkeypatch
 async def test_the_writing_step_writes_brief_md_and_the_writer_gets_its_text(world, fast, monkeypatch):
     asked = {}
 
-    async def stand_in_write(topic, minutes, brief, folder, turn, browser, listing="", assets_script="", aspect=None, timed_seconds=None):
+    async def stand_in_write(topic, minutes, brief, folder, turn, browser, listing="", assets_script="", aspect=None, timed_seconds=None, kit=None):
         asked["brief"] = brief
         asked["on_disk"] = (folder / "brief.md").read_text(encoding="utf-8")
         return writer.Written(title="Tides", narration=["One.", "Two."], body="<div>x</div>")
@@ -478,7 +478,7 @@ async def test_a_job_with_a_picture_fetches_it_lists_it_for_the_writer_and_stapl
 
     asked = {}
 
-    async def stand_in_write(topic, minutes, brief, folder, turn, browser, listing="", assets_script="", aspect=None, timed_seconds=None):
+    async def stand_in_write(topic, minutes, brief, folder, turn, browser, listing="", assets_script="", aspect=None, timed_seconds=None, kit=None):
         asked.update(brief=brief, listing=listing, on_disk=(folder / "brief.md").read_text(encoding="utf-8"),
                      assets_script=assets_script)
         return writer.Written(title="Delhi", narration=["One.", "Two."], body="<script>Video.scenes([]);</script>")
@@ -486,7 +486,7 @@ async def test_a_job_with_a_picture_fetches_it_lists_it_for_the_writer_and_stapl
     rendered = {}
 
     async def watching_render(browser, body, timings, folder, fps, tabs, progress=None, assets_script="",
-                              credits_script="", size=None):
+                              credits_script="", size=None, brand_script=""):
         rendered.update(script=assets_script, timings=timings, credits=credits_script)
         return await stand_in_render(browser, body, timings, folder, fps, tabs)
 
@@ -537,7 +537,7 @@ async def test_a_job_whose_pictures_all_fail_still_tells_the_writer(world, fast,
 
     asked = {}
 
-    async def stand_in_write(topic, minutes, brief, folder, turn, browser, listing="", assets_script="", aspect=None, timed_seconds=None):
+    async def stand_in_write(topic, minutes, brief, folder, turn, browser, listing="", assets_script="", aspect=None, timed_seconds=None, kit=None):
         asked["listing"] = listing
         return writer.Written(title="Delhi", narration=["One.", "Two."], body="<div></div>")
 
@@ -558,7 +558,7 @@ async def test_a_video_whose_pictures_are_all_the_users_own_has_no_credits_card(
     seen = {}
 
     async def watching_render(browser, body, timings, folder, fps, tabs, progress=None, assets_script="",
-                              credits_script="", size=None):
+                              credits_script="", size=None, brand_script=""):
         seen.update(timings=timings, credits=credits_script)
         return await stand_in_render(browser, body, timings, folder, fps, tabs)
 
