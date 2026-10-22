@@ -252,7 +252,7 @@
             "push": false,
             "ref": "mail:i1",
             "title": "Expert Circle consultation — workflow software market",
-            "why": "Maya Lin asks you to answer 4 screening questions (vendor familiarity, competitors, OK with a recorded call, availability next week) to take a paid expert call; no deadline given, but she's waiting on your reply."
+            "why": "Tamsin Orrell asks you to answer 4 screening questions (vendor familiarity, competitors, OK with a recorded call, availability next week) to take a paid expert call; no deadline given, but she's waiting on your reply."
           }
         ],
         "line": "One new mail: a paid expert-call invitation that needs your screening answers; no bills, orders or events today.",
@@ -338,11 +338,11 @@
           {
             "push": true,
             "ref": "mail:k1",
-            "title": "Maya Lin (Expert Circle): consultation request — answer screening questions",
+            "title": "Tamsin Orrell (Expert Circle): consultation request — answer screening questions",
             "why": "She asks you to confirm fit for a workflow-software expert call: 4 questions (vendor familiarity, head-to-head competitors, OK with a recorded call, availability over the next week). You told her on 11 Oct you were interested, so a reply is owed."
           }
         ],
-        "line": "One mail: Maya Lin at Expert Circle wants your answers to four screening questions for a workflow-software consultation call.",
+        "line": "One mail: Tamsin Orrell at Expert Circle wants your answers to four screening questions for a workflow-software consultation call.",
         "done": []
       },
       "opened": [
@@ -904,7 +904,7 @@
             "push": false,
             "ref": "mail:ia1",
             "title": "Expert Circle consultation — workflow software market",
-            "why": "Maya Lin asks you to answer 4 screening questions (vendor familiarity, competitors, recorded call yes/no, availability next week) for a paid expert call."
+            "why": "Tamsin Orrell asks you to answer 4 screening questions (vendor familiarity, competitors, recorded call yes/no, availability next week) for a paid expert call."
           }
         ],
         "line": "Quiet mail day: two items need your reply (school sports day RSVP by Tue, an expert-call screening), and I put the shipped headphones order on tomorrow's calendar.",
