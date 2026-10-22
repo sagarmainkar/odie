@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.2.18 (2026-10-22)
+
+- The mail watch reads like an assistant. It opens a mail whose preview doesn't say what it asks (before, a
+  connector's preview was all it ever saw), can read a mail's thread, earlier mail and the user's own sent mail, and
+  counts any mail that asks the user for something as a reply owed, even one with an unsubscribe footer. Promotions,
+  digests and codes stay quiet. After reading beyond a check's own mail it can't reach the web, and each read has a
+  30-second limit.
+- A watch eval: made-up mails run through the real watch turn and scored (`scripts/watch_eval.sh`).
+
 ## v0.2.17 (2026-10-22)
 
 - Tapping a mail on Today now says which mail app holds it and its id, so chat opens that mail instead of searching
