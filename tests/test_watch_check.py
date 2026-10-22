@@ -242,3 +242,16 @@ def test_the_nudge_carries_what_the_check_read():
     c.events = [Event("e1", "Standup", "2026-10-22T10:00:00+05:30", "", "", [], "calendar:x")]
     text = watch_check.nudge_text(c)
     assert "call report now" in text and '"m1"' in text and "Standup" in text
+
+
+def test_the_watch_reads_like_an_assistant():
+    # The rules the eval showed matter: assume the user isn't reading, open what's unclear, a person asking is a reply
+    # owed, look around with the reads, finish with report even after a refused tool. It runs every 30 minutes.
+    from odie.watch import check as watch_check
+    text = watch_check.SKILL.read_text()
+    assert "may not be reading" in text
+    assert "read_mail" in text and "before deciding" in text
+    assert "a person" in text and "waiting on a reply" in text and "unsubscribe footer" in text
+    assert "read_thread" in text and "sent_to" in text and "search_mail" in text
+    assert "Always finish with `report`" in text and "refused" in text
+    assert len(text.split()) <= 800
