@@ -13,7 +13,14 @@ import tempfile
 from datetime import datetime
 from pathlib import Path
 
-from odie.blocks_eval import commit_of_repo, copy_key, file_stem, key_name_for, owner_env_file, use_throwaway_home
+from odie.blocks_eval import (
+    commit_of_repo,
+    copy_key,
+    file_stem,
+    key_name_for,
+    owner_env_file,
+    use_throwaway_home,
+)
 
 
 def main(argv: list[str]) -> int:
