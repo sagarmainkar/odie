@@ -124,6 +124,9 @@ elif MODE == "gmailmcp":  # a line-style Gmail and Calendar server: its schema a
     def gmail_search(query: Annotated[str, Field(description="Gmail search query")], max_results: int = 10) -> str:
         """Search Gmail."""
         _log("gmail_search", {"query": query, "max_results": max_results})
+        hits = DATA.get("query_hits", {})
+        if query in hits:
+            return json.dumps({"messages": hits[query][:max_results]})
         return json.dumps({"messages": DATA["mail"]})
 
     @s.tool()

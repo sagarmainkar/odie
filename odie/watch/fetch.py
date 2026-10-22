@@ -213,6 +213,35 @@ def fold_mail(mails: list[Mail]) -> list[Mail]:
     return out
 
 
+ADDRESS = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
+NOT_FOR_APPLE_MAIL = "not available for Apple Mail"
+SEARCH_LIMIT = 10
+
+
+def address_of(frm: str) -> str:
+    """The bare address in a From line, for a search: '"A Person" <a@example.com>' -> "a@example.com";
+    "a@example.com" -> itself; "A Person" (no address) -> ""."""
+    found = ADDRESS.search(frm or "")
+    if found is None:
+        return ""
+    return found.group(0)
+
+
+def thread_rows(text: str) -> list[dict]:
+    """A thread from an app's reply, oldest first as the app gives it, each {from, at, body}:
+    '{"messages": [{"from": "A", "date": "…", "body": "Hi"}]}' -> [{"from": "A", "at": "…", "body": "Hi"}]."""
+    try:
+        rows = _list_in(json.loads(text))
+    except ValueError:
+        return []
+    out = []
+    for r in rows:
+        body = str(_first(r, "body", "body_plain", "text", "messageText", "snippet"))[:BODY]
+        out.append({"from": _who(_first(r, "from", "sender")), "at": str(_first(r, "date", "at", "messageTimestamp")),
+                    "body": body})
+    return out
+
+
 def body_of(text: str) -> str:
     """A message's text from an app's read reply: its JSON's body field, or the reply itself when it is plain text.
     '{"id": "m1", "body": "Hi there"}' -> "Hi there"; 'Hi there' -> "Hi there"; '{"data": {"messageText": "x"}}' -> "x"."""
@@ -561,6 +590,70 @@ class Fetcher:
             mail.body = body[:BODY]
             mail.opened = True
         return mail
+
+    async def read_thread(self, mail_id: str) -> list[dict] | str:
+        """The whole thread a mail of this check belongs to, oldest first, through the app that holds it; or why it
+        can't be read (Apple Mail, an app without a thread tool, a mail whose thread isn't known)."""
+        mail = self._mail.get(mail_id)
+        if mail is None:
+            return "No message with that id in this check: call new_mail first."
+        src = self._source_of(mail)
+        if src is not None and src.style == "native":
+            return f"Reading a thread is {NOT_FOR_APPLE_MAIL}."
+        if src is None or not src.thread:
+            return "This mail's app can't read a whole thread."
+        if not mail.thread:
+            return "This mail's thread isn't known."
+        params = {src.thread["id_param"]: mail.thread}
+        args: dict = {}
+        if src.style == "zapier":
+            args["params"] = params
+        else:
+            args.update(params)
+        try:
+            res = await self._call(src, src.thread["tool"], args)
+        except CallError as e:
+            return f"The thread couldn't be read: {e}"
+        if res.is_error:
+            return f"The thread couldn't be read: {res.text[:200]}"
+        return thread_rows(res.text)
+
+    async def search_mail(self, query: str, limit: int = SEARCH_LIMIT) -> list[Mail] | str:
+        """Older mail matching `query` (the app's own search words, e.g. "from:bills@power.example.com") across the
+        connected mail apps that can search, newest first, at most `limit`; found mails can then be opened with
+        open_mail. Only Apple Mail connected -> why not."""
+        searchable = [s for s in saved(self.store) if s.kind == "mail" and s.style != "native" and s.query_param]
+        if not searchable:
+            return f"Searching older mail is {NOT_FOR_APPLE_MAIL}, and no other connected mail app can search."
+        got: list[Mail] = []
+        for src in searchable:
+            args = dict(src.fixed)
+            if "max_results" in args:
+                args["max_results"] = limit
+            if src.style == "zapier":
+                args["params"] = {**(args.get("params") or {}), src.query_param: query}
+            else:
+                args[src.query_param] = query
+            try:
+                res = await self._call(src, src.tool, args)
+            except CallError as e:
+                log.info("watch: %s couldn't search: %s", src.app, e)
+                continue
+            if res.is_error:
+                continue
+            got += parse_mail(res.text, src.id)
+        found = newest_first(fold_mail(got))[:limit]
+        for m in found:
+            self._mail.setdefault(m.id, m)
+        return found
+
+    async def sent_to(self, address: str, limit: int = 5) -> list[Mail] | str:
+        """The user's own recent mail to this address (newest first): have they written to this person before, and
+        in what tone. A From line works too; no address in it -> why not."""
+        bare = address_of(address)
+        if not bare:
+            return "That isn't an email address."
+        return await self.search_mail(f"in:sent to:{bare}", limit)
 
     async def _whole_body(self, src: Source, mail_id: str) -> str:
         """The whole text of one message from its app: "" when the app has no way to open one."""

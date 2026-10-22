@@ -263,3 +263,52 @@ async def test_apple_mail_opens_with_its_own_read(store, monkeypatch):
     monkeypatch.setattr(fetch, "saved", lambda _store: [apple_mail])
     m = await f.open_mail("mac:5")
     assert asked["id"] == "mac:5" and m.body == "the whole message" and m.opened
+
+
+THREAD = [{"from": "A Person <a.person@example.com>", "date": "2026-10-07T08:00:00Z", "body": "Can you help?"},
+          {"from": "Me <me@example.com>", "date": "2026-10-07T09:00:00Z", "body": "Yes, gladly."}]
+OLDER = [{"id": "o1", "threadId": "t0", "from": "Power Co <bills@power.example.com>", "subject": "Your bill",
+          "date": "2026-10-01T08:00:00Z", "snippet": "Amount due 4,280 by 9 Nov"}]
+SENT = [{"id": "s1", "threadId": "t9", "from": "Me <me@example.com>", "subject": "Re: Hello",
+         "date": "2026-09-20T08:00:00Z", "snippet": "Thanks, happy to help."}]
+
+
+async def test_read_thread_gives_the_thread_oldest_first(store, tmp_path):
+    check, tools = await gmail_check(store, tmp_path, threads={"t1": THREAD})
+    got = await tools["read_thread"].func(mail_id="g1")
+    assert calls_to(tmp_path, "gmail_read_thread") == [{"thread_id": "t1"}]
+    text = got["result"]
+    assert text.index("Can you help?") < text.index("Yes, gladly.") and "UNTRUSTED" in text
+
+
+async def test_search_mail_passes_the_query_and_caps_results(store, tmp_path):
+    check, tools = await gmail_check(store, tmp_path, query_hits={"from:power.example.com": OLDER})
+    got = await tools["search_mail"].func(query="from:power.example.com")
+    assert "Your bill" in got["result"]
+    asked = calls_to(tmp_path, "gmail_search")[-1]
+    assert asked == {"query": "from:power.example.com", "max_results": 10}
+
+
+async def test_sent_to_asks_for_the_users_sent_mail_to_that_address(store, tmp_path):
+    check, tools = await gmail_check(store, tmp_path, query_hits={"in:sent to:a.person@example.com": SENT})
+    got = await tools["sent_to"].func(address='"A Person" <a.person@example.com>')
+    assert "Thanks, happy to help." in got["result"]
+    assert calls_to(tmp_path, "gmail_search")[-1]["query"] == "in:sent to:a.person@example.com"
+
+
+def test_address_of():
+    # The bare address from a From line, for a search: quotes, names and brackets dropped; no address -> "".
+    assert fetch.address_of('"A Person" <a.person@example.com>') == "a.person@example.com"
+    assert fetch.address_of("a.person@example.com") == "a.person@example.com"
+    assert fetch.address_of("A Person") == ""
+
+
+async def test_apple_mail_says_these_reads_arent_available(store, monkeypatch):
+    apple_mail = sources.Source("mail", "mac", "Apple Mail", "native", "mac_mail_new", {})
+    monkeypatch.setattr(fetch, "saved", lambda _store: [apple_mail])
+    f = fetch.Fetcher(store, NOW)
+    f._mail["mac:5"] = fetch.Mail("mac:5", "B <b@example.com>", "Hi", "2026-10-08T08:00:00Z", "x", [], "mail:mac",
+                                  sources=["mail:mac"])
+    assert "not available for Apple Mail" in await f.read_thread("mac:5")
+    assert "not available for Apple Mail" in await f.search_mail("from:b@example.com")
+    assert "not available for Apple Mail" in await f.sent_to("b@example.com")
