@@ -148,6 +148,45 @@
     }
   },
   {
+    "description": "Takes a Desk item off (the user handled it, or doesn't want it) and closes the watch's thread for it.\nwhy: in the user's words (\"not interested\", \"replied from my phone\").",
+    "name": "desk_close",
+    "parameters_json_schema": {
+      "properties": {
+        "ref": {
+          "title": "Ref",
+          "type": "string"
+        },
+        "why": {
+          "title": "Why",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ref",
+        "why"
+      ],
+      "title": "desk_closeParams",
+      "type": "object"
+    }
+  },
+  {
+    "description": "A Desk card's item by its ref (\"mail:<id>\"): what it is, its suggestion and escape, and its drafted reply\nwhen it has one. Use it when the user taps a card or asks about a desk item. To send a draft, show it, then\nuse the mail app's draft and send tools: the user approves the send.",
+    "name": "desk_item",
+    "parameters_json_schema": {
+      "properties": {
+        "ref": {
+          "title": "Ref",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ref"
+      ],
+      "title": "desk_itemParams",
+      "type": "object"
+    }
+  },
+  {
     "description": "Write a skill into staging and check it (its code is read, never run). name: lowercase-with-hyphens.\ndescription: one line, what it does and when to use it. instructions: the SKILL.md body in Markdown.\ntools_code: the whole tools.py, or \"\" for an instructions-only skill. blocks: the block kinds it draws.\nReturns \"Ready to install\" or the problems to fix; call again with fixes until it's ready.",
     "name": "draft_skill",
     "parameters_json_schema": {

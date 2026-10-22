@@ -21,6 +21,7 @@ def _tool_declarations(tmp: Path) -> str:
     from google.adk.tools import FunctionTool
 
     from odie import addons
+    from odie.agent.tools.desk import make_desk_tools
     from odie.agent.tools.local import make_local_tools
     from odie.agent.tools.files import make_file_tools
     from odie.agent.tools.media import make_media_tools
@@ -33,7 +34,8 @@ def _tool_declarations(tmp: Path) -> str:
     store.init_schema()
     memory = MemoryFile(tmp / "memories.md", tmp / "memory.lock", "golden")
     tools = [*make_memory_tools(memory), make_shell_tool(store=store), *make_web_tools(api_key=""),
-             *make_local_tools(store, "Asia/Kolkata"), *make_media_tools(store), *make_file_tools()]
+             *make_local_tools(store, "Asia/Kolkata"), *make_desk_tools(store), *make_media_tools(store),
+             *make_file_tools()]
     tools += [t for a in addons.active() for t in addons.tools_of(a, store) if isinstance(t, FunctionTool)]  # MCP ones list online
     from odie.skills.registry import discover
     # declared from the start (odie.skills); as on a Mac, Odie's first home, so the golden is the same on Linux CI

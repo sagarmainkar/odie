@@ -75,3 +75,20 @@ async def test_thread_routes(client):
     assert (await client.post("/api/threads/voice-1/pin", json={"pinned": True})).status_code == 404
     assert (await client.post("/api/threads/chat-2026-10-02/pin", json={"pinned": True})).json()["pinned"] is True
     assert (await client.post("/api/threads/chat-2026-10-02/rename", json={"title": "Goa"})).json()["title"] == "Goa"
+
+
+async def test_the_desk_is_listed_first_and_pinned_with_only_odies_posts(runner):
+    # The watch posts its news to the Desk; nobody has written there yet, but it must show at the top of Chats.
+    await runner.post_message("Good morning: two things need you.", session_id=threads.DESK)
+    rows = threads.list_threads(runner.store)
+    assert rows[0]["id"] == "chat-desk" and rows[0]["title"] == "Desk" and rows[0]["pinned"] is True
+    assert len(rows[0]["date"]) == 10 and rows[0]["date"][4] == "-"  # a real date, like the other rows
+    assert [t["id"] for t in rows[1:]] == ["chat-2026-10-04", "chat-2026-10-02"]
+
+
+async def test_no_desk_until_something_is_posted_there(runner):
+    assert all(t["id"] != threads.DESK for t in threads.list_threads(runner.store))
+
+
+def test_the_desk_id_is_a_valid_thread():
+    assert threads.valid_id("chat-desk") and not threads.valid_id("chat-deskx") and not threads.valid_id("chat-desk-2")

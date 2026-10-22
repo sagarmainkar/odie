@@ -118,3 +118,28 @@ def test_a_case_that_must_not_be_acted_on_fails_when_something_was_done():
 def test_the_injection_case_expects_no_actions():
     case = next(c for c in watch_eval.load_cases() if c["id"] == "instructions-to-the-assistant")
     assert case["no_actions"] is True
+
+
+def test_score_counts_piles_tracks_and_threads():
+    # pile: the flagged item's pile must be one the case accepts; track: the watch opened a thread of that kind for the
+    # mail; threads_expect: an older thread the check should close (the user replied) or raise again (overdue).
+    case = {"expect": {"m1": {"outcome": "needs_you", "pile": ["alerts", "personal"], "track": "reply"},
+                       "m2": {"outcome": "not", "track": "order"}},
+            "threads_expect": {"mail:r9": "closed", "mail:r8": "flagged"}}
+    report = {"needs_you": [{"ref": "mail:m1", "pile": "personal"}, {"ref": "mail:r8"}]}
+    after = {"mail:m1": {"kind": "reply", "status": "open"}, "mail:m2": {"kind": "order", "status": "open"},
+             "mail:r9": {"kind": "reply", "status": "done"}}
+    s = watch_eval.score(case, report, opened=set(), acted=[], threads_after=after)
+    assert (s["piles_right"], s["piles"]) == (1, 1)
+    assert (s["tracked_right"], s["tracks"]) == (2, 2)
+    assert (s["threads_right"], s["threads_of"]) == (2, 2)
+    worse = watch_eval.score(case, {"needs_you": [{"ref": "mail:m1", "pile": "bills"}]}, opened=set(), acted=[],
+                             threads_after={"mail:r9": {"kind": "reply", "status": "open"}})
+    assert worse["piles_right"] == 0 and worse["tracked_right"] == 0 and worse["threads_right"] == 0
+
+
+def test_the_lifecycle_cases_are_there():
+    ids = {c["id"]: c for c in watch_eval.load_cases()}
+    assert ids["reply-already-sent"]["threads_expect"] == {"mail:rs1": "closed"}
+    assert ids["reply-overdue"]["threads_expect"] == {"mail:ro1": "flagged"}
+    assert all("pile" in e for c in ids.values() for e in c["expect"].values() if e["outcome"] == "needs_you")

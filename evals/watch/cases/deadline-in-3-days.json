@@ -13,7 +13,10 @@
   ],
   "expect": {
     "dl1": {
-      "outcome": "needs_you"
+      "outcome": "needs_you",
+      "pile": [
+        "alerts"
+      ]
     }
   }
 }

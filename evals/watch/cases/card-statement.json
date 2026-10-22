@@ -13,7 +13,8 @@
   ],
   "expect": {
     "c1": {
-      "outcome": "not"
+      "outcome": "not",
+      "track": "bill"
     }
   }
 }

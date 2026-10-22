@@ -252,7 +252,7 @@
             "push": false,
             "ref": "mail:i1",
             "title": "Expert Circle consultation on workflow software — screening questions",
-            "why": "Maya Lin asks you to answer 4 screening questions (vendor familiarity, competitors, OK with a recorded call, availability next week) to take a paid expert call; no deadline given, but she's waiting on your reply."
+            "why": "Tamsin Orrell asks you to answer 4 screening questions (vendor familiarity, competitors, OK with a recorded call, availability next week) to take a paid expert call; no deadline given, but she's waiting on your reply."
           }
         ],
         "line": "One new mail: a paid expert-call invitation that needs your answers; nothing else new and no events in the next 48 hours.",
@@ -338,11 +338,11 @@
           {
             "push": true,
             "ref": "mail:k1",
-            "title": "Maya Lin — another consultation request (workflow software market)",
+            "title": "Tamsin Orrell — another consultation request (workflow software market)",
             "why": "Asks you to answer 4 screening questions (vendor familiarity, competitors, OK with a recorded call, availability next week) to be matched with a client; you replied to her last request on 11 Oct, so a reply is owed."
           }
         ],
-        "line": "One new mail: a consultation screening request from Maya Lin at Expert Circle, waiting on your answers and availability.",
+        "line": "One new mail: a consultation screening request from Tamsin Orrell at Expert Circle, waiting on your answers and availability.",
         "done": []
       },
       "opened": [
@@ -879,7 +879,7 @@
             "push": false,
             "ref": "mail:ia1",
             "title": "Expert Circle consultation — workflow software market",
-            "why": "Maya Lin asks you to answer 4 screening questions (vendors, competitors, recorded call yes/no, availability next week) to take a paid consultation."
+            "why": "Tamsin Orrell asks you to answer 4 screening questions (vendors, competitors, recorded call yes/no, availability next week) to take a paid consultation."
           },
           {
             "push": true,

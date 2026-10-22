@@ -102,13 +102,25 @@
   ],
   "expect": {
     "pt1": {
-      "outcome": "needs_you"
+      "outcome": "needs_you",
+      "pile": [
+        "personal",
+        "events"
+      ]
     },
     "pt2": {
-      "outcome": "needs_you"
+      "outcome": "needs_you",
+      "pile": [
+        "alerts",
+        "personal",
+        "bills"
+      ]
     },
     "pt3": {
-      "outcome": "needs_you"
+      "outcome": "needs_you",
+      "pile": [
+        "alerts"
+      ]
     },
     "pr9": {
       "outcome": "not"
@@ -117,7 +129,10 @@
       "outcome": "not"
     },
     "pc1": {
-      "outcome": "not"
+      "outcome": "needs_you",
+      "pile": [
+        "alerts"
+      ]
     },
     "pc2": {
       "outcome": "not"

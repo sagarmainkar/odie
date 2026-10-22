@@ -8,6 +8,10 @@ from datetime import datetime
 from odie.watch.fetch import Event, Mail
 
 CARD, FLAGGED, HELD = "watch.card", "watch.flagged", "watch.held"
+PILES = ("alerts", "bills", "events", "personal", "orders")  # where an item belongs (the parked Desk design's buckets)
+WHY_MAX = 120
+LABEL_MAX = 40
+DRAFT_MAX = 4000
 MAX_PUSH = 3
 # A source is said to have stopped working on its 3rd failed check in a row (one or two misses are often a blip),
 # and said to work again only when it comes back after that.
@@ -50,6 +54,79 @@ def badges_of(source_ids: list[str], statuses: dict) -> list[dict]:
     return out
 
 
+def _label(value) -> str:
+    """A button's words from the model's suggestion or escape: {"label": "Reply with your fee"} -> that, trimmed to
+    fit; no label, or not an object -> "". The model writes only the words, never what the tap sends."""
+    if not isinstance(value, dict):
+        return ""
+    return str(value.get("label") or "").strip()[:LABEL_MAX]
+
+
+def _amount(value) -> dict | None:
+    """An amount as {"value": number, "currency": text}: {"value": 4280, "currency": "INR"} -> the same; "lots" ->
+    None."""
+    if not isinstance(value, dict):
+        return None
+    number = value.get("value")
+    if isinstance(number, bool) or not isinstance(number, (int, float)):
+        return None
+    return {"value": number, "currency": str(value.get("currency") or "")[:8]}
+
+
+def _draft(value) -> dict | None:
+    """A drafted reply as {"to", "subject", "body"} with a body; anything else -> None. It stays in Odie: chat sends
+    it only after the user's tap."""
+    if not isinstance(value, dict):
+        return None
+    body = str(value.get("body") or "").strip()
+    if not body:
+        return None
+    return {"to": str(value.get("to") or "")[:200], "subject": str(value.get("subject") or "")[:200],
+            "body": body[:DRAFT_MAX]}
+
+
+def _day(value) -> str | None:
+    """A due date the card can show: "2026-10-24" or "2026-10-24T18:00" -> as given; "next week" -> None."""
+    text = str(value or "").strip()
+    try:
+        datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    return text
+
+
+def labelled(n: dict) -> dict:
+    """The labels of one item the model reported, each kept only when it is usable; a bad one is left out, never the
+    item. {"pile": "alerts", "suggestion": {"label": "Reply", "run": "…"}, "due": "2026-10-24"} -> those three;
+    {"pile": "urgent", "suggestion": {}, "due": "next week"} -> {}. A suggestion's or escape's tap always sends Odie's
+    own request naming the item ("Show the draft for desk item mail:m1", "Close desk item mail:m1: Not interested"),
+    whatever run the model wrote."""
+    out: dict = {}
+    ref = str(n.get("ref") or "")
+    pile = str(n.get("pile") or "").strip().lower()
+    if pile in PILES:
+        out["pile"] = pile
+    draft = _draft(n.get("draft"))
+    suggestion = _label(n.get("suggestion"))
+    if suggestion:  # what a tap sends is Odie's own words, naming the item: a mail can't write it
+        run = f"Desk item {ref}: {suggestion}"
+        if draft:
+            run = f"Show the draft for desk item {ref}"
+        out["suggestion"] = {"label": suggestion, "run": run}
+    escape = _label(n.get("escape"))
+    if escape:
+        out["escape"] = {"label": escape, "run": f"Close desk item {ref}: {escape}"}
+    due = _day(n.get("due"))
+    if due:
+        out["due"] = due
+    amount = _amount(n.get("amount"))
+    if amount:
+        out["amount"] = amount
+    if draft:
+        out["draft"] = draft
+    return out
+
+
 def _mail_fields(ref: str, mails: list[Mail], statuses: dict | None = None) -> dict:
     """What Today's row needs from the mail behind an item (web: watchRow): the sender's name, the subject, the mail's
     time, its gist, its badges, and the app that holds its id (the tap opens the mail there, by that id). {} for an
@@ -75,17 +152,21 @@ def _events(events: list[Event], statuses: dict | None = None) -> list[dict]:
 
 def apply(store, now: datetime, needs_you: list[dict], line: str, mails: list[Mail], events: list[Event],
           statuses: dict, first: bool) -> list[dict]:
+    from odie.watch import threads
     known = {f"mail:{m.id}" for m in mails} | {f"event:{e.id}" for e in events}
+    known |= threads.open_refs(store)  # a thread the watch follows can come back (a reply now overdue)
     card = store.get_setting(CARD) or {}
-    items = [i for i in card.get("needs_you", []) if not i.get("done")]
+    closed = threads.closed_refs(store)  # the user ticked it on Today, or the watch closed it: its card goes too
+    items = [i for i in card.get("needs_you", []) if not i.get("done") and i.get("ref") not in closed]
     have = {i["ref"] for i in items}
     fresh = []
     for n in needs_you or []:
         ref = str(n.get("ref") or "")
         if ref not in known or ref in have:
             continue
-        it = {"ref": ref, "title": str(n.get("title") or "")[:120], "why": str(n.get("why") or "")[:200],
-              "at": now.isoformat(timespec="seconds"), "done": False, **_mail_fields(ref, mails, statuses)}
+        it = {"ref": ref, "title": str(n.get("title") or "")[:120], "why": str(n.get("why") or "")[:WHY_MAX],
+              "at": now.isoformat(timespec="seconds"), "done": False, **_mail_fields(ref, mails, statuses),
+              **labelled(n)}
         if ref.startswith("event:"):
             event = next((e for e in events if f"event:{e.id}" == ref), None)
             if event is not None:
@@ -166,3 +247,15 @@ def recovered_now(store, statuses: dict) -> list[str]:
         if _failures_before(prev, sid) >= SAY_FAILING_AT:
             apps.add(st.get("app", sid))
     return sorted(apps)
+
+
+def drop_item(store, ref: str) -> None:
+    """Takes an item off the card (its thread closed, or the user dismissed it); nothing when it isn't there."""
+    card = store.get_setting(CARD)
+    if not card:
+        return
+    items = card.get("needs_you", [])
+    kept = [i for i in items if i.get("ref") != ref]
+    if len(kept) != len(items):
+        card["needs_you"] = kept
+        store.set_setting(CARD, card)

@@ -1,0 +1,41 @@
+{
+  "id": "reply-overdue",
+  "about": "A reply the watch was following is two days late and the user hasn't answered: it comes back as needing the user.",
+  "mails": [
+    {
+      "id": "rop1",
+      "from": "Shop Deals <deals@shop.example.com>",
+      "subject": "Weekend sale",
+      "at": "2026-10-22T02:00:00Z",
+      "snippet": "Up to 30% off",
+      "body": "Up to 30% off this weekend."
+    }
+  ],
+  "expect": {
+    "rop1": {
+      "outcome": "not"
+    }
+  },
+  "threads_open": [
+    {
+      "ref": "mail:ro1",
+      "kind": "reply",
+      "title": "Reply: kitchen quote",
+      "stage": "owed",
+      "due": "2026-10-20",
+      "thread": "th-ro"
+    }
+  ],
+  "threads": {
+    "th-ro": [
+      {
+        "from": "Build Co <hello@buildco.example.com>",
+        "date": "2026-10-18T08:00:00Z",
+        "body": "Here's the quote. Can you confirm by Tuesday so we can book the team?"
+      }
+    ]
+  },
+  "threads_expect": {
+    "mail:ro1": "flagged"
+  }
+}

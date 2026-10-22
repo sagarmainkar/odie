@@ -257,6 +257,7 @@ def guard(tool, args, tool_context) -> dict | None:
     from odie.signin.guard import background_asks
     always_gated = tool.name in GATED_TOOLS | addons.gated_tools()
     is_skill_install = tool.name == "install_skill"
-    if always_gated or is_skill_install or background_asks(tool, args, tool_context):
+    is_the_users_desk = tool.name == "desk_close"  # only the user takes an item off their Desk
+    if always_gated or is_skill_install or is_the_users_desk or background_asks(tool, args, tool_context):
         return {"error": "Not allowed in a background check: this needs the user's tap. Skip it and report what you found."}
     return None

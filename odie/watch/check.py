@@ -8,9 +8,9 @@ import logging
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from odie.watch import bills
+from odie.threads import DESK
+from odie.watch import bills, cards, sources
 from odie.watch import report as rep
-from odie.watch import sources
 from odie.watch.fetch import STATE, Fetcher
 from odie.watch.tools import Check, watch_tools
 
@@ -68,7 +68,8 @@ def guard(tool, args, tool_context) -> dict | None:
     refused = trackers_guard(tool, args, tool_context)
     if refused:
         return refused
-    not_for_the_watch = tool.name in ("update_memory", "forget_memory", "run_shell", "hand_over", "task_update")
+    not_for_the_watch = tool.name in ("update_memory", "forget_memory", "run_shell", "hand_over", "task_update",
+                                      "desk_close")
     is_browser = tool.name.startswith("browser_")
     if not_for_the_watch or is_browser:
         return {"error": "Not allowed in the background watch: report it as a needs-you item instead."}
@@ -186,8 +187,9 @@ async def run_check(store, now: datetime, turn, post, push, memory=None, memory_
         fetcher.commit(turn_failed=bool(reason) and r is None)
 
     async def say(text: str, media=None) -> None:
+        """A message on the Desk, the watch's own conversation, never the chat the user is in."""
         try:
-            await post(text, media=media)
+            await post(text, media=media, session_id=DESK)
         except Exception:  # noqa: BLE001
             log.warning("watch: a message couldn't be posted", exc_info=True)
 
@@ -203,6 +205,8 @@ async def run_check(store, now: datetime, turn, post, push, memory=None, memory_
         await say(f"{app} works again: the watch is back.")
     if r is None:
         return "fallback"
+    if to_push:  # what needs the user soon: cards on the Desk, and a push for each
+        await say(cards.round_text("", to_push, []))
     for it in to_push:
         ping(it["title"], it["why"])
     from odie.agent.tools.files import hand_over, workspace
@@ -230,8 +234,9 @@ async def run_check(store, now: datetime, turn, post, push, memory=None, memory_
 
 
 def _last_task_id(store) -> int:
-    """The newest task's id (0 with none): compared before and after the check, it says whether the check added one."""
-    row = store.one("select max(id) n from tasks")
+    """The newest task's id (0 with none), the watch's own threads left out: compared before and after the check, it
+    says whether the check added a reminder for the user (opening a thread to follow is not one)."""
+    row = store.one("select max(id) n from tasks where source_kind is null or source_kind != 'watch'")
     if row is None or row["n"] is None:
         return 0
     return int(row["n"])

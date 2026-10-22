@@ -14,7 +14,12 @@
   "expect": {
     "k1": {
       "outcome": "needs_you",
-      "must_open": true
+      "must_open": true,
+      "pile": [
+        "alerts",
+        "personal"
+      ],
+      "track": "reply"
     }
   },
   "sent": {

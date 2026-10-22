@@ -49,3 +49,16 @@ async def test_up_next_has_the_watchs_events(store):
     from odie import upcoming
     got = await upcoming.build(store, DAY)
     assert any(i.get("title") == "Standup" for i in got["items"])
+
+
+
+async def test_dismissing_on_today_closes_the_watchs_thread(isolated_settings, store):
+    from odie.app.main import create_app
+    from odie.watch import threads
+    from tests.test_api import FakeRunner
+    threads.track(store, "mail:m1", "reply", "Reply: invoice", "owed")
+    app = create_app(runner=FakeRunner(), store=store)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+        async with app.router.lifespan_context(app):
+            await c.post("/api/watch/done", json={"ref": "mail:m1"})
+    assert threads.open_refs(store) == set()

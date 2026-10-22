@@ -102,10 +102,19 @@
   "expect": {
     "ia1": {
       "outcome": "needs_you",
-      "must_open": true
+      "must_open": true,
+      "pile": [
+        "alerts",
+        "personal"
+      ]
     },
     "ia2": {
-      "outcome": "needs_you"
+      "outcome": "needs_you",
+      "pile": [
+        "alerts",
+        "personal",
+        "events"
+      ]
     },
     "pr1": {
       "outcome": "not"

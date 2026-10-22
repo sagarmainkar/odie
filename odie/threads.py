@@ -10,7 +10,9 @@ from datetime import UTC, datetime
 from odie import config
 from odie.store.db import Store
 
-ID_RE = re.compile(r"^chat-\d{4}-\d{2}-\d{2}(-\d+)?$")
+ID_RE = re.compile(r"^(chat-\d{4}-\d{2}-\d{2}(-\d+)?|chat-desk)$")
+DESK = "chat-desk"  # the watch's own conversation: its morning round, urgent items and news (never the user's chat)
+DESK_TITLE = "Desk"
 TITLE_MAX = 70
 
 
@@ -88,14 +90,22 @@ def list_threads(store: Store, q: str | None = None) -> list[dict]:
     meta = _meta(store)
     out = []
     for sid, t in info.items():
+        if sid == DESK:  # only Odie writes there at first; it is always listed, pinned, under its own name
+            t["first"] = t["first"] or DESK_TITLE
         if not t["first"]:
             continue
         m = meta.get(sid, {})
         title = m.get("title") or (t["first"][:TITLE_MAX] + ("…" if len(t["first"]) > TITLE_MAX else ""))
+        date = sid[5:15]
+        pinned_at = m.get("pinned_at")
+        if sid == DESK:
+            title = DESK_TITLE
+            date = datetime.fromtimestamp(sessions[sid]).strftime("%Y-%m-%d")
+            pinned_at = pinned_at or "9999-12-31T00:00:00"  # pinned above every pin the user made
         if needle and t["snippet"] is None and needle not in title.lower():
             continue
-        out.append({"id": sid, "title": title, "renamed": bool(m.get("title")), "date": sid[5:15], "messages": t["messages"],
-                    "started": t["started"], "updated": sessions[sid], "pinned": bool(m.get("pinned_at")), "pinned_at": m.get("pinned_at"),
+        out.append({"id": sid, "title": title, "renamed": bool(m.get("title")), "date": date, "messages": t["messages"],
+                    "started": t["started"], "updated": sessions[sid], "pinned": bool(pinned_at), "pinned_at": pinned_at,
                     "snippet": t["snippet"]})
     out.sort(key=lambda x: (not x["pinned"], -(datetime.fromisoformat(x["pinned_at"]).timestamp() if x["pinned_at"] else 0), -x["updated"]))
     return out

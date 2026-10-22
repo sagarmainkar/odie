@@ -23,10 +23,16 @@ def store(isolated_settings, tmp_path):
     return s
 
 
+WHERE: list[str | None] = []  # the conversation each recorded post went to
+
+
 def recorder():
     posts, pushes = [], []
-    async def post(text, media=None):
+    WHERE.clear()
+
+    async def post(text, media=None, session_id=None):
         posts.append((text, media))
+        WHERE.append(session_id)
     def push(title, body):
         pushes.append((title, body))
     return posts, pushes, post, push
@@ -63,7 +69,8 @@ async def test_a_standing_instruction_makes_the_deck_and_says_so(store, tmp_path
     store.set_setting("watch.state", {"last_check": None, "seen": [], "events": {}, "sources": {"mail:mymail": {"fails": 0}, "calendar:mymail": {"fails": 0}}})
     assert await check.run_check(store, DAY, turn, post, push) == "ok"
     assert "## Watch for" in seen_prompt["i"]
-    assert posts and posts[0][0] == "The deck from xyz's PDF is ready" and posts[0][1]
+    told = [(text, media) for text, media in posts if text == "The deck from xyz's PDF is ready"]
+    assert told and told[0][1]  # the done message, with the deck as its file (after the urgent item's card)
     assert [t for t, _ in pushes] == ["Deck from xyz", "Odie: done"]
     assert store.get_setting(report.CARD)["needs_you"][0]["ref"] == "mail:m1"
 
@@ -254,4 +261,63 @@ def test_the_watch_reads_like_an_assistant():
     assert "a reply owed" in text and "unsubscribe footer" in text and "opportunity for the user" in text
     assert "read_thread" in text and "sent_to" in text and "search_mail" in text
     assert "Always finish with `report`" in text and "refused" in text
-    assert len(text.split()) <= 800
+    assert "open_threads" in text and "`track`" in text and "draft" in text
+    assert all(pile in text for pile in ("alerts", "bills", "events", "personal", "orders"))
+    assert "suggestion" in text and "escape" in text
+    assert len(text.split()) <= 1000  # it also reviews its threads now; it still runs every 30 minutes
+
+
+
+async def test_an_urgent_item_is_a_card_on_the_desk(store, tmp_path):
+    # The watch's news goes to its own conversation as a card, never into the chat the user is in.
+    from odie.plugins import mcp
+    from odie.threads import DESK
+    mcp.write_config({"mymail": spec_for("plain", tmp_path, mail=ZAP_MAIL, events=EVENTS)})
+    posts, pushes, post, push = recorder()
+    store.set_setting("watch.state", {"last_check": None, "seen": [], "events": {}, "sources": {
+        "mail:mymail": {"ok": True}, "calendar:mymail": {"ok": True}}})  # not the first check: pushes are on
+
+    async def turn(prompt, tools, instruction):
+        await call(tools, "new_mail")
+        await call(tools, "report", needs_you=[{"ref": "mail:m1", "title": "Deck review", "why": "Asks for comments by noon",
+                                                "pile": "alerts", "push": True,
+                                                "suggestion": {"label": "Open it", "run": "Tell me about desk item mail:m1"},
+                                                "escape": {"label": "Skip", "run": "Close desk item mail:m1: skip"}}],
+                    line="one")
+    await check.run_check(store, DAY, turn, post, push)
+    cards_posted = [(text, where) for (text, _media), where in zip(posts, WHERE) if "```odie-blocks" in text]
+    assert cards_posted and cards_posted[0][1] == DESK and "Deck review" in cards_posted[0][0]
+    assert pushes and pushes[0][0] == "Deck review"
+
+
+
+async def test_tracking_a_thread_is_not_telling_the_user(store, tmp_path):
+    # track adds a row to the tasks table; that must not count as "a reminder added", which tells every done line.
+    from odie.plugins import mcp
+    mcp.write_config({"mymail": spec_for("plain", tmp_path, mail=ZAP_MAIL, events=EVENTS)})
+    posts, pushes, post, push = recorder()
+
+    async def turn(prompt, tools, instruction):
+        await call(tools, "new_mail")
+        await call(tools, "track", ref="mail:m1", kind="order", title="Order: desk lamp", stage="placed")
+        await call(tools, "report", needs_you=[], line="quiet", done=[{"message": "Nothing new, already covered"}])
+    await check.run_check(store, DAY, turn, post, push)
+    assert all("Nothing new" not in text for text, _media in posts)
+
+
+def test_the_watch_and_trackers_never_close_a_desk_item():
+    # A mail could steer a background turn into taking a real item off the user's Desk.
+    from odie.trackers import guard as trackers_guard
+    tool = SimpleNamespace(name="desk_close")
+    ctx = SimpleNamespace(session=SimpleNamespace(id="tracker-1"), state={})
+    assert check.guard(tool, {"ref": "mail:m1", "why": "x"}, ctx) is not None
+    assert trackers_guard(tool, {"ref": "mail:m1", "why": "x"}, ctx) is not None
+
+
+def test_the_instructions_have_no_braced_word_adk_would_fill_in():
+    # ADK reads "{word}" in an agent's instruction as a state variable: "{label}" once crashed every watch turn
+    # (KeyError: Context variable not found). Lists like "{to, subject, body}" are fine.
+    import re
+    from odie.watch import check as watch_check
+    text = watch_check._instruction("", "")
+    assert re.findall(r"\{[A-Za-z_][A-Za-z0-9_.:]*\??\}", text) == []
