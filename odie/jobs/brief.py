@@ -6,7 +6,6 @@ import logging
 from dataclasses import dataclass, field
 from datetime import datetime
 
-
 from odie import addons
 from odie.addons import BriefPart
 from odie.agent.prompt import day_block
@@ -75,8 +74,8 @@ Open threads are the things that need them; name them, never print their ids. Th
 
 
 async def write_with_model(prompt: str, store: Store | None = None) -> str:
-    from odie.models import chat_completion
     from odie import profile
+    from odie.models import chat_completion
     from odie.sampling import BRIEF_TEMPERATURE
     user = profile.get(store)["user_name"] if store is not None else ""
     return await chat_completion(store, "chat", [{"role": "system", "content": brief_system(user, guidance())}, {"role": "user", "content": prompt}],

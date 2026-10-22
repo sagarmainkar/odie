@@ -8,11 +8,9 @@ import logging
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from odie.watch import bills
 from odie.threads import DESK
-from odie.watch import cards
+from odie.watch import bills, cards, sources
 from odie.watch import report as rep
-from odie.watch import sources
 from odie.watch.fetch import STATE, Fetcher
 from odie.watch.tools import Check, watch_tools
 
