@@ -89,3 +89,50 @@ async def test_sources_saved_before_dates_were_known_are_found_again(isolated_se
     del old["v"]  # what 2026-10-08's Odie saved
     s.set_setting(sources.KEY, old)
     assert sources.stale(s, datetime.now(UTC))
+
+
+READ_TOOLS = [
+    {"name": "gmail_read", "input_schema": {"type": "object", "properties": {"message_id": {"type": "string"}}}},
+    {"name": "gmail_read_thread", "input_schema": {"type": "object", "properties": {"thread_id": {"type": "string"}}}},
+]
+
+
+def test_a_mail_app_with_read_and_thread_tools():
+    # The watch opens a whole mail and reads its thread with the app's own tools, found by name like the listing.
+    found = {s.kind: s for s in sources._by_names("g", {}, GMAIL_MCP_TOOLS + READ_TOOLS, "plain", "Mail")}
+    assert found["mail"].reader == {"tool": "gmail_read", "id_param": "message_id"}
+    assert found["mail"].thread == {"tool": "gmail_read_thread", "id_param": "thread_id"}
+
+
+def test_a_mail_app_without_them_has_none():
+    found = {s.kind: s for s in sources._by_names("g", {}, GMAIL_MCP_TOOLS, "plain", "Mail")}
+    assert found["mail"].reader is None and found["mail"].thread is None
+
+
+def test_a_listing_tool_is_never_also_the_reader():
+    # "get_messages" lists mail; it must not be taken as the tool that opens one message.
+    tools = [{"name": "get_messages", "input_schema": {"type": "object", "properties": {"query": {"type": "string"}}}},
+             {"name": "get_message", "input_schema": {"type": "object", "properties": {"id": {"type": "string"}}}}]
+    mail = {s.kind: s for s in sources._by_names("m", {}, tools, "plain", "Mail")}["mail"]
+    assert mail.tool == "get_messages" and mail.reader == {"tool": "get_message", "id_param": "id"}
+
+
+def test_composio_read_tools_by_name():
+    tools = [{"name": n, "input_schema": {"type": "object", "properties": {p: {"type": "string"}}}}
+             for n, p in (("GMAIL_FETCH_EMAILS", "query"), ("GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID", "message_id"),
+                          ("GMAIL_FETCH_MESSAGE_BY_THREAD_ID", "thread_id"))]
+    mail = {s.kind: s for s in sources._by_names("c", {}, tools, "composio", "Composio")}["mail"]
+    assert mail.reader == {"tool": "GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID", "id_param": "message_id"}
+    assert mail.thread == {"tool": "GMAIL_FETCH_MESSAGE_BY_THREAD_ID", "id_param": "thread_id"}
+
+
+async def test_sources_saved_before_readers_were_known_are_found_again(isolated_settings, tmp_path):
+    s = Store(tmp_path / "a.db")
+    s.init_schema()
+    from odie.plugins import mcp
+    mcp.write_config({"mymail": spec_for("plain", tmp_path)})
+    await sources.detect_and_save(s)
+    old = s.get_setting(sources.KEY)
+    old["v"] = 2  # saved before mail apps' read and thread tools were looked for
+    s.set_setting(sources.KEY, old)
+    assert sources.stale(s, datetime.now(UTC))

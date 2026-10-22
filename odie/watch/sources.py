@@ -14,10 +14,15 @@ from odie.watch.calls import CallError, call_tool, list_tools
 
 log = logging.getLogger("odie.watch")
 KEY = "watch.sources"
-VERSION = 2  # bumped when detection learns something new, so a saved source is found again (2: calendars that take dates)
+VERSION = 3  # bumped when detection learns something new, so a saved source is found again (2: calendars that take
+# dates; 3: a mail app's read and thread tools)
 MAIL_RE = re.compile(r"^(gmail_)?(search|list|find|fetch|get)_?(e?mails?|messages?|inbox)$|^gmail_search$", re.I)
 EVENTS_RE = re.compile(r"^(list|find|search|get)_?(calendar_)?events?$|^calendar_(list_)?events$", re.I)
 ATTACH_RE = re.compile(r"^(gmail_)?get_?attachments?$", re.I)
+READ_RE = re.compile(r"^(gmail_)?(read|get|fetch)_?(e?mail|message)(_by_id)?$|^gmail_read$", re.I)  # opens one message
+THREAD_RE = re.compile(r"^(gmail_)?(read|get|fetch)_?thread$", re.I)  # reads a whole thread
+COMPOSIO_READER = "GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID"
+COMPOSIO_THREAD = "GMAIL_FETCH_MESSAGE_BY_THREAD_ID"
 WRITE_RE = re.compile(r"send|reply|forward|delete|trash|archive|create|update|modify|move|add|remove|accept|decline", re.I)
 
 
@@ -34,6 +39,8 @@ class Source:
     end_param: str = ""
     attachment: dict | None = None
     dates: bool = False  # the window is whole days (YYYY-MM-DD), not times
+    reader: dict | None = None  # {"tool", "id_param"}: opens one whole message
+    thread: dict | None = None  # {"tool", "id_param"}: reads a whole thread
 
     @property
     def id(self) -> str:
@@ -148,6 +155,15 @@ def _may_read_with(tool_name: str) -> bool:
     return bool(MAIL_RE.match(tool_name) or EVENTS_RE.match(tool_name))
 
 
+def _id_tool(tool: dict | None, *id_names: str) -> dict | None:
+    """A read tool that takes one id, as the source keeps it: {"name": "gmail_read", schema with message_id} ->
+    {"tool": "gmail_read", "id_param": "message_id"}; no tool -> None."""
+    if tool is None:
+        return None
+    props = _props(tool["input_schema"])
+    return {"tool": tool["name"], "id_param": _pick(props, *id_names)}
+
+
 def _by_names(name: str, spec: dict, tools: list[dict], style: str, app: str) -> list[Source]:
     byname = {t["name"]: t for t in tools}
     out: list[Source] = []
@@ -155,11 +171,16 @@ def _by_names(name: str, spec: dict, tools: list[dict], style: str, app: str) ->
         mail = byname.get("GMAIL_FETCH_EMAILS")
         cal = byname.get("GOOGLECALENDAR_EVENTS_LIST") or byname.get("GOOGLECALENDAR_FIND_EVENT")
         att = byname.get("GMAIL_GET_ATTACHMENT")
+        reader_tool = byname.get(COMPOSIO_READER)
+        thread_tool = byname.get(COMPOSIO_THREAD)
     else:
         ok = [t for t in tools if _may_read_with(t["name"])]
         mail = next((t for t in ok if MAIL_RE.match(t["name"])), None)
         cal = next((t for t in ok if EVENTS_RE.match(t["name"])), None)
         att = next((t for t in ok if ATTACH_RE.match(t["name"])), None)
+        others = [t for t in ok if mail is None or t["name"] != mail["name"]]  # the listing never also opens one
+        reader_tool = next((t for t in others if READ_RE.match(t["name"])), None)
+        thread_tool = next((t for t in others if THREAD_RE.match(t["name"])), None)
     if mail:
         props = _props(mail["input_schema"])
         fixed = {}
@@ -172,7 +193,10 @@ def _by_names(name: str, spec: dict, tools: list[dict], style: str, app: str) ->
             attachment = {"tool": att["name"], "fixed": {},
                           "id_param": _pick(att_props, "message_id", "messageId", "id"),
                           "name_param": _pick(att_props, "filename", "file_name", "attachment_filename", "name")}
-        out.append(Source("mail", name, app, style, mail["name"], fixed, query_param=query_param, attachment=attachment))
+        reader = _id_tool(reader_tool, "message_id", "messageId", "id")
+        thread = _id_tool(thread_tool, "thread_id", "threadId", "id")
+        out.append(Source("mail", name, app, style, mail["name"], fixed, query_param=query_param, attachment=attachment,
+                          reader=reader, thread=thread))
     if cal:
         props = _props(cal["input_schema"])
         start = _pick(props, "time_min", "timeMin", "start", "after", "start_time", "date_from", "from_date", "start_date")
