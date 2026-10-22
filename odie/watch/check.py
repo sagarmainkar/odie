@@ -68,7 +68,8 @@ def guard(tool, args, tool_context) -> dict | None:
     refused = trackers_guard(tool, args, tool_context)
     if refused:
         return refused
-    not_for_the_watch = tool.name in ("update_memory", "forget_memory", "run_shell", "hand_over", "task_update")
+    not_for_the_watch = tool.name in ("update_memory", "forget_memory", "run_shell", "hand_over", "task_update",
+                                      "desk_close")
     is_browser = tool.name.startswith("browser_")
     if not_for_the_watch or is_browser:
         return {"error": "Not allowed in the background watch: report it as a needs-you item instead."}
@@ -233,8 +234,9 @@ async def run_check(store, now: datetime, turn, post, push, memory=None, memory_
 
 
 def _last_task_id(store) -> int:
-    """The newest task's id (0 with none): compared before and after the check, it says whether the check added one."""
-    row = store.one("select max(id) n from tasks")
+    """The newest task's id (0 with none), the watch's own threads left out: compared before and after the check, it
+    says whether the check added a reminder for the user (opening a thread to follow is not one)."""
+    row = store.one("select max(id) n from tasks where source_kind is null or source_kind != 'watch'")
     if row is None or row["n"] is None:
         return 0
     return int(row["n"])

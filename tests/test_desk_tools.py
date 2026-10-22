@@ -56,3 +56,19 @@ def test_threads_close_by_ref(store):
     threads.track(store, "mail:o1", "order", "Order: lamp", "shipped")
     assert "Closed" in threads.close(store, "mail:o1", "delivered")
     assert "No open thread" in threads.close(store, "mail:o1", "delivered")
+
+
+
+def test_everything_the_watch_wrote_is_inside_the_fence(store):
+    text = tools_for(store)["desk_item"](ref="mail:m1")
+    fence = text.index("<<<UNTRUSTED")
+    assert text.index("Workshop invite") > fence and text.index("Reply with your fee") > fence
+
+
+def test_closing_on_the_desk_is_the_users_not_the_watchs(store):
+    from datetime import datetime, timedelta
+
+    from odie.jobs.brief import done_lines
+    threads.track(store, "mail:m1", "reply", "Reply: workshop invite", "owed")
+    tools_for(store)["desk_close"](ref="mail:m1", why="not interested")
+    assert done_lines(store, datetime.now().astimezone() + timedelta(minutes=1)) == []

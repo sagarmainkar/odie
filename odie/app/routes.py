@@ -1659,6 +1659,8 @@ async def watch_done(body: WatchDoneIn, request: Request) -> dict[str, Any]:
     card = store.get_setting(report.CARD) or {}
     card["needs_you"] = [i for i in card.get("needs_you", []) if i.get("ref") != body.ref]
     store.set_setting(report.CARD, card)
+    from odie.watch import threads
+    threads.close(store, body.ref, "dismissed on Today", by_user=True)  # the watch stops following it too
     return {"ok": True}
 
 

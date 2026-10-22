@@ -11,7 +11,6 @@ CARD, FLAGGED, HELD = "watch.card", "watch.flagged", "watch.held"
 PILES = ("alerts", "bills", "events", "personal", "orders")  # where an item belongs (the parked Desk design's buckets)
 WHY_MAX = 120
 LABEL_MAX = 40
-RUN_MAX = 200
 DRAFT_MAX = 4000
 MAX_PUSH = 3
 # A source is said to have stopped working on its 3rd failed check in a row (one or two misses are often a blip),
@@ -55,17 +54,12 @@ def badges_of(source_ids: list[str], statuses: dict) -> list[dict]:
     return out
 
 
-def _action(value) -> dict | None:
-    """One suggestion or escape as a card button: {"label", "run"} with both words given, trimmed to fit; anything
-    else -> None. {"label": "Reply with your fee", "run": "Show the draft for desk item mail:m1"} -> the same;
-    {"label": "Do it"} (no run) -> None; "skip" -> None."""
+def _label(value) -> str:
+    """A button's words from the model's suggestion or escape: {"label": "Reply with your fee"} -> that, trimmed to
+    fit; no label, or not an object -> "". The model writes only the words, never what the tap sends."""
     if not isinstance(value, dict):
-        return None
-    label = str(value.get("label") or "").strip()
-    run = str(value.get("run") or "").strip()
-    if not label or not run:
-        return None
-    return {"label": label[:LABEL_MAX], "run": run[:RUN_MAX]}
+        return ""
+    return str(value.get("label") or "").strip()[:LABEL_MAX]
 
 
 def _amount(value) -> dict | None:
@@ -104,22 +98,30 @@ def _day(value) -> str | None:
 def labelled(n: dict) -> dict:
     """The labels of one item the model reported, each kept only when it is usable; a bad one is left out, never the
     item. {"pile": "alerts", "suggestion": {"label": "Reply", "run": "…"}, "due": "2026-10-24"} -> those three;
-    {"pile": "urgent", "suggestion": {"label": "Do it"}, "due": "next week"} -> {}."""
+    {"pile": "urgent", "suggestion": {}, "due": "next week"} -> {}. A suggestion's or escape's tap always sends Odie's
+    own request naming the item ("Show the draft for desk item mail:m1", "Close desk item mail:m1: Not interested"),
+    whatever run the model wrote."""
     out: dict = {}
+    ref = str(n.get("ref") or "")
     pile = str(n.get("pile") or "").strip().lower()
     if pile in PILES:
         out["pile"] = pile
-    for key in ("suggestion", "escape"):
-        action = _action(n.get(key))
-        if action:
-            out[key] = action
+    draft = _draft(n.get("draft"))
+    suggestion = _label(n.get("suggestion"))
+    if suggestion:  # what a tap sends is Odie's own words, naming the item: a mail can't write it
+        run = f"Desk item {ref}: {suggestion}"
+        if draft:
+            run = f"Show the draft for desk item {ref}"
+        out["suggestion"] = {"label": suggestion, "run": run}
+    escape = _label(n.get("escape"))
+    if escape:
+        out["escape"] = {"label": escape, "run": f"Close desk item {ref}: {escape}"}
     due = _day(n.get("due"))
     if due:
         out["due"] = due
     amount = _amount(n.get("amount"))
     if amount:
         out["amount"] = amount
-    draft = _draft(n.get("draft"))
     if draft:
         out["draft"] = draft
     return out
@@ -154,7 +156,8 @@ def apply(store, now: datetime, needs_you: list[dict], line: str, mails: list[Ma
     known = {f"mail:{m.id}" for m in mails} | {f"event:{e.id}" for e in events}
     known |= threads.open_refs(store)  # a thread the watch follows can come back (a reply now overdue)
     card = store.get_setting(CARD) or {}
-    items = [i for i in card.get("needs_you", []) if not i.get("done")]
+    closed = threads.closed_refs(store)  # the user ticked it on Today, or the watch closed it: its card goes too
+    items = [i for i in card.get("needs_you", []) if not i.get("done") and i.get("ref") not in closed]
     have = {i["ref"] for i in items}
     fresh = []
     for n in needs_you or []:
@@ -244,3 +247,15 @@ def recovered_now(store, statuses: dict) -> list[str]:
         if _failures_before(prev, sid) >= SAY_FAILING_AT:
             apps.add(st.get("app", sid))
     return sorted(apps)
+
+
+def drop_item(store, ref: str) -> None:
+    """Takes an item off the card (its thread closed, or the user dismissed it); nothing when it isn't there."""
+    card = store.get_setting(CARD)
+    if not card:
+        return
+    items = card.get("needs_you", [])
+    kept = [i for i in items if i.get("ref") != ref]
+    if len(kept) != len(items):
+        card["needs_you"] = kept
+        store.set_setting(CARD, card)

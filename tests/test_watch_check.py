@@ -263,7 +263,7 @@ def test_the_watch_reads_like_an_assistant():
     assert "Always finish with `report`" in text and "refused" in text
     assert "open_threads" in text and "`track`" in text and "draft" in text
     assert all(pile in text for pile in ("alerts", "bills", "events", "personal", "orders"))
-    assert "suggestion" in text and "escape" in text and "desk item mail:" in text
+    assert "suggestion" in text and "escape" in text
     assert len(text.split()) <= 1000  # it also reviews its threads now; it still runs every 30 minutes
 
 
@@ -288,3 +288,27 @@ async def test_an_urgent_item_is_a_card_on_the_desk(store, tmp_path):
     cards_posted = [(text, where) for (text, _media), where in zip(posts, WHERE) if "```odie-blocks" in text]
     assert cards_posted and cards_posted[0][1] == DESK and "Deck review" in cards_posted[0][0]
     assert pushes and pushes[0][0] == "Deck review"
+
+
+
+async def test_tracking_a_thread_is_not_telling_the_user(store, tmp_path):
+    # track adds a row to the tasks table; that must not count as "a reminder added", which tells every done line.
+    from odie.plugins import mcp
+    mcp.write_config({"mymail": spec_for("plain", tmp_path, mail=ZAP_MAIL, events=EVENTS)})
+    posts, pushes, post, push = recorder()
+
+    async def turn(prompt, tools, instruction):
+        await call(tools, "new_mail")
+        await call(tools, "track", ref="mail:m1", kind="order", title="Order: desk lamp", stage="placed")
+        await call(tools, "report", needs_you=[], line="quiet", done=[{"message": "Nothing new, already covered"}])
+    await check.run_check(store, DAY, turn, post, push)
+    assert all("Nothing new" not in text for text, _media in posts)
+
+
+def test_the_watch_and_trackers_never_close_a_desk_item():
+    # A mail could steer a background turn into taking a real item off the user's Desk.
+    from odie.trackers import guard as trackers_guard
+    tool = SimpleNamespace(name="desk_close")
+    ctx = SimpleNamespace(session=SimpleNamespace(id="tracker-1"), state={})
+    assert check.guard(tool, {"ref": "mail:m1", "why": "x"}, ctx) is not None
+    assert trackers_guard(tool, {"ref": "mail:m1", "why": "x"}, ctx) is not None

@@ -27,11 +27,13 @@ def test_track_opens_then_moves_then_closes_a_thread(store):
     assert "Tracking" in said
     row = row_for(store, "mail:o1")
     assert row["kind"] == "waiting" and row["detail"] == "placed" and row["status"] == "open"
-    assert row["origin"] == "agent" and row["due_at"].startswith("2026-10-24")
-    assert json.loads(row["notes"]) == {"thread": "t1", "source": "mail:gmail-calendar", "kind": "order"}
+    assert row["origin"] == "agent" and row["due_at"] is None  # an order's date never fires a reminder
+    facts = json.loads(row["notes"])
+    assert facts["thread"] == "t1" and facts["source"] == "mail:gmail-calendar" and facts["kind"] == "order"
+    assert facts["due"].startswith("2026-10-24")
     threads.track(store, "mail:o1", "order", "Order: desk lamp", "shipped", due="2026-10-23")
     row = row_for(store, "mail:o1")
-    assert row["detail"] == "shipped" and row["due_at"].startswith("2026-10-23")
+    assert row["detail"] == "shipped" and json.loads(row["notes"])["due"].startswith("2026-10-23")
     assert store.one("select count(*) n from tasks")["n"] == 1  # moved, not a second row
     threads.track(store, "mail:o1", "order", "Order: desk lamp", "done", why="delivered: mail 23 Oct")
     row = row_for(store, "mail:o1")
@@ -86,3 +88,38 @@ async def test_open_threads_makes_older_mail_readable(store, tmp_path):
     assert "mail:r1" in listed["result"]
     got = await tools["read_thread"].func(mail_id="r1")
     assert "My fee is attached." in got["result"]
+
+
+
+def test_only_bills_and_deadlines_fire_a_reminder(store):
+    threads.track(store, "mail:b1", "bill", "Pay card bill — ₹12,400", "due", due="2026-10-21")
+    threads.track(store, "mail:r1", "reply", "Reply: fee", "owed", due="2026-10-21")
+    threads.track(store, "mail:o1", "order", "Order: lamp", "shipped", due="2026-10-21")
+    fired = {r["source_ref"] for r in store.due_tasks("2026-10-22T09:00+05:30")}
+    assert fired == {"mail:b1"}
+    assert {t["ref"]: t["overdue"] for t in threads.open_threads(store, NOW)} == {"mail:b1": True, "mail:r1": True,
+                                                                                "mail:o1": True}
+
+
+def test_a_moved_bill_fires_again(store):
+    threads.track(store, "mail:b1", "bill", "Pay card bill", "due", due="2026-10-21")
+    tid = row_for(store, "mail:b1")["id"]
+    store.mark_delivered(tid)
+    threads.track(store, "mail:b1", "bill", "Pay card bill", "due", due="2026-10-25")
+    assert row_for(store, "mail:b1")["delivered_at"] is None
+
+
+def test_closing_a_thread_takes_its_card_item_off(store):
+    from odie.watch import report
+    store.set_setting(report.CARD, {"needs_you": [{"ref": "mail:r1", "title": "Reply: fee", "why": "x", "done": False}]})
+    threads.track(store, "mail:r1", "reply", "Reply: fee", "owed")
+    threads.track(store, "mail:r1", "reply", "Reply: fee", "done", why="replied 21 Oct")
+    assert store.get_setting(report.CARD)["needs_you"] == []
+
+
+async def test_read_thread_and_read_mail_take_a_ref_too(store, tmp_path):
+    # The instructions say "read_thread on its ref": "mail:r1" works like "r1".
+    from tests.test_watch_fetch import gmail_check
+    _check, tools = await gmail_check(store, tmp_path, threads={"t1": [{"from": "A", "date": "x", "body": "Hello"}]})
+    assert "Hello" in (await tools["read_thread"].func(mail_id="mail:g1"))["result"]
+    assert "error" not in await tools["read_mail"].func(mail_id="mail:g1")

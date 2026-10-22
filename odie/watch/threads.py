@@ -11,9 +11,12 @@ import json
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+from odie.watch import report
 from odie.watch.bills import CLOSED_NOTE
 
 KINDS = {"order": "waiting", "bill": "reminder", "reply": "followup", "deadline": "reminder"}  # thread kind -> task kind
+FIRES = frozenset({"bill", "deadline"})  # kinds whose due date fires a reminder (pay it, do it); orders and replies don't
+USER_CLOSED_NOTE = "Closed by the user: "
 CLOSING = ("done", "dropped")
 SOURCE_KIND = "watch"
 
@@ -52,29 +55,45 @@ def track(store, ref: str, kind: str, title: str, stage: str, due: str | None = 
         if not reason:
             return "Say why it's closed: which mail showed it, or what the user did."
         store.update_task(row["id"], status=stage_now, notes=CLOSED_NOTE + reason)
+        report.drop_item(store, ref)
         return f"Closed thread #{row['id']}."
     due_at = _due(due)
     if due and due_at is None:
         return "I didn't catch the due date: give it as 2026-10-24 or 2026-10-24T18:00."
+    fires = kind in FIRES
     if row is None:
-        notes = json.dumps({"thread": mail_thread, "source": mail_source, "kind": kind})
-        tid = store.add_task(title.strip(), KINDS[kind], due_at=due_at, source_kind=SOURCE_KIND, source_ref=ref,
+        notes = json.dumps({"thread": mail_thread, "source": mail_source, "kind": kind, "due": due_at})
+        reminder_at = due_at if fires else None
+        tid = store.add_task(title.strip(), KINDS[kind], due_at=reminder_at, source_kind=SOURCE_KIND, source_ref=ref,
                              origin="agent", notes=notes)
         store.update_task(tid, detail=stage_now)
         return f"Tracking #{tid} {title.strip()} ({stage_now})."
-    fields = {"detail": stage_now, "title": title.strip() or row["title"]}
-    if due_at:
-        fields["due_at"] = due_at
+    new_title = title.strip()
+    if not new_title:
+        new_title = row["title"]
+    fields: dict = {"detail": stage_now, "title": new_title}
+    facts = _facts(row["notes"])
+    if due_at and due_at != facts.get("due"):
+        facts["due"] = due_at
+        fields["notes"] = json.dumps(facts)
+        if fires:
+            fields["due_at"] = due_at
+            fields["delivered_at"] = None  # a moved date fires again
     store.update_task(row["id"], **fields)
     return f"Moved #{row['id']}: {stage_now}."
 
 
-def close(store, ref: str, why: str) -> str:
-    """Closes the watch's open thread for this ref, whatever its kind (the user dismissed its card in chat):
+def close(store, ref: str, why: str, by_user: bool = False) -> str:
+    """Closes the watch's open thread for this ref, whatever its kind, and takes its card item off. by_user: the user
+    dismissed it (on Today or the Desk): noted as theirs, so it isn't listed as something the watch got done.
     ("mail:o1", "delivered") with an open thread -> "Closed thread #12."; no open thread -> "No open thread …"."""
     row = _own_open(store, ref)
     if row is None:
         return f"No open thread for {ref}."
+    if by_user:
+        store.update_task(row["id"], status="done", notes=USER_CLOSED_NOTE + (why or "dismissed"))
+        report.drop_item(store, ref)
+        return f"Closed thread #{row['id']}."
     kind = _facts(row["notes"]).get("kind") or "reply"
     return track(store, ref, kind, row["title"], "done", why=why)
 
@@ -103,14 +122,16 @@ def _overdue(due_at: str | None, now: datetime) -> bool:
 def open_threads(store, now: datetime) -> list[dict]:
     """The watch's open threads, soonest due first: id, ref, kind, title, stage, due, overdue, thread, source,
     opened_at."""
-    rows = store.query("select * from tasks where source_kind = ? and status in ('open', 'waiting') "
-                       "order by due_at is null, due_at, id", (SOURCE_KIND,))
+    rows = store.query("select * from tasks where source_kind = ? and status in ('open', 'waiting') order by id",
+                       (SOURCE_KIND,))
     out = []
     for r in rows:
         facts = _facts(r["notes"])
+        due = facts.get("due") or r["due_at"]
         out.append({"id": r["id"], "ref": r["source_ref"], "kind": facts.get("kind", ""), "title": r["title"],
-                    "stage": r["detail"] or "", "due": r["due_at"], "overdue": _overdue(r["due_at"], now),
+                    "stage": r["detail"] or "", "due": due, "overdue": _overdue(due, now),
                     "thread": facts.get("thread", ""), "source": facts.get("source", ""), "opened_at": r["created_at"]})
+    out.sort(key=lambda t: (t["due"] is None, t["due"] or ""))  # soonest due first, undated last
     return out
 
 
@@ -119,3 +140,10 @@ def open_refs(store) -> set[str]:
     rows = store.query("select source_ref from tasks where source_kind = ? and status in ('open', 'waiting')",
                        (SOURCE_KIND,))
     return {r["source_ref"] for r in rows}
+
+
+def closed_refs(store) -> set[str]:
+    """The refs whose watch thread is closed and none is open again: their card items go."""
+    rows = store.query("select source_ref from tasks where source_kind = ? and status in ('done', 'dropped')",
+                       (SOURCE_KIND,))
+    return {r["source_ref"] for r in rows} - open_refs(store)

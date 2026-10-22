@@ -35,9 +35,8 @@ You follow things until they're done. Every check:
    - ref, a short title in the user's words, and why: one line, what is asked and by when (at most 120 characters);
    - pile: alerts (a decision or action soon), bills, events, personal (family, friends, people, not companies) or
      orders;
-   - one suggestion and one escape, each {label, run}: a short button label ("Reply with your fee", "Not
-     interested") and the chat request its tap sends: "Show the draft for desk item mail:<id>", "Close desk item
-     mail:<id>: not interested";
+   - one suggestion and one escape, each {label}: a short button ("Reply with your fee", "Not interested"); Odie
+     makes what its tap does;
    - due (2026-10-24) and amount ({value, currency}) when the mail gives them;
    - draft {to, subject, body} when a reply is owed: short, in the user's voice (formal for a firm, warm for a
      friend), unknowns as [brackets]. The user sends it with a tap.

@@ -8,30 +8,30 @@ from google.adk.tools import FunctionTool
 
 from odie.agent.callbacks import wrap_untrusted
 from odie.store.db import Store
+from odie.watch.cards import money
 
 NOT_ON_DESK = "That isn't on the Desk any more (it may have been closed)."
 
 
 def item_text(item: dict) -> str:
-    """One Desk item as chat reads it: its title and labels, then what came from mail (why, sender, the drafted
-    reply) fenced as other people's words."""
-    lines = [f"Desk item {item['ref']}: {item.get('title', '')}"]
+    """One Desk item as chat reads it: its ref, then everything the watch wrote from the mail (title, labels, why,
+    sender, the drafted reply) fenced as other people's words, because the watch wrote it from mail."""
+    from_mail = [f"title: {item.get('title', '')}"]
     for key in ("pile", "due"):
         if item.get(key):
-            lines.append(f"{key}: {item[key]}")
+            from_mail.append(f"{key}: {item[key]}")
     if item.get("amount"):
-        lines.append(f"amount: {item['amount'].get('value')} {item['amount'].get('currency', '')}".rstrip())
+        from_mail.append(f"amount: {money(item['amount'])}")
     for key in ("suggestion", "escape"):
         if item.get(key):
-            lines.append(f"{key}: {item[key]['label']} ({item[key]['run']})")
-    from_mail = [f"why: {item.get('why', '')}"]
+            from_mail.append(f"{key}: {item[key]['label']}")
+    from_mail.append(f"why: {item.get('why', '')}")
     if item.get("from") or item.get("subject"):
         from_mail.append(f"mail: from {item.get('from', '')}, subject {item.get('subject', '')}")
     draft = item.get("draft")
     if draft:
         from_mail.append(f"drafted reply, to {draft.get('to', '')}, subject {draft.get('subject', '')}:\n{draft['body']}")
-    lines.append(wrap_untrusted("\n".join(from_mail)))
-    return "\n".join(lines)
+    return f"Desk item {item['ref']}\n" + wrap_untrusted("\n".join(from_mail))
 
 
 def make_desk_tools(store: Store) -> list[FunctionTool]:
@@ -65,7 +65,7 @@ def make_desk_tools(store: Store) -> list[FunctionTool]:
             return NOT_ON_DESK
         card["needs_you"] = kept
         store.set_setting(report.CARD, card)
-        threads.close(store, ref, reason)
+        threads.close(store, ref, reason, by_user=True)
         return f"Closed {ref}: {reason}."
 
     return [FunctionTool(desk_item), FunctionTool(desk_close)]
