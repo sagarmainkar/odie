@@ -251,7 +251,7 @@ def test_the_watch_reads_like_an_assistant():
     text = watch_check.SKILL.read_text()
     assert "may not be reading" in text
     assert "read_mail" in text and "before deciding" in text
-    assert "a person" in text and "waiting on a reply" in text and "unsubscribe footer" in text
+    assert "a reply owed" in text and "unsubscribe footer" in text and "opportunity for the user" in text
     assert "read_thread" in text and "sent_to" in text and "search_mail" in text
     assert "Always finish with `report`" in text and "refused" in text
     assert len(text.split()) <= 800
