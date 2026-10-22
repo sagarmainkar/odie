@@ -68,7 +68,7 @@ def brief_system(user: str, guidance: list[str] | tuple = ()) -> str:
     the general ones."""
     whose = f"{user}'s" if user else "the user's"
     extra = "".join(f"\n{line}" for line in guidance)
-    return f"""You are Odie, writing {whose} morning brief for their phone's lock screen and Chat. Three short sentences at most, warm and direct, no emoji, no headings, no bullet points.
+    return f"""You are Odie, writing {whose} morning brief for their phone's lock screen and the opener of their morning round (cards with the details follow it). Two short sentences at most, warm and direct, no emoji, no headings, no bullet points.
 Lead with what needs them today (the open threads), then the day's shape, then anything due soon.
 Use only the facts given; never invent. If a source is empty or says it is not connected, skip it silently and do not say "no events" or "nothing scheduled". Amounts stay exactly as written.{extra}
 Open threads are the things that need them; name them, never print their ids. Things they have already closed are not in the list, so never mention them."""
@@ -89,6 +89,46 @@ def stored(inp: BriefInputs) -> dict:
     return {**out, "parts": {p.key: p.text for p in inp.parts}}
 
 
+DONE_HOURS = 24  # "Done while you were away": what the watch closed in the last day
+
+
+def due_reminder_items(store: Store, now: datetime) -> list[dict]:
+    """The user's own reminders due by the end of today (overdue ones too) as Desk items, the watch's own threads left
+    out (the card shows those): "Pay the gas bill" due today -> {"ref": "task:7", "title": …, "why": "Due today 09:00",
+    "pile": "bills", "suggestion": {"label": "Done", "run": "Mark task #7 done"}}."""
+    from odie.watch import bills
+    end_of_day = now.replace(hour=23, minute=59, second=59).isoformat()
+    rows = store.query("select id, title, due_at from tasks where status = 'open' and due_at is not null and due_at <= ? "
+                       "and (source_kind is null or source_kind != 'watch') order by due_at", (end_of_day,))
+    items = []
+    for r in rows:
+        pile = "alerts"
+        if bills.is_bill_or_order(r["title"]):
+            pile = "bills"
+        due_day = "Due today" if r["due_at"][:10] == now.strftime("%Y-%m-%d") else "Overdue since " + r["due_at"][:10]
+        items.append({"ref": f"task:{r['id']}", "title": r["title"], "why": f"{due_day} {r['due_at'][11:16]}".strip(),
+                      "pile": pile, "suggestion": {"label": "Done", "run": f"Mark task #{r['id']} done"},
+                      "escape": {"label": "Tomorrow", "run": f"Snooze task #{r['id']} until tomorrow 09:00"}})
+    return items
+
+
+def desk_items(store: Store, now: datetime) -> list[dict]:
+    """What the morning round shows as cards: the watch's open needs-you items, then the user's reminders due today."""
+    from odie.watch import report
+    card = store.get_setting(report.CARD) or {}
+    watch_items = [i for i in card.get("needs_you", []) if not i.get("done")]
+    return [*watch_items, *due_reminder_items(store, now)]
+
+
+def done_lines(store: Store, now: datetime) -> list[str]:
+    """What the watch closed in the last day, one line each: "✓ Order: desk lamp · delivered"."""
+    from datetime import timedelta
+
+    from odie.watch import bills
+    closed = bills.closed_by_watch(store, now - timedelta(hours=DONE_HOURS))
+    return [f"✓ {c['title']} · {c['why']}" for c in closed]
+
+
 async def run_brief(store: Store, now: datetime, post_message=None, push: bool = True) -> str:
     inp = await gather_inputs(store, now, post_message=post_message)
     text = await write_with_model(render_prompt(now, inp), store)
@@ -98,8 +138,14 @@ async def run_brief(store: Store, now: datetime, post_message=None, push: bool =
                   (now.strftime("%Y-%m-%d"), text, json.dumps(stored(inp))))
     store.audit("job", "brief", result_summary=text)
     if post_message:
+        from odie.threads import DESK
+        from odie.watch import cards
+        opener = text
+        if not text.lower().startswith(("good morning", "morning")):
+            opener = f"Good morning. {text}"
+        round_text = cards.round_text(opener, desk_items(store, now), done_lines(store, now)) or opener
         try:
-            await post_message(f"Good morning. {text}" if not text.lower().startswith(("good morning", "morning")) else text)
+            await post_message(round_text, session_id=DESK)
         except Exception:  # noqa: BLE001
             log.warning("brief chat message failed", exc_info=True)
     if push:

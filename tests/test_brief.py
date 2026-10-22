@@ -44,13 +44,14 @@ async def test_run_brief_stores_and_pushes(monkeypatch, tmp_path):
     posted = []
 
     async def post(text, session_id=None):
-        posted.append(text)
+        posted.append((text, session_id))
     text = await run_brief(s, NOW, post_message=post)
     assert text.startswith("Dentist at 10")
     row = s.one("select * from briefs order by id desc")
     assert row["date"] == "2026-10-01" and row["text"] == text
     assert pushed and pushed[0][0] == "Good morning" and "Dentist" in pushed[0][1]   # a short push...
-    assert posted == ["Good morning. Dentist at 10. Nothing else needs you."]          # ...and a message in Chat
+    from odie.threads import DESK
+    assert posted == [("Good morning. Dentist at 10. Nothing else needs you.", DESK)]   # ...and the Desk's morning round
     assert s.one("select count(*) n from audit_log where event='brief'")["n"] == 1
 
 
@@ -94,3 +95,40 @@ def test_turn_context_says_brief_is_not_a_calendar():
     from odie.agent.prompt import build_turn_context
     out = build_turn_context(NOW, "", "", "", "Schedule is clear.")
     assert "calendar_list_events" in out and "Schedule is clear." in out
+
+
+
+async def test_the_morning_round_is_the_opener_then_cards(monkeypatch, tmp_path):
+    # The model writes the opener; the cards come from code: the watch's open items, the user's reminders due today,
+    # and what closed overnight.
+    import odie.jobs.brief as b
+    from odie.threads import DESK
+    from odie.watch import report, threads
+    s = Store(tmp_path / "a.db")
+    s.init_schema()
+    s.set_setting(report.CARD, {"needs_you": [
+        {"ref": "mail:m1", "title": "Workshop invite", "why": "Asks your fee by Friday", "pile": "alerts", "done": False,
+         "suggestion": {"label": "Reply with your fee", "run": "Show the draft for desk item mail:m1"}},
+        {"ref": "mail:m2", "title": "Old thing", "why": "x", "done": True}]})
+    s.add_task("Pay the gas bill", "reminder", due_at="2026-10-01T09:00+05:30")
+    threads.track(s, "mail:o1", "order", "Order: desk lamp", "shipped")
+    threads.track(s, "mail:o1", "order", "Order: desk lamp", "done", why="delivered")
+
+    async def fake_write(prompt, store=None):
+        return "Two things need you today."
+    monkeypatch.setattr(b, "write_with_model", fake_write)
+    monkeypatch.setattr(b, "send_to_all", lambda *a, **k: 1)
+    posted = []
+
+    async def post(text, session_id=None):
+        posted.append((text, session_id))
+    await run_brief(s, NOW, post_message=post)
+    text, where = posted[0]
+    assert where == DESK and text.startswith("Good morning. Two things need you today.")
+    assert "```odie-blocks" in text and "Workshop invite" in text and "Pay the gas bill" in text
+    assert "Old thing" not in text and "Order: desk lamp" in text  # a done item is gone; a closed thread is news
+
+
+def test_the_opener_is_short():
+    from odie.jobs.brief import brief_system
+    assert "Two short sentences at most" in brief_system("Asha")

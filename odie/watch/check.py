@@ -9,6 +9,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from odie.watch import bills
+from odie.threads import DESK
+from odie.watch import cards
 from odie.watch import report as rep
 from odie.watch import sources
 from odie.watch.fetch import STATE, Fetcher
@@ -186,8 +188,9 @@ async def run_check(store, now: datetime, turn, post, push, memory=None, memory_
         fetcher.commit(turn_failed=bool(reason) and r is None)
 
     async def say(text: str, media=None) -> None:
+        """A message on the Desk, the watch's own conversation, never the chat the user is in."""
         try:
-            await post(text, media=media)
+            await post(text, media=media, session_id=DESK)
         except Exception:  # noqa: BLE001
             log.warning("watch: a message couldn't be posted", exc_info=True)
 
@@ -203,6 +206,8 @@ async def run_check(store, now: datetime, turn, post, push, memory=None, memory_
         await say(f"{app} works again: the watch is back.")
     if r is None:
         return "fallback"
+    if to_push:  # what needs the user soon: cards on the Desk, and a push for each
+        await say(cards.round_text("", to_push, []))
     for it in to_push:
         ping(it["title"], it["why"])
     from odie.agent.tools.files import hand_over, workspace
