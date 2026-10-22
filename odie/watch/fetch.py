@@ -575,6 +575,12 @@ class Fetcher:
             mail = self._found.get(mail_id)
         return mail
 
+    def remember(self, mail: Mail) -> None:
+        """Makes an older mail known to this check (a thread the watch follows), so it can be opened and its thread
+        read; like a search's finds, it is never marked seen."""
+        if self.read_mail(mail.id) is None:
+            self._found[mail.id] = mail
+
     def _source_of(self, mail: Mail) -> Source | None:
         """The saved source whose id the mail carries (a mail folded from two apps keeps the connector's id)."""
         return next((s for s in saved(self.store) if s.id == mail.source), None)
