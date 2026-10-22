@@ -252,7 +252,7 @@ async def test_a_finished_file_at_the_wrong_size_is_refused(making, monkeypatch,
     making["lengths"] = [4.0, 55.5]
 
     async def tiny_render(browser, body, timings, folder, fps, tabs, progress=None, assets_script="",
-                          credits_script="", size=None):
+                          credits_script="", size=None, brand_script=""):
         path = folder / "segment-0.mp4"
         async with encode.Segment(path, fps=2) as segment:
             buffer = io.BytesIO()
@@ -302,7 +302,7 @@ async def test_the_writing_step_tells_the_writer_the_aspect(store, monkeypatch, 
     asked = {}
 
     async def stand_in_write(topic, minutes, brief, folder, turn, browser, listing="", assets_script="",
-                             aspect="landscape", timed_seconds=None):
+                             aspect="landscape", timed_seconds=None, kit=None):
         asked["aspect"] = aspect
         return writer.Written(title="Ice", narration=["One.", "Two."], body="<div></div>")
 

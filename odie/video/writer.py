@@ -19,7 +19,7 @@ from pathlib import Path
 from odie.browser.engine import BrowserError, BrowserTimeout
 from odie.making import writer as harness
 from odie.making.chat import text_or_empty
-from odie.video import sounds, timed, timeline
+from odie.video import brand, sounds, timed, timeline
 from odie.video import page as video_page
 from odie.video.limits import narration_problem, page_problem
 
@@ -37,17 +37,21 @@ def timed_rules(seconds: float) -> str:
     return rules.replace("__FEWEST__", str(fewest)).replace("__MOST__", str(most))
 
 
-def instruction_for(aspect: str, timed_seconds: float | None = None) -> str:
-    """The writer's instruction for the video's aspect and its timed segment: writer.md for a landscape video (the guide
-    is written for its 1920 x 1080 stage); for a vertical one, writer.md and then writer-vertical.md (the 1080 x 1920
-    stage, the safe area, one idea a screen); a video with a timed segment (odie.video.timed) then gets its rules
-    (timed_rules: mark the segment, its words, the segment clock s.left()). "landscape" -> INSTRUCTION; "vertical" ->
-    INSTRUCTION + the vertical rules; ("vertical", timed_seconds=60) -> those + the 60-second segment's rules."""
+def instruction_for(aspect: str, timed_seconds: float | None = None, kit: brand.Kit | None = None) -> str:
+    """The writer's instruction for the video's aspect, its timed segment and its brand kit: writer.md for a landscape
+    video (the guide is written for its 1920 x 1080 stage); for a vertical one, writer.md and then writer-vertical.md
+    (the 1080 x 1920 stage, the safe area, one idea a screen); a video with a timed segment (odie.video.timed) then
+    gets its rules (timed_rules: mark the segment, its words, the segment clock s.left()); a video with a brand kit
+    then gets the kit's functions and rules last (odie.video.brand.writer_rules), so they win over the general guide.
+    "landscape" -> INSTRUCTION; "vertical" -> INSTRUCTION + the vertical rules; ("vertical", timed_seconds=60) ->
+    those + the 60-second segment's rules; with a kit -> those + the kit's."""
     instruction = INSTRUCTION
     if aspect == "vertical":
         instruction = instruction.rstrip() + "\n\n" + VERTICAL_RULES
     if timed_seconds:
         instruction = instruction.rstrip() + "\n\n" + timed_rules(timed_seconds)
+    if kit is not None:
+        instruction = instruction.rstrip() + "\n\n" + brand.writer_rules(kit)
     return instruction
 
 HANG = "The page didn't finish drawing in time (a loop that never ends?): "
@@ -72,6 +76,24 @@ SUBMIT_DOC = ("Submit the whole video at once: title (the topic, short), narrati
               "fixed page.\n"
               '{"result": "Accepted."}: the video is done.')  # what the writer reads, as it read before the harness
 SUBMIT_FIELDS = {"title": str, "narration": list[str], "page": str}
+BRAND_DOC = ("\nbrand: the brand kit's words for its bookends, by name, as its rules list them "
+             '({"name": "one short line"}).')
+
+
+def submit_fields(kit: brand.Kit | None) -> dict:
+    """submit_video's arguments: title, narration and page; and brand (the bookends' words) when the video's kit has
+    words to give. No kit, or a kit without vars -> the three; a kit with vars -> the three and brand."""
+    fields = dict(SUBMIT_FIELDS)
+    if kit is not None and kit.vars:
+        fields["brand"] = dict[str, str]
+    return fields
+
+
+def submit_doc(kit: brand.Kit | None) -> str:
+    """What the writer reads about submit_video: SUBMIT_DOC, and the brand argument when it has one (submit_fields)."""
+    if kit is not None and kit.vars:
+        return SUBMIT_DOC + BRAND_DOC
+    return SUBMIT_DOC
 
 
 @dataclass
@@ -84,6 +106,7 @@ class Written:
     body: str
     cues: list[dict] = field(default_factory=list)
     segment: tuple[int, int] | None = None
+    brand_vars: dict[str, str] = field(default_factory=dict)  # the brand kit's bookend words ({} without a kit)
 
 
 @dataclass(kw_only=True)
@@ -95,6 +118,7 @@ class Desk(harness.Desk):
     cues: list[dict] = field(default_factory=list)
     segment: tuple[int, int] | None = None
     cue_refusals: int = 0
+    kit: brand.Kit | None = None  # the video's brand kit, whose sounds join the cues' names
 
 
 @dataclass
@@ -244,7 +268,8 @@ def unknown_name_problem(body: str, assets_script: str) -> str | None:
 
 
 async def checked_submission(narration, body: str, browser, assets_script: str = "",
-                             size: tuple[int, int] = timeline.LANDSCAPE, timed_seconds: float | None = None) -> Judged:
+                             size: tuple[int, int] = timeline.LANDSCAPE, timed_seconds: float | None = None,
+                             kit: brand.Kit | None = None, kit_vars=None) -> Judged:
     """Decides whether a video can be accepted: the page's first problem as words to fix, or None, then the sound
     cues' first problem apart from it (the tool refuses on cues only once; see cues_answer), with the cues the page
     placed. In this order: a page over 300 KB -> the limit; narration that isn't a list of strings ->
@@ -260,7 +285,11 @@ async def checked_submission(narration, body: str, browser, assets_script: str =
     segment of `timed_seconds` must mark it in Video.scenes (the page check says how), and the marked scenes must be
     about that many seconds of words (odie.video.timed.words_problem: 30 words for 60 s -> what to write); its page is
     drawn with the segment clock running. Without one, the marks are ignored. A browser that fails in another way (it
-    won't start) is not the page's problem: its BrowserError goes up to the check."""
+    won't start) is not the page's problem: its BrowserError goes up to the check. A video with a brand kit (`kit`,
+    with the bookends' words the writer gave, `kit_vars`) is also refused for a page that changes Brand
+    (brand.reassign_problem) or words that are missing (brand.vars_problem), before anything is drawn, and is drawn
+    with the kit in (brand.check: a scene painting over the kit's background, or moves that can't play, are refused
+    too); its sounds join the cues' names. A kit that breaks while drawing is brand.KitProblem, up to the check."""
     problem = page_problem(body)
     if problem:
         return Judged(problem=problem)
@@ -272,9 +301,23 @@ async def checked_submission(narration, body: str, browser, assets_script: str =
     problem = unknown_name_problem(body, assets_script)
     if problem:
         return Judged(problem=problem)
+    kit_names = ()
+    if kit is not None:
+        kit_names = tuple(kit.sounds)
+        problem = brand.reassign_problem(body)
+        if problem:
+            return Judged(problem=problem)
+        problem = brand.vars_problem(kit, kit_vars)
+        if problem:
+            return Judged(problem=problem)
     try:
-        drawn = await video_page.check_with_cues(body, narration, browser, assets_script, size=size,
-                                                 timed_seconds=timed_seconds)
+        if kit is not None:
+            branded = brand.Branded(kit, dict(kit_vars or {}))
+            drawn = await brand.check(body, narration, browser, branded, assets_script, size=size,
+                                      timed_seconds=timed_seconds)
+        else:
+            drawn = await video_page.check_with_cues(body, narration, browser, assets_script, size=size,
+                                                     timed_seconds=timed_seconds)
     except BrowserTimeout as e:
         return Judged(problem=HANG + str(e))
     if drawn.problem:
@@ -286,7 +329,7 @@ async def checked_submission(narration, body: str, browser, assets_script: str =
         problem = timed.words_problem(narration, first, last, timed_seconds)
         if problem:
             return Judged(problem=problem)
-    cue_problem = sounds.cue_problem(drawn.cues, narration)
+    cue_problem = sounds.cue_problem(drawn.cues, narration, kit_names)
     return Judged(problem=None, cue_problem=cue_problem, cues=drawn.cues, segment=segment)
 
 
@@ -324,7 +367,10 @@ def cues_answer(desk: Desk, judged: Judged, narration: list[str]) -> str | None:
         desk.cue_refusals += 1
         desk.cues = []
         return judged.cue_problem
-    kept = sounds.good_cues(judged.cues, narration)
+    kit_names = ()
+    if desk.kit is not None:
+        kit_names = tuple(desk.kit.sounds)
+    kept = sounds.good_cues(judged.cues, narration, kit_names)
     desk.cues = kept
     log.warning("video %r: kept %d of %d sound cues after one refusal; dropped the rest: %s", desk.topic, len(kept),
                 len(judged.cues), judged.cue_problem)
@@ -338,23 +384,27 @@ def tools_for(desk: Desk, browser, assets_script: str = "", size: tuple[int, int
     clips, `assets_script`, at the video's `size`, with a timed segment of `timed_seconds` when there is one); a page
     that drew fine is answered from its cues (cues_answer: they refuse it at most once, then the ones that don't fit
     are dropped), which puts the cues and the timed segment's scenes to keep on the desk; a browser that fails is no
-    refusal: the job ends with the browser's own words. Accepting makes the Written video with those cues and that
-    segment (the harness accepts right after the check that passed), the title falling back to the topic."""
+    refusal: the job ends with the browser's own words, and so does a brand kit that breaks (desk.kit: its
+    words). Accepting makes the Written video with those cues, that segment and the kit's words (the harness accepts
+    right after the check that passed), the title falling back to the topic."""
 
     async def check(fields: dict) -> str | None:
         body = text_or_empty(fields["page"])
         keep_page(desk.pages, body)
         narration = narration_as_given(fields["narration"])
+        kit_vars = brand.vars_as_given(fields.get("brand"))
         desk.cues = []
         desk.segment = None
         try:
             judged = await checked_submission(narration, body, browser, assets_script, size=size,
-                                              timed_seconds=timed_seconds)
+                                              timed_seconds=timed_seconds, kit=desk.kit, kit_vars=kit_vars)
         except BrowserError as e:
             words = str(e).strip()
             if not words:
                 words = BROWSER_FAILED
             raise harness.CantCheck(words) from e
+        except brand.KitProblem as e:
+            raise harness.CantCheck(str(e)) from e
         if judged.problem:
             return judged.problem
         desk.segment = judged.segment
@@ -364,24 +414,30 @@ def tools_for(desk: Desk, browser, assets_script: str = "", size: tuple[int, int
         title = harness.title_given(fields["title"], desk.topic)
         narration = list(narration_as_given(fields["narration"]))
         cues = list(desk.cues)
+        kit_vars = {}
+        if desk.kit is not None and desk.kit.vars:
+            kit_vars = dict(brand.vars_as_given(fields.get("brand")))
         return Written(title=title, narration=narration, body=text_or_empty(fields["page"]), cues=cues,
-                       segment=desk.segment)
+                       segment=desk.segment, brand_vars=kit_vars)
 
-    return [harness.submit_tool(desk, "submit_video", SUBMIT_DOC, SUBMIT_FIELDS, check, accept)]
+    fields = submit_fields(desk.kit)
+    return [harness.submit_tool(desk, "submit_video", submit_doc(desk.kit), fields, check, accept)]
 
 
 async def write(topic: str, minutes: int, brief: str, folder: Path, turn, browser, listing: str = "",
-                assets_script: str = "", aspect: str = "landscape", timed_seconds: float | None = None) -> Written:
+                assets_script: str = "", aspect: str = "landscape", timed_seconds: float | None = None,
+                kit: brand.Kit | None = None) -> Written:
     """Writes the video in one focused turn: `turn(prompt, instruction, tools, timeout, follow_up=…)` is
     runner.focused_turn in Odie, `browser` the one page.check draws in (render_browser()), `listing` the pictures and
     clips the writer may use, by name (see prompt_for), and `assets_script` those same pictures and clips stapled
     (odie.video.assets.staple), so the check draws them. `aspect` ("landscape" or "vertical") picks the instruction
     (instruction_for) and the size the page is checked at; `timed_seconds` (odie.video.timed) adds the timed segment's
-    rules, and the page must mark the segment and is checked with its clock. Every submitted page is kept under
+    rules, and the page must mark the segment and is checked with its clock; a brand `kit` adds its rules, the brand
+    argument when it has words to give, and its checks (checked_submission). Every submitted page is kept under
     folder/pages. Returns the accepted video; raises WriterFailed when there's none, with the video's words (LINES), or
     the harness's time-limit line (see odie.making.writer.write)."""
-    desk = Desk(topic=topic, pages=folder / "pages")
+    desk = Desk(topic=topic, pages=folder / "pages", kit=kit)
     size = timeline.size_of(aspect)
     [tool] = tools_for(desk, browser, assets_script, size=size, timed_seconds=timed_seconds)
     prompt = prompt_for(topic, minutes, brief, listing)
-    return await harness.write(desk, prompt, instruction_for(aspect, timed_seconds), tool, LINES, turn)
+    return await harness.write(desk, prompt, instruction_for(aspect, timed_seconds, kit), tool, LINES, turn)

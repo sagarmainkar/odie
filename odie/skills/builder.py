@@ -154,13 +154,29 @@ def staged_version(name: str) -> str:
     return h.hexdigest()[:12]
 
 
+def brand_kit_line(name: str) -> str:
+    """The approval card's line for a skill's brand kit (odie.video.brand), which an update keeps as it is, so the user
+    sees that its code runs in the pages of the skill's videos: a skill with assets/brand holding brand.js, brand.json
+    and ting.wav -> "── Keeps its brand kit (assets/brand): brand.js, brand.json, ting.wav; brand.js runs in the
+    pages of its videos ──"; no kit -> ""."""
+    folder = user_dir() / name / "assets" / "brand"
+    if not folder.is_dir():
+        return ""
+    files = sorted(p.name for p in folder.iterdir() if p.is_file() and not p.name.startswith("."))
+    return f"── Keeps its brand kit (assets/brand): {', '.join(files)}; brand.js runs in the pages of its videos ──"
+
+
 def staged_text(name: str) -> str:
-    """What the approval card shows: SKILL.md and tools.py, as written."""
+    """What the approval card shows: SKILL.md and tools.py, as written, and for an update, what it keeps (its brand
+    kit by name, brand_kit_line)."""
     d = staging_dir() / name
     parts = []
     if (user_dir() / name).is_dir():
         kept = _kept_files(name)
         parts.append(f"── Replaces your existing {name} skill" + (f"; keeps: {', '.join(kept)}" if kept else "") + " ──")
+        kit_line = brand_kit_line(name)
+        if kit_line:
+            parts.append(kit_line)
     for f in ("SKILL.md", "tools.py"):
         if (d / f).exists():
             parts.append(f"── {f} ──\n{(d / f).read_text()}")

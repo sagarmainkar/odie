@@ -245,7 +245,7 @@ async def test_the_writing_step_asks_for_the_segment_and_keeps_its_scenes(store,
     seen = {}
 
     async def stand_in_write(topic, minutes, brief, folder, turn, browser, listing="", assets_script="",
-                             aspect="landscape", timed_seconds=None):
+                             aspect="landscape", timed_seconds=None, kit=None):
         seen.update(minutes=minutes, aspect=aspect, timed_seconds=timed_seconds)
         return writer.Written(title="Ice", narration=NARRATION, body=TIMED_PAGE, cues=[], segment=(1, 2))
 
