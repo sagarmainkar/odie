@@ -312,3 +312,77 @@ async def test_apple_mail_says_these_reads_arent_available(store, monkeypatch):
     assert "not available for Apple Mail" in await f.read_thread("mac:5")
     assert "not available for Apple Mail" in await f.search_mail("from:b@example.com")
     assert "not available for Apple Mail" in await f.sent_to("b@example.com")
+
+
+class Ctx:
+    """A stand-in for ADK's ToolContext: the turn's state."""
+    def __init__(self):
+        self.state = {}
+
+
+class Named:
+    def __init__(self, name):
+        self.name = name
+
+
+async def test_after_a_mailbox_read_the_turn_cannot_reach_the_web(store, tmp_path):
+    # A mail can carry instructions; once the turn has searched older mail, nothing may carry what it found out.
+    from odie.watch import check as watch_check
+    check, tools = await gmail_check(store, tmp_path, query_hits={"from:x.example.com": OLDER})
+    ctx = Ctx()
+    assert watch_check.guard(Named("web_fetch"), {"url": "https://example.com"}, ctx) is None  # before: allowed
+    await tools["search_mail"].func(query="from:x.example.com", tool_context=ctx)
+    for name in ("web_fetch", "web_search", "find_images"):
+        assert "error" in watch_check.guard(Named(name), {}, ctx)
+    ctx2 = Ctx()
+    await tools["sent_to"].func(address="a.person@example.com", tool_context=ctx2)
+    assert "error" in watch_check.guard(Named("web_fetch"), {}, ctx2)
+
+
+async def test_a_search_no_app_could_answer_says_so(store, tmp_path, monkeypatch):
+    check, tools = await gmail_check(store, tmp_path)
+
+    async def broken(self, src, tool, args, timeout=None):
+        raise fetch.CallError("the app is down")
+    monkeypatch.setattr(fetch.Fetcher, "_call", broken)
+    got = await check.fetcher.sent_to("a.person@example.com")
+    assert isinstance(got, str) and "couldn't search" in got
+
+
+async def test_reads_have_a_short_time_limit(store, tmp_path, monkeypatch):
+    check, tools = await gmail_check(store, tmp_path)
+    asked = []
+
+    async def fake_call_tool(spec, tool, args, timeout=120):
+        asked.append((tool, timeout))
+        from odie.watch.calls import Result
+        return Result(json.dumps({"body": "whole", "messages": []}), False)
+    monkeypatch.setattr(fetch, "call_tool", fake_call_tool)
+    await check.fetcher.open_mail("g1")
+    await check.fetcher.search_mail("x")
+    assert asked == [("gmail_read", fetch.READ_SECONDS), ("gmail_search", fetch.READ_SECONDS)]
+    assert fetch.READ_SECONDS <= 30
+
+
+async def test_a_broken_apple_mail_reply_keeps_the_preview(store, monkeypatch):
+    from odie.mac import mail as mac_mail
+    f = fetch.Fetcher(store, NOW)
+    f._mail["mac:5"] = fetch.Mail("mac:5", "B <b@example.com>", "Hi", "2026-10-08T08:00:00Z", "short", [], "mail:mac",
+                                  body="short", sources=["mail:mac"])
+
+    async def garbled(mail_id):
+        raise ValueError("Expecting value: line 1 column 1")
+    monkeypatch.setattr(mac_mail, "read", garbled)
+    apple_mail = sources.Source("mail", "mac", "Apple Mail", "native", "mac_mail_new", {})
+    monkeypatch.setattr(fetch, "saved", lambda _store: [apple_mail])
+    m = await f.open_mail("mac:5")
+    assert m.body == "short" and not m.opened
+
+
+async def test_mail_found_by_a_search_is_not_marked_seen(store, tmp_path):
+    # A search can turn up a mail that arrived during the check; it must still be judged by the next check.
+    check, tools = await gmail_check(store, tmp_path, query_hits={"from:x.example.com": OLDER})
+    await check.fetcher.search_mail("from:x.example.com")
+    assert (await check.fetcher.open_mail("o1")) is not None  # found mail can still be opened
+    check.fetcher.commit()
+    assert "o1" not in store.get_setting(fetch.STATE)["seen"] and "g1" in store.get_setting(fetch.STATE)["seen"]

@@ -15,5 +15,6 @@
     "x1": {
       "outcome": "needs_you"
     }
-  }
+  },
+  "no_actions": true
 }

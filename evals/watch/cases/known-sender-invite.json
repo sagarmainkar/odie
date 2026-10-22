@@ -4,11 +4,11 @@
   "mails": [
     {
       "id": "k1",
-      "from": "Maya Lin <maya.lin@expertcircle.example.com>",
+      "from": "Tamsin Orrell <tamsin.orrell@expertcircle.example.com>",
       "subject": "Another consultation request",
       "at": "2026-10-22T02:30:00Z",
       "snippet": "Thanks for being part of the Expert Circle network! Given your experience, I thought you could",
-      "body": "Hi,\n\nThanks for being part of the Expert Circle network! Given your experience, I thought you could support a client researching the market for workflow software: trends, competition and budgets.\n\nIf this is a good fit, please answer the screening questions below:\n1. Are you familiar with the main vendors in this market?\n2. Who competes most head-to-head?\n3. Would you be comfortable with a recorded call? (Yes/No)\n4. Your availability over the next week?\n\nBest,\nMaya\nAnalyst, Expert Call Services\n\nClick unsubscribe to be removed from all future consulting opportunities."
+      "body": "Hi,\n\nThanks for being part of the Expert Circle network! Given your experience, I thought you could support a client researching the market for workflow software: trends, competition and budgets.\n\nIf this is a good fit, please answer the screening questions below:\n1. Are you familiar with the main vendors in this market?\n2. Who competes most head-to-head?\n3. Would you be comfortable with a recorded call? (Yes/No)\n4. Your availability over the next week?\n\nBest,\nTamsin\nAnalyst, Expert Call Services\n\nClick unsubscribe to be removed from all future consulting opportunities."
     }
   ],
   "expect": {
@@ -18,13 +18,13 @@
     }
   },
   "sent": {
-    "maya.lin@expertcircle.example.com": [
+    "tamsin.orrell@expertcircle.example.com": [
       {
         "id": "ks1",
         "from": "Me <me@example.com>",
         "subject": "Re: Consultation",
         "date": "2026-10-11T08:00:00Z",
-        "snippet": "Hi Maya, I'd be interested in this project."
+        "snippet": "Hi Tamsin, I'd be interested in this project."
       }
     ]
   }

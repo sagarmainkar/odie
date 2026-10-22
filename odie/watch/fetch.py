@@ -216,6 +216,7 @@ def fold_mail(mails: list[Mail]) -> list[Mail]:
 ADDRESS = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
 NOT_FOR_APPLE_MAIL = "not available for Apple Mail"
 SEARCH_LIMIT = 10
+READ_SECONDS = 30  # one read (open, thread, search) may take this long: the whole check has 280 s
 
 
 def address_of(frm: str) -> str:
@@ -419,7 +420,8 @@ class Fetcher:
         self.catch_up_tries = int(self.state.get("catch_up_tries") or 0)  # its turns that failed so far
         self.statuses: dict[str, dict] = {}
         self.first: set[str] = set()
-        self._mail: dict[str, Mail] = {}
+        self._mail: dict[str, Mail] = {}  # this check's new mail: marked seen at commit
+        self._found: dict[str, Mail] = {}  # older mail a search turned up: openable, never marked seen
         self._events: list[Event] = []
         self._servers = None
 
@@ -432,12 +434,15 @@ class Fetcher:
             raise CallError(f"{src.app} isn't connected any more")
         return spec
 
-    async def _call(self, src: Source, tool: str, args: dict):
-        """One read through the source: a connector through its MCP server, the Mac's own apps through odie.mac."""
+    async def _call(self, src: Source, tool: str, args: dict, timeout: float | None = None):
+        """One read through the source: a connector through its MCP server (within `timeout` seconds when given), the
+        Mac's own apps through odie.mac."""
         if src.style == "native":
             from odie.mac import native
             return await native.call(tool, args)
-        return await call_tool(self._spec(src), tool, args)
+        if timeout is None:
+            return await call_tool(self._spec(src), tool, args)
+        return await call_tool(self._spec(src), tool, args, timeout=timeout)
 
     def _ok(self, src: Source, ok: bool, reason: str = "") -> None:
         self.statuses[src.id] = {"ok": ok, "at": self.now.isoformat(timespec="seconds"), "reason": reason, "app": src.app, "kind": src.kind}
@@ -564,7 +569,11 @@ class Fetcher:
         return fold_events(got)  # one row for an event both calendars hold
 
     def read_mail(self, mail_id: str) -> Mail | None:
-        return self._mail.get(mail_id)
+        """A mail this check knows: one of its new mails, or one a search turned up."""
+        mail = self._mail.get(mail_id)
+        if mail is None:
+            mail = self._found.get(mail_id)
+        return mail
 
     def _source_of(self, mail: Mail) -> Source | None:
         """The saved source whose id the mail carries (a mail folded from two apps keeps the connector's id)."""
@@ -575,7 +584,7 @@ class Fetcher:
         Mail through its own read, a connector through its read tool (Source.reader). A listing often carries only a
         preview, so this is what "reading the mail" means. None for an id not in this check; the mail as it was when
         the app has no read tool or the read fails (its `opened` stays False, so the caller can say so)."""
-        mail = self._mail.get(mail_id)
+        mail = self.read_mail(mail_id)
         if mail is None or mail.opened:
             return mail
         src = self._source_of(mail)
@@ -594,7 +603,7 @@ class Fetcher:
     async def read_thread(self, mail_id: str) -> list[dict] | str:
         """The whole thread a mail of this check belongs to, oldest first, through the app that holds it; or why it
         can't be read (Apple Mail, an app without a thread tool, a mail whose thread isn't known)."""
-        mail = self._mail.get(mail_id)
+        mail = self.read_mail(mail_id)
         if mail is None:
             return "No message with that id in this check: call new_mail first."
         src = self._source_of(mail)
@@ -611,7 +620,7 @@ class Fetcher:
         else:
             args.update(params)
         try:
-            res = await self._call(src, src.thread["tool"], args)
+            res = await self._call(src, src.thread["tool"], args, timeout=READ_SECONDS)
         except CallError as e:
             return f"The thread couldn't be read: {e}"
         if res.is_error:
@@ -626,6 +635,7 @@ class Fetcher:
         if not searchable:
             return f"Searching older mail is {NOT_FOR_APPLE_MAIL}, and no other connected mail app can search."
         got: list[Mail] = []
+        answered = 0
         for src in searchable:
             args = dict(src.fixed)
             if "max_results" in args:
@@ -635,16 +645,20 @@ class Fetcher:
             else:
                 args[src.query_param] = query
             try:
-                res = await self._call(src, src.tool, args)
+                res = await self._call(src, src.tool, args, timeout=READ_SECONDS)
             except CallError as e:
                 log.info("watch: %s couldn't search: %s", src.app, e)
                 continue
             if res.is_error:
                 continue
+            answered += 1
             got += parse_mail(res.text, src.id)
+        if answered == 0:
+            return "The mail apps couldn't search just now; don't read this as no mail."
         found = newest_first(fold_mail(got))[:limit]
         for m in found:
-            self._mail.setdefault(m.id, m)
+            if m.id not in self._mail:
+                self._found.setdefault(m.id, m)
         return found
 
     async def sent_to(self, address: str, limit: int = 5) -> list[Mail] | str:
@@ -662,7 +676,7 @@ class Fetcher:
             from odie.mac import scripts as mac_scripts
             try:
                 row = await mac_mail.read(mail_id)
-            except mac_scripts.MacError as e:
+            except (mac_scripts.MacError, ValueError) as e:  # ValueError: Mail's reply wasn't JSON
                 raise CallError(str(e)) from None
             return str(_first(row, "body", "text"))
         if not src.reader:
@@ -673,7 +687,7 @@ class Fetcher:
             args["params"] = params
         else:
             args.update(params)
-        res = await self._call(src, src.reader["tool"], args)
+        res = await self._call(src, src.reader["tool"], args, timeout=READ_SECONDS)
         if res.is_error:
             raise CallError(res.text[:200] or "the app said no")
         return body_of(res.text)
