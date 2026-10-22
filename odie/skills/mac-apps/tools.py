@@ -30,7 +30,9 @@ def _said(e: Exception) -> dict:
 
 async def mac_mail_new(since: str, limit: int = 25) -> dict:
     """New mail in the Mac's Mail app since a local time ("2026-10-21T09:00"), newest first, at most `limit`:
-    id, from, subject, at, snippet, attachments. Read one in full with mac_mail_read."""
+    id, from, subject, at, snippet, attachments. Read one in full with mac_mail_read. This is Apple Mail only: a mail
+    that isn't here may be in another connected mail app, so load its skill and look there before saying it isn't
+    found. Never search the disk for mail."""
     if blocked := _blocked("mail"):
         return blocked
     try:
@@ -40,7 +42,8 @@ async def mac_mail_new(since: str, limit: int = 25) -> dict:
 
 
 async def mac_mail_read(mail_id: str) -> dict:
-    """One message from the Mac's Mail app in full, by the id mac_mail_new gave ("mac:123")."""
+    """One message from the Mac's Mail app in full, by the id mac_mail_new gave ("mac:123"). An id without "mac:"
+    belongs to another mail app: read it with that app's tools."""
     if blocked := _blocked("mail"):
         return blocked
     try:

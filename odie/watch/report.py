@@ -52,15 +52,18 @@ def badges_of(source_ids: list[str], statuses: dict) -> list[dict]:
 
 def _mail_fields(ref: str, mails: list[Mail], statuses: dict | None = None) -> dict:
     """What Today's row needs from the mail behind an item (web: watchRow): the sender's name, the subject, the mail's
-    time and its gist. {} for an event, or a mail that isn't in this check's list (an older item keeps what it had).
-      "mail:m9" with m9 from "Priya Nair <priya@…>", "Lease renewal", at 06:00, snippet "Sign by Friday please."
-        -> {"from": "Priya Nair", "subject": "Lease renewal", "when": "2026-10-08T06:00:00Z", "gist": "Sign by Friday please."}
+    time, its gist, its badges, and the app that holds its id (the tap opens the mail there, by that id). {} for an
+    event, or a mail that isn't in this check's list (an older item keeps what it had).
+      "mail:m9" with m9 from "Priya Nair <priya@…>", "Lease renewal", at 06:00, snippet "Sign by Friday please.", read
+      from Gmail -> {"from": "Priya Nair", "subject": "Lease renewal", "when": "2026-10-08T06:00:00Z",
+      "gist": "Sign by Friday please.", "badges": [...], "app": "Gmail and Calendar"}
       "event:e1" -> {}"""
     mail = next((m for m in mails if f"mail:{m.id}" == ref), None)
     if mail is None:
         return {}
+    holds_the_id = badge_of(mail.source, statuses or {})["app"]
     return {"from": sender_name(mail.frm), "subject": mail.subject[:120], "when": mail.at, "gist": (mail.snippet or "")[:160],
-            "badges": badges_of(mail.sources or [mail.source], statuses or {})}
+            "badges": badges_of(mail.sources or [mail.source], statuses or {}), "app": holds_the_id}
 
 
 CARD_EVENTS = 20  # Today's two weeks: Up next shows a big card and up to 14 small ones

@@ -319,7 +319,7 @@
     }
   },
   {
-    "description": "New mail in the Mac's Mail app since a local time (\"2026-10-21T09:00\"), newest first, at most `limit`:\nid, from, subject, at, snippet, attachments. Read one in full with mac_mail_read.",
+    "description": "New mail in the Mac's Mail app since a local time (\"2026-10-21T09:00\"), newest first, at most `limit`:\nid, from, subject, at, snippet, attachments. Read one in full with mac_mail_read. This is Apple Mail only: a mail\nthat isn't here may be in another connected mail app, so load its skill and look there before saying it isn't\nfound. Never search the disk for mail.",
     "name": "mac_mail_new",
     "parameters_json_schema": {
       "properties": {
@@ -341,7 +341,7 @@
     }
   },
   {
-    "description": "One message from the Mac's Mail app in full, by the id mac_mail_new gave (\"mac:123\").",
+    "description": "One message from the Mac's Mail app in full, by the id mac_mail_new gave (\"mac:123\"). An id without \"mac:\"\nbelongs to another mail app: read it with that app's tools.",
     "name": "mac_mail_read",
     "parameters_json_schema": {
       "properties": {

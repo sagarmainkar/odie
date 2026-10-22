@@ -54,3 +54,17 @@ async def test_a_granted_tool_runs_the_app_and_a_bad_time_is_said(store, tmp_pat
     bad = await tools["mac_calendar_events"].func(start="tomorrow", end="2026-10-22T00:00")
     assert "error" in bad
     permissions.forget()
+
+
+def test_apple_mail_tools_point_to_the_other_mail_apps():
+    # A mail chat can't find in Apple Mail may be in another connected mail app whose tools load with its skill; chat
+    # once grepped the disk instead and decided that app's tools were gone.
+    import importlib.util
+    path = BUILTIN / "mac-apps" / "tools.py"
+    spec = importlib.util.spec_from_file_location("mac_apps_tools_doc", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    new_doc = module.mac_mail_new.__doc__
+    assert "another connected mail app" in new_doc and "load its skill" in new_doc
+    assert "never search the disk for mail" in new_doc.lower()
+    assert "another mail app" in module.mac_mail_read.__doc__  # an id without "mac:" isn't Apple Mail's

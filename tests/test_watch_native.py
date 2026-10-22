@@ -153,6 +153,24 @@ def test_the_card_carries_badges_on_items_and_events(store):
     assert [b["kind"] for b in card["events"][0]["badges"]] == ["gmail", "icloud"]
 
 
+def test_a_mail_item_names_the_app_that_holds_its_id(store):
+    # The tap on Today opens the mail by its id, so the item says which app that id belongs to, even when another app
+    # had a copy of the same mail too.
+    from odie.watch import report
+    statuses = {"mail:mac": {"ok": True, "app": "Apple Mail", "kind": "mail"},
+                "mail:gmail-calendar": {"ok": True, "app": "Gmail and Calendar", "kind": "mail"}}
+    both = Mail("g1", "Asha <a@x.in>", "Lease", "2026-10-21T12:50:00+05:30", "Hi", [], "mail:gmail-calendar",
+                sources=["mail:mac", "mail:gmail-calendar"])
+    only_mac = Mail("mac:7", "Ravi <r@x.in>", "Hello", "2026-10-21T12:55:00+05:30", "Hi", [], "mail:mac",
+                    sources=["mail:mac"])
+    report.apply(store, NOW, [{"ref": "mail:g1", "title": "Lease", "why": "sign"},
+                              {"ref": "mail:mac:7", "title": "Hello", "why": "reply"}], "two", [both, only_mac], [],
+                 statuses, first=True)
+    by_ref = {i["ref"]: i for i in store.get_setting(report.CARD)["needs_you"]}
+    assert by_ref["mail:g1"]["app"] == "Gmail and Calendar"
+    assert by_ref["mail:mac:7"]["app"] == "Apple Mail"
+
+
 async def test_up_next_keeps_the_events_badges(store, monkeypatch):
     from odie import upcoming
     store.set_setting("watch.card", {"events": [{"id": "e1", "title": "Dentist", "start": "2026-10-22T10:00:00+05:30", "end": "2026-10-22T10:30:00+05:30",

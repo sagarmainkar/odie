@@ -32,7 +32,17 @@ describe("watchRow", () => {
     expect(row.subtitle).toBe(":badge[New]{good} ₹2,480 by the 10th");  // the model's reason; New until Today was opened
     expect(row.lead).toMatchObject({ kind: "initial", letter: "P" });
     expect(row.value).toBe("14:00");
-    expect(row.run).toBe("Open the email from Priya Nair about Lease renewal");
+    expect(row.run).toBe("Open the email from Priya Nair about Lease renewal (id 1)");
+  });
+  it("the tap names the app that holds the mail and its id, so chat reads it there", () => {
+    const mail = { ...base, ref: "mail:18f3a2", from: "Priya Nair", subject: "Lease renewal" };
+    expect(watchRow({ ...mail, app: "Mail Connector" }, "2026-10-08").run)
+      .toBe("Open the email from Priya Nair about Lease renewal (in Mail Connector, id 18f3a2)");
+    // an item saved before items named their app: its one badge says where it is; two badges can't say which holds the id
+    const one = [{ kind: "app", app: "Mail Connector" }];
+    expect(watchRow({ ...mail, badges: one }, "2026-10-08").run).toContain("(in Mail Connector, id 18f3a2)");
+    const two = [{ kind: "app", app: "Mail Connector" }, { kind: "icloud", app: "Apple Mail" }];
+    expect(watchRow({ ...mail, badges: two }, "2026-10-08").run).toContain("(id 18f3a2)");
   });
   it("a seen item loses the pill; a mail from another day shows its day; no reason falls back to the gist", () => {
     const row = watchRow({ ...base, why: "", from: "CDSL", subject: "Demat alert", gist: "A transaction was reported.", seen: true, when: "2026-10-06T09:00:00+05:30" }, "2026-10-08");
