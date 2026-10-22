@@ -8,6 +8,11 @@ from datetime import datetime
 from odie.watch.fetch import Event, Mail
 
 CARD, FLAGGED, HELD = "watch.card", "watch.flagged", "watch.held"
+PILES = ("alerts", "bills", "events", "personal", "orders")  # where an item belongs (the parked Desk design's buckets)
+WHY_MAX = 120
+LABEL_MAX = 40
+RUN_MAX = 200
+DRAFT_MAX = 4000
 MAX_PUSH = 3
 # A source is said to have stopped working on its 3rd failed check in a row (one or two misses are often a blip),
 # and said to work again only when it comes back after that.
@@ -50,6 +55,76 @@ def badges_of(source_ids: list[str], statuses: dict) -> list[dict]:
     return out
 
 
+def _action(value) -> dict | None:
+    """One suggestion or escape as a card button: {"label", "run"} with both words given, trimmed to fit; anything
+    else -> None. {"label": "Reply with your fee", "run": "Show the draft for desk item mail:m1"} -> the same;
+    {"label": "Do it"} (no run) -> None; "skip" -> None."""
+    if not isinstance(value, dict):
+        return None
+    label = str(value.get("label") or "").strip()
+    run = str(value.get("run") or "").strip()
+    if not label or not run:
+        return None
+    return {"label": label[:LABEL_MAX], "run": run[:RUN_MAX]}
+
+
+def _amount(value) -> dict | None:
+    """An amount as {"value": number, "currency": text}: {"value": 4280, "currency": "INR"} -> the same; "lots" ->
+    None."""
+    if not isinstance(value, dict):
+        return None
+    number = value.get("value")
+    if isinstance(number, bool) or not isinstance(number, (int, float)):
+        return None
+    return {"value": number, "currency": str(value.get("currency") or "")[:8]}
+
+
+def _draft(value) -> dict | None:
+    """A drafted reply as {"to", "subject", "body"} with a body; anything else -> None. It stays in Odie: chat sends
+    it only after the user's tap."""
+    if not isinstance(value, dict):
+        return None
+    body = str(value.get("body") or "").strip()
+    if not body:
+        return None
+    return {"to": str(value.get("to") or "")[:200], "subject": str(value.get("subject") or "")[:200],
+            "body": body[:DRAFT_MAX]}
+
+
+def _day(value) -> str | None:
+    """A due date the card can show: "2026-10-24" or "2026-10-24T18:00" -> as given; "next week" -> None."""
+    text = str(value or "").strip()
+    try:
+        datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    return text
+
+
+def labelled(n: dict) -> dict:
+    """The labels of one item the model reported, each kept only when it is usable; a bad one is left out, never the
+    item. {"pile": "alerts", "suggestion": {"label": "Reply", "run": "…"}, "due": "2026-10-24"} -> those three;
+    {"pile": "urgent", "suggestion": {"label": "Do it"}, "due": "next week"} -> {}."""
+    out: dict = {}
+    pile = str(n.get("pile") or "").strip().lower()
+    if pile in PILES:
+        out["pile"] = pile
+    for key in ("suggestion", "escape"):
+        action = _action(n.get(key))
+        if action:
+            out[key] = action
+    due = _day(n.get("due"))
+    if due:
+        out["due"] = due
+    amount = _amount(n.get("amount"))
+    if amount:
+        out["amount"] = amount
+    draft = _draft(n.get("draft"))
+    if draft:
+        out["draft"] = draft
+    return out
+
+
 def _mail_fields(ref: str, mails: list[Mail], statuses: dict | None = None) -> dict:
     """What Today's row needs from the mail behind an item (web: watchRow): the sender's name, the subject, the mail's
     time, its gist, its badges, and the app that holds its id (the tap opens the mail there, by that id). {} for an
@@ -75,7 +150,9 @@ def _events(events: list[Event], statuses: dict | None = None) -> list[dict]:
 
 def apply(store, now: datetime, needs_you: list[dict], line: str, mails: list[Mail], events: list[Event],
           statuses: dict, first: bool) -> list[dict]:
+    from odie.watch import threads
     known = {f"mail:{m.id}" for m in mails} | {f"event:{e.id}" for e in events}
+    known |= threads.open_refs(store)  # a thread the watch follows can come back (a reply now overdue)
     card = store.get_setting(CARD) or {}
     items = [i for i in card.get("needs_you", []) if not i.get("done")]
     have = {i["ref"] for i in items}
@@ -84,8 +161,9 @@ def apply(store, now: datetime, needs_you: list[dict], line: str, mails: list[Ma
         ref = str(n.get("ref") or "")
         if ref not in known or ref in have:
             continue
-        it = {"ref": ref, "title": str(n.get("title") or "")[:120], "why": str(n.get("why") or "")[:200],
-              "at": now.isoformat(timespec="seconds"), "done": False, **_mail_fields(ref, mails, statuses)}
+        it = {"ref": ref, "title": str(n.get("title") or "")[:120], "why": str(n.get("why") or "")[:WHY_MAX],
+              "at": now.isoformat(timespec="seconds"), "done": False, **_mail_fields(ref, mails, statuses),
+              **labelled(n)}
         if ref.startswith("event:"):
             event = next((e for e in events if f"event:{e.id}" == ref), None)
             if event is not None:

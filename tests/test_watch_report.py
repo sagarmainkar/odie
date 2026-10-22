@@ -80,3 +80,35 @@ def test_a_mail_item_keeps_its_sender_subject_time_and_gist(store):
     assert priya["title"] == "About mail:m9" and priya["why"] == "due Friday"  # the model's words stay
     assert by_ref["mail:m0"]["from"] == "a@b.c"  # a bare address is the name there is
     assert "from" not in by_ref["event:e1"]
+
+
+LABELLED = {"ref": "mail:m1", "title": "Workshop invite", "why": "Asks your fee and a date by Friday", "pile": "alerts",
+            "suggestion": {"label": "Reply with your fee", "run": "Show the draft for desk item mail:m1"},
+            "escape": {"label": "Not interested", "run": "Close desk item mail:m1: not interested"},
+            "due": "2026-10-24", "amount": {"value": 4280, "currency": "INR"},
+            "draft": {"to": "a@example.com", "subject": "Re: Workshop", "body": "Hi, happy to. My fee is ..."}}
+
+
+def test_a_labelled_item_keeps_its_labels(store):
+    report.apply(store, DAY, [LABELLED], "one", MAILS, EVENTS, {}, first=True)
+    got = store.get_setting(report.CARD)["needs_you"][0]
+    for key in ("pile", "suggestion", "escape", "due", "amount", "draft"):
+        assert got[key] == LABELLED[key], key
+
+
+def test_bad_labels_are_dropped_not_the_item(store):
+    bad = {"ref": "mail:m1", "title": "Odd", "why": "x" * 300, "pile": "urgent", "suggestion": {"label": "Do it"},
+           "escape": "skip", "due": "next week", "amount": "lots", "draft": "text only"}
+    assert report.labelled(bad) == {}
+    report.apply(store, DAY, [bad], "one", MAILS, EVENTS, {}, first=True)
+    got = store.get_setting(report.CARD)["needs_you"][0]
+    assert got["ref"] == "mail:m1" and len(got["why"]) == 120 and "pile" not in got
+
+
+def test_an_open_threads_ref_can_be_reported_in_a_later_check(store):
+    # A reply owed from an older check comes back as an alert: its mail isn't in this check, its thread is open.
+    from odie.watch import threads
+    threads.track(store, "mail:old7", "reply", "Reply: fee", "owed", due="2026-10-07")
+    report.apply(store, DAY, [{"ref": "mail:old7", "title": "Reply still owed", "why": "2 days late", "pile": "alerts"}],
+                 "one", MAILS, EVENTS, {}, first=True)
+    assert [i["ref"] for i in store.get_setting(report.CARD)["needs_you"]] == ["mail:old7"]

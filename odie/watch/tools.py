@@ -146,8 +146,10 @@ def watch_tools(check: Check) -> list[FunctionTool]:
         return {"result": bills.close(check.fetcher.store, task_id, why)}
 
     def report(needs_you: list[dict], line: str, done: list[dict] | None = None) -> dict:
-        """Finish the check. needs_you: [{ref: "mail:<id>" or "event:<id>", title, why, push}] (push only for what
-        needs the user soon). line: one sentence for Today. done: what you did for a Watch for entry: [{message,
+        """Finish the check. needs_you: [{ref: "mail:<id>" or "event:<id>", title, why (≤120 chars: what is asked, by
+        when), pile (alerts, bills, events, personal or orders), suggestion {label, run}, escape {label, run}, due
+        (2026-10-24), amount {value, currency}, draft {to, subject, body} when a reply is owed, push}] (push only for
+        what needs the user soon; a run is the chat request a tap sends, naming "desk item <ref>"). line: one sentence for Today. done: what you did for a Watch for entry: [{message,
         files: [paths in the workspace], tell}]. tell: true only when the user should hear it now (a reminder you
         added, something new he'd act on); leave it out for "nothing new", "already covered" or "couldn't": those stay
         on the card, never in the chat."""
