@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.2.17 (2026-10-22)
+
+- Tapping a mail on Today now says which mail app holds it and its id, so chat opens that mail instead of searching
+  the wrong app. Chat looks in every connected mail app before saying a mail isn't there, and the memory review no
+  longer saves guesses about which tools the assistant has.
+
 ## v0.2.16 (2026-10-22)
 
 - Brand kits: when the timed segment is the writer's last scene, the kit's ending now plays before its card. The card
