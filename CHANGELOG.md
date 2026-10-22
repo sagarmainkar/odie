@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.2.16 (2026-10-22)
+
+- Brand kits: when the timed segment is the writer's last scene, the kit's ending now plays before its card. The card
+  used to start at the same moment and hide the ending, and the picture ended before the sound. An ending or card
+  that speaks a line now has that line in the voice track.
+
 ## v0.2.15 (2026-10-22)
 
 - Brand kits: a skill can give its videos a fixed look (`make_video(brand_kit="<skill>")`, a kit in the skill's
