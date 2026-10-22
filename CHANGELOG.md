@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.2.15 (2026-10-22)
+
+- Brand kits: a skill can give its videos a fixed look (`make_video(brand_kit="<skill>")`, a kit in the skill's
+  `assets/brand/`): its drawing code, sounds and fixed opening and ending scenes go in as they are, the stage draws
+  its background and its character through the timed segment, and the writer draws only the middle. The kit is
+  copied into the video's folder and its version recorded; a missing or broken kit is an error. Format:
+  `odie/video/kit/README.md`.
+- OpenAI's voice is given more time: each clip waits up to two minutes and is tried again after a timeout or a busy
+  answer, and a video's phrases are spoken six at a time, so a reel no longer fails when OpenAI is slow.
+
 ## v0.2.14 (2026-10-21)
 
 - A video can have one timed segment of exactly N seconds (`make_video(timed_segment_seconds=60)`), with untimed
