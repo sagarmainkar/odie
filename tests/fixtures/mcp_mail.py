@@ -148,6 +148,22 @@ elif MODE == "gmailmcp":  # a line-style Gmail and Calendar server: its schema a
         return "\n".join(out)
 
     @s.tool()
+    def gmail_read(message_id: str) -> str:
+        """Read one message in full."""
+        _log("gmail_read", {"message_id": message_id})
+        if DATA.get("read_fails"):
+            raise RuntimeError("the mail service is busy")
+        row = next((m for m in DATA["mail"] if m.get("id") == message_id), {})
+        return json.dumps({"ok": True, "id": message_id, "threadId": row.get("threadId", ""),
+                           "body": DATA.get("bodies", {}).get(message_id, "")})
+
+    @s.tool()
+    def gmail_read_thread(thread_id: str) -> str:
+        """Read a whole thread, oldest first."""
+        _log("gmail_read_thread", {"thread_id": thread_id})
+        return json.dumps({"ok": True, "thread_id": thread_id, "messages": DATA.get("threads", {}).get(thread_id, [])})
+
+    @s.tool()
     def calendar_create_event(summary: str, start: str, end: str) -> str:
         """Create an event."""
         _log("calendar_create_event", {"summary": summary})

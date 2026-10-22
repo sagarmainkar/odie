@@ -45,12 +45,16 @@ def watch_tools(check: Check) -> list[FunctionTool]:
         check.read = True
         return {"result": json.dumps([e.brief() for e in check.events], ensure_ascii=False)}
 
-    def read_mail(mail_id: str) -> dict:
-        """One message from this check in full (trimmed), by its id."""
-        m = check.fetcher.read_mail(mail_id)
+    async def read_mail(mail_id: str) -> dict:
+        """One message from this check in full (trimmed), by its id: the whole mail, not new_mail's first lines. Read
+        it whenever the subject and those lines don't make clear what it asks of the user."""
+        m = await check.fetcher.open_mail(mail_id)
         if m is None:
             return {"error": "No message with that id in this check: call new_mail first."}
-        return {"result": wrap_untrusted(f"From: {m.frm}\nSubject: {m.subject}\n\n{m.body}")}
+        text = f"From: {m.frm}\nSubject: {m.subject}\n\n{m.body}"
+        if not m.opened:
+            text += "\n\n(only the preview: the app didn't open it)"
+        return {"result": wrap_untrusted(text)}
 
     async def save_attachment(mail_id: str, name: str) -> dict:
         """Save one attachment of a message from this check into Odie's workspace; returns its path, for the

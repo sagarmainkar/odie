@@ -192,3 +192,74 @@ async def test_a_good_turn_after_a_failed_one_clears_the_retries(store, tmp_path
     g.commit()
     state = store.get_setting(fetch.STATE)
     assert sorted(state["seen"]) == ["m0", "m1"] and state["retries"] == {}
+
+
+GM_INVITE = [{"id": "g1", "threadId": "t1", "from": "A Person <a.person@example.com>", "subject": "New consultation",
+              "date": "2026-10-08T08:30:00Z", "snippet": "Thanks for being part of our network!"}]
+GM_INVITE_BODY = "Hi, a client would value your view. 1. Do you know the market? 2. Who competes? 3. When are you free?"
+
+
+async def gmail_check(store, tmp_path, **extra):
+    """A check whose Gmail-style app has read tools, with its new mail listed."""
+    from odie.plugins import mcp
+    from odie.watch.tools import Check, watch_tools
+    mcp.write_config({"gmail-calendar": spec_for("gmailmcp", tmp_path, mail=GM_INVITE, bodies={"g1": GM_INVITE_BODY},
+                                                 **extra)})
+    await sources.detect_and_save(store)
+    check = Check(fetch.Fetcher(store, NOW))
+    tools = {t.name: t for t in watch_tools(check)}
+    await tools["new_mail"].func()
+    return check, tools
+
+
+def calls_to(tmp_path, tool):
+    lines = (tmp_path / "calls.log").read_text().splitlines()
+    return [json.loads(line)["args"] for line in lines if json.loads(line)["tool"] == tool]
+
+
+async def test_read_mail_opens_the_whole_mail_not_the_preview(store, tmp_path):
+    # The preview reads like a newsletter; only the whole mail shows a person asking three questions (22 Oct).
+    check, tools = await gmail_check(store, tmp_path)
+    got = await tools["read_mail"].func(mail_id="g1")
+    assert "When are you free?" in got["result"] and "only the preview" not in got["result"]
+    await tools["read_mail"].func(mail_id="g1")
+    assert calls_to(tmp_path, "gmail_read") == [{"message_id": "g1"}]  # opened once, then kept
+    assert check.fetcher.read_mail("g1").thread == "t1"
+
+
+async def test_a_failed_read_keeps_the_preview_and_says_so(store, tmp_path):
+    check, tools = await gmail_check(store, tmp_path, read_fails=True)
+    got = await tools["read_mail"].func(mail_id="g1")
+    assert "Thanks for being part of our network!" in got["result"]
+    assert "(only the preview: the app didn't open it)" in got["result"]
+
+
+async def test_a_mail_not_in_this_check_is_still_refused(store, tmp_path):
+    check, tools = await gmail_check(store, tmp_path)
+    got = await tools["read_mail"].func(mail_id="nope")
+    assert "error" in got
+
+
+async def test_a_folded_mail_opens_through_the_app_that_holds_its_id(store, tmp_path):
+    check, tools = await gmail_check(store, tmp_path)
+    kept = check.fetcher.read_mail("g1")
+    kept.sources = ["mail:mac", "mail:gmail-calendar"]  # Apple Mail had a copy too; the id is the connector's
+    await tools["read_mail"].func(mail_id="g1")
+    assert calls_to(tmp_path, "gmail_read") == [{"message_id": "g1"}]
+
+
+async def test_apple_mail_opens_with_its_own_read(store, monkeypatch):
+    from odie.mac import mail as mac_mail
+    f = fetch.Fetcher(store, NOW)
+    f._mail["mac:5"] = fetch.Mail("mac:5", "B <b@example.com>", "Hi", "2026-10-08T08:00:00Z", "short", [], "mail:mac",
+                                  body="short", sources=["mail:mac"])
+    asked = {}
+
+    async def fake_read(mail_id):
+        asked["id"] = mail_id
+        return {"id": mail_id, "body": "the whole message"}
+    monkeypatch.setattr(mac_mail, "read", fake_read)
+    apple_mail = sources.Source("mail", "mac", "Apple Mail", "native", "mac_mail_new", {})
+    monkeypatch.setattr(fetch, "saved", lambda _store: [apple_mail])
+    m = await f.open_mail("mac:5")
+    assert asked["id"] == "mac:5" and m.body == "the whole message" and m.opened

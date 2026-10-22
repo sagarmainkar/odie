@@ -79,6 +79,8 @@ class Mail:
     source: str
     body: str = ""
     sources: list[str] = field(default_factory=list)  # every source that showed this mail (Gmail and Apple Mail)
+    thread: str = ""  # the app's thread id, when its listing gives one
+    opened: bool = False  # body is the whole message (open_mail), not the listing's preview
 
     def brief(self) -> dict:
         return {"id": self.id, "from": self.frm, "subject": self.subject, "at": self.at, "snippet": self.snippet,
@@ -150,8 +152,9 @@ def parse_mail(text: str, source: str) -> list[Mail]:
         sender = _who(_first(r, "from", "sender", "from_email", "from__email"))
         subject = str(_first(r, "subject", "title"))
         at = str(_first(r, "date", "messageTimestamp", "internalDate", "received_at", "at"))
+        thread = str(_first(r, "threadId", "thread_id"))
         out.append(Mail(id=mid, frm=sender, subject=subject, at=at, snippet=body[:SNIPPET], attachments=atts,
-                        source=source, body=body[:BODY], sources=[source]))
+                        source=source, body=body[:BODY], sources=[source], thread=thread))
     return out
 
 
@@ -208,6 +211,20 @@ def fold_mail(mails: list[Mail]) -> list[Mail]:
         by_key[key] = len(out)
         out.append(m)
     return out
+
+
+def body_of(text: str) -> str:
+    """A message's text from an app's read reply: its JSON's body field, or the reply itself when it is plain text.
+    '{"id": "m1", "body": "Hi there"}' -> "Hi there"; 'Hi there' -> "Hi there"; '{"data": {"messageText": "x"}}' -> "x"."""
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return text.strip()
+    if isinstance(data, dict) and isinstance(data.get("data"), dict):
+        data = data["data"]
+    if not isinstance(data, dict):
+        return ""
+    return str(_first(data, "body", "body_plain", "text", "messageText", "message_text"))
 
 
 def _minutes(iso: str) -> float | None:
@@ -519,6 +536,54 @@ class Fetcher:
 
     def read_mail(self, mail_id: str) -> Mail | None:
         return self._mail.get(mail_id)
+
+    def _source_of(self, mail: Mail) -> Source | None:
+        """The saved source whose id the mail carries (a mail folded from two apps keeps the connector's id)."""
+        return next((s for s in saved(self.store) if s.id == mail.source), None)
+
+    async def open_mail(self, mail_id: str) -> Mail | None:
+        """A mail of this check with its whole body, read once through the app that holds its id and then kept: Apple
+        Mail through its own read, a connector through its read tool (Source.reader). A listing often carries only a
+        preview, so this is what "reading the mail" means. None for an id not in this check; the mail as it was when
+        the app has no read tool or the read fails (its `opened` stays False, so the caller can say so)."""
+        mail = self._mail.get(mail_id)
+        if mail is None or mail.opened:
+            return mail
+        src = self._source_of(mail)
+        if src is None:
+            return mail
+        try:
+            body = await self._whole_body(src, mail_id)
+        except CallError as e:
+            log.info("watch: %s couldn't open %s: %s", src.app, mail_id, e)
+            return mail
+        if body:
+            mail.body = body[:BODY]
+            mail.opened = True
+        return mail
+
+    async def _whole_body(self, src: Source, mail_id: str) -> str:
+        """The whole text of one message from its app: "" when the app has no way to open one."""
+        if src.style == "native":
+            from odie.mac import mail as mac_mail
+            from odie.mac import scripts as mac_scripts
+            try:
+                row = await mac_mail.read(mail_id)
+            except mac_scripts.MacError as e:
+                raise CallError(str(e)) from None
+            return str(_first(row, "body", "text"))
+        if not src.reader:
+            return ""
+        params = {src.reader["id_param"]: mail_id}
+        args: dict = {}
+        if src.style == "zapier":
+            args["params"] = params
+        else:
+            args.update(params)
+        res = await self._call(src, src.reader["tool"], args)
+        if res.is_error:
+            raise CallError(res.text[:200] or "the app said no")
+        return body_of(res.text)
 
     async def save_attachment(self, mail_id: str, name: str) -> Path:
         from odie.agent.tools.files import workspace
