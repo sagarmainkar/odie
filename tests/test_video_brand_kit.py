@@ -317,6 +317,39 @@ def test_a_long_line_holds_the_handoff_and_is_logged(kit, caplog):
     assert "holds its last frame 1.5 s" in caplog.text
 
 
+def test_a_segment_that_ends_the_narration_plays_the_ending_then_the_card(kit):
+    # The ending and the card both go in at the narration's end: the card must wait for the ending, not cover it.
+    lengths = [6.0, 30.0]
+    wav, _starts = joined_wavs([wav_of(length) for length in lengths], gap=timeline.BREATH)
+    clock = {"start": 6.5, "seconds": 30, "end": 36.5}
+    laid = brand.lay_out(wav, lengths, [[0.0]] * 2, [timeline.BREATH], clock, (1, 1), 2, kit,
+                         {"handoff": wav_of(1.0)})
+    assert laid.order == [1, "handoff", 2, "ending", "card"]
+    assert laid.starts == [0.0, 6.5, 8.5, 39.0, 40.5]
+    assert laid.lengths == [6.0, 1.5, 30.0, 1.0, 1.5]
+    assert laid.clock == {"start": 8.5, "seconds": 30, "end": 38.5}
+    assert seconds_of(laid.wav) == pytest.approx(42.0, abs=0.001)  # the voice ends with the picture
+
+
+def test_an_ending_and_a_card_that_speak_have_their_lines_in_the_voice_track(store):  # noqa: F811
+    manifest = json.loads(json.dumps(brand_kit.MANIFEST))
+    manifest["vars"]["outro"] = "one short spoken line to close on"
+    manifest["bookends"]["ending"]["says"] = "outro"
+    manifest["bookends"]["card"]["says"] = "outro"
+    brand_kit.make_kit(brand.skills_folder(), manifest=manifest)
+    kit = brand.find("test-channel")
+    lengths = [6.0, 30.0]
+    wav, _starts = joined_wavs([wav_of(length) for length in lengths], gap=timeline.BREATH)
+    laid = brand.lay_out(wav, lengths, [[0.0]] * 2, [timeline.BREATH], None, (1, 1), 2, kit,
+                         {"handoff": wav_of(1.0), "ending": wav_of(0.8), "card": wav_of(2.0)})
+    assert laid.starts == [0.0, 6.5, 8.5, 39.0, 40.5]
+    assert laid.lengths == [6.0, 1.5, 30.0, 1.0, 2.0]  # the card held for its 2 s line
+    assert level_at(laid.wav, 39.1, 39.7) > 0.3  # the ending's line
+    assert level_at(laid.wav, 39.9, 40.4) == 0  # then quiet to its 1 s and the breath
+    assert level_at(laid.wav, 40.6, 42.4) > 0.3  # the card's line
+    assert seconds_of(laid.wav) == pytest.approx(42.5, abs=0.001)
+
+
 def test_the_writers_cues_move_to_their_scenes_places():
     order = [1, "handoff", 2, "ending", 3, "card"]
     cues = [{"scene": 2, "at": 1, "name": "whoosh"}, {"scene": 3, "beat": 0, "name": "ting"}]

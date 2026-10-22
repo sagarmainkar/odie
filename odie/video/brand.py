@@ -608,29 +608,35 @@ class Insert:
 EPSILON = 1e-6  # seconds: moments this close are the same moment
 
 
+def line_frames(spoken: dict[str, bytes], name: str) -> bytes:
+    """A speaking bookend's line as sample bytes for the voice track: {"ending": <a WAV>} and "ending" -> its
+    samples; a bookend that says nothing -> b""."""
+    line = spoken.get(name)
+    if line is None:
+        return b""
+    return wav_parts(line)[1]
+
+
 def inserts_for(kit: Kit, starts: list[float], lengths: list[float], total: float, segment: tuple[int, int] | None,
                 spoken: dict[str, bytes]) -> list[Insert]:
     """The kit's bookends as inserts into a narrated timeline (scene `starts` and `lengths`, `total` its end): the
-    handoff at the segment's first scene's start (its line, then a breath), the ending at the segment's last scene's
-    end (a breath first), the card at the very end (a breath first). A bookend that sits around the segment is left
-    out of a video without one."""
+    handoff at the segment's first scene's start (then a breath), the ending at the segment's last scene's end (a
+    breath first), the card at the very end (a breath first). Each speaking bookend carries its line from `spoken`. A
+    bookend that sits around the segment is left out of a video without one."""
     inserts = []
     if segment is not None and has(kit, "handoff"):
-        bookend = kit.bookends["handoff"]
-        line = spoken.get("handoff")
-        line_frames = b""
-        if line is not None:
-            line_frames = wav_parts(line)[1]
-        inserts.append(Insert("handoff", point=starts[segment[0]], lead=0.0, length=bookend_length(bookend, line),
-                              tail=timeline.BREATH, moves_at_point=True, line=line_frames))
+        length = bookend_length(kit.bookends["handoff"], spoken.get("handoff"))
+        inserts.append(Insert("handoff", point=starts[segment[0]], lead=0.0, length=length, tail=timeline.BREATH,
+                              moves_at_point=True, line=line_frames(spoken, "handoff")))
     if segment is not None and has(kit, "ending"):
         last = segment[1]
         length = bookend_length(kit.bookends["ending"], spoken.get("ending"))
         inserts.append(Insert("ending", point=starts[last] + lengths[last], lead=timeline.BREATH, length=length,
-                              tail=0.0, moves_at_point=False))
+                              tail=0.0, moves_at_point=False, line=line_frames(spoken, "ending")))
     if has(kit, "card"):
-        inserts.append(Insert("card", point=total, lead=timeline.BREATH, length=kit.bookends["card"].seconds,
-                              tail=0.0, moves_at_point=False))
+        length = bookend_length(kit.bookends["card"], spoken.get("card"))
+        inserts.append(Insert("card", point=total, lead=timeline.BREATH, length=length, tail=0.0,
+                              moves_at_point=False, line=line_frames(spoken, "card")))
     return inserts
 
 
@@ -640,17 +646,41 @@ def moved(t: float, inserts: list[Insert]) -> float:
     return round(t + shift, 3)
 
 
+def plays_first(other: Insert, insert: Insert) -> bool:
+    """Decides whether another bookend at the same point plays before this one, which moved() can't tell from the
+    point alone. A segment that ends the narration puts the ending and the card both at its end, and they play in
+    BOOKENDS order: the ending, asked for the card -> True; the card, asked for the ending -> False; a bookend at
+    another point -> False (moved() counts it)."""
+    same_point = abs(other.point - insert.point) <= EPSILON
+    if not same_point or other.moves(insert.point):
+        return False
+    return BOOKENDS.index(other.name) < BOOKENDS.index(insert.name)
+
+
 def bookend_start(insert: Insert, inserts: list[Insert]) -> float:
-    """When a bookend starts in the video: its point, moved by the other inserts before it, plus its lead."""
+    """When a bookend starts in the video: its point, moved by the other inserts before it and by any at the same
+    point that plays first (plays_first), plus its lead. The ending at 36.5 (1 s, a breath first) and the card also
+    at 36.5 -> the ending at 37.0, the card at 38.5."""
     others = [other for other in inserts if other is not insert]
-    return round(moved(insert.point, others) + insert.lead, 3)
+    start = moved(insert.point, others)
+    for other in others:
+        if plays_first(other, insert):
+            start += other.seconds
+    return round(start + insert.lead, 3)
+
+
+def insert_place(insert: Insert) -> tuple[float, int]:
+    """Where an insert goes into the voice track: by its point (to the millisecond, as the starts are kept), and at
+    the same point in BOOKENDS order."""
+    return round(insert.point, 3), BOOKENDS.index(insert.name)
 
 
 def voice_with_inserts(wav: bytes, inserts: list[Insert], total: float, video_end: float) -> bytes:
     """The voice track with each insert's stretch put in at its point: its lead's quiet, its line (if it speaks)
     then quiet to its length, then its tail's quiet. Quiet is added first to the narrated end (`total`: a credits card
     after the last word is silent), and last to `video_end`, so the bookends' sounds aren't cut off in the mix. The
-    inserts go in from the latest point back, so each earlier point is still where it was."""
+    inserts go in from the latest point back, so each earlier point is still where it was; two at the same point go
+    in later bookend first, so the earlier one's stretch ends up before it (the ending, then the card)."""
     params, frames = wav_parts(wav)
     frame_size = params.sampwidth * params.nchannels
 
@@ -663,7 +693,7 @@ def voice_with_inserts(wav: bytes, inserts: list[Insert], total: float, video_en
     narrated_end = bytes_for(total)
     if len(frames) < narrated_end:
         frames += b"\x00" * (narrated_end - len(frames))
-    for insert in sorted(inserts, key=lambda one: one.point, reverse=True):
+    for insert in sorted(inserts, key=insert_place, reverse=True):
         line = insert.line[:bytes_for(insert.length)]
         body = line + b"\x00" * (bytes_for(insert.length) - len(line))
         stretch = quiet(insert.lead) + body + quiet(insert.tail)
