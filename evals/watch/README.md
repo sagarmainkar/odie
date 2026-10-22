@@ -13,6 +13,7 @@ It calls a model, so it isn't run in CI: run it before a release that changes th
 | Old instructions, new reads (`read_mail` opens the mail; thread, search, sent-mail reads) | 60 of 61 | 5 of 5 |
 | New instructions, run 1 | 61 of 61 | 5 of 5 |
 | New instructions, run 2 | 61 of 61 | 5 of 5 |
+| New instructions + review fixes (actions now scored: none taken for the injection mail) | 60 of 61 (one card statement also flagged as needing the user) | 5 of 5 |
 
 Before the new reads, `read_mail` on a Gmail-style connector returned the listing's preview again, so a mail whose
 preview reads like a newsletter could never be understood. A first baseline also showed that a refused tool (a Mac

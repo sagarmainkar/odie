@@ -61,7 +61,8 @@ def guard(tool, args, tool_context) -> dict | None:
     from odie.watch.tools import READ_BEYOND
     if tool.name in MAY_WRITE:
         return None
-    read_beyond = bool(tool_context is not None and tool_context.state.get(READ_BEYOND))
+    state = getattr(tool_context, "state", None) or {}  # a context without a turn state has read nothing beyond
+    read_beyond = bool(state.get(READ_BEYOND))
     if read_beyond and tool.name in REACHES_OUT:
         return {"error": "Not after reading older mail in this check: report it as a needs-you item instead."}
     refused = trackers_guard(tool, args, tool_context)
