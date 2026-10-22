@@ -31,6 +31,9 @@ come back as needing the user).
 |---|---|---|---|---|---|
 | Run 1 | 62 of 63 | 5 of 5 | 20 of 20 | 7 of 7 | 2 of 2 |
 | Run 2 | 62 of 63 | 5 of 5 | 20 of 20 | 7 of 7 | 2 of 2 |
+| After the review fixes (Odie writes each button's request) | 62 of 63 | 5 of 5 | 20 of 20 | 7 of 7 | 2 of 2 |
 
 The one difference in both runs was a "new sign-in to your account" notice the watch flagged; its instructions ask for
 exactly that (a login the user may not have made), so the case now expects it flagged, pile alerts.
+
+A run between those found every turn crashing (no reports at all): the instructions had a braced word, `{label}`, which ADK reads as a state variable. A test now forbids that.
