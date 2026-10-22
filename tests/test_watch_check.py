@@ -312,3 +312,12 @@ def test_the_watch_and_trackers_never_close_a_desk_item():
     ctx = SimpleNamespace(session=SimpleNamespace(id="tracker-1"), state={})
     assert check.guard(tool, {"ref": "mail:m1", "why": "x"}, ctx) is not None
     assert trackers_guard(tool, {"ref": "mail:m1", "why": "x"}, ctx) is not None
+
+
+def test_the_instructions_have_no_braced_word_adk_would_fill_in():
+    # ADK reads "{word}" in an agent's instruction as a state variable: "{label}" once crashed every watch turn
+    # (KeyError: Context variable not found). Lists like "{to, subject, body}" are fine.
+    import re
+    from odie.watch import check as watch_check
+    text = watch_check._instruction("", "")
+    assert re.findall(r"\{[A-Za-z_][A-Za-z0-9_.:]*\??\}", text) == []
