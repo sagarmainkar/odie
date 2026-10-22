@@ -1,10 +1,11 @@
 """The Desk's cards: what the watch found, drawn by code as chat blocks (never the model's paragraphs)."""
 import json
 import re
+from pathlib import Path
 
 from odie.watch import cards
 
-CATALOG = json.loads(open("odie/blocks/catalog.json").read())
+CATALOG = json.loads(Path("odie/blocks/catalog.json").read_text())
 ICONS = set(CATALOG["icons"])
 KINDS = {b["kind"] for b in CATALOG["blocks"]}
 INVITE = {"ref": "mail:m1", "title": "Workshop invite", "why": "Asks your fee and a date by Friday", "pile": "alerts",
@@ -16,7 +17,7 @@ BILL = {"ref": "mail:b1", "title": "Card bill", "why": "Statement ready", "pile"
 
 
 def blocks_of(text: str) -> list[dict]:
-    fence = re.search(r"```odie-blocks\n(.*?)\n```", text, re.S)
+    fence = re.search(r"```odie-blocks\n(.*?)\n```", text, re.DOTALL)
     assert fence, text
     return json.loads(fence.group(1))
 
