@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.2.19 (2026-10-22)
+
+- The watch follows things until they're done: orders, bills, replies the user owes and deadlines become threads it reviews every check (a reply closes when the user's answer is in the thread, or comes back when it's overdue; only bills and deadlines remind at their due date).
+- What needs the user is labelled (alerts, bills, events, personal, orders) with one suggested action and one way out, and a drafted reply when one is owed. Sending still takes the user's approval.
+- A pinned Desk conversation holds the morning round (a short opener, then cards with buttons), urgent items and what was done, never the user's own chat. Chat can show or close a Desk item.
+
 ## v0.2.18 (2026-10-22)
 
 - The mail watch reads like an assistant. It opens a mail whose preview doesn't say what it asks (before, a
