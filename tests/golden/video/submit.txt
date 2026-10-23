@@ -1,0 +1,6 @@
+Submit the whole video at once: title (the topic, short), narration (one string of plain speech per scene,
+in order) and page (the whole page: the HTML body, one <script> that calls Video.scenes([...]) once, with one
+scene per narration string). It checks the narration and draws the page.
+{"error": …}: fix exactly that and call submit_video again with the whole narration and the whole fixed page.
+{"result": "Accepted."}: the video is done.
+['narration', 'page', 'title']

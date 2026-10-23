@@ -1,0 +1,10 @@
+Topic: Tides
+Length: 2 minutes, roughly 280 words of narration (a guide, not a count).
+
+Brief:
+For a curious beginner.
+
+Pictures:
+  img1  1200x800  landscape  a beach
+
+Plan in a few lines, then call submit_video with the title, the narration and the whole page.
