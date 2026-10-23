@@ -35,7 +35,7 @@ async def test_speaking_names_the_line_playing_in_this_frame(tmp_path):
         "__frame(2.5) && __s.speaking().speaker",
     ], tmp_path)
     assert values[0] is None
-    assert values[1] == {"speaker": "anna", "index": 0, "progress": 0.5}
+    assert values[1] == {"speaker": "anna", "index": 0, "progress": 0.5, "text": ""}
     assert values[2] is None  # between the lines
     assert values[3] == "ben"
 

@@ -204,7 +204,8 @@ async def narrate_dialogue(store: Store, script, voices: dict[str, str],
             wav = spoken[position]
             seconds = wav_seconds(wav)
             starts.append(round(at, 3))
-            lines.append({"index": position, "speaker": line.speaker, "scene": number + 1, "at": round(at, 3),
+            lines.append({"index": position, "speaker": line.speaker, "text": line.text, "scene": number + 1,
+                          "at": round(at, 3),
                           "dur": round(seconds, 3), "amplitude": dialogue.loudness(wav)})
             pieces.append(wav)
             at += seconds

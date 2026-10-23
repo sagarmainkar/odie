@@ -127,3 +127,24 @@ async def test_each_line_is_spoken_in_its_speakers_voice_and_laid_with_its_pause
     total = 4.55 + 0.5 + 1.0  # the scenes joined with the usual breath
     with wave.open(io.BytesIO(wav)) as w:
         assert round(w.getnframes() / w.getframerate(), 2) == total
+
+
+def test_the_writer_stages_a_script_with_its_own_guide_and_no_narration():
+    from odie.video import writer
+    instruction = writer.instruction_for("landscape", dialogue=True)
+    assert instruction.startswith(writer.INSTRUCTION.rstrip())
+    assert "never change, add or drop a word" in instruction and "s.mouth(" in instruction
+    assert writer.instruction_for("landscape") == writer.INSTRUCTION  # no script: as before
+    assert sorted(writer.submit_fields(None, dialogue=True)) == ["page", "title"]
+    staged = dialogue.staging(dialogue.parse(SCRIPT))
+    prompt = writer.prompt_for_dialogue("The night shift", "A quiet, warm look.", staged.listing)
+    assert "line 1 · anna: You're still here?" in prompt and "A quiet, warm look." in prompt
+    assert "narration" not in writer.prompt_for_dialogue("T", "", staged.listing).lower().replace("no narration", "")
+
+
+def test_the_page_check_draws_with_estimated_lines():
+    staged = dialogue.staging(dialogue.parse(SCRIPT))
+    timings = {"starts": [0.0, 8.0], "lengths": [7.5, 2.0], "beats": [[0.0, 2.5, 4.0], [0.0]]}
+    script = staged.lines_for(timings)
+    assert script.startswith("<script>Video.lines(")
+    assert '"speaker": "anna"' in script and '"t": 2.5' in script and '"text": "Look."' in script

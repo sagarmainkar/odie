@@ -796,14 +796,14 @@
     return null;
   }
 
-  // Who is speaking at T: {speaker, index, progress (0..1 through the line)}, or null.
+  // Who is speaking at T: {speaker, index, progress (0..1 through the line), text}, or null.
   function speakingAt(T) {
     const line = lineAt(T);
     if (line === null) {
       return null;
     }
     const progress = Math.round(((T - line.t) / line.dur) * 1000) / 1000;
-    return {speaker: line.speaker, index: line.index, progress: progress};
+    return {speaker: line.speaker, index: line.index, progress: progress, text: line.text || ""};
   }
 
   // How open a speaker's mouth is at T: 0 closed, 1 half, 2 open, from the line's loudness at that moment (under 0.15

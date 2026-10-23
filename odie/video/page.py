@@ -273,7 +273,7 @@ class CheckResult:
 
 async def check_with_cues(body: str, narration: list[str], browser, assets_script: str = "",
                           size: tuple[int, int] = timeline.LANDSCAPE,
-                          timed_seconds: float | None = None) -> CheckResult:
+                          timed_seconds: float | None = None, lines_for=None) -> CheckResult:
     """Loads the page in a sealed tab of the video's size (1920x1080, or 1080x1920 for a vertical video) with estimated
     timings and the video's pictures and clips
     (`assets_script`, as the render will have them) and draws three moments of every scene, so the chat turn hears
@@ -284,10 +284,14 @@ async def check_with_cues(body: str, narration: list[str], browser, assets_scrip
     them, right or wrong: whether they fit, shape included, is odie.video.sounds.cue_problem's to say. A video with a
     timed segment of `timed_seconds` must mark it in Video.scenes (odie.video.timed.marks_problem: no marks -> how to
     mark it), and is drawn with its segment clock running (s.left()) from the marked scenes' estimated start to their
-    end; the marks are ignored for any other video."""
+    end; the marks are ignored for any other video. A dialogue video's page is drawn with its line timeline for the
+    estimated timings (`lines_for(timings)`, the page script), so s.speaking() and s.mouth() run in the check too."""
     timings = estimated_timings(narration)
+    lines_script = ""
+    if lines_for is not None:
+        lines_script = lines_for(timings)
     try:
-        html = assemble(body, timings, assets_script, size=size)
+        html = assemble(body, timings, assets_script, size=size, lines_script=lines_script)
     except ValueError as e:
         return CheckResult(problem=str(e))
     width, height = size

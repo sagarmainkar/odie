@@ -180,7 +180,7 @@ def loudness(wav: bytes, step: float = LOUDNESS_STEP) -> list[float]:
 
 
 def lines_script(lines: list[dict]) -> str:
-    """The page's line timeline: `<script>Video.lines([...])</script>`, each {index, speaker, scene, t, dur,
+    """The page's line timeline: `<script>Video.lines([...])</script>`, each {index, speaker, text, scene, t, dur,
     amplitude} with t in seconds into the video."""
     return f"<script>Video.lines({json.dumps(lines)})</script>"
 
@@ -197,7 +197,25 @@ def estimated_lines(script: Script, timings: dict) -> list[dict]:
         for i, line in enumerate(scene.lines):
             begin = beats[i] if i < len(beats) else 0.0
             end = beats[i + 1] if i + 1 < len(beats) else length
-            out.append({"index": index, "speaker": line.speaker, "scene": number + 1, "t": round(start + begin, 3),
-                        "dur": round(max(0.0, end - begin), 3), "amplitude": []})
+            out.append({"index": index, "speaker": line.speaker, "text": line.text, "scene": number + 1,
+                        "t": round(start + begin, 3), "dur": round(max(0.0, end - begin), 3), "amplitude": []})
             index += 1
     return out
+
+
+@dataclass
+class Staging:
+    """What the video writer needs to stage a script: the script as it reads it (writer_listing), the narration the
+    page is checked against (narration_of: one string a scene, a phrase a line), and the line timeline for the
+    check's estimated timings (estimated_lines, as the page script)."""
+    listing: str
+    narration: list[str]
+    script: Script
+
+    def lines_for(self, timings: dict) -> str:
+        return lines_script(estimated_lines(self.script, timings))
+
+
+def staging(script: Script) -> Staging:
+    """The writer's staging of `script` (see Staging)."""
+    return Staging(listing=writer_listing(script), narration=narration_of(script), script=script)
