@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { badge, chatAbout, footer, watchRow, type WatchCardData } from "./watch";
+import { badge, chatAbout, footer, notOnTheCard, watchRow, type WatchCardData } from "./watch";
 
 const card = (over: Partial<WatchCardData> = {}): WatchCardData => ({
   checked_at: "2026-10-08T14:30:00+05:30", line: "2 new emails", needs_you: [], events: [], unseen: 0,
@@ -56,5 +56,15 @@ describe("watchRow", () => {
     expect(mail.run).toBe("Tell me about: Invoice due Friday");
     const event = watchRow({ ...base, ref: "event:e1", title: "Standup moved to 3", seen: true }, "2026-10-08");
     expect(event.lead).toEqual({ kind: "tile", icon: "cal", color: "orange" });
+  });
+  it("leaves out of Today's tasks the watch's threads its card already shows", () => {
+    const c = card({ needs_you: [{ ref: "mail:r1", title: "Reply to Asha", why: "she asked twice", at: "" }] });
+    const tasks = [
+      { id: 1, source_kind: "watch", source_ref: "mail:r1" },  // the same reply, on the card
+      { id: 2, source_kind: "watch", source_ref: "mail:o1" },  // an order the card doesn't show
+      { id: 3, source_kind: null, source_ref: null },          // the user's own
+    ];
+    expect(notOnTheCard(tasks, c).map((t) => t.id)).toEqual([2, 3]);
+    expect(notOnTheCard(tasks, null).map((t) => t.id)).toEqual([1, 2, 3]);
   });
 });
