@@ -136,3 +136,12 @@ async def test_sources_saved_before_readers_were_known_are_found_again(isolated_
     old["v"] = 2  # saved before mail apps' read and thread tools were looked for
     s.set_setting(sources.KEY, old)
     assert sources.stale(s, datetime.now(UTC))
+
+
+def test_a_read_tool_without_a_known_id_parameter_is_no_reader():
+    """Called with {"": id}, such a tool could only fail; the watch then keeps the preview instead of trying."""
+    from odie.watch.sources import _id_tool
+    odd = {"name": "gmail_read", "input_schema": {"type": "object", "properties": {"ref_code": {"type": "string"}}}}
+    plain = {"name": "gmail_read", "input_schema": {"type": "object", "properties": {"message_id": {"type": "string"}}}}
+    assert _id_tool(odd, "message_id", "messageId", "id") is None
+    assert _id_tool(plain, "message_id", "messageId", "id") == {"tool": "gmail_read", "id_param": "message_id"}

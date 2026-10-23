@@ -12,7 +12,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from odie.watch import report
-from odie.watch.bills import CLOSED_NOTE
+from odie.watch.bills import CLOSED_NOTE, closed_note
 
 KINDS = {"order": "waiting", "bill": "reminder", "reply": "followup", "deadline": "reminder"}  # thread kind -> task kind
 FIRES = frozenset({"bill", "deadline"})  # kinds whose due date fires a reminder (pay it, do it); orders and replies don't
@@ -22,7 +22,8 @@ SOURCE_KIND = "watch"
 
 
 def _own_open(store, ref: str):
-    """The watch's open thread for this mail ref, or None (a task the user made never counts)."""
+    """The watch's open thread for this mail ref, or None (a task the user made never counts): "mail:o1" with the
+    watch's open order thread -> that row; "mail:o1" only on the user's own task, or a closed thread -> None."""
     return store.one("select * from tasks where source_kind = ? and source_ref = ? and status in ('open', 'waiting') "
                      "order by id desc limit 1", (SOURCE_KIND, ref))
 
@@ -54,7 +55,7 @@ def track(store, ref: str, kind: str, title: str, stage: str, due: str | None = 
         reason = (why or "").strip()
         if not reason:
             return "Say why it's closed: which mail showed it, or what the user did."
-        store.update_task(row["id"], status=stage_now, notes=CLOSED_NOTE + reason)
+        store.update_task(row["id"], status=stage_now, notes=closed_note(CLOSED_NOTE, reason, _facts(row["notes"])))
         report.drop_item(store, ref)
         return f"Closed thread #{row['id']}."
     due_at = _due(due)
@@ -91,7 +92,8 @@ def close(store, ref: str, why: str, by_user: bool = False) -> str:
     if row is None:
         return f"No open thread for {ref}."
     if by_user:
-        store.update_task(row["id"], status="done", notes=USER_CLOSED_NOTE + (why or "dismissed"))
+        reason = why or "dismissed"
+        store.update_task(row["id"], status="done", notes=closed_note(USER_CLOSED_NOTE, reason, _facts(row["notes"])))
         report.drop_item(store, ref)
         return f"Closed thread #{row['id']}."
     kind = _facts(row["notes"]).get("kind") or "reply"

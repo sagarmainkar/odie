@@ -204,3 +204,15 @@ async def test_a_model_that_keeps_calling_a_tool_is_stopped_at_the_cap(isolated_
         await r.focused_turn("Write the page about tides.", INSTRUCTION, [save_note])
     await r.close()
     assert Looping.calls == harness.MAX_LLM_CALLS == 10
+
+
+async def test_braces_in_a_background_turns_instruction_reach_the_model_as_written(isolated_settings, tmp_path,
+                                                                                    monkeypatch):
+    """The watch's instruction carries the user's Watch for notes and memory, written in their own words: a note
+    with "{name}" in it must not fail every watch check (ADK would read it as a session-state value)."""
+    braced = 'Watch for: a parcel from {sender}; the form asks for {name, date}.'
+    r = await _runner(tmp_path, monkeypatch)
+    await r.background_turn("Run the watch check.", instruction=braced, bare=True)
+    await r.close()
+
+    assert str(Scripted.seen[0].config.system_instruction).startswith(braced)

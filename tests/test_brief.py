@@ -40,7 +40,7 @@ async def test_run_brief_stores_and_pushes(monkeypatch, tmp_path):
     pushed = []
     monkeypatch.setattr(b, "gather_inputs", fake_gather)
     monkeypatch.setattr(b, "write_with_model", fake_write)
-    monkeypatch.setattr(b, "send_to_all", lambda store, title, body, url="/", tag=None: pushed.append((title, body)) or 1)
+    monkeypatch.setattr(b, "send_to_all", lambda store, title, body, url="/", tag=None: pushed.append((title, body, url)) or 1)
     posted = []
 
     async def post(text, session_id=None):
@@ -50,6 +50,7 @@ async def test_run_brief_stores_and_pushes(monkeypatch, tmp_path):
     row = s.one("select * from briefs order by id desc")
     assert row["date"] == "2026-10-01" and row["text"] == text
     assert pushed and pushed[0][0] == "Good morning" and "Dentist" in pushed[0][1]   # a short push...
+    assert pushed[0][2] == "/#chat?thread=chat-desk"   # ...that opens the Desk, where the round is
     from odie.threads import DESK
     assert posted == [("Good morning. Dentist at 10. Nothing else needs you.", DESK)]   # ...and the Desk's morning round
     assert s.one("select count(*) n from audit_log where event='brief'")["n"] == 1
@@ -65,6 +66,19 @@ async def test_brief_lists_open_tasks_with_ids_and_skips_snoozed(tmp_path):
     p = render_prompt(NOW, inp)
     assert f"#{t1}" in p and "ICICI" in p and "Electricity" not in p
     assert "Dues and deadlines" not in p  # raw ledger text no longer feeds the brief
+
+
+async def test_the_watchs_threads_are_not_listed_as_needing_the_user(tmp_path):
+    """The watch follows orders and replies on its own and shows what needs the user on its card; listing its threads
+    as open threads too counted them twice, and an order in transit read as "needs you"."""
+    from odie.watch import threads
+    s = Store(tmp_path / "a.db")
+    s.init_schema()
+    s.add_task("Answer Asha", "todo", due_at="2026-10-03")
+    threads.track(s, "mail:o1", "order", "Order: desk lamp", "shipped", due="2026-10-02")
+    inp = await gather_inputs(s, NOW)
+    assert "Asha" in inp.tasks
+    assert "desk lamp" not in inp.tasks
 
 
 async def test_manual_brief_does_not_push(monkeypatch, tmp_path):

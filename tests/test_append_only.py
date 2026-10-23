@@ -204,7 +204,8 @@ async def test_a_background_checks_system_prompt_is_the_same_every_time(isolated
     seen = []
 
     async def capture(self, **kw):
-        seen.append((self.app.root_agent.instruction, kw["new_message"].parts[0].text))
+        instruction = self.app.root_agent.instruction  # a function handing the text over as written
+        seen.append((instruction(None), kw["new_message"].parts[0].text))
         return
         yield
     monkeypatch.setattr(Runner, "run_async", capture)

@@ -134,7 +134,8 @@ def background_for(store: Store, runner):
 
         def push(title, body):
             try:
-                send_to_all(store, title, body, url="/#today", tag="watch")
+                from odie.threads import DESK_URL
+                send_to_all(store, title, body, url=DESK_URL, tag="watch")
             except Exception:  # noqa: BLE001
                 logging.getLogger("odie").warning("watch push failed", exc_info=True)
         memory = getattr(runner, "memory", None)

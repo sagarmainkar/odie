@@ -911,9 +911,16 @@ class OdieRunner:
         now = datetime.now(self.tz).strftime("%A %d %B %Y, %H:%M")
         from odie.agent.free import free_tools
         chat_only = [t for t in self.agent.tools if not getattr(t, "_odie_signin", False)]  # signing in is the user's, in chat
+        whole_instruction = (f"{instruction}\n\n" if instruction else "") + BACKGROUND_INSTRUCTION
+
+        def as_written(_context) -> str:
+            # Handed as a function, so ADK passes the text on untouched: the watch's instruction carries the user's
+            # Watch for notes and memory, and a "{name}" there would be read as a session-state value and fail the turn.
+            return whole_instruction
+
         agent = LlmAgent(name="odie_tracker", model=model_for(sel, False), tools=[] if bare else free_tools([*chat_only, *(tools or [])], free),
                          before_tool_callback=guard or trackers_guard, after_tool_callback=background_after_tool(self.plugin),
-                         instruction=(f"{instruction}\n\n" if instruction else "") + BACKGROUND_INSTRUCTION,
+                         instruction=as_written,
                          generate_content_config=types.GenerateContentConfig(temperature=BACKGROUND_TEMPERATURE))
         sessions = InMemorySessionService()
         from odie.skills import loaded_skills_state

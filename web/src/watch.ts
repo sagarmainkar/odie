@@ -90,3 +90,13 @@ export function watchRow(item: WatchItem, today: string): WatchRowView {
   return { title: item.title, subtitle: `${pill}${item.why}`.trim(),
            lead: { kind: "tile", icon: event ? "cal" : "mail", color: event ? "orange" : "blue" }, value: "", run: chatAbout(item) };
 }
+
+/** Today's tasks without the watch's threads that its card already shows, so an owed reply appears once:
+ *   card needs_you [mail:r1]; tasks [watch mail:r1, watch mail:o1, the user's own] -> [watch mail:o1, the user's own];
+ *   no card yet -> every task. */
+export function notOnTheCard<T extends { source_kind?: string | null; source_ref?: string | null }>(
+  tasks: T[], card: WatchCardData | null): T[] {
+  if (!card) return tasks;
+  const shown = new Set(card.needs_you.filter((i) => !i.done).map((i) => i.ref));
+  return tasks.filter((t) => !(t.source_kind === "watch" && t.source_ref && shown.has(t.source_ref)));
+}

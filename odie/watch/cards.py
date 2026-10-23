@@ -40,7 +40,8 @@ def day(due: str) -> str:
 
 
 def when_or_amount(item: dict) -> str:
-    """The value at the end of a row: the amount when there is one, else the due day, else ""."""
+    """The value at the end of a row: the amount when there is one, else the due day, else "". {"amount": {"value":
+    12400, "currency": "INR"}, "due": "2026-10-24"} -> "₹12,400"; {"due": "2026-10-24"} -> "24 Oct"; {} -> ""."""
     if item.get("amount"):
         return money(item["amount"])
     if item.get("due"):

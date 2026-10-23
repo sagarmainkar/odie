@@ -1,6 +1,6 @@
 import { AnimatePresence, motion } from "framer-motion";
 import { WatchCard } from "../components/WatchCard";
-import type { WatchCardData } from "../watch";
+import { notOnTheCard, type WatchCardData } from "../watch";
 import { useCallback, useEffect, useState } from "react";
 import { useLive } from "../live";
 import { getJSON, postJSON, todayISO } from "../api";
@@ -23,7 +23,7 @@ import { has, useCaps } from "../capabilities";
 import { userLocale } from "../locale";
 import { useProfile } from "../profile";
 
-type Task = { id: number; title: string; kind: string; status: string; due_at: string | null; next_check_at: string | null; delivered_at?: string | null; source_kind?: string | null; detail?: string | null };  // detail: a mail thread's "from X" line, then its gist
+type Task = { id: number; title: string; kind: string; status: string; due_at: string | null; next_check_at: string | null; delivered_at?: string | null; source_kind?: string | null; source_ref?: string | null; detail?: string | null };  // detail: a mail thread's "from X" line, then its gist
 type Ev = { time: string; end?: string; title: string };
 const EASE = [0.2, 0.8, 0.2, 1] as const;
 
@@ -175,7 +175,8 @@ export function Today() {
     try { await postJSON(`/api/tasks/${id}/snooze`, { until }); } catch { loadTasks(); }
   }
 
-  const open = [...tasks.filter((t) => t.delivered_at), ...tasks.filter((t) => !t.delivered_at)];  // "Now" first
+  const shown = notOnTheCard(tasks, watch);  // a reply the watch card shows isn't listed again as a task
+  const open = [...shown.filter((t) => t.delivered_at), ...shown.filter((t) => !t.delivered_at)];  // "Now" first
   // The day bands and week dots read the same merged list as Up next (calendar, SMS, mail, tasks).
   const cal = !up ? undefined : up.sources.calendar === false && up.items.length === 0 ? null
     : { today: dayEvents(up.items, todayISO()), tomorrow: dayEvents(up.items, isoDay(1)) };

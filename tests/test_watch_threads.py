@@ -37,7 +37,8 @@ def test_track_opens_then_moves_then_closes_a_thread(store):
     assert store.one("select count(*) n from tasks")["n"] == 1  # moved, not a second row
     threads.track(store, "mail:o1", "order", "Order: desk lamp", "done", why="delivered: mail 23 Oct")
     row = row_for(store, "mail:o1")
-    assert row["status"] == "done" and row["notes"] == "Closed by the watch: delivered: mail 23 Oct"
+    assert row["status"] == "done"
+    assert row["notes"].startswith("Closed by the watch: delivered: mail 23 Oct\nKept for a reopen: ")
 
 
 def test_track_never_touches_the_users_own_tasks(store):
@@ -123,3 +124,19 @@ async def test_read_thread_and_read_mail_take_a_ref_too(store, tmp_path):
     _check, tools = await gmail_check(store, tmp_path, threads={"t1": [{"from": "A", "date": "x", "body": "Hello"}]})
     assert "Hello" in (await tools["read_thread"].func(mail_id="mail:g1"))["result"]
     assert "error" not in await tools["read_mail"].func(mail_id="mail:g1")
+
+
+def test_a_reopened_thread_still_knows_its_mail(store):
+    """Undoing the watch's close on Today must bring the thread back whole: its mail thread and app, so the next check
+    can read the thread again. The closing reason alone shows under "Done while you were away"."""
+    from odie.watch import bills
+    threads.track(store, "mail:o1", "order", "Order: desk lamp", "placed", due="2026-10-24",
+                  mail_thread="t1", mail_source="mail:gmail-calendar")
+    threads.track(store, "mail:o1", "order", "Order: desk lamp", "done", why="delivered: mail 23 Oct")
+    closed = bills.closed_by_watch(store, datetime(2000, 1, 1, tzinfo=UTC))
+    assert [c["why"] for c in closed] == ["delivered: mail 23 Oct"]
+    bills.reopen(store, row_for(store, "mail:o1")["id"])
+    row = row_for(store, "mail:o1")
+    facts = json.loads(row["notes"])
+    assert row["status"] == "open"
+    assert facts["thread"] == "t1" and facts["source"] == "mail:gmail-calendar" and facts["kind"] == "order"

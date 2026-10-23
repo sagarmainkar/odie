@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { askedFromHash, composerHeight } from "./Chat";
+import { askedFromHash, composerHeight, threadFromHash } from "./Chat";
 
 describe("composerHeight", () => {
   it("grows from one to five lines", () => {
@@ -29,5 +29,13 @@ describe("a new chat starts clean", () => {
     expect(afterLastNewChat(items)).toEqual({ items: [m("user", "fresh"), m("odie", "reply")], cut: true });
     expect(afterLastNewChat([m("user", "a"), m("odie", "(New chat.)")])).toEqual({ items: [], cut: true });
     expect(afterLastNewChat([m("user", "a")])).toEqual({ items: [m("user", "a")], cut: false });
+  });
+});
+
+describe("threadFromHash", () => {
+  it("names the conversation a push opens", () => {
+    expect(threadFromHash("#chat?thread=chat-desk")).toBe("chat-desk");
+    expect(threadFromHash("#chat?q=hello")).toBeNull();
+    expect(threadFromHash("#chat")).toBeNull();
   });
 });
