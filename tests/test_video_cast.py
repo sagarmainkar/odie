@@ -85,3 +85,18 @@ def test_a_cast_folder_is_found_in_the_vault_by_its_path_there(folder, tmp_path)
     assert cast.find_folder(str(folder), vault_dir=None) == folder
     with pytest.raises(cast.CastProblem, match="No folder"):
         cast.find_folder("Stories/missing", vault_dir=str(vault))
+
+
+def test_the_writer_reads_the_cast_word_for_word_with_each_scenes_ages_and_the_look(folder):
+    script = dialogue.parse("## Act: Chapter one\n## Scene: The lamp room\nMIRA: Sleep.\nTOBI: Not yet.\n"
+                            "## Act: Chapter two\n## Scene: The gallery\nMIRA: A sail.")
+    characters = cast.read(folder)
+    staged = dialogue.staging(script, characters, look="Muted teal and amber; 35 mm; light grain; 1970s coast.")
+    listing = staged.listing
+    assert ("mira (Mira): A tall woman in her thirties, short silver hair, a long green oilskin coat."
+            in listing)
+    assert "Speaks slowly" in listing  # the sheet's notes
+    assert "Scene 1 (Chapter one; mira is 34): The lamp room" in listing
+    assert "Scene 2 (Chapter two; mira is 41): The gallery" in listing
+    assert "Muted teal and amber" in listing
+    assert dialogue.staging(script).listing == dialogue.writer_listing(script)  # no cast, no look: as in phase 1

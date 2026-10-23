@@ -202,18 +202,54 @@ def narration_of(script: Script) -> list[str]:
     return [" | ".join(line.text for line in scene.lines) for scene in script.scenes]
 
 
-def writer_listing(script: Script) -> str:
-    """The script as the writer reads it: each scene with where it is and its lines, numbered across the video, with
-    who speaks."""
-    out = ["Script (stage it; never change, add or drop a word):"]
+def writer_listing(script: Script, characters: list | None = None, look: str = "") -> str:
+    """The script as the writer reads it: each scene with where it is (and, with a cast, its act and the ages of
+    who speaks in it) and its lines, numbered across the video, with who speaks. With a cast (odie.video.cast
+    characters), their sheets come first, each description word for word; with a look, it comes before the script.
+    No cast and no look -> the script alone, as phase 1 gave it."""
+    out = []
+    if characters:
+        out.append("Cast (draw each exactly as described here, in every scene and every video; never change or add "
+                   "to how they look):")
+        for character in characters:
+            description = character.canonical
+            if not description:
+                description = "(no description given: choose one look and keep it)"
+            entry = f"  {character.id} ({character.display_name}): {description}"
+            if character.notes:
+                entry += f"\n    Notes: {character.notes}"
+            out.append(entry)
+        out.append("")
+    if look.strip():
+        out.append("Look (for every video of this work; follow it):")
+        out.append(look.strip())
+        out.append("")
+    out.append("Script (stage it; never change, add or drop a word):")
     index = 0
     for number, scene in enumerate(script.scenes, start=1):
         where = scene.where or "(no heading)"
-        out.append(f"Scene {number}: {where}")
+        out.append(f"Scene {number}{scene_note(scene, characters)}: {where}")
         for line in scene.lines:
             out.append(f"  line {index} · {line.speaker}: {line.text}")
             index += 1
     return "\n".join(out)
+
+
+def scene_note(scene: Scene, characters: list | None) -> str:
+    """What the writer is told about a scene beside its number: its act and the ages of those who speak in it, when
+    the cast gives them. Act "Chapter one", Mira 34 there -> " (Chapter one; mira is 34)"; no act -> ""; an act but
+    no ages -> " (Chapter one)"."""
+    if not scene.act:
+        return ""
+    ages = []
+    speakers = {line.speaker for line in scene.lines}
+    for character in characters or []:
+        age = character.age_in(scene.act)
+        if character.id in speakers and age is not None:
+            ages.append(f"{character.id} is {age}")
+    if not ages:
+        return f" ({scene.act})"
+    return f" ({scene.act}; {', '.join(ages)})"
 
 
 def loudness(wav: bytes, step: float = LOUDNESS_STEP) -> list[float]:
@@ -295,6 +331,6 @@ class Staging:
         return lines_script(estimated_lines(self.script, timings))
 
 
-def staging(script: Script) -> Staging:
-    """The writer's staging of `script` (see Staging)."""
-    return Staging(listing=writer_listing(script), narration=narration_of(script), script=script)
+def staging(script: Script, characters: list | None = None, look: str = "") -> Staging:
+    """The writer's staging of `script` (see Staging), with the cast's sheets and the work's look when there are."""
+    return Staging(listing=writer_listing(script, characters, look), narration=narration_of(script), script=script)
