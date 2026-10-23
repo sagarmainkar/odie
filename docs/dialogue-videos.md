@@ -44,8 +44,45 @@ TOBI: They made it.
 - `timeline.json` next to it, in Odie's workspace (the chat says where): every line's speaker, voice, text, start
   and length, and every scene's start and length, in seconds, so the work can be re-voiced or re-cut elsewhere.
 
+## A cast folder and a look (the same cast in every video)
+
+For a work of several videos, keep a folder of character sheets (in your vault, say `Stories/The lighthouse/cast`)
+and, if you like, a style file. Then: "Make a video of scene 3 of *The lighthouse*, cast folder Stories/The
+lighthouse/cast, look Stories/The lighthouse/look." Odie takes each character's voice from their sheet, gives the
+writer each description word for word, and follows the look in every scene.
+
+A sheet is a Markdown file with front matter; only `id` is required:
+
+```
+---
+id: mira
+display_name: Mira
+canonical: "A tall woman in her thirties with short silver hair, a long green oilskin coat …"
+voice: af_bella
+ages:
+  - act: Chapter one
+    age: 34
+    ref: refs/mira-34.jpg
+refs: [refs/mira-front.jpg]
+---
+Notes for the writer (optional): who they are, how they move.
+```
+
+- `canonical` is used word for word: the writer must never vary how the character looks.
+- `voice` is a voice of the engine chosen in Settings; `voices` in the request can still change it for one video.
+- `ages`: mark acts in the script with `## Act: Chapter one`; the writer draws each speaker at that act's age.
+- `refs` (and an age's `ref`) are your own pictures in the folder. The writer can't see pictures; they reach the
+  video as named pictures it may show (a portrait, a photo on a wall), up to three per character.
+- `asset` (a `.glb` model) is kept for later: 3D characters aren't drawn yet.
+- Files without front matter (a README, notes) are skipped.
+
+After each video, a still of each speaker is saved as `refs/<id>-<video>.jpg` in the cast folder, so later videos can
+match it.
+
+The look file is plain text: palette, light, lens, grain, period. A complete invented example (two sheets, a look and
+a script) is in `docs/examples/lighthouse/`.
+
 ## What it is not (yet)
 
 - Characters are drawn in code: simple, consistent shapes, not realistic faces or 3D models.
 - No timed segment or brand kit in a dialogue video.
-- Cast folders (character sheets used across videos), a style file and reference images are the next step.

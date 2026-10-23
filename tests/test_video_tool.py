@@ -333,7 +333,7 @@ def test_the_skill_says_how_to_write_the_brief():
     assert "brief" in text and "can't see" in text and "20,000" in text
     assert "sources" in text and "my message" in text and "earlier message" in text
     assert "no emojis" in text and "save_video_page" not in text
-    assert len(text.split("---", 2)[2].split()) < 960  # short: the writer has the page contract and the film grammar
+    assert len(text.split("---", 2)[2].split()) < 975  # short: the writer has the page contract and the film grammar
 
 
 def test_the_skill_says_sounds_are_on_unless_the_user_says_no_sound_effects():
@@ -354,6 +354,7 @@ def test_the_skill_says_how_to_gather_pictures_clips_and_places():
 def test_the_skill_says_how_to_film_the_users_own_script():
     text = (SKILL / "SKILL.md").read_text()
     assert "`script`" in text and "`voices`" in text and "word for word" in text
+    assert "`cast`" in text and "`look`" in text
 
 
 def test_the_skill_says_videos_can_be_3d_with_real_surfaces():

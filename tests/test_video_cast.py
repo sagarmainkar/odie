@@ -189,3 +189,13 @@ async def test_a_still_of_each_speaker_is_kept_in_the_cast_folder(isolated_setti
     await kind.make_video(job, browser=object(), transport=None)
     assert (folder / "refs" / "mira-lighthouse.jpg").is_file()
     assert (folder / "refs" / "tobi-lighthouse.jpg").is_file()
+
+
+def test_the_demo_cast_in_the_docs_reads_and_covers_its_script():
+    from pathlib import Path
+    demo = Path(__file__).parent.parent / "docs" / "examples" / "lighthouse"
+    characters = cast.read(demo / "cast")
+    script = dialogue.parse((demo / "script.md").read_text())
+    speakers = {s for s in script.speakers() if s != dialogue.NARRATOR}
+    assert speakers <= {character.id for character in characters}
+    assert dialogue.script_problem(script) is None
