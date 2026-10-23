@@ -120,3 +120,72 @@ def test_the_chat_cant_hand_a_cast_picture_itself():
     from odie.video import assets
     with pytest.raises(assets.AssetProblem):
         assets.parse(["cast:/Users/x/.ssh/id_rsa.png — a key"], None)
+
+
+def a_job_with_a_cast(folder, tmp_path):
+    from odie.video import kind  # noqa: F401  (registers the kind)
+    from tests.test_video_jobs import make_job
+    script = dialogue.parse("## Act: Chapter one\n## Scene: A\nMIRA: Sleep.\nTOBI: Not yet.")
+    characters = cast.read(folder)
+    job = make_job(slug="lighthouse", title="The lighthouse")
+    job.data = {"dialogue": {"script": script.as_data(), "voices": {"mira": "af_bella", "tobi": "am_michael"},
+                             "cast": [c.as_data() for c in characters], "cast_folder": str(folder),
+                             "look": "Muted teal and amber."}}
+    return job, script
+
+
+async def test_the_job_gives_the_writer_the_cast_and_the_look_and_the_cast_pictures(isolated_settings, folder,
+                                                                                     tmp_path, monkeypatch):
+    from odie.video import assets, kind, writer
+    job, script = a_job_with_a_cast(folder, tmp_path)
+    seen = {}
+
+    async def stand_in_gather(pictures, moving, place):
+        seen["pictures"] = [(given.address, given.words) for given in pictures]
+        return [], []
+
+    async def stand_in_write(topic, minutes, brief, place, turn, browser, listing="", assets_script="",
+                             aspect="landscape", staging=None):
+        seen["listing"] = staging.listing
+        return writer.Written(title="The lighthouse", narration=staging.narration, body="<div></div>")
+
+    monkeypatch.setattr(assets, "gather", stand_in_gather)
+    monkeypatch.setattr(writer, "write", stand_in_write)
+    await kind.write(job, turn=None, browser=None)
+    assert "mira (Mira): A tall woman in her thirties" in seen["listing"]
+    assert "Muted teal and amber." in seen["listing"]
+    assert "Scene 1 (Chapter one; mira is 34): A" in seen["listing"]
+    addresses = [address for address, _words in seen["pictures"]]
+    assert addresses == [f"cast:{folder / 'refs' / 'mira-front.jpg'}", f"cast:{folder / 'refs' / 'mira-34.jpg'}"]
+    assert seen["pictures"][0][1] == "Mira: a reference picture of how they look (mira-front.jpg)"
+
+
+async def test_a_still_of_each_speaker_is_kept_in_the_cast_folder(isolated_settings, folder, tmp_path, monkeypatch):
+    from odie.making import jobs
+    from odie.store.db import Store
+    from odie.video import kind
+    from tests.test_media import make_wav
+    from tests.test_video_jobs import stand_in_render
+    store = Store(tmp_path / "assistant.db")
+    store.init_schema()
+    monkeypatch.setitem(jobs.hooks, "store", store)
+    job, script = a_job_with_a_cast(folder, tmp_path)
+    job.data["narration"] = dialogue.narration_of(script)
+    job.data["body"] = "<div></div>"
+
+    async def stand_in_dialogue(store, script, voices, transport=None, style="", narrator_voice=""):
+        lines = [{"index": 0, "speaker": "mira", "text": "Sleep.", "voice": "af_bella", "scene": 1, "at": 0.0,
+                  "dur": 0.6, "amplitude": []},
+                 {"index": 1, "speaker": "tobi", "text": "Not yet.", "voice": "am_michael", "scene": 1, "at": 0.8,
+                  "dur": 0.6, "amplitude": []}]
+        return make_wav(1.5), [1.4], [[0.0, 0.8]], lines
+
+    async def render(browser, body, timings, place, fps, tabs, progress=None, assets_script="", credits_script="",
+                     size=None, brand_script="", lines_script=""):
+        return await stand_in_render(browser, body, timings, place, fps, tabs)
+
+    monkeypatch.setattr(kind, "narrate_dialogue", stand_in_dialogue)
+    monkeypatch.setattr(kind, "render", render)
+    await kind.make_video(job, browser=object(), transport=None)
+    assert (folder / "refs" / "mira-lighthouse.jpg").is_file()
+    assert (folder / "refs" / "tobi-lighthouse.jpg").is_file()
