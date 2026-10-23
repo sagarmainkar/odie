@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.2.24 (2026-10-23)
+
+- Odie for Mac: every message Odie says on its own (a tracker that fired, a finished video or deck, a reply that came late after an approval) now says what it is on the live event stream, so the Mac's corner banner shows it; housekeeping lines stay quiet. The mail watch's alerts (an urgent mail, an app that stopped working) also reach the stream, not only the phone.
+
 ## v0.2.23 (2026-10-23)
 
 - Experimental: dialogue videos. Give Odie a script you wrote (scenes and `SPEAKER: line` lines, in a note, a file or a message) and a voice for each character: every line is spoken in its character's voice, the characters' mouths move with their own lines, the line shows as a caption, and a timeline.json (every line's time and voice) is kept next to the video. See docs/dialogue-videos.md. Videos without a script are made exactly as before.
