@@ -22,7 +22,8 @@ SOURCE_KIND = "watch"
 
 
 def _own_open(store, ref: str):
-    """The watch's open thread for this mail ref, or None (a task the user made never counts)."""
+    """The watch's open thread for this mail ref, or None (a task the user made never counts): "mail:o1" with the
+    watch's open order thread -> that row; "mail:o1" only on the user's own task, or a closed thread -> None."""
     return store.one("select * from tasks where source_kind = ? and source_ref = ? and status in ('open', 'waiting') "
                      "order by id desc limit 1", (SOURCE_KIND, ref))
 

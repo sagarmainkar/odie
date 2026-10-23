@@ -157,11 +157,15 @@ def _may_read_with(tool_name: str) -> bool:
 
 def _id_tool(tool: dict | None, *id_names: str) -> dict | None:
     """A read tool that takes one id, as the source keeps it: {"name": "gmail_read", schema with message_id} ->
-    {"tool": "gmail_read", "id_param": "message_id"}; no tool -> None."""
+    {"tool": "gmail_read", "id_param": "message_id"}; no tool, or none of `id_names` among its parameters -> None
+    (called without its id it could only fail)."""
     if tool is None:
         return None
     props = _props(tool["input_schema"])
-    return {"tool": tool["name"], "id_param": _pick(props, *id_names)}
+    id_param = _pick(props, *id_names)
+    if not id_param:
+        return None
+    return {"tool": tool["name"], "id_param": id_param}
 
 
 def _by_names(name: str, spec: dict, tools: list[dict], style: str, app: str) -> list[Source]:
