@@ -24,8 +24,13 @@ def _meta(store: Store) -> dict[str, dict]:
     return {r["session_id"]: dict(r) for r in store.query("select * from threads")}
 
 
+UNPINNED = ""  # pinned_at for a thread the user unpinned that would otherwise be pinned (the Desk); no row = never set
+
+
 def set_pinned(store: Store, sid: str, pinned: bool) -> None:
     at = datetime.now(UTC).isoformat(timespec="seconds") if pinned else None
+    if not pinned and sid == DESK:
+        at = UNPINNED  # the Desk is pinned until the user unpins it, so the unpin is kept
     store.execute("insert into threads(session_id, pinned_at) values (?,?) on conflict(session_id) do update set pinned_at=excluded.pinned_at",
                   (sid, at))
 
@@ -99,9 +104,12 @@ def list_threads(store: Store, q: str | None = None) -> list[dict]:
         date = sid[5:15]
         pinned_at = m.get("pinned_at")
         if sid == DESK:
-            title = DESK_TITLE
+            title = m.get("title") or DESK_TITLE
             date = datetime.fromtimestamp(sessions[sid]).strftime("%Y-%m-%d")
-            pinned_at = pinned_at or "9999-12-31T00:00:00"  # pinned above every pin the user made
+            if pinned_at is None:  # never pinned or unpinned by the user: pinned above every pin they made
+                pinned_at = "9999-12-31T00:00:00"
+        if pinned_at == UNPINNED:
+            pinned_at = None
         if needle and t["snippet"] is None and needle not in title.lower():
             continue
         out.append({"id": sid, "title": title, "renamed": bool(m.get("title")), "date": date, "messages": t["messages"],

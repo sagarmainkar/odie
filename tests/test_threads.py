@@ -86,6 +86,20 @@ async def test_the_desk_is_listed_first_and_pinned_with_only_odies_posts(runner)
     assert [t["id"] for t in rows[1:]] == ["chat-2026-10-04", "chat-2026-10-02"]
 
 
+async def test_the_desk_can_be_renamed_and_unpinned(runner):
+    """The Desk starts pinned and named "Desk", but it is the user's list: a new name sticks, and so does an unpin."""
+    from odie import threads
+    await runner.post_message("Good morning: two things need you.", session_id=threads.DESK)
+    threads.rename(runner.store, threads.DESK, "Inbox duty")
+    threads.set_pinned(runner.store, threads.DESK, False)
+    desk = next(t for t in threads.list_threads(runner.store) if t["id"] == threads.DESK)
+    assert desk["title"] == "Inbox duty" and desk["renamed"] is True
+    assert desk["pinned"] is False
+    threads.set_pinned(runner.store, threads.DESK, True)
+    desk = next(t for t in threads.list_threads(runner.store) if t["id"] == threads.DESK)
+    assert desk["pinned"] is True
+
+
 async def test_no_desk_until_something_is_posted_there(runner):
     assert all(t["id"] != threads.DESK for t in threads.list_threads(runner.store))
 
