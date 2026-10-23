@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.2.26 (2026-10-23)
+
+- Mac apps: an app that isn't running (Calendar, often) is opened in the background and asked again, so Settings → Allow Calendar works and the watch no longer says Calendar isn't working when it's simply closed.
+- Experimental, dialogue videos: a cast folder of character sheets (a fixed description used word for word, a voice, ages per act, reference pictures) and a look file keep a work's characters and style the same across videos; `## Act:` lines in the script set each scene's ages, and a still of each speaker is saved to the cast folder after each video. See docs/dialogue-videos.md.
+
 ## v0.2.25 (2026-10-23)
 
 - "Allow for 30 min" asks far less: writing in Odie's workspace and your vault, and inline code (python3 -c, a script fed to python3) that doesn't touch secrets, delete anything or send data out, now run under the pass. Text inside quotes or written into a file no longer looks like a command. Reading secrets, deleting, sending data out and writing anywhere else still ask every time.
