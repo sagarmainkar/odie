@@ -97,8 +97,6 @@ async def fetch(ref: str, credit: str = "", referer: str | None = None) -> Photo
         return await asyncio.to_thread(_local, ref)
     if ref.startswith("photo:"):
         return await asyncio.to_thread(_library, ref)
-    if ref.startswith(CAST):
-        return await asyncio.to_thread(_cast_picture, ref)
     if not re.match(r"^https?://", ref, re.I):
         raise PhotoError("Use a photo address a tool returned (https://…), screenshot:<id>, upload:<id> or "
                          "photo:<id>.")
@@ -117,20 +115,23 @@ async def fetch(ref: str, credit: str = "", referer: str | None = None) -> Photo
     return Photo(ref, dest, w, h, credit)
 
 
-CAST = "cast:"  # a dialogue video's reference picture in the user's cast folder (odie.video.cast); only Odie makes it
-CAST_SUFFIXES = (".jpg", ".jpeg", ".png", ".webp", ".heic")
+CAST = "cast:"  # how a cast picture's line is named in a video job (odie.video.kind.cast_pictures)
 
 
-def _cast_picture(ref: str) -> Photo:
-    """A picture from the user's cast folder by its path: "cast:/…/cast/refs/mira-front.jpg" -> that picture. Only the
-    video job writes these (from the sheets), never the chat (odie.video.assets refuses the address); a path that
-    isn't a picture file -> PhotoError."""
-    path = Path(ref[len(CAST):])
-    if path.suffix.lower() not in CAST_SUFFIXES or not path.is_file():
-        raise PhotoError(f"There's no picture at {path.name} in the cast folder.")
-    dest = _dest(ref)
-    w, h = _encode(path.read_bytes(), dest)
-    return Photo(ref, dest, w, h, "")
+async def cast_picture(path: Path) -> Photo:
+    """A picture from the user's cast folder (odie.video.cast), for the video job's own cast lines only: fetch()
+    never reads a file for an address, so a "cast:" address a deck's brief carries is refused like any unknown one.
+    /…/cast/refs/mira-front.jpg -> that picture; a missing file or not a picture -> PhotoError."""
+    from odie.video.cast import PICTURE_SUFFIXES
+    if path.suffix.lower() not in PICTURE_SUFFIXES or not path.is_file():
+        raise PhotoError(f"There's no picture at {path.name} in the cast folder (JPEG, PNG or WebP).")
+    ref = f"{CAST}{path}"
+
+    def read() -> Photo:
+        dest = _dest(ref)
+        w, h = _encode(path.read_bytes(), dest)
+        return Photo(ref, dest, w, h, "")
+    return await asyncio.to_thread(read)
 
 
 def _local(ref: str) -> Photo:

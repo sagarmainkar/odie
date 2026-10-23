@@ -32,7 +32,7 @@ from odie.browser.engine import BrowserError
 from odie.making import jobs
 from odie.video import assets, brand, dialogue, sounds, timed, timeline, writer
 from odie.video import cast as cast_module
-from odie.video.encode import EncodeError, ffmpeg, mux, probe, run
+from odie.video.encode import EncodeError, ffmpeg, mux, probe, run, tail
 from odie.video.narrate import narrate, narrate_dialogue
 from odie.video.page import assemble, credits_scene
 from odie.video.render import render
@@ -164,6 +164,7 @@ async def write(job: jobs.Job, turn, browser) -> None:
 
 
 MAX_CAST_PICTURES = 3  # reference pictures per character a video carries
+MAX_CAST_PICTURES_IN_ALL = 6  # and in all, after the chat's own pictures
 
 
 def characters_of(job: jobs.Job) -> list[cast_module.Character]:
@@ -174,14 +175,19 @@ def characters_of(job: jobs.Job) -> list[cast_module.Character]:
 
 def cast_pictures(job: jobs.Job) -> list[assets.Given]:
     """The cast's reference pictures as picture lines only Odie writes ("cast:<path>", odie.decks.photos reads them),
-    a few per character, named for whose they are: Mira's refs/mira-front.jpg -> ("cast:/…/refs/mira-front.jpg",
-    "Mira: a reference picture of how they look (mira-front.jpg)"). A video without a cast -> []."""
+    for those who speak in it, a few per character and MAX_CAST_PICTURES_IN_ALL in all, named for whose they are:
+    Mira's refs/mira-front.jpg -> ("cast:/…/refs/mira-front.jpg", "Mira: a reference picture of how they look
+    (mira-front.jpg)"). A video without a cast -> []."""
+    script = script_of(job)
+    speakers = set(script.speakers()) if script is not None else set()
     out = []
     for character in characters_of(job):
+        if character.id not in speakers:
+            continue  # on a sheet in the folder, but not in this video
         for path in character.pictures()[:MAX_CAST_PICTURES]:
             words = f"{character.display_name}: a reference picture of how they look ({path.name})"
-            out.append(assets.Given(address=f"cast:{path}", words=words, credit=""))
-    return out
+            out.append(assets.Given(address=f"cast:{path}", words=words, credit="", cast=True))
+    return out[:MAX_CAST_PICTURES_IN_ALL]
 
 
 def script_of(job: jobs.Job) -> dialogue.Script | None:
@@ -218,27 +224,31 @@ def placed_lines(spoken: list[dict], starts: list[float]) -> list[dict]:
 
 
 async def keep_stills(mp4: Path, lines: list[dict], folder: Path, slug: str) -> None:
-    """One still of each speaker from the finished video, kept in the cast folder's refs/ for later videos to match:
-    the frame in the middle of their first line, as refs/<id>-<video>.jpg (Mira's first line at 4.0 s for 2.0 s, in
-    "lighthouse" -> refs/mira-lighthouse.jpg, the frame at 5.0 s). A still that can't be made is logged: it never
-    fails the video."""
+    """One still of each speaker from the finished video, kept in the cast folder's refs/stills/ for the user to use
+    as a reference later: the frame in the middle of their first line, as refs/stills/<id>-<video>.jpg (Mira's first
+    line at 4.0 s for 2.0 s, in "lighthouse" -> refs/stills/mira-lighthouse.jpg, the frame at 5.0 s). A file already
+    there is never overwritten; a still that can't be made is logged: it never fails the video."""
     firsts: dict[str, dict] = {}
     for line in lines:
         if line["speaker"] != dialogue.NARRATOR and line["speaker"] not in firsts:
             firsts[line["speaker"]] = line
-    refs = folder / "refs"
+    if not firsts:
+        return
+    stills = folder / "refs" / "stills"
     try:
-        refs.mkdir(exist_ok=True)
+        stills.mkdir(parents=True, exist_ok=True)
     except OSError:
-        log.warning("video: no refs folder in the cast folder %s for the stills", folder, exc_info=True)
+        log.warning("video: no refs/stills folder in the cast folder %s", folder, exc_info=True)
         return
     for speaker, line in firsts.items():
         at = round(line["t"] + line["dur"] / 2, 3)
-        still = refs / f"{speaker}-{slug}.jpg"
-        code, stderr = await run([ffmpeg(), "-y", "-loglevel", "error", "-ss", f"{at}", "-i", str(mp4),
+        still = stills / f"{speaker}-{slug}.jpg"
+        if still.exists():
+            continue
+        code, stderr = await run([ffmpeg(), "-n", "-loglevel", "error", "-ss", f"{at}", "-i", str(mp4),
                                   "-frames:v", "1", "-q:v", "3", str(still)])
         if code != 0:
-            log.warning("video: the still of %s couldn't be made: %s", speaker, stderr[-300:])
+            log.warning("video: the still of %s couldn't be made: %s", speaker, tail(stderr))
 
 
 def wants_sounds(job: jobs.Job) -> bool:
@@ -412,11 +422,11 @@ async def make_video(job: jobs.Job, browser, transport) -> Path:
     info = await probe(mp4)
     if not info["video"] or not info["audio"]:
         raise EncodeError("The finished file is missing its picture or its sound.")
-    if script is not None and job.data["dialogue"].get("cast_folder"):
-        await keep_stills(mp4, lines, Path(job.data["dialogue"]["cast_folder"]), job.slug)
     made = (info["width"], info["height"])
     if made != size:
         raise EncodeError(f"The finished file is {made[0]}x{made[1]}, not {size[0]}x{size[1]}.")
+    if script is not None and job.data["dialogue"].get("cast_folder"):  # only a video that came out right
+        await keep_stills(mp4, lines, Path(job.data["dialogue"]["cast_folder"]), job.slug)
     return mp4
 
 

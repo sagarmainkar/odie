@@ -259,7 +259,10 @@ async def make_video(topic: str, minutes: int = 2, brief: str = "", sources: lis
 
     dialogue_data = None
     no_script = not chat.text_or_empty(script).strip()
-    if no_script and (voices or chat.text_or_empty(cast).strip() or chat.text_or_empty(look).strip()):
+    gave_cast = bool(chat.text_or_empty(cast).strip())
+    gave_look = bool(chat.text_or_empty(look).strip())
+    asked_for_dialogue = bool(voices) or gave_cast or gave_look
+    if no_script and asked_for_dialogue:
         return {"error": VOICES_NEED_SCRIPT}
     if chat.text_or_empty(script).strip():
         if timed_seconds is not None or kit is not None:
@@ -375,14 +378,23 @@ def dialogue_as_given(script_reference: str, voices, store, cast_reference: str 
         if without:
             raise ValueError(f"Every speaker but the narrator needs a sheet in {folder.name}; none for: "
                              f"{', '.join(without)}.")
-    named = {character.id: character.voice for character in characters if character.voice}
-    named.update(dialogue.voices_by_speaker(voices_as_given(voices)))
+    speakers = set(script.speakers())
+    from_sheets = {c.id: c.voice for c in characters if c.voice and c.id in speakers}  # who speaks in this script
+    given = dialogue.voices_by_speaker(voices_as_given(voices))
+    named = {**from_sheets, **given}
     missing = dialogue.missing_voices(script, named)
     if missing:
         raise ValueError(f"Every speaker but the narrator needs a voice; none for: {', '.join(missing)}. Add "
                          '{"id": "<speaker>", "name": "<a voice of the Settings engine>"} to voices'
                          " (or voice: to their sheet).")
-    by_id = {speaker: voice.voice_in_chosen_engine(store, name)["id"] for speaker, name in named.items()}
+    by_id = {}
+    for speaker, name in named.items():
+        try:
+            by_id[speaker] = voice.voice_in_chosen_engine(store, name)["id"]
+        except ValueError as e:
+            if speaker in given:
+                raise
+            raise ValueError(f"{speaker}'s voice on their sheet: {e} Change it on the sheet, or give voices.") from None
     kept = {"script": script.as_data(), "voices": by_id}
     if characters:
         kept["cast"] = [character.as_data() for character in characters]

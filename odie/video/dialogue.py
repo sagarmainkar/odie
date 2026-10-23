@@ -33,7 +33,7 @@ MAX_PAUSE = 10.0  # the longest pause a line may ask for, in seconds
 LOUDNESS_STEP = 0.02  # seconds per loudness value: what the mouths follow
 RELEASE = 0.7  # how much of the last step's loudness a mouth keeps as it closes: shut after about 0.1 s of quiet
 SCENE = re.compile(r"^#{2,}\s*Scene\s*:\s*(.*)$", re.IGNORECASE)
-ACT = re.compile(r"^#{1,}\s*Act\s*:\s*(.*)$", re.IGNORECASE)  # "## Act: Chapter one": the scenes after it are in it
+ACT = re.compile(r"^#{1,}\s*Act\b\s*:?\s*(.*)$", re.IGNORECASE)  # "## Act: One", "## Act 2": the scenes after
 MARKER = re.compile(r"^\s*(?:[-*+]\s+|\d+[.)]\s+|>\s*)")  # a bullet, a number or a quote before the name
 LINE = re.compile(r"^([^\W\d_][\w .'-]{0,40}?)\s*(?:\([^)]*\))?\s*:\s*(.+)$")  # NAME (direction): text
 PAUSE = re.compile(r"\s*\[pause(?:\s+(\d+(?:\.\d+)?)\s*s?)?\s*\]\s*$", re.IGNORECASE)
@@ -205,9 +205,11 @@ def narration_of(script: Script) -> list[str]:
 def writer_listing(script: Script, characters: list | None = None, look: str = "") -> str:
     """The script as the writer reads it: each scene with where it is (and, with a cast, its act and the ages of
     who speaks in it) and its lines, numbered across the video, with who speaks. With a cast (odie.video.cast
-    characters), their sheets come first, each description word for word; with a look, it comes before the script.
-    No cast and no look -> the script alone, as phase 1 gave it."""
+    characters), the sheets of those who speak in this script come first, each description word for word; with a
+    look, it comes before the script. No cast and no look -> the script alone, as phase 1 gave it."""
     out = []
+    speakers = set(script.speakers())
+    characters = [character for character in characters or [] if character.id in speakers]  # this script's cast
     if characters:
         out.append("Cast (draw each exactly as described here, in every scene and every video; never change or add "
                    "to how they look):")
@@ -237,9 +239,9 @@ def writer_listing(script: Script, characters: list | None = None, look: str = "
 
 def scene_note(scene: Scene, characters: list | None) -> str:
     """What the writer is told about a scene beside its number: its act and the ages of those who speak in it, when
-    the cast gives them. Act "Chapter one", Mira 34 there -> " (Chapter one; mira is 34)"; no act -> ""; an act but
-    no ages -> " (Chapter one)"."""
-    if not scene.act:
+    the cast gives them. Act "Chapter one", Mira 34 there -> " (Chapter one; mira is 34)"; no act, or no cast (a
+    phase-1 listing stays as it was) -> ""; an act but no ages -> " (Chapter one)"."""
+    if not scene.act or not characters:
         return ""
     ages = []
     speakers = {line.speaker for line in scene.lines}

@@ -82,7 +82,7 @@ def test_a_folder_without_sheets_says_how_to_write_one(tmp_path):
 def test_a_cast_folder_is_found_in_the_vault_by_its_path_there(folder, tmp_path):
     vault = tmp_path
     assert cast.find_folder("cast", vault_dir=str(vault)) == folder
-    assert cast.find_folder(str(folder), vault_dir=None) == folder
+    assert cast.find_folder(str(folder), vault_dir=None, workspace=tmp_path) == folder
     with pytest.raises(cast.CastProblem, match="No folder"):
         cast.find_folder("Stories/missing", vault_dir=str(vault))
 
@@ -108,12 +108,12 @@ async def test_a_cast_picture_is_read_from_its_folder(isolated_settings, tmp_pat
     from odie.decks import photos
     picture = tmp_path / "mira-front.png"
     Image.new("RGB", (64, 48), (200, 50, 50)).save(picture)
-    got = await photos.fetch(f"cast:{picture}")
+    got = await photos.cast_picture(picture)
     assert (got.width, got.height) == (64, 48) and got.credit == ""
     with pytest.raises(photos.PhotoError):
-        await photos.fetch(f"cast:{tmp_path / 'missing.png'}")
+        await photos.cast_picture(tmp_path / "missing.png")
     with pytest.raises(photos.PhotoError):
-        await photos.fetch(f"cast:{tmp_path / 'notes.md'}")
+        await photos.cast_picture(tmp_path / "notes.md")
 
 
 def test_the_chat_cant_hand_a_cast_picture_itself():
@@ -187,8 +187,9 @@ async def test_a_still_of_each_speaker_is_kept_in_the_cast_folder(isolated_setti
     monkeypatch.setattr(kind, "narrate_dialogue", stand_in_dialogue)
     monkeypatch.setattr(kind, "render", render)
     await kind.make_video(job, browser=object(), transport=None)
-    assert (folder / "refs" / "mira-lighthouse.jpg").is_file()
-    assert (folder / "refs" / "tobi-lighthouse.jpg").is_file()
+    assert (folder / "refs" / "stills" / "mira-lighthouse.jpg").is_file()
+    assert (folder / "refs" / "stills" / "tobi-lighthouse.jpg").is_file()
+    assert (folder / "refs" / "mira-front.jpg").read_bytes() == b"jpg"  # the user's own pictures are never touched
 
 
 def test_the_demo_cast_in_the_docs_reads_and_covers_its_script():
@@ -199,3 +200,97 @@ def test_the_demo_cast_in_the_docs_reads_and_covers_its_script():
     speakers = {s for s in script.speakers() if s != dialogue.NARRATOR}
     assert speakers <= {character.id for character in characters}
     assert dialogue.script_problem(script) is None
+
+
+# The review's fixes.
+
+async def test_no_one_but_the_video_job_can_fetch_a_cast_picture(isolated_settings, tmp_path):
+    """A deck's writer copies addresses from the brief, which a web page can steer: a "cast:" address there must not
+    read a file. Only the video job's own cast lines (Given.cast) are read from the folder."""
+    from PIL import Image
+
+    from odie.decks import photos
+    picture = tmp_path / "private.png"
+    Image.new("RGB", (50, 40)).save(picture)
+    with pytest.raises(photos.PhotoError):
+        await photos.fetch(f"cast:{picture}")
+    found, failed = await photos.fetch_all([(f"cast:{picture}", "")])
+    assert not found and failed
+    got = await photos.cast_picture(picture)
+    assert (got.width, got.height) == (50, 40)
+
+
+def test_a_sheets_pictures_stay_inside_its_folder(folder, tmp_path):
+    outside = tmp_path / "outside.jpg"
+    outside.write_bytes(b"jpg")
+    (folder / "anna.md").write_text(f"---\nid: anna\nrefs: [{outside}, ../outside.jpg, refs/mira-front.jpg]\n---\n")
+    anna = next(c for c in cast.read(folder) if c.id == "anna")
+    assert [path.name for path in anna.pictures()] == ["mira-front.jpg"]
+
+
+@pytest.mark.parametrize("front, named", [("id: anna\nages: 34", "ages"), ("id: anna\nrefs: 5", "refs"),
+                                          ("id: [a, b]", "id"), ("id: anna\ncanonical: [tall, thin]", "canonical")])
+def test_a_sheet_with_the_wrong_kind_of_value_is_named(folder, front, named):
+    (folder / "anna.md").write_text(f"---\n{front}\n---\n")
+    with pytest.raises(cast.CastProblem, match=f"anna.md.*{named}"):
+        cast.read(folder)
+
+
+def test_ages_read_as_people_write_them(folder):
+    (folder / "anna.md").write_text('---\nid: anna\nages:\n  - {act: One, age: "34"}\n  - {act: Two, age: true}\n---\n')
+    anna = next(c for c in cast.read(folder) if c.id == "anna")
+    assert anna.age_in("One") == 34 and anna.age_in("Two") is None
+
+
+def test_a_sheet_saved_with_a_byte_order_mark_or_in_latin_1_is_read_or_named(folder):
+    (folder / "anna.md").write_bytes("﻿---\nid: anna\n---\n".encode("utf-8"))
+    assert "anna" in {c.id for c in cast.read(folder)}
+    (folder / "anna.md").write_bytes("---\nid: anna\ncanonical: café\n---\n".encode("latin-1"))
+    with pytest.raises(cast.CastProblem, match="anna.md"):
+        cast.read(folder)
+
+
+def test_a_cast_folder_must_be_in_the_vault_or_the_workspace(folder, tmp_path):
+    vault = tmp_path
+    assert cast.find_folder(str(folder), vault_dir=str(vault)) == folder  # a full path inside the vault
+    elsewhere = tmp_path.parent / f"{tmp_path.name}-elsewhere"
+    elsewhere.mkdir()
+    with pytest.raises(cast.CastProblem, match="vault"):
+        cast.find_folder(str(elsewhere), vault_dir=str(vault))
+    with pytest.raises(cast.CastProblem):
+        cast.find_folder("../", vault_dir=str(folder))
+
+
+def test_the_writer_gets_only_the_speakers_sheets_each_capped(folder):
+    (folder / "carl.md").write_text('---\nid: carl\ncanonical: "A man who never speaks here."\n---\n')
+    (folder / "mira.md").write_text('---\nid: mira\ncanonical: "' + "x" * 3000 + '"\n---\n')
+    script = dialogue.parse("MIRA: Hi.\nTOBI: Yo.")
+    listing = dialogue.staging(script, cast.read(folder)).listing
+    assert "carl" not in listing
+    assert "x" * cast.MAX_CANONICAL in listing and "x" * (cast.MAX_CANONICAL + 1) not in listing
+
+
+def test_acts_are_shown_only_with_a_cast():
+    script = dialogue.parse("## Act: One\n## Scene: A\nMIRA: Hi.")
+    assert "Scene 1: A" in dialogue.staging(script).listing  # as phase 1 gave it
+
+
+def test_cast_pictures_are_the_speakers_and_at_most_six(folder, tmp_path):
+    from odie.video import kind
+    for n in range(4):
+        (folder / "refs" / f"tobi-{n}.jpg").write_bytes(b"jpg")
+    (folder / "tobi.md").write_text("---\nid: tobi\nrefs: [refs/tobi-0.jpg, refs/tobi-1.jpg, refs/tobi-2.jpg, "
+                                    "refs/tobi-3.jpg]\n---\n")
+    (folder / "carl.md").write_text("---\nid: carl\nrefs: [refs/mira-front.jpg]\n---\n")  # doesn't speak
+    job, _script = a_job_with_a_cast(folder, tmp_path)
+    job.data["dialogue"]["cast"] = [c.as_data() for c in cast.read(folder)]
+    pictures = kind.cast_pictures(job)
+    assert len(pictures) <= kind.MAX_CAST_PICTURES_IN_ALL
+    assert all("Carl" not in given.words for given in pictures)
+    assert all(given.cast for given in pictures)
+
+
+@pytest.mark.parametrize("heading, act", [("## Act: Chapter one", "Chapter one"), ("## Act 2", "2"),
+                                         ("# ACT One", "One")])
+def test_acts_are_read_however_the_heading_is_written(heading, act):
+    assert dialogue.parse(f"{heading}\n## Scene: A\nMIRA: Hi.").scenes[0].act == act

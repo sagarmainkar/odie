@@ -18,7 +18,8 @@ A sheet (all fields optional but id):
     ---
     Notes for the writer (optional).
 
-Markdown files without front matter, or without an id, are notes and are skipped."""
+Markdown files without front matter, or without an id, are notes and are skipped. A cast folder must be in the
+user's vault or Odie's workspace, and a sheet's pictures must be inside its folder."""
 from __future__ import annotations
 
 import re
@@ -28,8 +29,9 @@ from pathlib import Path
 import yaml
 
 FRONT_MATTER = re.compile(r"\A---\s*\n(.*?)\n---\s*\n?(.*)\Z", re.DOTALL)
-PICTURE_SUFFIXES = (".jpg", ".jpeg", ".png", ".webp", ".heic")
+PICTURE_SUFFIXES = (".jpg", ".jpeg", ".png", ".webp")  # what Odie can read (HEIC: export it as a JPEG)
 MAX_NOTES = 1500  # characters of a sheet's notes the writer gets
+MAX_CANONICAL = 1500  # characters of a sheet's description the writer gets
 TEMPLATE_HINT = ('Each character is a Markdown file starting with front matter: "---", then "id: mira", '
                  '"canonical: …" and "voice: …" lines, then "---".')
 
@@ -66,13 +68,20 @@ class Character:
         return None
 
     def pictures(self) -> list[Path]:
-        """The character's reference pictures that exist in the folder: the refs first, then each age's, each once;
-        a missing file is left out."""
+        """The character's reference pictures that exist in the folder: the refs first, then each age's, each once.
+        A missing file, one that isn't a picture, or one outside the folder (an absolute path, ../, a link out) is
+        left out: refs: [refs/front.jpg, /Users/x/a.jpg, ../b.jpg] -> [<folder>/refs/front.jpg]."""
+        if self.folder is None:
+            return []
+        home = self.folder.resolve()
         named = [*self.refs, *(age.ref for age in self.ages if age.ref)]
         out = []
         for name in named:
-            path = (self.folder / name) if self.folder else Path(name)
-            if path.suffix.lower() in PICTURE_SUFFIXES and path.is_file() and path not in out:
+            if Path(name).is_absolute():
+                continue
+            path = (self.folder / name).resolve()
+            inside = path.is_relative_to(home)
+            if inside and path.suffix.lower() in PICTURE_SUFFIXES and path.is_file() and path not in out:
                 out.append(path)
         return out
 
@@ -92,44 +101,78 @@ def from_data(data: dict) -> Character:
                      folder=folder)
 
 
-def text_of(value) -> str:
-    """A front-matter value as one line of text: None -> ""; "  Mira " -> "Mira"; 34 -> "34"."""
+def text_of(value, path: Path, name: str) -> str:
+    """A front-matter value as one line of text: None -> ""; "  Mira " -> "Mira"; 34 -> "34"; a list, a mapping or
+    true/false -> CastProblem naming the file and the field ("anna.md: canonical is one line of text …")."""
     if value is None:
         return ""
+    if isinstance(value, bool) or not isinstance(value, (str, int, float)):
+        raise CastProblem(f"{path.name}: {name} is one line of text, not {type(value).__name__}.")
     return str(value).strip()
 
 
+def age_of(value) -> int | None:
+    """An age as people write it: 34 or "34" -> 34; true, "about forty" or nothing -> None (no number to give)."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.strip().isdigit():
+        return int(value.strip())
+    return None
+
+
+def listed(value, path: Path, name: str) -> list:
+    """A field that is a list ("refs", "ages"), as a list: None -> []; one text -> [it]; a list -> itself; anything
+    else -> CastProblem naming the file ("anna.md: refs is a list …")."""
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, list):
+        return value
+    raise CastProblem(f"{path.name}: {name} is a list, like [refs/front.jpg].")
+
+
 def sheet(path: Path) -> Character | None:
-    """One character from a Markdown file, or None for a note (no front matter, or no id). Front matter that isn't
-    YAML raises CastProblem naming the file."""
-    found = FRONT_MATTER.match(path.read_text(encoding="utf-8").replace("\r\n", "\n"))
+    """One character from a Markdown file, or None for a note (no front matter, or no id): "---\nid: Mira\nvoice:
+    af_bella\n---\nCalm." -> Mira, af_bella, notes "Calm."; "# Notes" -> None. A file that can't be read (not UTF-8),
+    front matter that isn't YAML, or a field of the wrong kind raises CastProblem naming the file."""
+    try:
+        text = path.read_text(encoding="utf-8-sig")
+    except (OSError, UnicodeDecodeError) as e:
+        raise CastProblem(f"{path.name} can't be read ({type(e).__name__}): save it as UTF-8 text.") from None
+    found = FRONT_MATTER.match(text.replace("\r\n", "\n"))
     if found is None:
         return None
     try:
         fields = yaml.safe_load(found.group(1)) or {}
     except yaml.YAMLError as e:
         raise CastProblem(f"{path.name}: its front matter can't be read ({str(e).splitlines()[0]}).") from None
-    if not isinstance(fields, dict) or not text_of(fields.get("id")):
+    if not isinstance(fields, dict) or fields.get("id") is None:
         return None
-    written_id = text_of(fields["id"])
+    written_id = text_of(fields["id"], path, "id")
+    if not written_id:
+        return None
     ages = []
-    for entry in fields.get("ages") or []:
+    for entry in listed(fields.get("ages"), path, "ages"):
         if not isinstance(entry, dict):
             continue
-        age = entry.get("age")
-        if not isinstance(age, int):
-            age = None  # "about forty" or nothing: no number to give the writer
-        ages.append(Age(act=text_of(entry.get("act")), age=age, ref=text_of(entry.get("ref"))))
-    refs = fields.get("refs") or []
-    if isinstance(refs, str):
-        refs = [refs]
-    display_name = text_of(fields.get("display_name"))
+        ages.append(Age(act=text_of(entry.get("act"), path, "act"), age=age_of(entry.get("age")),
+                        ref=text_of(entry.get("ref"), path, "ref")))
+    refs = []
+    for ref in listed(fields.get("refs"), path, "refs"):
+        text = text_of(ref, path, "refs")
+        if text:
+            refs.append(text)
+    display_name = text_of(fields.get("display_name"), path, "display_name")
     if not display_name:
         display_name = written_id
-    return Character(id=written_id.lower(), display_name=display_name, canonical=text_of(fields.get("canonical")),
-                     voice=text_of(fields.get("voice")), ages=ages,
-                     refs=[text_of(ref) for ref in refs if text_of(ref)], asset=text_of(fields.get("asset")),
-                     notes=found.group(2).strip()[:MAX_NOTES], folder=path.parent)
+    canonical = text_of(fields.get("canonical"), path, "canonical")[:MAX_CANONICAL]
+    return Character(id=written_id.lower(), display_name=display_name, canonical=canonical,
+                     voice=text_of(fields.get("voice"), path, "voice"), ages=ages, refs=refs,
+                     asset=text_of(fields.get("asset"), path, "asset"), notes=found.group(2).strip()[:MAX_NOTES],
+                     folder=path.parent)
 
 
 def read(folder: Path) -> list[Character]:
@@ -137,6 +180,8 @@ def read(folder: Path) -> list[Character]:
     folder with no sheets (saying how to write one), a sheet that can't be read, or two sheets for one id."""
     characters: list[Character] = []
     for path in sorted(folder.glob("*.md")):
+        if not path.is_file():
+            continue
         character = sheet(path)
         if character is None:
             continue
@@ -149,20 +194,30 @@ def read(folder: Path) -> list[Character]:
 
 
 def find_folder(reference: str, vault_dir: str | None, workspace: Path | None = None) -> Path:
-    """The cast folder the user named: an absolute path or one from ~, else a path in their vault, else one in Odie's
-    workspace. "Stories/Lighthouse/cast" with the vault set -> <vault>/Stories/Lighthouse/cast. Raises CastProblem
-    when there's no such folder."""
-    given = Path(reference.strip()).expanduser()
-    places = []
+    """The cast folder the user named, which must be in their vault or Odie's workspace (it is read for the writer and
+    stills are written into it): a path in the vault ("Stories/Lighthouse/cast"), one in the workspace, or a full
+    path inside either. Raises CastProblem when there's no such folder, or it is elsewhere."""
+    allowed = []
+    if vault_dir:
+        allowed.append(Path(vault_dir).expanduser().resolve())
+    if workspace is not None:
+        allowed.append(workspace.resolve())
+    try:
+        given = Path(reference.strip()).expanduser()
+    except RuntimeError:
+        raise CastProblem(f'"{reference}" isn\'t a path Odie can follow.') from None
     if given.is_absolute():
-        places.append(given)
+        places = [given.resolve()]
     else:
-        if vault_dir:
-            places.append(Path(vault_dir).expanduser() / given)
-        if workspace is not None:
-            places.append(workspace / given)
+        places = [(root / given).resolve() for root in allowed]
     for place in places:
+        if not any(place.is_relative_to(root) for root in allowed):
+            continue
         if place.is_dir():
             return place
+    if given.is_absolute() and not any(places[0].is_relative_to(root) for root in allowed):
+        raise CastProblem(f"{reference} isn't in your vault or Odie's workspace: keep the cast folder there.")
+    if not vault_dir:
+        raise CastProblem(f'No folder "{reference}" in Odie\'s workspace (no vault is set up in Settings).')
     raise CastProblem(f'No folder "{reference}" in the vault or Odie\'s workspace: give the cast folder\'s path in '
-                      "the vault (Stories/My story/cast) or its full path.")
+                      "the vault (Stories/My story/cast).")

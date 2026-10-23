@@ -601,6 +601,7 @@ async def test_voices_given_win_over_the_sheets_and_every_speaker_needs_a_sheet(
     store, submitted = world
     voice.set_tts(store, engine="kokoro", voice="af_heart")
     out = await tools.make_video("Night", script=a_script(), cast=a_cast_folder(), voices={"anna": "Emma"})
+    assert "result" in out, out
     assert submitted[-1].data["dialogue"]["voices"]["anna"] == "bf_emma"
     stranger = NIGHT + "CARL: Who's there?\n"
     out = await tools.make_video("Night", script=a_script(stranger), cast=a_cast_folder())
@@ -612,3 +613,26 @@ async def test_a_cast_or_a_look_needs_a_script(world):
     assert "script" in out["error"]
     out = await tools.make_video("Night", look="look.md")
     assert "script" in out["error"]
+
+
+async def test_a_bad_voice_on_a_sheet_matters_only_for_who_speaks_and_names_the_sheet(world):
+    from odie.agent.tools.files import workspace
+    store, submitted = world
+    voice.set_tts(store, engine="kokoro", voice="af_heart")
+    folder = a_cast_folder()
+    (workspace() / folder / "carl.md").write_text("---\nid: carl\nvoice: cedar\n---\n")  # carl never speaks here
+    out = await tools.make_video("Night", script=a_script(), cast=folder)
+    assert "result" in out, out
+    (workspace() / folder / "ben.md").write_text("---\nid: ben\nvoice: cedar\n---\n")
+    out = await tools.make_video("Night", script=a_script(), cast=folder)
+    assert "ben" in out["error"] and "sheet" in out["error"] and "cedar" in out["error"]
+
+
+async def test_a_sheet_of_the_wrong_shape_is_an_error_not_a_crash(world):
+    from odie.agent.tools.files import workspace
+    store, _submitted = world
+    voice.set_tts(store, engine="kokoro", voice="af_heart")
+    folder = a_cast_folder()
+    (workspace() / folder / "anna.md").write_text("---\nid: anna\nages: 34\n---\n")
+    out = await tools.make_video("Night", script=a_script(), cast=folder)
+    assert "anna.md" in out["error"]
