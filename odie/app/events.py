@@ -11,6 +11,10 @@ class EventBus:
         self._subs: set[asyncio.Queue] = set()
 
     async def publish(self, event: dict[str, Any]) -> None:
+        self.emit(event)
+
+    def emit(self, event: dict[str, Any]) -> None:
+        """publish() for plain code (a push hook): the event goes to every open stream at once, nothing is awaited."""
         for q in list(self._subs):
             try:
                 q.put_nowait(event)

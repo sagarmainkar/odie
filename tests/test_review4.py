@@ -44,10 +44,11 @@ async def test_reconcile_unfinished_approvals(isolated_settings, tmp_path):
     from odie.app.runner import OdieRunner
     s = _store(tmp_path)
     r = OdieRunner(s)
-    posted = []
+    posted, kinds = [], []
 
-    async def fake_post(text, session_id=None):
+    async def fake_post(text, session_id=None, kind="system"):
         posted.append(text)
+        kinds.append(kind)
     r.post_message = fake_post
     lost = s.create_approval("chat-1", "inv1", "req1", "gmail_send_draft", {"draft_id": "d1"}, summary="Send email to a@x · S1", detail={}, provenance=[])
     s.decide_approval(lost, True)
@@ -56,6 +57,7 @@ async def test_reconcile_unfinished_approvals(isolated_settings, tmp_path):
     s.audit("agent", "tool_call", tool="run_shell", args={"command": "uptime"}, result_summary="up", session_id="chat-1", invocation_id="inv2")
     n = await r.reconcile_approvals()
     assert n == 1 and posted and "never got to" in posted[0] and "Send email to a@x" in posted[0]
+    assert kinds == ["reply"]  # the Mac shows it as a reply that came late, not as housekeeping
     assert s.get_approval(lost)["result_text"].startswith("Not done") and s.get_approval(done)["result_text"] == "Completed."
     assert await r.reconcile_approvals() == 0
     await r.close()

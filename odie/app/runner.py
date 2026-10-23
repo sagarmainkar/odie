@@ -887,7 +887,7 @@ class OdieRunner:
             if row["status"] == "approved":
                 text = f"Not done: I never got to this after your tap: {row['summary']}. Ask again if you still want it."
                 self.store.set_approval_result(row["id"], text)
-                await self.post_message(text, session_id=row["session_id"])
+                await self.post_message(text, session_id=row["session_id"], kind="reply")
                 n += 1
             else:
                 self.store.set_approval_result(row["id"], "Declined.")
@@ -1002,7 +1002,7 @@ class OdieRunner:
         """A tracker found something: a line in Chat and a push to the phone. `push`: what the lock screen says instead of
         the summary (a signed-in tracker's details stay in the app); `private_site`: the chat line came from that
         signed-in site, so today's chat is private for it, as if the user had read the page there."""
-        await self.post_message(f"🔔 {row['title']}: {summary}")
+        await self.post_message(f"🔔 {row['title']}: {summary}", kind="tracker")
         if private_site:
             from odie.signin import guard as signin_guard
             signin_guard.remember(self.store, self.current_session_id(datetime.now(self.tz).strftime("%Y-%m-%d")), private_site)
@@ -1022,9 +1022,14 @@ class OdieRunner:
         and only Act (routes: /reminders/{id}/act) posts it into the chat."""
         await self.bus.publish({"type": "reminder", "id": task_id, "text": text, "ts": time.time(), **({"media": media} if media else {})})
 
-    async def post_message(self, text: str, session_id: str | None = None, media: list[dict] | None = None) -> Event:
+    async def post_message(self, text: str, session_id: str | None = None, media: list[dict] | None = None,
+                           kind: str = "system") -> Event:
         """A message from Odie that did not come from a user turn (reminder, 'done as you asked', summary). `media`
-        (a spoken reminder's memo) rides in the event's metadata: shown in the chat, never seen by the model."""
+        (a spoken reminder's memo) rides in the event's metadata: shown in the chat, never seen by the model. `kind`
+        rides on the bus event and says what the message is, for an app that shows them differently (the Mac's
+        banners): reply (a reply that came late, after an approval), reminder (the repost after Act), tracker, job (a
+        made thing is ready), talk (a call's transcript), or system (housekeeping: "Stopped.", the new-chat marker, a
+        lapsed approval), which gets no banner."""
         s = config.settings
         today = datetime.now(self.tz).strftime("%Y-%m-%d")
         sid = session_id or self.current_session_id(today)
@@ -1036,7 +1041,8 @@ class OdieRunner:
                        custom_metadata={"media": media} if media else None)
             await self.session_service.append_event(session=sess, event=ev)
         self.store.audit("agent", "message", result_summary=text, session_id=sid)
-        await self.bus.publish({"type": "message", "text": text, "ts": ev.timestamp, "session_id": sid, **({"media": media} if media else {})})
+        await self.bus.publish({"type": "message", "kind": kind, "text": text, "ts": ev.timestamp, "session_id": sid,
+                                **({"media": media} if media else {})})
         return ev
 
     @staticmethod

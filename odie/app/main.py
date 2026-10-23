@@ -102,6 +102,21 @@ def scheduler_enabled() -> bool:
 BRIEF_LIMIT = 600  # seconds: gathering, then up to a 3-minute completion on a slow local model
 
 
+def watch_pushed(store: Store, runner, title: str, body: str) -> None:
+    """The watch found something the owner must see (an urgent mail, an app that stopped working): a push to the
+    phone, which opens Today's Needs you, and a `watch` event on the bus, so an open app that gets no web push (the
+    Mac) hears it too. A push that fails is logged and never keeps the bus quiet.
+      "Deck from xyz", "made from the PDF" -> push "Deck from xyz" to /#today, event {type: watch, title, body, ts}"""
+    import time
+
+    from odie.push import send as push
+    try:
+        push.send_to_all(store, title, body, url="/#today", tag="watch")
+    except Exception:  # noqa: BLE001
+        logging.getLogger("odie").warning("watch push failed", exc_info=True)
+    runner.bus.emit({"type": "watch", "title": title, "body": body, "ts": time.time()})
+
+
 def background_for(store: Store, runner):
     """The background agent for this server: in 9a its one part is the trackers that are due (each on its own
     schedule). Each check is cut at 5 minutes by background_turn, and one run checks up to trackers.PER_RUN, so the
@@ -117,7 +132,6 @@ def background_for(store: Store, runner):
     from datetime import datetime
     from zoneinfo import ZoneInfo
 
-    from odie.push.send import send_to_all
     from odie.watch import check as watch
 
     def now():
@@ -133,10 +147,7 @@ def background_for(store: Store, runner):
                                                 free=watch.MAY_WRITE, skills=watch.calendar_skills(store))
 
         def push(title, body):
-            try:
-                send_to_all(store, title, body, url="/#today", tag="watch")  # the card is on Today's Needs you
-            except Exception:  # noqa: BLE001
-                logging.getLogger("odie").warning("watch push failed", exc_info=True)
+            watch_pushed(store, runner, title, body)
         memory = getattr(runner, "memory", None)
         index = build_index(memory.load(), max_chars=3000) if memory is not None and memory.exists() else ""
         await watch.run_check(store, now(), turn, push, memory=memory, memory_index=index)
