@@ -115,6 +115,25 @@ async def fetch(ref: str, credit: str = "", referer: str | None = None) -> Photo
     return Photo(ref, dest, w, h, credit)
 
 
+CAST = "cast:"  # how a cast picture's line is named in a video job (odie.video.kind.cast_pictures)
+
+
+async def cast_picture(path: Path) -> Photo:
+    """A picture from the user's cast folder (odie.video.cast), for the video job's own cast lines only: fetch()
+    never reads a file for an address, so a "cast:" address a deck's brief carries is refused like any unknown one.
+    /…/cast/refs/mira-front.jpg -> that picture; a missing file or not a picture -> PhotoError."""
+    from odie.video.cast import PICTURE_SUFFIXES
+    if path.suffix.lower() not in PICTURE_SUFFIXES or not path.is_file():
+        raise PhotoError(f"There's no picture at {path.name} in the cast folder (JPEG, PNG or WebP).")
+    ref = f"{CAST}{path}"
+
+    def read() -> Photo:
+        dest = _dest(ref)
+        w, h = _encode(path.read_bytes(), dest)
+        return Photo(ref, dest, w, h, "")
+    return await asyncio.to_thread(read)
+
+
 def _local(ref: str) -> Photo:
     kind, _, rid = ref.partition(":")
     if kind == "screenshot":

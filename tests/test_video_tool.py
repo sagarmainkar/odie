@@ -315,7 +315,7 @@ def test_the_declaration_has_exactly_its_parameters_with_the_dialogue_ones_last(
     declaration = FunctionTool(tools.make_video)._get_declaration()
     properties = declaration.parameters_json_schema["properties"]
     assert list(properties) == ["topic", "minutes", "brief", "sources", "images", "clips", "sounds", "voice_name", "style",
-                                "aspect", "timed_segment_seconds", "brand_kit", "script", "voices"]
+                                "aspect", "timed_segment_seconds", "brand_kit", "script", "voices", "cast", "look"]
     assert properties["sounds"] == {"default": True, "title": "Sounds", "type": "boolean"}
     assert "sounds: leave true; false only when the user asks for no sound effects" in declaration.description
     for name in ("sources", "images", "clips"):
@@ -333,7 +333,7 @@ def test_the_skill_says_how_to_write_the_brief():
     assert "brief" in text and "can't see" in text and "20,000" in text
     assert "sources" in text and "my message" in text and "earlier message" in text
     assert "no emojis" in text and "save_video_page" not in text
-    assert len(text.split("---", 2)[2].split()) < 960  # short: the writer has the page contract and the film grammar
+    assert len(text.split("---", 2)[2].split()) < 975  # short: the writer has the page contract and the film grammar
 
 
 def test_the_skill_says_sounds_are_on_unless_the_user_says_no_sound_effects():
@@ -354,6 +354,7 @@ def test_the_skill_says_how_to_gather_pictures_clips_and_places():
 def test_the_skill_says_how_to_film_the_users_own_script():
     text = (SKILL / "SKILL.md").read_text()
     assert "`script`" in text and "`voices`" in text and "word for word" in text
+    assert "`cast`" in text and "`look`" in text
 
 
 def test_the_skill_says_videos_can_be_3d_with_real_surfaces():
@@ -570,3 +571,68 @@ async def test_a_script_too_big_for_one_video_is_refused_before_queueing(world):
 
 def test_make_video_says_a_pasted_script_is_my_message():
     assert '"my message"' in FunctionTool(tools.make_video)._get_declaration().description.split("script:")[1]
+
+
+# Phase 2: a cast folder of character sheets and a look file, read for every video of a work.
+
+def a_cast_folder() -> str:
+    from odie.agent.tools.files import workspace
+    folder = workspace() / "lighthouse-cast"
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "anna.md").write_text('---\nid: anna\ncanonical: "Silver hair, green coat."\nvoice: Bella\n---\n')
+    (folder / "ben.md").write_text('---\nid: ben\ncanonical: "Yellow raincoat, red hat."\nvoice: Michael\n---\n')
+    (workspace() / "look.md").write_text("Muted teal and amber; light grain.")
+    return "lighthouse-cast"
+
+
+async def test_a_cast_folder_gives_the_voices_and_the_look_goes_with_it(world):
+    store, submitted = world
+    voice.set_tts(store, engine="kokoro", voice="af_heart")
+    out = await tools.make_video("Night", script=a_script(), cast=a_cast_folder(), look="look.md")
+    assert "result" in out, out
+    kept = submitted[0].data["dialogue"]
+    assert kept["voices"] == {"anna": "af_bella", "ben": "am_michael"}  # from the sheets
+    assert [c["id"] for c in kept["cast"]] == ["anna", "ben"] and kept["cast"][0]["canonical"] == "Silver hair, green coat."
+    assert kept["look"] == "Muted teal and amber; light grain."
+    assert kept["cast_folder"].endswith("lighthouse-cast")
+
+
+async def test_voices_given_win_over_the_sheets_and_every_speaker_needs_a_sheet(world):
+    store, submitted = world
+    voice.set_tts(store, engine="kokoro", voice="af_heart")
+    out = await tools.make_video("Night", script=a_script(), cast=a_cast_folder(), voices={"anna": "Emma"})
+    assert "result" in out, out
+    assert submitted[-1].data["dialogue"]["voices"]["anna"] == "bf_emma"
+    stranger = NIGHT + "CARL: Who's there?\n"
+    out = await tools.make_video("Night", script=a_script(stranger), cast=a_cast_folder())
+    assert "carl" in out["error"] and "sheet" in out["error"]
+
+
+async def test_a_cast_or_a_look_needs_a_script(world):
+    out = await tools.make_video("Night", cast=a_cast_folder())
+    assert "script" in out["error"]
+    out = await tools.make_video("Night", look="look.md")
+    assert "script" in out["error"]
+
+
+async def test_a_bad_voice_on_a_sheet_matters_only_for_who_speaks_and_names_the_sheet(world):
+    from odie.agent.tools.files import workspace
+    store, submitted = world
+    voice.set_tts(store, engine="kokoro", voice="af_heart")
+    folder = a_cast_folder()
+    (workspace() / folder / "carl.md").write_text("---\nid: carl\nvoice: cedar\n---\n")  # carl never speaks here
+    out = await tools.make_video("Night", script=a_script(), cast=folder)
+    assert "result" in out, out
+    (workspace() / folder / "ben.md").write_text("---\nid: ben\nvoice: cedar\n---\n")
+    out = await tools.make_video("Night", script=a_script(), cast=folder)
+    assert "ben" in out["error"] and "sheet" in out["error"] and "cedar" in out["error"]
+
+
+async def test_a_sheet_of_the_wrong_shape_is_an_error_not_a_crash(world):
+    from odie.agent.tools.files import workspace
+    store, _submitted = world
+    voice.set_tts(store, engine="kokoro", voice="af_heart")
+    folder = a_cast_folder()
+    (workspace() / folder / "anna.md").write_text("---\nid: anna\nages: 34\n---\n")
+    out = await tools.make_video("Night", script=a_script(), cast=folder)
+    assert "anna.md" in out["error"]

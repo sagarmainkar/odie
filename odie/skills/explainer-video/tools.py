@@ -22,6 +22,7 @@ from odie.decks import photos
 from odie.making import chat, jobs
 from odie.making import sources as making_sources
 from odie.video import assets, brand, dialogue, kind, timed, timeline
+from odie.video import cast as cast_module
 
 NARRATING_SPEED = 10  # seconds of speech the voice narrates in a second
 JOINING_SECONDS = 10  # joining the segments and the sound into the MP4
@@ -184,8 +185,8 @@ def timed_seconds_as_given(value, minutes: int) -> int | None:
 async def make_video(topic: str, minutes: int = 2, brief: str = "", sources: list[str] | None = None,
                      images: list[str] | None = None, clips: list[str] | None = None, sounds: bool = True,
                      voice_name: str = "", style: str = "", aspect: str = "", timed_segment_seconds: int | None = None,
-                     brand_kit: str = "", script: str = "", voices: list[dict] | None = None,
-                     tool_context: ToolContext | None = None) -> dict:
+                     brand_kit: str = "", script: str = "", voices: list[dict] | None = None, cast: str = "",
+                     look: str = "", tool_context: ToolContext | None = None) -> dict:
     """Make a narrated, animated explainer video that plays in this chat. A separate writer makes the narration and
     the animation from your brief, in the background; it can't see this chat, the user's notes, memory or the web.
     topic: what the video is about, short ("How attention works").
@@ -216,7 +217,10 @@ async def make_video(topic: str, minutes: int = 2, brief: str = "", sources: lis
     script's note name or path, or a workspace file ("## Scene: …" headings, "SPEAKER: line" lines). The writer
     stages it word for word; never retype it, and the brief then says only the look and the cast's appearance.
     voices: with a script only, a voice for every speaker but the narrator: [{"id": "anna", "name": <a voice of the
-    Settings engine>}].
+    Settings engine>}]; with a cast, only to change a sheet's voice for this video.
+    cast: with a script, the folder of the work's character sheets when the user has one (a path in their vault,
+    "Stories/The lighthouse/cast", or a full path): each character's look, voice and ages come from it.
+    look: with a script, the work's style file when the user has one (a note or file: palette, lens, grain, period).
     It returns at once. {"error": …}: fix exactly that and call again. {"result": …}: the video is being made; reply
     in one or two lines as the result says, and don't repeat the brief."""
     if find.browser_binary() is None:
@@ -254,14 +258,19 @@ async def make_video(topic: str, minutes: int = 2, brief: str = "", sources: lis
             return {"error": problem}
 
     dialogue_data = None
-    if voices and not chat.text_or_empty(script).strip():
+    no_script = not chat.text_or_empty(script).strip()
+    gave_cast = bool(chat.text_or_empty(cast).strip())
+    gave_look = bool(chat.text_or_empty(look).strip())
+    asked_for_dialogue = bool(voices) or gave_cast or gave_look
+    if no_script and asked_for_dialogue:
         return {"error": VOICES_NEED_SCRIPT}
     if chat.text_or_empty(script).strip():
         if timed_seconds is not None or kit is not None:
             return {"error": DIALOGUE_ALONE}
         try:
-            dialogue_data = dialogue_as_given(chat.text_or_empty(script).strip(), voices, jobs.hooks["store"])
-        except (ValueError, making_sources.SourceProblem) as e:
+            dialogue_data = dialogue_as_given(chat.text_or_empty(script).strip(), voices, jobs.hooks["store"],
+                                              chat.text_or_empty(cast).strip(), chat.text_or_empty(look).strip())
+        except (ValueError, making_sources.SourceProblem, cast_module.CastProblem) as e:
             return {"error": str(e)}
 
     problem = chat.brief_problem(brief, WORD, MAX_BRIEF_CHARACTERS)
@@ -324,8 +333,9 @@ DIALOGUE_ALONE = ("A dialogue video (a script) can't have a timed segment or a b
                   "timed_segment_seconds and brand_kit empty.")
 
 
-VOICES_NEED_SCRIPT = ("voices are for a dialogue video: give its script too, or use voice_name for one narrator's "
-                      "voice.")
+VOICES_NEED_SCRIPT = ("voices, cast and look are for a dialogue video: give its script too (or use voice_name for "
+                      "one narrator's voice).")
+MAX_LOOK = 4000  # characters of a work's look file the writer gets
 
 
 def voices_as_given(voices) -> list:
@@ -343,24 +353,56 @@ def voices_as_given(voices) -> list:
     return voices
 
 
-def dialogue_as_given(script_reference: str, voices, store) -> dict:
-    """A dialogue video's script and voices, checked before anything is queued: the script read as sources are (a
-    note or a workspace file) and parsed (odie.video.dialogue.parse), every speaker but the narrator given a voice of
-    the engine chosen in Settings, kept by its id. Returns {"script": [...], "voices": {speaker: voice id}}; raises
-    ValueError (or SourceProblem) in words to fix: a speaker with no voice ("ben"), a voice of another engine, a
-    script with no lines."""
+def dialogue_as_given(script_reference: str, voices, store, cast_reference: str = "",
+                      look_reference: str = "") -> dict:
+    """A dialogue video's script, cast, look and voices, checked before anything is queued: the script read as
+    sources are (a note, a workspace file or "my message") and parsed (odie.video.dialogue.parse); the cast folder's
+    sheets (odie.video.cast), whose voices `voices` may change; every speaker but the narrator given a voice of the
+    engine chosen in Settings (and, with a cast, a sheet), kept by its id; the look file read as a source. Returns
+    {"script", "voices", and with a cast "cast" and "cast_folder", with a look "look"}; raises ValueError (or
+    SourceProblem) in words to fix: a speaker with no voice or no sheet, a voice of another engine, a script with no
+    lines or too big for one video, a cast folder that can't be found or read."""
+    from odie.vault import settings as vault_settings
     [source] = making_sources.resolve([script_reference], store)
     script = dialogue.parse(source.text)
     problem = dialogue.script_problem(script)
     if problem:
         raise ValueError(problem)
-    named = dialogue.voices_by_speaker(voices_as_given(voices))
+    characters = []
+    folder = None
+    if cast_reference:
+        folder = cast_module.find_folder(cast_reference, vault_settings.get(store).get("dir"), workspace())
+        characters = cast_module.read(folder)
+        sheets = {character.id for character in characters}
+        without = [s for s in script.speakers() if s != dialogue.NARRATOR and s not in sheets]
+        if without:
+            raise ValueError(f"Every speaker but the narrator needs a sheet in {folder.name}; none for: "
+                             f"{', '.join(without)}.")
+    speakers = set(script.speakers())
+    from_sheets = {c.id: c.voice for c in characters if c.voice and c.id in speakers}  # who speaks in this script
+    given = dialogue.voices_by_speaker(voices_as_given(voices))
+    named = {**from_sheets, **given}
     missing = dialogue.missing_voices(script, named)
     if missing:
         raise ValueError(f"Every speaker but the narrator needs a voice; none for: {', '.join(missing)}. Add "
-                         '{"id": "<speaker>", "name": "<a voice of the Settings engine>"} to voices.')
-    by_id = {speaker: voice.voice_in_chosen_engine(store, name)["id"] for speaker, name in named.items()}
-    return {"script": script.as_data(), "voices": by_id}
+                         '{"id": "<speaker>", "name": "<a voice of the Settings engine>"} to voices'
+                         " (or voice: to their sheet).")
+    by_id = {}
+    for speaker, name in named.items():
+        try:
+            by_id[speaker] = voice.voice_in_chosen_engine(store, name)["id"]
+        except ValueError as e:
+            if speaker in given:
+                raise
+            raise ValueError(f"{speaker}'s voice on their sheet: {e} Change it on the sheet, or give voices.") from None
+    kept = {"script": script.as_data(), "voices": by_id}
+    if characters:
+        kept["cast"] = [character.as_data() for character in characters]
+        kept["cast_folder"] = str(folder)
+    if look_reference:
+        [look_source] = making_sources.resolve([look_reference], store)
+        kept["look"] = look_source.text.strip()[:MAX_LOOK]
+    return kept
 
 
 TOOLS = [FunctionTool(make_video)]

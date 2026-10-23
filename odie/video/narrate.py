@@ -218,8 +218,9 @@ async def narrate_dialogue(store: Store, script, voices: dict[str, str],
             raise voice.VoiceUnavailable(f"{speaker}'s voice: {e}") from e
         by_speaker[speaker] = (chosen_engine, checked)
     default = voice.video_tts(store)
-    if narrator_voice:
+    if narrator_voice:  # the user asked for the narrator's voice: it wins over a narrator sheet's
         default = (chosen_engine, voice.voice_in_chosen_engine(store, narrator_voice)["id"])
+        by_speaker[dialogue.NARRATOR] = default
 
     order = [line for scene in script.scenes for line in scene.lines]
     voice_of = [by_speaker.get(line.speaker, default) for line in order]

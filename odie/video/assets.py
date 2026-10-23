@@ -65,10 +65,13 @@ class AssetProblem(Exception):
 
 @dataclass
 class Given:
-    """One line from the chat, read: where the picture is, what it shows, and its credit (web ones only)."""
+    """One line from the chat, read: where the picture is, what it shows, and its credit (web ones only). `cast`:
+    a dialogue video's cast picture, a file in the user's cast folder, made only by the video job (never read from
+    the chat's lines)."""
     address: str
     words: str
     credit: str
+    cast: bool = False
 
 
 @dataclass
@@ -273,7 +276,11 @@ def shared_fetch(fetches: dict[str, asyncio.Future], given: Given) -> asyncio.Fu
     address given twice is fetched once (and its cached file never written twice at once). img1 and img3 both
     "https://ex.com/fort.jpg" -> one photos.fetch, both await it; img2 "photo:3F2A" -> a fetch of its own."""
     if given.address not in fetches:
-        fetches[given.address] = asyncio.ensure_future(photos.fetch(given.address, given.credit))
+        if given.cast:  # the job's own cast picture: a file in the user's cast folder
+            path = Path(given.address.removeprefix(photos.CAST))
+            fetches[given.address] = asyncio.ensure_future(photos.cast_picture(path))
+        else:
+            fetches[given.address] = asyncio.ensure_future(photos.fetch(given.address, given.credit))
     return fetches[given.address]
 
 

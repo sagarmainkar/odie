@@ -12,7 +12,8 @@ The script, as the user writes it:
     ANNA: You're still here? [pause 1.2]
     BEN: Someone has to finish it.
 
-"## Scene: <where>" starts a scene; "SPEAKER: text" is a line (the speaker's case doesn't matter); "[pause N]" at a
+"## Act: <label>" marks the act the scenes after it are in (for the cast's ages); "## Scene: <where>" starts a
+scene; "SPEAKER: text" is a line (the speaker's case doesn't matter); "[pause N]" at a
 line's end is the quiet after it in seconds. Anything else (front matter, a title, notes) is ignored."""
 from __future__ import annotations
 
@@ -32,6 +33,7 @@ MAX_PAUSE = 10.0  # the longest pause a line may ask for, in seconds
 LOUDNESS_STEP = 0.02  # seconds per loudness value: what the mouths follow
 RELEASE = 0.7  # how much of the last step's loudness a mouth keeps as it closes: shut after about 0.1 s of quiet
 SCENE = re.compile(r"^#{2,}\s*Scene\s*:\s*(.*)$", re.IGNORECASE)
+ACT = re.compile(r"^#{1,}\s*Act\b\s*:?\s*(.*)$", re.IGNORECASE)  # "## Act: One", "## Act 2": the scenes after
 MARKER = re.compile(r"^\s*(?:[-*+]\s+|\d+[.)]\s+|>\s*)")  # a bullet, a number or a quote before the name
 LINE = re.compile(r"^([^\W\d_][\w .'-]{0,40}?)\s*(?:\([^)]*\))?\s*:\s*(.+)$")  # NAME (direction): text
 PAUSE = re.compile(r"\s*\[pause(?:\s+(\d+(?:\.\d+)?)\s*s?)?\s*\]\s*$", re.IGNORECASE)
@@ -62,6 +64,7 @@ class Line:
 class Scene:
     where: str  # the heading's words: where the scene is, for the writer
     lines: list[Line] = field(default_factory=list)
+    act: str = ""  # the act it is in ("## Act: Chapter one" before it), for the cast's ages; "" when none was given
 
 
 @dataclass
@@ -74,13 +77,13 @@ class Script:
 
     def as_data(self) -> list[dict]:
         """The script as the job keeps it: [{"where", "lines": [{"speaker", "text", "pause"}]}]."""
-        return [{"where": scene.where, "lines": [line.__dict__.copy() for line in scene.lines]}
+        return [{"where": scene.where, "act": scene.act, "lines": [line.__dict__.copy() for line in scene.lines]}
                 for scene in self.scenes]
 
 
 def from_data(data: list[dict]) -> Script:
     """A script the job kept (Script.as_data) read back."""
-    return Script([Scene(s["where"], [Line(**line) for line in s["lines"]]) for s in data])
+    return Script([Scene(s["where"], [Line(**line) for line in s["lines"]], s.get("act", "")) for s in data])
 
 
 def line_of(text: str) -> Line | None:
@@ -118,10 +121,15 @@ def parse(text: str) -> Script:
     body = FRONT_MATTER.sub("", text.replace("\r\n", "\n"), count=1)
     scenes: list[Scene] = []
     current: Scene | None = None
+    act = ""
     for raw in body.split("\n"):
+        act_heading = ACT.match(raw.strip())
+        if act_heading:
+            act = act_heading.group(1).strip()
+            continue
         heading = SCENE.match(raw.strip())
         if heading:
-            current = Scene(where=heading.group(1).strip())
+            current = Scene(where=heading.group(1).strip(), act=act)
             scenes.append(current)
             continue
         if raw.lstrip().startswith("#"):
@@ -130,7 +138,7 @@ def parse(text: str) -> Script:
         if line is None:
             continue
         if current is None:
-            current = Scene(where="")
+            current = Scene(where="", act=act)
             scenes.append(current)
         current.lines.append(line)
     if not any(scene.lines for scene in scenes):
@@ -194,18 +202,56 @@ def narration_of(script: Script) -> list[str]:
     return [" | ".join(line.text for line in scene.lines) for scene in script.scenes]
 
 
-def writer_listing(script: Script) -> str:
-    """The script as the writer reads it: each scene with where it is and its lines, numbered across the video, with
-    who speaks."""
-    out = ["Script (stage it; never change, add or drop a word):"]
+def writer_listing(script: Script, characters: list | None = None, look: str = "") -> str:
+    """The script as the writer reads it: each scene with where it is (and, with a cast, its act and the ages of
+    who speaks in it) and its lines, numbered across the video, with who speaks. With a cast (odie.video.cast
+    characters), the sheets of those who speak in this script come first, each description word for word; with a
+    look, it comes before the script. No cast and no look -> the script alone, as phase 1 gave it."""
+    out = []
+    speakers = set(script.speakers())
+    characters = [character for character in characters or [] if character.id in speakers]  # this script's cast
+    if characters:
+        out.append("Cast (draw each exactly as described here, in every scene and every video; never change or add "
+                   "to how they look):")
+        for character in characters:
+            description = character.canonical
+            if not description:
+                description = "(no description given: choose one look and keep it)"
+            entry = f"  {character.id} ({character.display_name}): {description}"
+            if character.notes:
+                entry += f"\n    Notes: {character.notes}"
+            out.append(entry)
+        out.append("")
+    if look.strip():
+        out.append("Look (for every video of this work; follow it):")
+        out.append(look.strip())
+        out.append("")
+    out.append("Script (stage it; never change, add or drop a word):")
     index = 0
     for number, scene in enumerate(script.scenes, start=1):
         where = scene.where or "(no heading)"
-        out.append(f"Scene {number}: {where}")
+        out.append(f"Scene {number}{scene_note(scene, characters)}: {where}")
         for line in scene.lines:
             out.append(f"  line {index} · {line.speaker}: {line.text}")
             index += 1
     return "\n".join(out)
+
+
+def scene_note(scene: Scene, characters: list | None) -> str:
+    """What the writer is told about a scene beside its number: its act and the ages of those who speak in it, when
+    the cast gives them. Act "Chapter one", Mira 34 there -> " (Chapter one; mira is 34)"; no act, or no cast (a
+    phase-1 listing stays as it was) -> ""; an act but no ages -> " (Chapter one)"."""
+    if not scene.act or not characters:
+        return ""
+    ages = []
+    speakers = {line.speaker for line in scene.lines}
+    for character in characters or []:
+        age = character.age_in(scene.act)
+        if character.id in speakers and age is not None:
+            ages.append(f"{character.id} is {age}")
+    if not ages:
+        return f" ({scene.act})"
+    return f" ({scene.act}; {', '.join(ages)})"
 
 
 def loudness(wav: bytes, step: float = LOUDNESS_STEP) -> list[float]:
@@ -287,6 +333,6 @@ class Staging:
         return lines_script(estimated_lines(self.script, timings))
 
 
-def staging(script: Script) -> Staging:
-    """The writer's staging of `script` (see Staging)."""
-    return Staging(listing=writer_listing(script), narration=narration_of(script), script=script)
+def staging(script: Script, characters: list | None = None, look: str = "") -> Staging:
+    """The writer's staging of `script` (see Staging), with the cast's sheets and the work's look when there are."""
+    return Staging(listing=writer_listing(script, characters, look), narration=narration_of(script), script=script)

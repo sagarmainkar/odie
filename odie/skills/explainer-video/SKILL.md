@@ -71,8 +71,9 @@ left out, tell the user in a few words (a library picture with a small copy: ope
 ## Dialogue videos
 
 When the user wrote a script (`## Scene:` headings, `SPEAKER: line` lines) and wants it filmed, pass `script` (its
-note or file) and `voices`, one Settings-engine voice per speaker but the narrator (ask which if they didn't say).
-The brief then gives only the look and how each character looks: the writer stages the script word for word.
+note or file) and, when they have them, `cast` (their character-sheet folder: looks and voices) and `look` (their
+style file); else `voices`, one Settings-engine voice per speaker but the narrator (ask which). The writer stages
+the script word for word.
 
 ## The call
 
