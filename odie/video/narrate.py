@@ -153,3 +153,70 @@ async def narrate(store: Store, narration: list[str], voice_name: str = "",
     gap_ms = int(timeline.BREATH * 1000)
     joined, _starts = media.join_wavs(scenes, gap_ms=gap_ms)
     return joined, lengths, scene_beats
+
+
+def quiet_like(wav: bytes, seconds: float) -> bytes:
+    """`seconds` of silence in the same WAV format as `wav`, to lay between two lines: (a 24 kHz mono line, 0.35) ->
+    0.35 s of 24 kHz mono quiet."""
+    with wave.open(io.BytesIO(wav)) as w:
+        params = w.getparams()
+    frames = int(round(params.framerate * seconds)) * params.nchannels * params.sampwidth
+    out = io.BytesIO()
+    with wave.open(out, "wb") as w:
+        w.setparams(params)
+        w.writeframes(b"\x00" * frames)
+    return out.getvalue()
+
+
+async def narrate_dialogue(store: Store, script, voices: dict[str, str],
+                           transport: httpx.AsyncBaseTransport | None = None,
+                           style: str = "") -> tuple[bytes, list[float], list[list[float]], list[dict]]:
+    """A dialogue video's voice (odie.video.dialogue): every line spoken on its own in its speaker's voice
+    (`voices`: speaker -> a voice id of the video's engine; the narrator, or anyone without one, has the video
+    voice), its first word at once (lead_cut), the lines of a scene laid end to end with each line's pause after it
+    (none after a scene's last line: the usual breath comes between scenes). Returns the whole WAV, each scene's
+    length, each scene's beats (where each line starts in it, so s.beatAt is the line being spoken) and every line as
+    {index, speaker, scene (from 1), at (seconds into its scene), dur, amplitude (dialogue.loudness)}.
+    Two 1 s lines with a 0.35 s pause -> a 2.35 s scene, beats [0.0, 1.35]."""
+    from odie.video import dialogue
+    engine, default_voice = voice.video_tts(store)
+    order = [(n, i, line) for n, scene in enumerate(script.scenes) for i, line in enumerate(scene.lines)]
+    by_voice: dict[str, list[int]] = {}
+    for position, (_n, _i, line) in enumerate(order):
+        voice_id = voices.get(line.speaker) or default_voice
+        by_voice.setdefault(voice_id, []).append(position)
+    spoken: list[bytes] = [b""] * len(order)
+    for voice_id, positions in by_voice.items():
+        texts = [order[p][2].text for p in positions]
+        for position, wav in zip(positions, await speak_all(store, texts, engine, voice_id, transport, style)):
+            spoken[position] = lead_cut(wav)
+
+    scenes = []
+    lengths = []
+    scene_beats = []
+    lines = []
+    position = 0
+    for number, scene in enumerate(script.scenes):
+        pieces = []
+        starts = []
+        at = 0.0
+        for i, line in enumerate(scene.lines):
+            wav = spoken[position]
+            seconds = wav_seconds(wav)
+            starts.append(round(at, 3))
+            lines.append({"index": position, "speaker": line.speaker, "scene": number + 1, "at": round(at, 3),
+                          "dur": round(seconds, 3), "amplitude": dialogue.loudness(wav)})
+            pieces.append(wav)
+            at += seconds
+            is_last = i == len(scene.lines) - 1
+            if not is_last and line.pause > 0:
+                pieces.append(quiet_like(wav, line.pause))
+                at += line.pause
+            position += 1
+        joined, _starts = media.join_wavs(pieces, gap_ms=0)
+        scenes.append(joined)
+        lengths.append(round(wav_seconds(joined), 3))
+        scene_beats.append(starts)
+    gap_ms = int(timeline.BREATH * 1000)
+    whole, _starts = media.join_wavs(scenes, gap_ms=gap_ms)
+    return whole, lengths, scene_beats, lines

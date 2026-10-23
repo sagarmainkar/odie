@@ -98,3 +98,32 @@ def test_loudness_comes_every_20_ms_from_0_to_1():
 
 def test_silence_is_all_zeros_not_an_error():
     assert set(dialogue.loudness(tone_then_quiet(0, 0.1))) == {0.0}
+
+
+@pytest.fixture
+def store(isolated_settings, tmp_path):
+    from odie.store.db import Store
+    s = Store(tmp_path / "assistant.db")
+    s.init_schema()
+    return s
+
+
+async def test_each_line_is_spoken_in_its_speakers_voice_and_laid_with_its_pause(store):
+    from odie.video import narrate
+    from tests.test_speak import kokoro
+    spoken = []
+    script = dialogue.parse(SCRIPT)
+    voices = {"anna": "af_bella", "ben": "am_michael"}
+    wav, lengths, beats, lines = await narrate.narrate_dialogue(store, script, voices, transport=kokoro(spoken, 1.0))
+    said = {call["text"]: call["voice"] for call in spoken}
+    assert said["You're still here?"] == "af_bella" and said["Someone has to finish it."] == "am_michael"
+    assert said["The lamp had been burning for hours."] == "af_heart"  # the narrator: the video voice
+    # scene 1: three 1 s lines, 0.35 s after the first, 1.2 s after the second -> 3 + 0.35 + 1.2 = 4.55 s
+    assert lengths == [4.55, 1.0]
+    assert beats == [[0.0, 1.35, 3.55], [0.0]]
+    assert [(line["index"], line["speaker"], line["scene"], line["at"], line["dur"]) for line in lines] == [
+        (0, "narrator", 1, 0.0, 1.0), (1, "anna", 1, 1.35, 1.0), (2, "ben", 1, 3.55, 1.0), (3, "ben", 2, 0.0, 1.0)]
+    assert len(lines[0]["amplitude"]) == 50 and max(lines[0]["amplitude"]) == 1.0
+    total = 4.55 + 0.5 + 1.0  # the scenes joined with the usual breath
+    with wave.open(io.BytesIO(wav)) as w:
+        assert round(w.getnframes() / w.getframerate(), 2) == total
