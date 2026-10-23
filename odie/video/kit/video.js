@@ -768,6 +768,66 @@
     return Math.max(0, Math.round(left * 1000) / 1000);
   }
 
+  // ---- A dialogue video's lines (odie.video.dialogue): who speaks when, and how loud, for the characters' mouths ----
+
+  const LOUDNESS_STEP = 0.02;  // seconds per loudness value, as odie.video.dialogue.loudness gives them
+  let lines = [];  // Video.lines: [{index, speaker, scene, t, dur, amplitude}], t in seconds into the video
+
+  // The page's line timeline, given once by Odie before the writer's page in a dialogue video. Speakers are kept in
+  // lower case, as the script's are. Video.lines([{index: 0, speaker: "anna", scene: 1, t: 0.5, dur: 1.2,
+  // amplitude: [0, 0.4, 1]}])
+  function registerLines(list) {
+    if (!Array.isArray(list)) {
+      throw new Error("Video.lines takes a list of lines");
+    }
+    lines = list.map(function (line) {
+      return Object.assign({}, line, {speaker: String(line.speaker).toLowerCase()});
+    });
+  }
+
+  // The line being spoken at T, or null (before the first, between lines, after the last, and in any video without
+  // lines). Lines at 0.5 for 1.0 s and at 2.0: T 1.0 -> the first; T 1.6 -> null.
+  function lineAt(T) {
+    for (const line of lines) {
+      if (T >= line.t && T < line.t + line.dur) {
+        return line;
+      }
+    }
+    return null;
+  }
+
+  // Who is speaking at T: {speaker, index, progress (0..1 through the line), text}, or null.
+  function speakingAt(T) {
+    const line = lineAt(T);
+    if (line === null) {
+      return null;
+    }
+    const progress = Math.round(((T - line.t) / line.dur) * 1000) / 1000;
+    return {speaker: line.speaker, index: line.index, progress: progress, text: line.text || ""};
+  }
+
+  // How open a speaker's mouth is at T: 0 closed, 1 half, 2 open, from the line's loudness at that moment (under 0.15
+  // closed, under 0.5 half, else open); closed when they aren't speaking; half open all through a line whose loudness
+  // isn't known (the page check draws before anything is spoken). Anna's line at 0.5 with amplitude [0.1, 0.6]:
+  // mouthAt("anna", 0.53) -> 2; mouthAt("anna", 0.51) -> 0; mouthAt("ben", 0.53) -> 0.
+  function mouthAt(id, T) {
+    const line = lineAt(T);
+    if (line === null || line.speaker !== String(id).toLowerCase()) {
+      return 0;
+    }
+    if (!line.amplitude || line.amplitude.length === 0) {
+      return 1;
+    }
+    const level = line.amplitude[Math.floor((T - line.t) / LOUDNESS_STEP)] || 0;
+    if (level < 0.15) {
+      return 0;
+    }
+    if (level < 0.5) {
+      return 1;
+    }
+    return 2;
+  }
+
   let timedMarks = {starts: [], ends: []};  // the scenes (from 1) the page marked timed_start and timed_end
 
   // The scenes the page marked as its timed segment's first and last, from 1, as Video.scenes was given them; Odie
@@ -797,6 +857,14 @@
       // last; null before it and in a video without a timed segment. A countdown draws only when it isn't null.
       left: function () {
         return clockAt(frameTime);
+      },
+      // A dialogue video: the line being spoken in this frame ({speaker, index, progress, text}, or null), and how open a
+      // speaker's mouth is (0 closed, 1 half, 2 open). Both read the frame's time, not the scene's.
+      speaking: function () {
+        return speakingAt(frameTime);
+      },
+      mouth: function (id) {
+        return mouthAt(id, frameTime);
       },
     };
     for (const extension of extensions) {
@@ -1295,7 +1363,8 @@
     return playing;
   }
 
-  window.Video = {scenes: scenes, closing: closing, assets: registerAssets, sounds: sounds, soundCues: soundCues,
+  window.Video = {scenes: scenes, closing: closing, assets: registerAssets, lines: registerLines, sounds: sounds,
+                  soundCues: soundCues,
                   timedScenes: timedScenes, extend: extend, clockAt: clockAt, colors: colors, W: W, H: H, safe: SAFE,
                   layout: layout, order: order, brand: brandKit, moves: moves, moveCues: moveCuesGiven,
                   brandReport: brandReport,

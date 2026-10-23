@@ -311,11 +311,11 @@ def test_the_skill_offers_only_make_video_without_an_approval_card(isolated_sett
     assert not any(tool._require_confirmation for tool in entry.tool_objs)
 
 
-def test_the_declaration_has_exactly_topic_minutes_brief_sources_images_clips_sounds_voice_style_aspect_timing_and_kit():
+def test_the_declaration_has_exactly_its_parameters_with_the_dialogue_ones_last():
     declaration = FunctionTool(tools.make_video)._get_declaration()
     properties = declaration.parameters_json_schema["properties"]
     assert list(properties) == ["topic", "minutes", "brief", "sources", "images", "clips", "sounds", "voice_name", "style",
-                                "aspect", "timed_segment_seconds", "brand_kit"]
+                                "aspect", "timed_segment_seconds", "brand_kit", "script", "voices"]
     assert properties["sounds"] == {"default": True, "title": "Sounds", "type": "boolean"}
     assert "sounds: leave true; false only when the user asks for no sound effects" in declaration.description
     for name in ("sources", "images", "clips"):
@@ -333,7 +333,7 @@ def test_the_skill_says_how_to_write_the_brief():
     assert "brief" in text and "can't see" in text and "20,000" in text
     assert "sources" in text and "my message" in text and "earlier message" in text
     assert "no emojis" in text and "save_video_page" not in text
-    assert len(text.split("---", 2)[2].split()) < 900  # short: the writer has the page contract and the film grammar
+    assert len(text.split("---", 2)[2].split()) < 960  # short: the writer has the page contract and the film grammar
 
 
 def test_the_skill_says_sounds_are_on_unless_the_user_says_no_sound_effects():
@@ -349,6 +349,11 @@ def test_the_skill_says_how_to_gather_pictures_clips_and_places():
     assert "lat, lon" in text and "Gangtok" in text and "Lachung" in text  # a town the map may not know
     assert "private chat" in text and "open it in Photos once" in text
     assert "Unsplash, Pexels" in text and "watermarked" in text  # free pictures first; never a stock site's preview
+
+
+def test_the_skill_says_how_to_film_the_users_own_script():
+    text = (SKILL / "SKILL.md").read_text()
+    assert "`script`" in text and "`voices`" in text and "word for word" in text
 
 
 def test_the_skill_says_videos_can_be_3d_with_real_surfaces():
@@ -499,3 +504,69 @@ async def test_sounds_as_the_model_sends_them_are_read_as_on_or_off(world, given
     out = await call_as_adk_does(topic="Attention", sounds=given)
     assert "result" in out, out
     assert world[1][0].data["sounds"] is meant
+
+
+# A dialogue video: the user's script, each speaker in their own voice (odie.video.dialogue).
+
+NIGHT = "## Scene: A workshop at night\nNARRATOR: The lamp burned on.\nANNA: Still here? [pause 1]\nBEN: Always.\n"
+
+
+def a_script(text: str = NIGHT) -> str:
+    from odie.agent.tools.files import workspace
+    path = workspace() / "night.md"
+    path.write_text(text)
+    return "night.md"
+
+
+async def test_a_script_with_a_voice_for_each_speaker_queues_a_dialogue_video(world):
+    store, submitted = world
+    voice.set_tts(store, engine="kokoro", voice="af_heart")
+    out = await tools.make_video("The night shift", brief="Warm lamplight, two friends.", script=a_script(),
+                                 voices=[{"id": "Anna", "name": "Bella"}, {"id": "ben", "name": "Michael"}])
+    assert "result" in out, out
+    kept = submitted[0].data["dialogue"]
+    assert kept["voices"] == {"anna": "af_bella", "ben": "am_michael"}  # by speaker, as voice ids
+    assert [line["speaker"] for line in kept["script"][0]["lines"]] == ["narrator", "anna", "ben"]
+    assert submitted[0].brief == "Warm lamplight, two friends."  # the script isn't retyped into the brief
+
+
+async def test_a_dialogue_script_is_refused_before_queueing_when_it_cant_be_staged(world):
+    store, submitted = world
+    voice.set_tts(store, engine="kokoro", voice="af_heart")
+    out = await tools.make_video("Night", script=a_script(), voices=[{"id": "anna", "name": "Bella"}])
+    assert "ben" in out["error"] and "voice" in out["error"]
+    out = await tools.make_video("Night", script=a_script("Just notes, nobody speaks."),
+                                 voices=[{"id": "anna", "name": "Bella"}])
+    assert "no lines" in out["error"]
+    out = await tools.make_video("Night", script=a_script(), voices=[{"id": "anna", "name": "cedar"},
+                                                                     {"id": "ben", "name": "Michael"}])
+    assert "cedar" in out["error"]
+    out = await tools.make_video("Night", script=a_script(), voices=[{"id": "anna", "name": "Bella"},
+                                                                     {"id": "ben", "name": "Michael"}],
+                                 timed_segment_seconds=60)
+    assert "dialogue" in out["error"]
+    out = await tools.make_video("Night", script="missing.md", voices=[])
+    assert "error" in out
+    assert submitted == []
+
+
+async def test_voices_may_be_a_mapping_and_need_a_script(world):
+    store, submitted = world
+    voice.set_tts(store, engine="kokoro", voice="af_heart")
+    out = await tools.make_video("Night", script=a_script(), voices={"Anna": "Bella", "ben": "Michael"})
+    assert "result" in out, out
+    assert submitted[0].data["dialogue"]["voices"] == {"anna": "af_bella", "ben": "am_michael"}
+    out = await tools.make_video("Night", voices=[{"id": "anna", "name": "Bella"}])
+    assert "script" in out["error"] and len(submitted) == 1
+
+
+async def test_a_script_too_big_for_one_video_is_refused_before_queueing(world):
+    store, submitted = world
+    voice.set_tts(store, engine="kokoro", voice="af_heart")
+    many = "## Scene: The roof\n" + "\n".join(f"ANNA: Line {n}." for n in range(13))
+    out = await tools.make_video("Night", script=a_script(many), voices=[{"id": "anna", "name": "Bella"}])
+    assert "13 lines" in out["error"] and "## Scene:" in out["error"] and submitted == []
+
+
+def test_make_video_says_a_pasted_script_is_my_message():
+    assert '"my message"' in FunctionTool(tools.make_video)._get_declaration().description.split("script:")[1]

@@ -144,15 +144,16 @@ def scene_timings(timings: dict) -> dict:
 
 
 def assemble(body: str, timings: dict, assets_script: str = "", credits_script: str = "",
-             size: tuple[int, int] = timeline.LANDSCAPE, brand_script: str = "") -> str:
+             size: tuple[int, int] = timeline.LANDSCAPE, brand_script: str = "", lines_script: str = "") -> str:
     """The whole HTML document for a video on a stage of `size` (timeline.LANDSCAPE or VERTICAL; base_style and
     `window.__stage`): KaTeX's CSS, three.js, KaTeX, video.js, the map's data (`window.__geo`)
     and map.js, then `window.__timings`
     ({"starts": [...], "lengths": [...], "beats": [[...], ...]}, in seconds, passed through as given), and for a video
     with a timed segment `window.ODIE_TIMED` (timings["timed"]: {"start", "seconds", "end"}, odie.video.timed), then the
     video's pictures and clips (`assets_script`, odie.video.assets.staple's `<script>Video.assets({...})</script>`,
-    when there are any), then Odie's credits card (`credits_script`, credits_scene's, when there is one), then a brand
-    kit's brand.js and settings (`brand_script`, odie.video.brand.page_script, for a video with a kit), then `body`
+    when there are any), then a dialogue video's line timeline (`lines_script`, odie.video.dialogue.lines_script;
+    none for any other video), then Odie's credits card (`credits_script`, credits_scene's, when there is one), then a
+    brand kit's brand.js and settings (`brand_script`, odie.video.brand.page_script, for a video with a kit), then `body`
     (the model's markup and script), in that order. The credits card comes before the body but plays after it: it
     registers a closing scene that the body's Video.scenes([...]) puts after the writer's last, so the timings then
     carry one scene more than the writer's page has."""
@@ -174,6 +175,8 @@ def assemble(body: str, timings: dict, assets_script: str = "", credits_script: 
         head.append(f"<script>window.ODIE_TIMED = {json.dumps(timings['timed'])};</script>")
     if assets_script:
         head.append(assets_script)
+    if lines_script:  # a dialogue video's line timeline (odie.video.dialogue.lines_script); none for any other
+        head.append(lines_script)
     if credits_script:
         head.append(credits_script)
     if brand_script:
@@ -232,7 +235,7 @@ def probe_times(timings: dict) -> list[float]:
 
 
 def first_problem(scene_count: int | None, narration_count: int, load_errors: list[str],
-                  draw_errors: list[tuple[int, float, str]]) -> str | None:
+                  draw_errors: list[tuple[int, float, str]], scripted: bool = False) -> str | None:
     """Decides which single problem the model hears about, as one plain paragraph (fixing one at a time is clearer than
     a list, and a first fault often causes the later ones). The order is the order they would bite:
     page never called Video.scenes (scene_count None) -> "never called Video.scenes", and if the page also raised
@@ -244,6 +247,9 @@ def first_problem(scene_count: int | None, narration_count: int, load_errors: li
         if load_errors:
             return f"The page failed while loading, before it called Video.scenes(...): {load_errors[0]}"
         return "The page never called Video.scenes(...): put all scenes in one Video.scenes([...]) call."
+    if scene_count != narration_count and scripted:  # a dialogue video: the user's script sets the scenes
+        return (f"The page has {scene_count} scenes but the script has {narration_count}: one page scene per script "
+                "scene, in order.")
     if scene_count != narration_count:
         return (f"The page has {scene_count} scenes but there are {narration_count} narration parts: "
                 "one narration per scene.")
@@ -270,7 +276,7 @@ class CheckResult:
 
 async def check_with_cues(body: str, narration: list[str], browser, assets_script: str = "",
                           size: tuple[int, int] = timeline.LANDSCAPE,
-                          timed_seconds: float | None = None) -> CheckResult:
+                          timed_seconds: float | None = None, lines_for=None) -> CheckResult:
     """Loads the page in a sealed tab of the video's size (1920x1080, or 1080x1920 for a vertical video) with estimated
     timings and the video's pictures and clips
     (`assets_script`, as the render will have them) and draws three moments of every scene, so the chat turn hears
@@ -281,17 +287,21 @@ async def check_with_cues(body: str, narration: list[str], browser, assets_scrip
     them, right or wrong: whether they fit, shape included, is odie.video.sounds.cue_problem's to say. A video with a
     timed segment of `timed_seconds` must mark it in Video.scenes (odie.video.timed.marks_problem: no marks -> how to
     mark it), and is drawn with its segment clock running (s.left()) from the marked scenes' estimated start to their
-    end; the marks are ignored for any other video."""
+    end; the marks are ignored for any other video. A dialogue video's page is drawn with its line timeline for the
+    estimated timings (`lines_for(timings)`, the page script), so s.speaking() and s.mouth() run in the check too."""
     timings = estimated_timings(narration)
+    lines_script = ""
+    if lines_for is not None:
+        lines_script = lines_for(timings)
     try:
-        html = assemble(body, timings, assets_script, size=size)
+        html = assemble(body, timings, assets_script, size=size, lines_script=lines_script)
     except ValueError as e:
         return CheckResult(problem=str(e))
     width, height = size
     async with browser.sealed_page(html, width, height) as tab:
         load_errors = list(tab.errors)
         scene_count = await tab.eval("window.__sceneCount === undefined ? null : window.__sceneCount")
-        problem = first_problem(scene_count, len(narration), load_errors, [])
+        problem = first_problem(scene_count, len(narration), load_errors, [], scripted=lines_for is not None)
         if problem:
             return CheckResult(problem=problem)
         segment = None
@@ -311,7 +321,8 @@ async def check_with_cues(body: str, narration: list[str], browser, assets_scrip
                 t = round(seconds - timings["starts"][scene_index], 3)  # draw's t: seconds into the scene
                 draw_errors.append((scene_index + 1, t, error))
                 break
-        problem = first_problem(scene_count, len(narration), load_errors, draw_errors)
+        problem = first_problem(scene_count, len(narration), load_errors, draw_errors,
+                                scripted=lines_for is not None)
         if problem:
             return CheckResult(problem=problem)
         cues = await tab.eval("Video.soundCues()")

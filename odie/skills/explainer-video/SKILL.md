@@ -68,6 +68,12 @@ In a private chat only the user's own pictures go in (web pictures and clips are
 for them. If a picture can't be fetched, the writer does without it: say nothing. If the result says something was
 left out, tell the user in a few words (a library picture with a small copy: open it in Photos once).
 
+## Dialogue videos
+
+When the user wrote a script (`## Scene:` headings, `SPEAKER: line` lines) and wants it filmed, pass `script` (its
+note or file) and `voices`, one Settings-engine voice per speaker but the narrator (ask which if they didn't say).
+The brief then gives only the look and how each character looks: the writer stages the script word for word.
+
 ## The call
 
 ```
