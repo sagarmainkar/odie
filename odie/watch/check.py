@@ -211,6 +211,7 @@ async def run_check(store, now: datetime, turn, post, push, memory=None, memory_
         ping(it["title"], it["why"])
     from odie.agent.tools.files import hand_over, workspace
     ws = workspace().resolve()
+    checklist: list[str] = []  # told notes without files: one "Done" card on the Desk, not a bubble each
     for d in r["done"]:
         media = []
         files = d.get("files") or []
@@ -228,8 +229,13 @@ async def run_check(store, now: datetime, turn, post, push, memory=None, memory_
         if not told:
             log.info("watch: done, not told: %s", message)
             continue
-        await say(message, media=media or None)
+        if media:
+            await say(message, media=media)
+        else:
+            checklist.append(message)
         ping("Odie: done", message[:160])
+    if checklist:
+        await say(cards.round_text("", [], checklist))
     return "ok"
 
 
@@ -249,12 +255,15 @@ def worth_telling(item: dict, media: list, added_task: bool) -> bool:
     check that only relayed, found nothing new, found it already covered, or couldn't do something in the background
     tells the user nothing.
     Example: {"message": "The deck from Asha's PDF is ready", "files": [deck]} -> True (a file card);
-    a relay check that added task #41, no tell -> True (a reminder is always told);
+    a relay check that added task #41, no tell -> True (a reminder is told when the model didn't say);
+    the same check's {"message": "HN: still no reply", "tell": false} -> False (the model said quiet);
     {"message": "Asha's flight moved to 18:00", "tell": "True"} -> True;
     {"message": "Relayed the digests; both events already covered, nothing added"}, no task added -> False."""
-    if media or added_task:
+    if media:
         return True
     tell = item.get("tell")
     if isinstance(tell, str):
-        return tell.strip().lower() == "true"
+        tell = tell.strip().lower() == "true"
+    if tell is None:
+        return added_task  # the model said nothing: a reminder the check added is still worth telling
     return tell is True

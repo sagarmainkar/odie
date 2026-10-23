@@ -154,7 +154,7 @@ async def test_a_done_item_worth_telling_posts_once_and_pushes(store, tmp_path):
         await call(tools, "report", needs_you=[], line="2 new emails", done=[{"message": news, "files": [], "tell": True}])
         return ""
     assert await check.run_check(store, DAY, turn, post, push) == "ok"
-    assert [t for t, _ in posts] == [news]
+    assert len(posts) == 1 and "```odie-blocks" in posts[0][0] and news in posts[0][0]
     assert pushes == [("Odie: done", news)]
     assert store.get_setting(report.CARD)["done"][-1]["told"] is True
 
@@ -173,7 +173,7 @@ async def test_a_check_that_added_a_reminder_tells_even_without_tell(store, tmp_
         await call(tools, "report", needs_you=[], line="2 new emails", done=[{"message": news, "files": []}])
         return ""
     assert await check.run_check(store, DAY, turn, post, push) == "ok"
-    assert [t for t, _ in posts] == [news]
+    assert len(posts) == 1 and "```odie-blocks" in posts[0][0] and news in posts[0][0]
     assert pushes == [("Odie: done", news)]
 
 
@@ -185,6 +185,31 @@ async def test_a_check_that_added_a_reminder_tells_even_without_tell(store, tmp_
 ])
 def test_worth_telling_reads_tell(item, told):
     assert check.worth_telling(item, [], added_task=False) is told
+
+
+def test_a_note_marked_dont_tell_stays_quiet_even_when_the_check_added_a_reminder():
+    """One check added a reminder and also noted "HN: still no reply" with tell false: only the reminder's note is
+    worth a message; the added task must not drag every other note onto the Desk."""
+    assert check.worth_telling({"message": "HN: still no reply", "tell": False}, [], added_task=True) is False
+    assert check.worth_telling({"message": "HN: still no reply", "tell": "false"}, [], added_task=True) is False
+    assert check.worth_telling({"message": "Added a heads-up"}, [], added_task=True) is True
+
+
+async def test_the_notes_one_check_tells_go_on_the_desk_as_one_checklist(store, tmp_path):
+    from odie.plugins import mcp
+    mcp.write_config({"mymail": spec_for("plain", tmp_path, mail=ZAP_MAIL, events=EVENTS)})
+    posts, pushes, post, push = recorder()
+    first = "Added a heads-up for the recital, Friday 17:30."
+    second = "Saved the school form to your files."
+
+    async def turn(prompt, tools, instruction):
+        await call(tools, "new_mail")
+        await call(tools, "report", needs_you=[], line="quiet",
+                   done=[{"message": first, "tell": True}, {"message": second, "tell": True}])
+    assert await check.run_check(store, DAY, turn, post, push) == "ok"
+    assert len(posts) == 1
+    text = posts[0][0]
+    assert "```odie-blocks" in text and first in text and second in text and "Done" in text
 
 
 async def test_nothing_connected_keeps_the_quiet_record(store):
