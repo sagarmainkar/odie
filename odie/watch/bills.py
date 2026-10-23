@@ -5,6 +5,8 @@ order gets an event on its delivery day that follows its status. The calendar ev
 through close(), which says why in the reminder's notes, so Today can show it and the user can reopen it."""
 from __future__ import annotations
 
+import json
+
 import re
 from datetime import UTC, datetime
 
@@ -20,6 +22,7 @@ LOOKS_LIKE = re.compile(r"\b(bills?|statements?|invoices?|payments?|paid|receipt
                         r"delivered|delivery|deliveries|refunds?|cancelled|canceled|emi|recharge)\b", re.I)
 AMOUNT = re.compile(r"(₹|\brs\.?\s?|\binr\b)\s?[\d,]+", re.I)
 CLOSED_NOTE = "Closed by the watch: "
+KEPT = "\nKept for a reopen: "  # after the closing reason: what a watch thread knew about its mail, as JSON
 DONE_MARKS = (("✓ Paid · ", "paid"), ("✓ Delivered · ", "delivered"), ("✗ Cancelled · ", "cancelled"))
 
 
@@ -74,10 +77,37 @@ def closed_by_watch(store, since: datetime) -> list[dict]:
     since_utc = since.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S")
     rows = store.query("select id, title, notes, completed_at from tasks where status = 'done' and notes like ? "
                        "and completed_at >= ? order by completed_at desc", (CLOSED_NOTE + "%", since_utc))
-    return [{"id": r["id"], "title": r["title"], "why": r["notes"][len(CLOSED_NOTE):], "closed": r["completed_at"]}
+    return [{"id": r["id"], "title": r["title"], "why": why_closed(r["notes"]), "closed": r["completed_at"]}
             for r in rows]
 
 
+def closed_note(prefix: str, reason: str, facts: dict | None = None) -> str:
+    """A closed task's notes: who closed it and why, then what a watch thread knew about its mail, kept so a reopen
+    brings it back whole. ("Closed by the watch: ", "delivered", {"thread": "t1"}) ->
+    'Closed by the watch: delivered\nKept for a reopen: {"thread": "t1"}'; no facts -> just the first line."""
+    note = prefix + reason
+    if facts:
+        note += KEPT + json.dumps(facts)
+    return note
+
+
+def why_closed(notes: str) -> str:
+    """The closing reason alone: 'Closed by the watch: delivered\nKept for a reopen: {…}' -> "delivered"."""
+    first_line = notes.split(KEPT, 1)[0]
+    return first_line[len(CLOSED_NOTE):]
+
+
+def kept_facts(notes: str | None) -> str | None:
+    """What a closed watch thread kept about its mail, as its open notes again: '…\nKept for a reopen: {"thread":
+    "t1"}' -> '{"thread": "t1"}'; a note without it (a reminder the watch closed) -> None."""
+    if not notes or KEPT not in notes:
+        return None
+    return notes.split(KEPT, 1)[1]
+
+
 def reopen(store, task_id: int) -> None:
-    """The user says the watch was wrong: the reminder is open again and the watch's note goes."""
-    store.update_task(int(task_id), status="open", notes=None, completed_at=None)
+    """The user says the watch was wrong: the reminder is open again and the watch's note goes. A watch thread gets
+    back what it knew about its mail, so the next check can still read its thread."""
+    row = store.one("select notes from tasks where id = ?", (int(task_id),))
+    notes = kept_facts(row["notes"]) if row else None
+    store.update_task(int(task_id), status="open", notes=notes, completed_at=None)
