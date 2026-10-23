@@ -599,7 +599,7 @@
     }
   },
   {
-    "description": "Make a narrated, animated explainer video that plays in this chat. A separate writer makes the narration and\nthe animation from your brief, in the background; it can't see this chat, the user's notes, memory or the web.\ntopic: what the video is about, short (\"How attention works\").\nminutes: its length, from 1 to 6: the user's length, else 2.\nbrief: the plan: who it's for and their level, the key points in order, the look, examples, numbers or formulas\nthat must appear, and any facts you found. Up to 20,000 characters.\nsources: what the user gave, passed to the writer word for word (never retype it): \"my message\" (the user's\nlatest message), a note's name or path in their vault, or a text file's path in Odie's workspace. Up to 5.\nimages: pictures for the film, at most 20, each one line \"address — what it shows\": the address a tool gave\n(https://… from find_images, photo:<id>, upload:<id>, screenshot:<id>), then what the picture shows, its mood, its\norientation if unusual, and a web picture's credit in brackets at the end. The writer sees only these words.\nFor a reel, find web pictures and clips only when the topic needs a real one (a place, a person, a real thing);\nthe writer draws the rest.\nclips: short stock clips, at most 6, the same way, with the https:// address find_clips gave.\nsounds: leave true; false only when the user asks for no sound effects.\nvoice_name: leave empty; only when the user asks for a voice, one of the Settings engine's voices.\nstyle: leave empty; only when the user says how the narrator should sound, one line up to 300 characters, like\n\"Curious science narrator. Calm, but lift slightly at the payoff. Slow down on numbers.\" Only OpenAI's voices\nfollow it.\naspect: leave empty (a wide video); \"vertical\" when the user says insta, reel, shorts, vertical or mobile (a\n1080 x 1920 reel; only the frame changes, its length is still `minutes`). Never put the aspect in the brief.\ntimed_segment_seconds: leave empty; only when the brief says a segment must last exactly N seconds (a countdown\ncharacter's 60 seconds inside a longer video): N. The writer marks that segment, and Odie fits its voice to exactly\nN seconds, first word to last; the rest of the video keeps its natural length.\nbrand_kit: leave empty; only when a skill says to use its brand kit: that skill's name. The kit's fixed look,\nsounds and opening and closing scenes go in as they are, and the writer draws around them.\nIt returns at once. {\"error\": …}: fix exactly that and call again. {\"result\": …}: the video is being made; reply\nin one or two lines as the result says, and don't repeat the brief.",
+    "description": "Make a narrated, animated explainer video that plays in this chat. A separate writer makes the narration and\nthe animation from your brief, in the background; it can't see this chat, the user's notes, memory or the web.\ntopic: what the video is about, short (\"How attention works\").\nminutes: its length, from 1 to 6: the user's length, else 2.\nbrief: the plan: who it's for and their level, the key points in order, the look, examples, numbers or formulas\nthat must appear, and any facts you found. Up to 20,000 characters.\nsources: what the user gave, passed to the writer word for word (never retype it): \"my message\" (the user's\nlatest message), a note's name or path in their vault, or a text file's path in Odie's workspace. Up to 5.\nimages: pictures for the film, at most 20, each one line \"address — what it shows\": the address a tool gave\n(https://… from find_images, photo:<id>, upload:<id>, screenshot:<id>), then what the picture shows, its mood, its\norientation if unusual, and a web picture's credit in brackets at the end. The writer sees only these words.\nFor a reel, find web pictures and clips only when the topic needs a real one (a place, a person, a real thing);\nthe writer draws the rest.\nclips: short stock clips, at most 6, the same way, with the https:// address find_clips gave.\nsounds: leave true; false only when the user asks for no sound effects.\nvoice_name: leave empty; only when the user asks for a voice, one of the Settings engine's voices.\nstyle: leave empty; only when the user says how the narrator should sound, one line up to 300 characters, like\n\"Curious science narrator. Calm, but lift slightly at the payoff. Slow down on numbers.\" Only OpenAI's voices\nfollow it.\naspect: leave empty (a wide video); \"vertical\" when the user says insta, reel, shorts, vertical or mobile (a\n1080 x 1920 reel; only the frame changes, its length is still `minutes`). Never put the aspect in the brief.\ntimed_segment_seconds: leave empty; only when the brief says a segment must last exactly N seconds (a countdown\ncharacter's 60 seconds inside a longer video): N. The writer marks that segment, and Odie fits its voice to exactly\nN seconds, first word to last; the rest of the video keeps its natural length.\nbrand_kit: leave empty; only when a skill says to use its brand kit: that skill's name. The kit's fixed look,\nsounds and opening and closing scenes go in as they are, and the writer draws around them.\nscript: leave empty; only for a dialogue video the user wrote: their script's note name or path, or a workspace\nfile (\"## Scene: …\" headings, \"SPEAKER: line\" lines). The writer stages it word for word; it isn't retyped\ninto the brief, which then says only the look and the cast's appearance.\nvoices: with a script, a voice for every speaker but the narrator: [{\"id\": \"anna\", \"name\": <a voice of the\nSettings engine>}].\nIt returns at once. {\"error\": …}: fix exactly that and call again. {\"result\": …}: the video is being made; reply\nin one or two lines as the result says, and don't repeat the brief.",
     "name": "make_video",
     "parameters_json_schema": {
       "properties": {
@@ -698,6 +698,27 @@
           "default": "",
           "title": "Brand Kit",
           "type": "string"
+        },
+        "script": {
+          "default": "",
+          "title": "Script",
+          "type": "string"
+        },
+        "voices": {
+          "anyOf": [
+            {
+              "items": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Voices"
         }
       },
       "required": [

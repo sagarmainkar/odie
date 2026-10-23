@@ -5,7 +5,7 @@ from pathlib import Path
 
 from odie.video import page, writer
 
-GOLDEN = Path(__file__).parent / "golden" / "video"
+GOLDEN = Path(__file__).parent / "golden_video"
 
 
 def test_a_video_without_a_script_gets_the_writers_instruction_as_before():
