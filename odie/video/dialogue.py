@@ -12,7 +12,8 @@ The script, as the user writes it:
     ANNA: You're still here? [pause 1.2]
     BEN: Someone has to finish it.
 
-"## Scene: <where>" starts a scene; "SPEAKER: text" is a line (the speaker's case doesn't matter); "[pause N]" at a
+"## Act: <label>" marks the act the scenes after it are in (for the cast's ages); "## Scene: <where>" starts a
+scene; "SPEAKER: text" is a line (the speaker's case doesn't matter); "[pause N]" at a
 line's end is the quiet after it in seconds. Anything else (front matter, a title, notes) is ignored."""
 from __future__ import annotations
 
@@ -32,6 +33,7 @@ MAX_PAUSE = 10.0  # the longest pause a line may ask for, in seconds
 LOUDNESS_STEP = 0.02  # seconds per loudness value: what the mouths follow
 RELEASE = 0.7  # how much of the last step's loudness a mouth keeps as it closes: shut after about 0.1 s of quiet
 SCENE = re.compile(r"^#{2,}\s*Scene\s*:\s*(.*)$", re.IGNORECASE)
+ACT = re.compile(r"^#{1,}\s*Act\s*:\s*(.*)$", re.IGNORECASE)  # "## Act: Chapter one": the scenes after it are in it
 MARKER = re.compile(r"^\s*(?:[-*+]\s+|\d+[.)]\s+|>\s*)")  # a bullet, a number or a quote before the name
 LINE = re.compile(r"^([^\W\d_][\w .'-]{0,40}?)\s*(?:\([^)]*\))?\s*:\s*(.+)$")  # NAME (direction): text
 PAUSE = re.compile(r"\s*\[pause(?:\s+(\d+(?:\.\d+)?)\s*s?)?\s*\]\s*$", re.IGNORECASE)
@@ -62,6 +64,7 @@ class Line:
 class Scene:
     where: str  # the heading's words: where the scene is, for the writer
     lines: list[Line] = field(default_factory=list)
+    act: str = ""  # the act it is in ("## Act: Chapter one" before it), for the cast's ages; "" when none was given
 
 
 @dataclass
@@ -74,13 +77,13 @@ class Script:
 
     def as_data(self) -> list[dict]:
         """The script as the job keeps it: [{"where", "lines": [{"speaker", "text", "pause"}]}]."""
-        return [{"where": scene.where, "lines": [line.__dict__.copy() for line in scene.lines]}
+        return [{"where": scene.where, "act": scene.act, "lines": [line.__dict__.copy() for line in scene.lines]}
                 for scene in self.scenes]
 
 
 def from_data(data: list[dict]) -> Script:
     """A script the job kept (Script.as_data) read back."""
-    return Script([Scene(s["where"], [Line(**line) for line in s["lines"]]) for s in data])
+    return Script([Scene(s["where"], [Line(**line) for line in s["lines"]], s.get("act", "")) for s in data])
 
 
 def line_of(text: str) -> Line | None:
@@ -118,10 +121,15 @@ def parse(text: str) -> Script:
     body = FRONT_MATTER.sub("", text.replace("\r\n", "\n"), count=1)
     scenes: list[Scene] = []
     current: Scene | None = None
+    act = ""
     for raw in body.split("\n"):
+        act_heading = ACT.match(raw.strip())
+        if act_heading:
+            act = act_heading.group(1).strip()
+            continue
         heading = SCENE.match(raw.strip())
         if heading:
-            current = Scene(where=heading.group(1).strip())
+            current = Scene(where=heading.group(1).strip(), act=act)
             scenes.append(current)
             continue
         if raw.lstrip().startswith("#"):
@@ -130,7 +138,7 @@ def parse(text: str) -> Script:
         if line is None:
             continue
         if current is None:
-            current = Scene(where="")
+            current = Scene(where="", act=act)
             scenes.append(current)
         current.lines.append(line)
     if not any(scene.lines for scene in scenes):
