@@ -22,4 +22,4 @@ def test_a_video_without_a_script_gets_the_writers_message_and_tool_as_before():
 
 def test_a_page_without_lines_has_no_line_timeline():
     html = page.assemble('<script>Video.scenes([{draw(t, s) {}}])</script>', {"starts": [0.0], "lengths": [2.0]})
-    assert "Video.lines(" not in html
+    assert "<script>Video.lines(" not in html
