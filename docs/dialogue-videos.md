@@ -41,8 +41,8 @@ TOBI: They made it.
 ## What you get
 
 - The video in the chat, timed from the spoken lines.
-- `timeline.json` next to it, in Odie's workspace (the chat says where): every line's speaker, voice, text, start and length, and every
-  scene's start and length, in seconds, so the work can be re-voiced or re-cut elsewhere.
+- `timeline.json` next to it, in Odie's workspace (the chat says where): every line's speaker, voice, text, start
+  and length, and every scene's start and length, in seconds, so the work can be re-voiced or re-cut elsewhere.
 
 ## What it is not (yet)
 
