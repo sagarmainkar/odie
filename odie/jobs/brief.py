@@ -33,7 +33,16 @@ async def gather_inputs(store: Store, now: datetime, post_message=None) -> Brief
         wp = watch_part(store)
         if wp is not None:
             parts.append(wp)
-    return BriefInputs(format_tasks(store.open_tasks(now.isoformat())), parts)
+    return BriefInputs(format_tasks(users_open_tasks(store, now)), parts)
+
+
+def users_open_tasks(store: Store, now: datetime) -> list:
+    """The open tasks the brief lists as needing the user: all but the watch's own threads, which the watch's card
+    already shows when they need the user. "Answer Asha" (the user's) -> listed; "Order: desk lamp" the watch follows
+    while it ships -> left out (it needs nobody until it is late, and then the card says so)."""
+    from odie.watch import threads
+    rows = store.open_tasks(now.isoformat())
+    return [r for r in rows if r["source_kind"] != threads.SOURCE_KIND]
 
 
 def watch_part(store: Store) -> BriefPart | None:

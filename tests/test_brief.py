@@ -67,6 +67,19 @@ async def test_brief_lists_open_tasks_with_ids_and_skips_snoozed(tmp_path):
     assert "Dues and deadlines" not in p  # raw ledger text no longer feeds the brief
 
 
+async def test_the_watchs_threads_are_not_listed_as_needing_the_user(tmp_path):
+    """The watch follows orders and replies on its own and shows what needs the user on its card; listing its threads
+    as open threads too counted them twice, and an order in transit read as "needs you"."""
+    from odie.watch import threads
+    s = Store(tmp_path / "a.db")
+    s.init_schema()
+    s.add_task("Answer Asha", "todo", due_at="2026-10-03")
+    threads.track(s, "mail:o1", "order", "Order: desk lamp", "shipped", due="2026-10-02")
+    inp = await gather_inputs(s, NOW)
+    assert "Asha" in inp.tasks
+    assert "desk lamp" not in inp.tasks
+
+
 async def test_manual_brief_does_not_push(monkeypatch, tmp_path):
     import odie.jobs.brief as b
     s = Store(tmp_path / "a.db")
