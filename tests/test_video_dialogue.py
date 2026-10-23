@@ -36,7 +36,8 @@ def test_a_script_reads_as_scenes_of_speakers_lines_with_pauses():
         ("ben", "Someone has to finish it."),
     ]
     assert first[1].pause == 1.2
-    assert first[0].pause == dialogue.DEFAULT_PAUSE
+    assert first[0].pause is None  # none given: DEFAULT_PAUSE between lines (Line.pause_after)
+    assert first[0].pause_after(is_last_in_scene=False) == dialogue.DEFAULT_PAUSE
     assert script.speakers() == ["anna", "ben", "narrator"]
 
 
@@ -196,7 +197,7 @@ async def test_a_dialogue_job_times_its_page_from_the_lines_and_keeps_a_timeline
     job.data = {"narration": dialogue.narration_of(script), "body": "<div></div>",
                 "dialogue": {"script": script.as_data(), "voices": {"anna": "af_bella", "ben": "am_michael"}}}
 
-    async def stand_in_dialogue(store, script, voices, transport=None, style=""):
+    async def stand_in_dialogue(store, script, voices, transport=None, style="", narrator_voice=""):
         lines = [{"index": 0, "speaker": "anna", "text": "Hi.", "voice": "af_bella", "scene": 1, "at": 0.0,
                   "dur": 1.0, "amplitude": [1.0]},
                  {"index": 1, "speaker": "ben", "text": "Hello.", "voice": "am_michael", "scene": 1, "at": 1.5,
@@ -244,3 +245,68 @@ def test_a_lines_quiet_after_its_last_word_is_cut_to_a_short_tail():
         assert round(w.getnframes() / w.getframerate(), 2) == 1.0 + narrate.MAX_TAIL
     short = tone_then_quiet(1.0, 0.05)
     assert narrate.tail_cut(short) == short  # already short: the same bytes
+
+
+# The review's fixes: scripts as people (and LLMs) really write them, and limits said before anything is queued.
+
+@pytest.mark.parametrize("written", ["- ANNA: Hi.", "* ANNA: Hi.", "1. ANNA: Hi.", "> ANNA: Hi.", "**ANNA:** Hi.",
+                                     "**ANNA**: Hi.", "__ANNA__: Hi.", "ANNA (whispering): Hi."])
+def test_markdown_bullets_bold_names_and_directions_still_read_as_lines(written):
+    [line] = dialogue.parse(written).scenes[0].lines
+    assert (line.speaker, line.text) == ("anna", "Hi.")
+
+
+def test_a_name_may_start_with_any_letter():
+    [line] = dialogue.parse("ÉLODIE: Salut.").scenes[0].lines
+    assert line.speaker == "élodie"
+
+
+@pytest.mark.parametrize("written, pause", [("ANNA: Hi. [pause]", None), ("ANNA: Hi. [pause 1.5s]", 1.5),
+                                            ("ANNA: Hi. [Pause 2]", 2.0)])
+def test_pause_marks_are_read_never_spoken(written, pause):
+    [line] = dialogue.parse(written).scenes[0].lines
+    assert line.text == "Hi." and line.pause == pause
+
+
+def test_a_pause_over_ten_seconds_is_refused_naming_the_line():
+    with pytest.raises(dialogue.ScriptProblem, match="at most 10"):
+        dialogue.parse("ANNA: Wait. [pause 300]")
+
+
+def test_a_bar_in_a_line_is_refused_since_it_marks_lines_for_the_writer():
+    with pytest.raises(dialogue.ScriptProblem, match="Either this"):
+        dialogue.parse("ANNA: Either this | or that.")
+
+
+def test_a_script_too_big_for_a_video_is_said_in_its_own_words():
+    many = "## Scene: One\n" + "\n".join(f"ANNA: Line {n}." for n in range(13))
+    assert "13 lines" in dialogue.script_problem(dialogue.parse(many))
+    long = "\n".join(f"## Scene: {n}\nANNA: " + "word " * 150 for n in range(7))
+    assert "minutes" in dialogue.script_problem(dialogue.parse(long))
+    assert dialogue.script_problem(dialogue.parse(SCRIPT)) is None
+
+
+def test_a_pause_on_a_scenes_last_line_is_kept_when_the_script_gives_one():
+    script = dialogue.parse("## Scene: A\nANNA: Hi. [pause 2]\n## Scene: B\nBEN: Yo.")
+    assert script.scenes[0].lines[0].pause == 2.0
+    assert dialogue.parse("ANNA: Hi.").scenes[0].lines[0].pause is None  # none given: the default between lines
+
+
+def test_a_line_that_closes_a_script_tag_cant_break_the_page():
+    assert "</script>" not in dialogue.lines_script([{"text": "Look </script> here"}]).removesuffix("</script>")
+
+
+async def test_a_characters_voice_is_checked_again_when_spoken_and_the_narrator_takes_the_asked_voice(store,
+                                                                                                      monkeypatch):
+    from odie import voice
+    from odie.video import narrate
+    from tests.test_speak import kokoro
+    spoken = []
+    script = dialogue.parse("NARRATOR: Night fell.\nANNA: Hi.")
+    await narrate.narrate_dialogue(store, script, {"anna": "af_bella"}, transport=kokoro(spoken, 0.5),
+                                   narrator_voice="am_michael")
+    assert {call["text"]: call["voice"] for call in spoken} == {"Night fell.": "am_michael", "Hi.": "af_bella"}
+    monkeypatch.setattr(voice, "load_secret", lambda name: "sk-test")  # OpenAI's voices need a key to be chosen
+    voice.set_tts(store, engine="openai", voice="shimmer")  # Settings changed after the video was asked for
+    with pytest.raises(voice.VoiceUnavailable, match="af_bella"):
+        await narrate.narrate_dialogue(store, script, {"anna": "af_bella"}, transport=kokoro([], 0.5))

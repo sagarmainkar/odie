@@ -9,7 +9,8 @@ Without a script, videos are made exactly as before.
 ## Asking for one
 
 In chat: "Make a video of my script *The lighthouse* (the note in my vault). Mira is Bella, Tobi is Michael. Warm
-lamplight, a stormy sea outside." Odie reads the note, checks every speaker has a voice, and starts the video.
+lamplight, a stormy sea outside." Odie reads the note (or the script you pasted), checks every speaker has a voice
+and the script fits one video, and starts the video.
 
 Voices are the voices of the engine chosen in Settings → Voice. The narrator needs none: the video voice speaks for
 them.
@@ -27,17 +28,20 @@ MIRA: There. A sail.
 TOBI: They made it.
 ```
 
-- `## Scene: <where>` starts a scene. The words tell the writer where it happens.
-- `SPEAKER: what they say` is one line. Upper or lower case doesn't matter. Every speaker but `NARRATOR` needs a
-  voice.
-- `[pause N]` at the end of a line is the quiet after it, in seconds. Without it, a short breath.
+- `## Scene: <where>` starts a scene. The words tell the writer where it happens. A scene has at most 12 lines.
+- `SPEAKER: what they say` is one line. Upper or lower case doesn't matter, and the usual Markdown is fine:
+  `- ANNA: …`, `**ANNA:** …`, `ANNA (whispering): …` (the direction isn't spoken). Every speaker but `NARRATOR`
+  needs a voice. A line can't contain `|`.
+- `[pause N]` (or `[pause Ns]`) at the end of a line is the quiet after it, up to 10 seconds; on a scene's last line
+  it is a beat before the cut. `[pause]` alone, or nothing, is a short breath between lines.
 - Anything else (a title, front matter, notes) is ignored. A line like `Note: check this` reads as a speaker called
   Note, and Odie will say Note has no voice.
+- A whole script is at most 6 minutes of speech and pauses.
 
 ## What you get
 
 - The video in the chat, timed from the spoken lines.
-- `timeline.json` next to it (the chat says where): every line's speaker, voice, text, start and length, and every
+- `timeline.json` next to it, in Odie's workspace (the chat says where): every line's speaker, voice, text, start and length, and every
   scene's start and length, in seconds, so the work can be re-voiced or re-cut elsewhere.
 
 ## What it is not (yet)

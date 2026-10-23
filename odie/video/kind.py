@@ -81,7 +81,8 @@ def ready_text(job: jobs.Job) -> str:
     video also says where its timeline.json is."""
     line = jobs.ready_line("video", job.title)
     if job.data.get("dialogue"):
-        line = f"{line}\n\nIts timeline (every line's time and voice): {job.folder / TIMELINE}"
+        where = f"videos/{job.slug}/{TIMELINE}"
+        line = f"{line}\n\nIts timeline (every line's time and voice) is {where} in Odie's workspace."
     credits = job.data.get("caption_credits") or []
     if not credits:
         return line
@@ -160,7 +161,8 @@ async def write(job: jobs.Job, turn, browser) -> None:
 
 def script_of(job: jobs.Job) -> dialogue.Script | None:
     """A dialogue video's script, as make_video kept it; None for any other video (and every video before
-    dialogue), which then takes the narrator's path exactly as before."""
+    dialogue), which then takes the narrator's path exactly as before. {"dialogue": {"script": [...]}} -> that
+    script; {} -> None."""
     kept = job.data.get("dialogue")
     if not kept:
         return None
@@ -283,7 +285,8 @@ async def make_video(job: jobs.Job, browser, transport) -> Path:
     else:
         voices = job.data["dialogue"].get("voices", {})
         wav, lengths, beats, spoken_lines = await narrate_dialogue(jobs.hooks["store"], script, voices,
-                                                                   transport=transport, style=style)
+                                                                   transport=transport, style=style,
+                                                                   narrator_voice=job.voice_name)
     gaps = [timeline.BREATH] * (len(lengths) - 1)
     clock = None
     fitted_scenes = None  # the timed segment's first and last scene, once its voice is fitted

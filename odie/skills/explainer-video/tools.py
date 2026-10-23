@@ -212,10 +212,10 @@ async def make_video(topic: str, minutes: int = 2, brief: str = "", sources: lis
     N seconds, first word to last; the rest of the video keeps its natural length.
     brand_kit: leave empty; only when a skill says to use its brand kit: that skill's name. The kit's fixed look,
     sounds and opening and closing scenes go in as they are, and the writer draws around them.
-    script: leave empty; only for a dialogue video the user wrote: their script's note name or path, or a workspace
-    file ("## Scene: …" headings, "SPEAKER: line" lines). The writer stages it word for word; it isn't retyped
-    into the brief, which then says only the look and the cast's appearance.
-    voices: with a script, a voice for every speaker but the narrator: [{"id": "anna", "name": <a voice of the
+    script: leave empty; only for a dialogue video the user wrote: "my message" when they pasted it, else their
+    script's note name or path, or a workspace file ("## Scene: …" headings, "SPEAKER: line" lines). The writer
+    stages it word for word; never retype it, and the brief then says only the look and the cast's appearance.
+    voices: with a script only, a voice for every speaker but the narrator: [{"id": "anna", "name": <a voice of the
     Settings engine>}].
     It returns at once. {"error": …}: fix exactly that and call again. {"result": …}: the video is being made; reply
     in one or two lines as the result says, and don't repeat the brief."""
@@ -254,6 +254,8 @@ async def make_video(topic: str, minutes: int = 2, brief: str = "", sources: lis
             return {"error": problem}
 
     dialogue_data = None
+    if voices and not chat.text_or_empty(script).strip():
+        return {"error": VOICES_NEED_SCRIPT}
     if chat.text_or_empty(script).strip():
         if timed_seconds is not None or kit is not None:
             return {"error": DIALOGUE_ALONE}
@@ -322,15 +324,22 @@ DIALOGUE_ALONE = ("A dialogue video (a script) can't have a timed segment or a b
                   "timed_segment_seconds and brand_kit empty.")
 
 
+VOICES_NEED_SCRIPT = ("voices are for a dialogue video: give its script too, or use voice_name for one narrator's "
+                      "voice.")
+
+
 def voices_as_given(voices) -> list:
-    """The voices list the model meant: None -> []; JSON text of a list -> the list; a list -> as it is."""
+    """The voices list the model meant: None -> []; JSON text -> read as below; a list -> as it is; a mapping of
+    speaker to voice ({"anna": "Bella"}) -> [{"id": "anna", "name": "Bella"}]."""
     if voices is None:
         return []
     if isinstance(voices, str):
         try:
-            return json.loads(voices)
+            voices = json.loads(voices)
         except ValueError:
             raise ValueError('voices is a list: [{"id": "anna", "name": "<a voice>"}].') from None
+    if isinstance(voices, dict):
+        return [{"id": speaker, "name": name} for speaker, name in voices.items()]
     return voices
 
 
@@ -342,6 +351,9 @@ def dialogue_as_given(script_reference: str, voices, store) -> dict:
     script with no lines."""
     [source] = making_sources.resolve([script_reference], store)
     script = dialogue.parse(source.text)
+    problem = dialogue.script_problem(script)
+    if problem:
+        raise ValueError(problem)
     named = dialogue.voices_by_speaker(voices_as_given(voices))
     missing = dialogue.missing_voices(script, named)
     if missing:

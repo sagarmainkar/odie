@@ -19,7 +19,7 @@ from pathlib import Path
 from odie.browser.engine import BrowserError, BrowserTimeout
 from odie.making import writer as harness
 from odie.making.chat import text_or_empty
-from odie.video import brand, sounds, timed, timeline
+from odie.video import brand, dialogue, sounds, timed, timeline
 from odie.video import page as video_page
 from odie.video.limits import narration_problem, page_problem
 
@@ -146,7 +146,7 @@ class Desk(harness.Desk):
     segment: tuple[int, int] | None = None
     cue_refusals: int = 0
     kit: brand.Kit | None = None  # the video's brand kit, whose sounds join the cues' names
-    staging: object = None  # a dialogue video's odie.video.dialogue.Staging: its fixed narration and line timeline
+    staging: dialogue.Staging | None = None  # a dialogue video's fixed narration and line timeline
 
 
 @dataclass

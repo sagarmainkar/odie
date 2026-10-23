@@ -808,7 +808,8 @@
 
   // How open a speaker's mouth is at T: 0 closed, 1 half, 2 open, from the line's loudness at that moment (under 0.15
   // closed, under 0.5 half, else open); closed when they aren't speaking; half open all through a line whose loudness
-  // isn't known (the page check draws before anything is spoken).
+  // isn't known (the page check draws before anything is spoken). Anna's line at 0.5 with amplitude [0.1, 0.6]:
+  // mouthAt("anna", 0.53) -> 2; mouthAt("anna", 0.51) -> 0; mouthAt("ben", 0.53) -> 0.
   function mouthAt(id, T) {
     const line = lineAt(T);
     if (line === null || line.speaker !== String(id).toLowerCase()) {
@@ -857,7 +858,7 @@
       left: function () {
         return clockAt(frameTime);
       },
-      // A dialogue video: the line being spoken in this frame ({speaker, index, progress}, or null), and how open a
+      // A dialogue video: the line being spoken in this frame ({speaker, index, progress, text}, or null), and how open a
       // speaker's mouth is (0 closed, 1 half, 2 open). Both read the frame's time, not the scene's.
       speaking: function () {
         return speakingAt(frameTime);
@@ -1362,7 +1363,8 @@
     return playing;
   }
 
-  window.Video = {scenes: scenes, closing: closing, assets: registerAssets, lines: registerLines, sounds: sounds, soundCues: soundCues,
+  window.Video = {scenes: scenes, closing: closing, assets: registerAssets, lines: registerLines, sounds: sounds,
+                  soundCues: soundCues,
                   timedScenes: timedScenes, extend: extend, clockAt: clockAt, colors: colors, W: W, H: H, safe: SAFE,
                   layout: layout, order: order, brand: brandKit, moves: moves, moveCues: moveCuesGiven,
                   brandReport: brandReport,

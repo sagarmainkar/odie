@@ -24,13 +24,17 @@ import re
 import wave
 from dataclasses import dataclass, field
 
+from odie.video import beats, limits, timeline
+
 NARRATOR = "narrator"  # the one speaker who may go without a voice of their own: the video voice speaks for them
-DEFAULT_PAUSE = 0.35  # seconds of quiet after a line that names none
+DEFAULT_PAUSE = 0.35  # seconds of quiet after a line that names none (none after a scene's last: the breath comes)
+MAX_PAUSE = 10.0  # the longest pause a line may ask for, in seconds
 LOUDNESS_STEP = 0.02  # seconds per loudness value: what the mouths follow
 RELEASE = 0.7  # how much of the last step's loudness a mouth keeps as it closes: shut after about 0.1 s of quiet
 SCENE = re.compile(r"^#{2,}\s*Scene\s*:\s*(.*)$", re.IGNORECASE)
-LINE = re.compile(r"^([A-Za-z][\w .'-]{0,40}?)\s*:\s*(.+)$")
-PAUSE = re.compile(r"\s*\[pause\s+(\d+(?:\.\d+)?)\s*\]\s*$", re.IGNORECASE)
+MARKER = re.compile(r"^\s*(?:[-*+]\s+|\d+[.)]\s+|>\s*)")  # a bullet, a number or a quote before the name
+LINE = re.compile(r"^([^\W\d_][\w .'-]{0,40}?)\s*(?:\([^)]*\))?\s*:\s*(.+)$")  # NAME (direction): text
+PAUSE = re.compile(r"\s*\[pause(?:\s+(\d+(?:\.\d+)?)\s*s?)?\s*\]\s*$", re.IGNORECASE)
 FRONT_MATTER = re.compile(r"\A---\n.*?\n---\n", re.DOTALL)
 
 
@@ -42,7 +46,16 @@ class ScriptProblem(ValueError):
 class Line:
     speaker: str  # lower case, as the voices are keyed
     text: str
-    pause: float = DEFAULT_PAUSE
+    pause: float | None = None  # the quiet after it the script asked for; None: pause_after decides
+
+    def pause_after(self, is_last_in_scene: bool) -> float:
+        """The quiet after this line: the script's own when it gave one (after a scene's last line too, a beat before
+        the cut); else DEFAULT_PAUSE between lines and none after a scene's last (the usual breath comes)."""
+        if self.pause is not None:
+            return self.pause
+        if is_last_in_scene:
+            return 0.0
+        return DEFAULT_PAUSE
 
 
 @dataclass
@@ -71,21 +84,30 @@ def from_data(data: list[dict]) -> Script:
 
 
 def line_of(text: str) -> Line | None:
-    """One script line, or None for anything else: "ANNA: You're still here? [pause 1.2]" -> anna, "You're still
-    here?", pause 1.2; "BEN: Hi." -> ben, "Hi.", the default pause; "Some notes." (no speaker) -> None. A note
-    written as "Note: check this" reads as a speaker called note, who then has no voice: make_video names them."""
-    match = LINE.match(text.strip())
+    """One script line, or None for anything else. Written as people and LLMs write scripts: "ANNA: You're still
+    here? [pause 1.2]" -> anna, "You're still here?", pause 1.2; "- **Anna:** Hi." or "1. Anna (whispering): Hi." ->
+    anna, "Hi." (the bullet, the bold and the direction go); "[pause]" -> the default pause; "Some notes." (no
+    speaker) -> None. A note written as "Note: check this" reads as a speaker called note, who then has no voice:
+    make_video names them. Raises ScriptProblem for a pause over MAX_PAUSE or a "|" in the words (it marks lines for
+    the writer), quoting the line."""
+    plain = MARKER.sub("", text.strip()).replace("**", "").replace("__", "")
+    match = LINE.match(plain)
     if match is None:
         return None
     speaker, said = match.groups()
-    pause = DEFAULT_PAUSE
+    pause = None
     paused = PAUSE.search(said)
     if paused:
-        pause = float(paused.group(1))
+        if paused.group(1):
+            pause = float(paused.group(1))
         said = said[:paused.start()]
     said = said.strip()
     if not said:
         return None
+    if pause is not None and pause > MAX_PAUSE:
+        raise ScriptProblem(f'"{text.strip()}": a pause can be at most {MAX_PAUSE:.0f} seconds.')
+    if "|" in said:
+        raise ScriptProblem(f'"{text.strip()}": a line can\'t contain "|"; write it another way.')
     return Line(speaker=speaker.strip().lower(), text=said, pause=pause)
 
 
@@ -119,6 +141,33 @@ def parse(text: str) -> Script:
             raise ScriptProblem(f'The scene "{scene.where}" has no lines: add them as SPEAKER: what they say, or '
                                 "remove its heading.")
     return Script(scenes)
+
+
+def script_problem(script: Script) -> str | None:
+    """Decides whether the script fits in one video, before anything is queued: the first problem in the user's
+    terms, or None. A scene of 13 lines -> "Scene 1 (The roof) has 13 lines; …at most 12…"; 41 scenes; a scene over
+    4,000 characters; over 6 minutes of speech and pauses -> how much and the limit. SCRIPT -> None."""
+    if len(script.scenes) > limits.MAX_SCENES:
+        return (f"The script has {len(script.scenes)} scenes; a video can have at most {limits.MAX_SCENES}. Make "
+                "it two videos.")
+    for number, scene in enumerate(script.scenes, start=1):
+        name = f"Scene {number}"
+        if scene.where:
+            name = f"Scene {number} ({scene.where})"
+        if len(scene.lines) > beats.MAX_BEATS:
+            return (f"{name} has {len(scene.lines)} lines; a scene can have at most {beats.MAX_BEATS}. Split it with "
+                    "another ## Scene: heading.")
+        characters = sum(len(line.text) for line in scene.lines)
+        if characters > limits.SCENE_CHARACTERS:
+            return (f"{name} has {characters:,} characters of lines; a scene can have at most "
+                    f"{limits.SCENE_CHARACTERS:,}. Split it with another ## Scene: heading.")
+    words = sum(len(line.text.split()) for scene in script.scenes for line in scene.lines)
+    pauses = sum(line.pause or 0.0 for scene in script.scenes for line in scene.lines)
+    minutes = words / timeline.WORDS_PER_MINUTE + pauses / 60
+    if minutes > timeline.MAX_MINUTES:
+        return (f"The script is about {minutes:.1f} minutes of speech and pauses; a video can be at most "
+                f"{timeline.MAX_MINUTES} minutes. Make it two videos.")
+    return None
 
 
 def voices_by_speaker(voices: list[dict] | None) -> dict[str, str]:
@@ -168,7 +217,10 @@ def loudness(wav: bytes, step: float = LOUDNESS_STEP) -> list[float]:
     with wave.open(io.BytesIO(wav)) as w:
         rate = w.getframerate()
         channels = w.getnchannels()
+        width = w.getsampwidth()
         frames = w.readframes(w.getnframes())
+    if width != 2:
+        return []  # not 16-bit: no loudness known, so a mouth is half open while the line plays
     samples = array.array("h", frames)
     if channels > 1:
         samples = array.array("h", samples[::channels])
@@ -200,7 +252,8 @@ def usual_peak(levels: list[float]) -> float:
 def lines_script(lines: list[dict]) -> str:
     """The page's line timeline: `<script>Video.lines([...])</script>`, each {index, speaker, text, scene, t, dur,
     amplitude} with t in seconds into the video."""
-    return f"<script>Video.lines({json.dumps(lines)})</script>"
+    data = json.dumps(lines).replace("</", "<\\/")  # a line saying "</script>" can't end the script early
+    return f"<script>Video.lines({data})</script>"
 
 
 def estimated_lines(script: Script, timings: dict) -> list[dict]:

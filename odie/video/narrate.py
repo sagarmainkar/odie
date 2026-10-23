@@ -12,7 +12,7 @@ import httpx
 
 from odie import media, voice
 from odie.store.db import Store
-from odie.video import beats, timeline
+from odie.video import beats, dialogue, timeline
 
 NO_ANSWER = "Odie's voice didn't answer (Settings → Voice): "
 MAX_TAIL = 0.15  # seconds of quiet a dialogue line keeps after its last word: the script's pause comes after it
@@ -197,27 +197,38 @@ def quiet_like(wav: bytes, seconds: float) -> bytes:
 
 
 async def narrate_dialogue(store: Store, script, voices: dict[str, str],
-                           transport: httpx.AsyncBaseTransport | None = None,
-                           style: str = "") -> tuple[bytes, list[float], list[list[float]], list[dict]]:
+                           transport: httpx.AsyncBaseTransport | None = None, style: str = "",
+                           narrator_voice: str = "") -> tuple[bytes, list[float], list[list[float]], list[dict]]:
     """A dialogue video's voice (odie.video.dialogue): every line spoken on its own in its speaker's voice
-    (`voices`: speaker -> a voice id of the video's engine; the narrator, or anyone without one, has the video
-    voice), its first word at once (lead_cut) and at most MAX_TAIL of quiet after its last (tail_cut), the lines of a scene laid end to end with each line's pause after it
-    (none after a scene's last line: the usual breath comes between scenes). Returns the whole WAV, each scene's
-    length, each scene's beats (where each line starts in it, so s.beatAt is the line being spoken) and every line as
-    {index, speaker, text, voice, scene (from 1), at (seconds into its scene), dur, amplitude (dialogue.loudness)}.
+    (`voices`: speaker -> a voice id of the engine chosen in Settings, checked again now, so a Settings change since
+    the video was asked for is a VoiceUnavailable naming the voice, before anything is spoken), its first word at once
+    (lead_cut) and at most MAX_TAIL of quiet after its last (tail_cut); the narrator, or anyone without a voice, in
+    `narrator_voice` when the user asked for one, else the video voice. The lines of a scene are laid end to end with
+    the quiet after each (Line.pause_after: the script's own, else a short pause between lines and none after the
+    last; the usual breath comes between scenes). Returns the whole WAV, each scene's length, each scene's beats
+    (where each line starts in it, so s.beatAt is the line being spoken) and every line as {index, speaker, text,
+    voice, scene (from 1), at (seconds into its scene), dur, amplitude (dialogue.loudness)}.
     Two 1 s lines with a 0.35 s pause -> a 2.35 s scene, beats [0.0, 1.35]."""
-    from odie.video import dialogue
-    engine, default_voice = voice.video_tts(store)
-    order = [(n, i, line) for n, scene in enumerate(script.scenes) for i, line in enumerate(scene.lines)]
-    by_voice: dict[str, list[int]] = {}
-    voice_of: list[str] = []
-    for position, (_n, _i, line) in enumerate(order):
-        voice_id = voices.get(line.speaker) or default_voice
-        voice_of.append(voice_id)
-        by_voice.setdefault(voice_id, []).append(position)
+    chosen_engine, _read_aloud = voice.get_tts(store)
+    by_speaker: dict[str, tuple[str, str]] = {}  # speaker -> (engine, voice id)
+    for speaker, voice_id in voices.items():
+        try:
+            checked = voice.voice_in_chosen_engine(store, voice_id)["id"]
+        except ValueError as e:
+            raise voice.VoiceUnavailable(f"{speaker}'s voice: {e}") from e
+        by_speaker[speaker] = (chosen_engine, checked)
+    default = voice.video_tts(store)
+    if narrator_voice:
+        default = (chosen_engine, voice.voice_in_chosen_engine(store, narrator_voice)["id"])
+
+    order = [line for scene in script.scenes for line in scene.lines]
+    voice_of = [by_speaker.get(line.speaker, default) for line in order]
+    groups: dict[tuple[str, str], list[int]] = {}
+    for position, engine_and_voice in enumerate(voice_of):
+        groups.setdefault(engine_and_voice, []).append(position)
     spoken: list[bytes] = [b""] * len(order)
-    for voice_id, positions in by_voice.items():
-        texts = [order[p][2].text for p in positions]
+    for (engine, voice_id), positions in groups.items():
+        texts = [order[p].text for p in positions]
         for position, wav in zip(positions, await speak_all(store, texts, engine, voice_id, transport, style)):
             spoken[position] = tail_cut(lead_cut(wav))
 
@@ -234,15 +245,15 @@ async def narrate_dialogue(store: Store, script, voices: dict[str, str],
             wav = spoken[position]
             seconds = wav_seconds(wav)
             starts.append(round(at, 3))
-            lines.append({"index": position, "speaker": line.speaker, "text": line.text, "voice": voice_of[position],
+            lines.append({"index": position, "speaker": line.speaker, "text": line.text, "voice": voice_of[position][1],
                           "scene": number + 1, "at": round(at, 3),
                           "dur": round(seconds, 3), "amplitude": dialogue.loudness(wav)})
             pieces.append(wav)
             at += seconds
-            is_last = i == len(scene.lines) - 1
-            if not is_last and line.pause > 0:
-                pieces.append(quiet_like(wav, line.pause))
-                at += line.pause
+            pause = line.pause_after(is_last_in_scene=i == len(scene.lines) - 1)
+            if pause > 0:
+                pieces.append(quiet_like(wav, pause))
+                at += pause
             position += 1
         joined, _starts = media.join_wavs(pieces, gap_ms=0)
         scenes.append(joined)

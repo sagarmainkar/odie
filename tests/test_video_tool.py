@@ -548,3 +548,25 @@ async def test_a_dialogue_script_is_refused_before_queueing_when_it_cant_be_stag
     out = await tools.make_video("Night", script="missing.md", voices=[])
     assert "error" in out
     assert submitted == []
+
+
+async def test_voices_may_be_a_mapping_and_need_a_script(world):
+    store, submitted = world
+    voice.set_tts(store, engine="kokoro", voice="af_heart")
+    out = await tools.make_video("Night", script=a_script(), voices={"Anna": "Bella", "ben": "Michael"})
+    assert "result" in out, out
+    assert submitted[0].data["dialogue"]["voices"] == {"anna": "af_bella", "ben": "am_michael"}
+    out = await tools.make_video("Night", voices=[{"id": "anna", "name": "Bella"}])
+    assert "script" in out["error"] and len(submitted) == 1
+
+
+async def test_a_script_too_big_for_one_video_is_refused_before_queueing(world):
+    store, submitted = world
+    voice.set_tts(store, engine="kokoro", voice="af_heart")
+    many = "## Scene: The roof\n" + "\n".join(f"ANNA: Line {n}." for n in range(13))
+    out = await tools.make_video("Night", script=a_script(many), voices=[{"id": "anna", "name": "Bella"}])
+    assert "13 lines" in out["error"] and "## Scene:" in out["error"] and submitted == []
+
+
+def test_make_video_says_a_pasted_script_is_my_message():
+    assert '"my message"' in FunctionTool(tools.make_video)._get_declaration().description.split("script:")[1]

@@ -152,8 +152,8 @@ def assemble(body: str, timings: dict, assets_script: str = "", credits_script: 
     with a timed segment `window.ODIE_TIMED` (timings["timed"]: {"start", "seconds", "end"}, odie.video.timed), then the
     video's pictures and clips (`assets_script`, odie.video.assets.staple's `<script>Video.assets({...})</script>`,
     when there are any), then a dialogue video's line timeline (`lines_script`, odie.video.dialogue.lines_script;
-    none for any other video), then Odie's credits card (`credits_script`, credits_scene's, when there is one), then a brand
-    kit's brand.js and settings (`brand_script`, odie.video.brand.page_script, for a video with a kit), then `body`
+    none for any other video), then Odie's credits card (`credits_script`, credits_scene's, when there is one), then a
+    brand kit's brand.js and settings (`brand_script`, odie.video.brand.page_script, for a video with a kit), then `body`
     (the model's markup and script), in that order. The credits card comes before the body but plays after it: it
     registers a closing scene that the body's Video.scenes([...]) puts after the writer's last, so the timings then
     carry one scene more than the writer's page has."""
@@ -235,7 +235,7 @@ def probe_times(timings: dict) -> list[float]:
 
 
 def first_problem(scene_count: int | None, narration_count: int, load_errors: list[str],
-                  draw_errors: list[tuple[int, float, str]]) -> str | None:
+                  draw_errors: list[tuple[int, float, str]], scripted: bool = False) -> str | None:
     """Decides which single problem the model hears about, as one plain paragraph (fixing one at a time is clearer than
     a list, and a first fault often causes the later ones). The order is the order they would bite:
     page never called Video.scenes (scene_count None) -> "never called Video.scenes", and if the page also raised
@@ -247,6 +247,9 @@ def first_problem(scene_count: int | None, narration_count: int, load_errors: li
         if load_errors:
             return f"The page failed while loading, before it called Video.scenes(...): {load_errors[0]}"
         return "The page never called Video.scenes(...): put all scenes in one Video.scenes([...]) call."
+    if scene_count != narration_count and scripted:  # a dialogue video: the user's script sets the scenes
+        return (f"The page has {scene_count} scenes but the script has {narration_count}: one page scene per script "
+                "scene, in order.")
     if scene_count != narration_count:
         return (f"The page has {scene_count} scenes but there are {narration_count} narration parts: "
                 "one narration per scene.")
@@ -298,7 +301,7 @@ async def check_with_cues(body: str, narration: list[str], browser, assets_scrip
     async with browser.sealed_page(html, width, height) as tab:
         load_errors = list(tab.errors)
         scene_count = await tab.eval("window.__sceneCount === undefined ? null : window.__sceneCount")
-        problem = first_problem(scene_count, len(narration), load_errors, [])
+        problem = first_problem(scene_count, len(narration), load_errors, [], scripted=lines_for is not None)
         if problem:
             return CheckResult(problem=problem)
         segment = None
@@ -318,7 +321,8 @@ async def check_with_cues(body: str, narration: list[str], browser, assets_scrip
                 t = round(seconds - timings["starts"][scene_index], 3)  # draw's t: seconds into the scene
                 draw_errors.append((scene_index + 1, t, error))
                 break
-        problem = first_problem(scene_count, len(narration), load_errors, draw_errors)
+        problem = first_problem(scene_count, len(narration), load_errors, draw_errors,
+                                scripted=lines_for is not None)
         if problem:
             return CheckResult(problem=problem)
         cues = await tab.eval("Video.soundCues()")
