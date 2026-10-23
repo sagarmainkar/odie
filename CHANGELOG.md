@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.2.25 (2026-10-23)
+
+- "Allow for 30 min" asks far less: writing in Odie's workspace and your vault, and inline code (python3 -c, a script fed to python3) that doesn't touch secrets, delete anything or send data out, now run under the pass. Text inside quotes or written into a file no longer looks like a command. Reading secrets, deleting, sending data out and writing anywhere else still ask every time.
+
 ## v0.2.24 (2026-10-23)
 
 - Odie for Mac: every message Odie says on its own (a tracker that fired, a finished video or deck, a reply that came late after an approval) now says what it is on the live event stream, so the Mac's corner banner shows it; housekeeping lines stay quiet. The mail watch's alerts (an urgent mail, an app that stopped working) also reach the stream, not only the phone.
