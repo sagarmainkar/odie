@@ -51,6 +51,9 @@ needs material; an abstract topic ("how attention works") doesn't. Gather it bef
   `photo:<id>` address, not its /api/photos/ one.
 - **Clips:** `find_clips(query)` for places and moods (waves, snow, a busy street; never faces): 0–6, of 5–15 s.
 - **What the user gave here:** `upload:<id>`, `screenshot:<id>`.
+- **3D and real surfaces:** any video can be 3D (a moving camera, lit objects); ask for it when depth helps (space,
+  molecules, buildings). For a planet or a moon, `find_images("<name> texture map")` and pass the flat map, saying
+  it is one: the writer wraps it on a sphere.
 
 Pass them as `images` and `clips`, one line each: the address exactly as the tool gave it, " — ", then what it shows,
 its mood and its orientation if unusual, then a web one's credit in brackets as the tool gave it:

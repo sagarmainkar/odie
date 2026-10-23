@@ -333,7 +333,7 @@ def test_the_skill_says_how_to_write_the_brief():
     assert "brief" in text and "can't see" in text and "20,000" in text
     assert "sources" in text and "my message" in text and "earlier message" in text
     assert "no emojis" in text and "save_video_page" not in text
-    assert len(text.split("---", 2)[2].split()) < 850  # short: the writer has the page contract and the film grammar
+    assert len(text.split("---", 2)[2].split()) < 900  # short: the writer has the page contract and the film grammar
 
 
 def test_the_skill_says_sounds_are_on_unless_the_user_says_no_sound_effects():
@@ -349,6 +349,15 @@ def test_the_skill_says_how_to_gather_pictures_clips_and_places():
     assert "lat, lon" in text and "Gangtok" in text and "Lachung" in text  # a town the map may not know
     assert "private chat" in text and "open it in Photos once" in text
     assert "Unsplash, Pexels" in text and "watermarked" in text  # free pictures first; never a stock site's preview
+
+
+def test_the_skill_says_videos_can_be_3d_with_real_surfaces():
+    """Chat once told the user make_video can't use pictures in 3D: it can (s.texture), and a planet's flat texture
+    map wraps on a sphere. The skill says so, so chat offers it."""
+    text = (SKILL / "SKILL.md").read_text()
+    assert "3D" in text and "texture map" in text
+    guide = (Path(page.__file__).parent / "writer.md").read_text()
+    assert "SphereGeometry" in guide and "texture map" in guide
 
 
 def test_videos_are_drawn_in_a_browser_cut_off_from_the_network(isolated_settings, monkeypatch):
