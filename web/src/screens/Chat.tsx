@@ -171,6 +171,12 @@ export function askedFromHash(hash: string): string | null {
   return m ? decodeURIComponent(m[1]) : null;
 }
 
+/** The conversation a push opens with "#chat?thread=<id>" (the Desk: "#chat?thread=chat-desk"), or null. */
+export function threadFromHash(hash: string): string | null {
+  const m = hash.match(/^#chat\?thread=([\w-]+)$/);
+  return m ? m[1] : null;
+}
+
 /** Composer height for its content, 1 to 5 lines; "" (natural height) while hidden, when there is nothing to measure. */
 export function composerHeight(scrollHeight: number): string {
   return scrollHeight > 0 ? `${Math.min(scrollHeight, 22 * 5 + 4)}px` : "";
@@ -482,6 +488,22 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
     take();
     window.addEventListener("hashchange", take);
     return () => window.removeEventListener("hashchange", take);
+  }, []);
+
+  // A push names its conversation (#chat?thread=chat-desk): open it, once it is in the threads list.
+  useEffect(() => {
+    const open = () => {
+      const id = threadFromHash(location.hash);
+      if (id === null) return;
+      history.replaceState(null, "", "#chat");
+      getJSON<{ threads: Thread[] }>("/api/threads").then((r) => {
+        const found = r.threads.find((t) => t.id === id);
+        if (found) setThread(found);
+      }).catch(() => {});
+    };
+    open();
+    window.addEventListener("hashchange", open);
+    return () => window.removeEventListener("hashchange", open);
   }, []);
 
   function retry(m: Msg) {

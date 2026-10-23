@@ -158,7 +158,8 @@ async def run_brief(store: Store, now: datetime, post_message=None, push: bool =
             log.warning("brief chat message failed", exc_info=True)
     if push:
         try:
-            send_to_all(store, "Good morning", text[:160], url="/#chat", tag="brief")
+            from odie.threads import DESK_URL
+            send_to_all(store, "Good morning", text[:160], url=DESK_URL, tag="brief")
         except Exception:  # noqa: BLE001
             log.warning("brief push failed", exc_info=True)
     return text
