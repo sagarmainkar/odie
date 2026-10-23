@@ -100,3 +100,23 @@ def test_the_writer_reads_the_cast_word_for_word_with_each_scenes_ages_and_the_l
     assert "Scene 2 (Chapter two; mira is 41): The gallery" in listing
     assert "Muted teal and amber" in listing
     assert dialogue.staging(script).listing == dialogue.writer_listing(script)  # no cast, no look: as in phase 1
+
+
+async def test_a_cast_picture_is_read_from_its_folder(isolated_settings, tmp_path):
+    from PIL import Image
+
+    from odie.decks import photos
+    picture = tmp_path / "mira-front.png"
+    Image.new("RGB", (64, 48), (200, 50, 50)).save(picture)
+    got = await photos.fetch(f"cast:{picture}")
+    assert (got.width, got.height) == (64, 48) and got.credit == ""
+    with pytest.raises(photos.PhotoError):
+        await photos.fetch(f"cast:{tmp_path / 'missing.png'}")
+    with pytest.raises(photos.PhotoError):
+        await photos.fetch(f"cast:{tmp_path / 'notes.md'}")
+
+
+def test_the_chat_cant_hand_a_cast_picture_itself():
+    from odie.video import assets
+    with pytest.raises(assets.AssetProblem):
+        assets.parse(["cast:/Users/x/.ssh/id_rsa.png — a key"], None)

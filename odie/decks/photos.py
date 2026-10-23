@@ -97,6 +97,8 @@ async def fetch(ref: str, credit: str = "", referer: str | None = None) -> Photo
         return await asyncio.to_thread(_local, ref)
     if ref.startswith("photo:"):
         return await asyncio.to_thread(_library, ref)
+    if ref.startswith(CAST):
+        return await asyncio.to_thread(_cast_picture, ref)
     if not re.match(r"^https?://", ref, re.I):
         raise PhotoError("Use a photo address a tool returned (https://…), screenshot:<id>, upload:<id> or "
                          "photo:<id>.")
@@ -113,6 +115,22 @@ async def fetch(ref: str, credit: str = "", referer: str | None = None) -> Photo
         raise PhotoError(str(e)) from None
     w, h = await asyncio.to_thread(_encode, data, dest)
     return Photo(ref, dest, w, h, credit)
+
+
+CAST = "cast:"  # a dialogue video's reference picture in the user's cast folder (odie.video.cast); only Odie makes it
+CAST_SUFFIXES = (".jpg", ".jpeg", ".png", ".webp", ".heic")
+
+
+def _cast_picture(ref: str) -> Photo:
+    """A picture from the user's cast folder by its path: "cast:/…/cast/refs/mira-front.jpg" -> that picture. Only the
+    video job writes these (from the sheets), never the chat (odie.video.assets refuses the address); a path that
+    isn't a picture file -> PhotoError."""
+    path = Path(ref[len(CAST):])
+    if path.suffix.lower() not in CAST_SUFFIXES or not path.is_file():
+        raise PhotoError(f"There's no picture at {path.name} in the cast folder.")
+    dest = _dest(ref)
+    w, h = _encode(path.read_bytes(), dest)
+    return Photo(ref, dest, w, h, "")
 
 
 def _local(ref: str) -> Photo:

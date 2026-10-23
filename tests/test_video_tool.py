@@ -315,7 +315,7 @@ def test_the_declaration_has_exactly_its_parameters_with_the_dialogue_ones_last(
     declaration = FunctionTool(tools.make_video)._get_declaration()
     properties = declaration.parameters_json_schema["properties"]
     assert list(properties) == ["topic", "minutes", "brief", "sources", "images", "clips", "sounds", "voice_name", "style",
-                                "aspect", "timed_segment_seconds", "brand_kit", "script", "voices"]
+                                "aspect", "timed_segment_seconds", "brand_kit", "script", "voices", "cast", "look"]
     assert properties["sounds"] == {"default": True, "title": "Sounds", "type": "boolean"}
     assert "sounds: leave true; false only when the user asks for no sound effects" in declaration.description
     for name in ("sources", "images", "clips"):
@@ -570,3 +570,44 @@ async def test_a_script_too_big_for_one_video_is_refused_before_queueing(world):
 
 def test_make_video_says_a_pasted_script_is_my_message():
     assert '"my message"' in FunctionTool(tools.make_video)._get_declaration().description.split("script:")[1]
+
+
+# Phase 2: a cast folder of character sheets and a look file, read for every video of a work.
+
+def a_cast_folder() -> str:
+    from odie.agent.tools.files import workspace
+    folder = workspace() / "lighthouse-cast"
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "anna.md").write_text('---\nid: anna\ncanonical: "Silver hair, green coat."\nvoice: Bella\n---\n')
+    (folder / "ben.md").write_text('---\nid: ben\ncanonical: "Yellow raincoat, red hat."\nvoice: Michael\n---\n')
+    (workspace() / "look.md").write_text("Muted teal and amber; light grain.")
+    return "lighthouse-cast"
+
+
+async def test_a_cast_folder_gives_the_voices_and_the_look_goes_with_it(world):
+    store, submitted = world
+    voice.set_tts(store, engine="kokoro", voice="af_heart")
+    out = await tools.make_video("Night", script=a_script(), cast=a_cast_folder(), look="look.md")
+    assert "result" in out, out
+    kept = submitted[0].data["dialogue"]
+    assert kept["voices"] == {"anna": "af_bella", "ben": "am_michael"}  # from the sheets
+    assert [c["id"] for c in kept["cast"]] == ["anna", "ben"] and kept["cast"][0]["canonical"] == "Silver hair, green coat."
+    assert kept["look"] == "Muted teal and amber; light grain."
+    assert kept["cast_folder"].endswith("lighthouse-cast")
+
+
+async def test_voices_given_win_over_the_sheets_and_every_speaker_needs_a_sheet(world):
+    store, submitted = world
+    voice.set_tts(store, engine="kokoro", voice="af_heart")
+    out = await tools.make_video("Night", script=a_script(), cast=a_cast_folder(), voices={"anna": "Emma"})
+    assert submitted[-1].data["dialogue"]["voices"]["anna"] == "bf_emma"
+    stranger = NIGHT + "CARL: Who's there?\n"
+    out = await tools.make_video("Night", script=a_script(stranger), cast=a_cast_folder())
+    assert "carl" in out["error"] and "sheet" in out["error"]
+
+
+async def test_a_cast_or_a_look_needs_a_script(world):
+    out = await tools.make_video("Night", cast=a_cast_folder())
+    assert "script" in out["error"]
+    out = await tools.make_video("Night", look="look.md")
+    assert "script" in out["error"]
