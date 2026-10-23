@@ -9,6 +9,7 @@ once. In the background the writer (odie.video.writer) turns the topic, length, 
 into the narration and the page; then the video is narrated, rendered and posted to this chat. The chat only briefs
 the video. Plain trusted code of a built-in skill: no shell, no approval card."""
 import asyncio
+import json
 
 from google.adk.tools import FunctionTool, ToolContext
 
@@ -20,7 +21,7 @@ from odie.browser import find
 from odie.decks import photos
 from odie.making import chat, jobs
 from odie.making import sources as making_sources
-from odie.video import assets, brand, kind, timed, timeline
+from odie.video import assets, brand, dialogue, kind, timed, timeline
 
 NARRATING_SPEED = 10  # seconds of speech the voice narrates in a second
 JOINING_SECONDS = 10  # joining the segments and the sound into the MP4
@@ -183,7 +184,8 @@ def timed_seconds_as_given(value, minutes: int) -> int | None:
 async def make_video(topic: str, minutes: int = 2, brief: str = "", sources: list[str] | None = None,
                      images: list[str] | None = None, clips: list[str] | None = None, sounds: bool = True,
                      voice_name: str = "", style: str = "", aspect: str = "", timed_segment_seconds: int | None = None,
-                     brand_kit: str = "", tool_context: ToolContext | None = None) -> dict:
+                     brand_kit: str = "", script: str = "", voices: list[dict] | None = None,
+                     tool_context: ToolContext | None = None) -> dict:
     """Make a narrated, animated explainer video that plays in this chat. A separate writer makes the narration and
     the animation from your brief, in the background; it can't see this chat, the user's notes, memory or the web.
     topic: what the video is about, short ("How attention works").
@@ -210,6 +212,11 @@ async def make_video(topic: str, minutes: int = 2, brief: str = "", sources: lis
     N seconds, first word to last; the rest of the video keeps its natural length.
     brand_kit: leave empty; only when a skill says to use its brand kit: that skill's name. The kit's fixed look,
     sounds and opening and closing scenes go in as they are, and the writer draws around them.
+    script: leave empty; only for a dialogue video the user wrote: their script's note name or path, or a workspace
+    file ("## Scene: …" headings, "SPEAKER: line" lines). The writer stages it word for word; it isn't retyped
+    into the brief, which then says only the look and the cast's appearance.
+    voices: with a script, a voice for every speaker but the narrator: [{"id": "anna", "name": <a voice of the
+    Settings engine>}].
     It returns at once. {"error": …}: fix exactly that and call again. {"result": …}: the video is being made; reply
     in one or two lines as the result says, and don't repeat the brief."""
     if find.browser_binary() is None:
@@ -245,6 +252,15 @@ async def make_video(topic: str, minutes: int = 2, brief: str = "", sources: lis
         problem = brand.segment_problem(kit, timed_seconds)
         if problem:
             return {"error": problem}
+
+    dialogue_data = None
+    if chat.text_or_empty(script).strip():
+        if timed_seconds is not None or kit is not None:
+            return {"error": DIALOGUE_ALONE}
+        try:
+            dialogue_data = dialogue_as_given(chat.text_or_empty(script).strip(), voices, jobs.hooks["store"])
+        except (ValueError, making_sources.SourceProblem) as e:
+            return {"error": str(e)}
 
     problem = chat.brief_problem(brief, WORD, MAX_BRIEF_CHARACTERS)
     if problem:
@@ -288,6 +304,8 @@ async def make_video(topic: str, minutes: int = 2, brief: str = "", sources: lis
         data["timed_segment"] = {"seconds": timed_seconds, "tolerance": timed.TOLERANCE}
     if kit is not None:  # the kit as it is now, copied into the job's folder (odie.video.brand)
         data["brand_kit"] = brand.snapshot(kit, folder)
+    if dialogue_data is not None:  # the user's script, staged word for word, each speaker in their voice
+        data["dialogue"] = dialogue_data
     job = jobs.Job(kind="video", slug=folder.name, title=title, topic=title, minutes=minutes, brief=whole_brief,
                    session_id=session_id_of(tool_context), voice_name=voice_id, folder=folder, data=data)
     place = jobs.submit(job)
@@ -298,6 +316,39 @@ async def make_video(topic: str, minutes: int = 2, brief: str = "", sources: lis
         told = LEFT_OUT.format(pictures="; ".join(left_out))
         reply = f"{reply} {told}"
     return {"result": reply}
+
+
+DIALOGUE_ALONE = ("A dialogue video (a script) can't have a timed segment or a brand kit yet: leave "
+                  "timed_segment_seconds and brand_kit empty.")
+
+
+def voices_as_given(voices) -> list:
+    """The voices list the model meant: None -> []; JSON text of a list -> the list; a list -> as it is."""
+    if voices is None:
+        return []
+    if isinstance(voices, str):
+        try:
+            return json.loads(voices)
+        except ValueError:
+            raise ValueError('voices is a list: [{"id": "anna", "name": "<a voice>"}].') from None
+    return voices
+
+
+def dialogue_as_given(script_reference: str, voices, store) -> dict:
+    """A dialogue video's script and voices, checked before anything is queued: the script read as sources are (a
+    note or a workspace file) and parsed (odie.video.dialogue.parse), every speaker but the narrator given a voice of
+    the engine chosen in Settings, kept by its id. Returns {"script": [...], "voices": {speaker: voice id}}; raises
+    ValueError (or SourceProblem) in words to fix: a speaker with no voice ("ben"), a voice of another engine, a
+    script with no lines."""
+    [source] = making_sources.resolve([script_reference], store)
+    script = dialogue.parse(source.text)
+    named = dialogue.voices_by_speaker(voices_as_given(voices))
+    missing = dialogue.missing_voices(script, named)
+    if missing:
+        raise ValueError(f"Every speaker but the narrator needs a voice; none for: {', '.join(missing)}. Add "
+                         '{"id": "<speaker>", "name": "<a voice of the Settings engine>"} to voices.')
+    by_id = {speaker: voice.voice_in_chosen_engine(store, name)["id"] for speaker, name in named.items()}
+    return {"script": script.as_data(), "voices": by_id}
 
 
 TOOLS = [FunctionTool(make_video)]

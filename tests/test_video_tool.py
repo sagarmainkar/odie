@@ -311,11 +311,11 @@ def test_the_skill_offers_only_make_video_without_an_approval_card(isolated_sett
     assert not any(tool._require_confirmation for tool in entry.tool_objs)
 
 
-def test_the_declaration_has_exactly_topic_minutes_brief_sources_images_clips_sounds_voice_style_aspect_timing_and_kit():
+def test_the_declaration_has_exactly_its_parameters_with_the_dialogue_ones_last():
     declaration = FunctionTool(tools.make_video)._get_declaration()
     properties = declaration.parameters_json_schema["properties"]
     assert list(properties) == ["topic", "minutes", "brief", "sources", "images", "clips", "sounds", "voice_name", "style",
-                                "aspect", "timed_segment_seconds", "brand_kit"]
+                                "aspect", "timed_segment_seconds", "brand_kit", "script", "voices"]
     assert properties["sounds"] == {"default": True, "title": "Sounds", "type": "boolean"}
     assert "sounds: leave true; false only when the user asks for no sound effects" in declaration.description
     for name in ("sources", "images", "clips"):
@@ -499,3 +499,47 @@ async def test_sounds_as_the_model_sends_them_are_read_as_on_or_off(world, given
     out = await call_as_adk_does(topic="Attention", sounds=given)
     assert "result" in out, out
     assert world[1][0].data["sounds"] is meant
+
+
+# A dialogue video: the user's script, each speaker in their own voice (odie.video.dialogue).
+
+NIGHT = "## Scene: A workshop at night\nNARRATOR: The lamp burned on.\nANNA: Still here? [pause 1]\nBEN: Always.\n"
+
+
+def a_script(text: str = NIGHT) -> str:
+    from odie.agent.tools.files import workspace
+    path = workspace() / "night.md"
+    path.write_text(text)
+    return "night.md"
+
+
+async def test_a_script_with_a_voice_for_each_speaker_queues_a_dialogue_video(world):
+    store, submitted = world
+    voice.set_tts(store, engine="kokoro", voice="af_heart")
+    out = await tools.make_video("The night shift", brief="Warm lamplight, two friends.", script=a_script(),
+                                 voices=[{"id": "Anna", "name": "Bella"}, {"id": "ben", "name": "Michael"}])
+    assert "result" in out, out
+    kept = submitted[0].data["dialogue"]
+    assert kept["voices"] == {"anna": "af_bella", "ben": "am_michael"}  # by speaker, as voice ids
+    assert [line["speaker"] for line in kept["script"][0]["lines"]] == ["narrator", "anna", "ben"]
+    assert submitted[0].brief == "Warm lamplight, two friends."  # the script isn't retyped into the brief
+
+
+async def test_a_dialogue_script_is_refused_before_queueing_when_it_cant_be_staged(world):
+    store, submitted = world
+    voice.set_tts(store, engine="kokoro", voice="af_heart")
+    out = await tools.make_video("Night", script=a_script(), voices=[{"id": "anna", "name": "Bella"}])
+    assert "ben" in out["error"] and "voice" in out["error"]
+    out = await tools.make_video("Night", script=a_script("Just notes, nobody speaks."),
+                                 voices=[{"id": "anna", "name": "Bella"}])
+    assert "no lines" in out["error"]
+    out = await tools.make_video("Night", script=a_script(), voices=[{"id": "anna", "name": "cedar"},
+                                                                     {"id": "ben", "name": "Michael"}])
+    assert "cedar" in out["error"]
+    out = await tools.make_video("Night", script=a_script(), voices=[{"id": "anna", "name": "Bella"},
+                                                                     {"id": "ben", "name": "Michael"}],
+                                 timed_segment_seconds=60)
+    assert "dialogue" in out["error"]
+    out = await tools.make_video("Night", script="missing.md", voices=[])
+    assert "error" in out
+    assert submitted == []
