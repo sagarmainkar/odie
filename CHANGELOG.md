@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.2.23 (2026-10-23)
+
+- Experimental: dialogue videos. Give Odie a script you wrote (scenes and `SPEAKER: line` lines, in a note, a file or a message) and a voice for each character: every line is spoken in its character's voice, the characters' mouths move with their own lines, the line shows as a caption, and a timeline.json (every line's time and voice) is kept next to the video. See docs/dialogue-videos.md. Videos without a script are made exactly as before.
+
 ## v0.2.22 (2026-10-23)
 
 - Videos: Odie knows any video can be 3D (a moving camera, lit objects) and offers it when depth helps; for a planet or a moon it finds the real texture map and the video wraps it on a turning sphere.
