@@ -321,3 +321,20 @@ def test_the_instructions_have_no_braced_word_adk_would_fill_in():
     from odie.watch import check as watch_check
     text = watch_check._instruction("", "")
     assert re.findall(r"\{[A-Za-z_][A-Za-z0-9_.:]*\??\}", text) == []
+
+
+async def test_the_watch_cant_open_a_thread_for_a_mail_it_hasnt_seen(store, tmp_path):
+    """A thread keeps its mail's thread id and app so later checks can read it; opened on a ref this check never saw,
+    it would know neither. So it is refused, and the watch is told to find the mail first."""
+    from odie.plugins import mcp
+    mcp.write_config({"mymail": spec_for("plain", tmp_path, mail=ZAP_MAIL, events=EVENTS)})
+    _posts, _pushes, post, push = recorder()
+    said: list = []
+
+    async def turn(prompt, tools, instruction):
+        await call(tools, "new_mail")
+        said.append(await call(tools, "track", ref="mail:unknown9", kind="order", title="Order: kettle", stage="placed"))
+        await call(tools, "report", needs_you=[], line="quiet")
+    await check.run_check(store, DAY, turn, post, push)
+    assert "search_mail" in str(said[0])
+    assert store.one("select count(*) n from tasks where source_kind = 'watch'")["n"] == 0

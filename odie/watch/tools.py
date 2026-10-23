@@ -127,12 +127,20 @@ def watch_tools(check: Check) -> list[FunctionTool]:
         check.fetcher.remember(Mail(id=mail_id, frm="", subject=t.get("title", ""), at="", snippet="", attachments=[],
                                     source=t.get("source", ""), thread=t.get("thread", "")))
 
+    def knows_the_thread(ref: str) -> bool:
+        """Whether the watch already follows this ref, so moving or closing it needs no mail from this check:
+        "mail:o1" with an open thread -> True; "mail:unknown9", never seen and never followed -> False."""
+        return ref in threads.open_refs(check.fetcher.store)
+
     def track(ref: str, kind: str, title: str, stage: str, due: str = "", why: str = "") -> dict:
         """Follow something until it's done: open a thread, move it to a new stage, or close it. ref: "mail:<id>".
         kind: order, bill, reply (a reply the user owes) or deadline. stage: where it is now ("placed", "shipped",
         "owed", "due"), or "done" / "dropped" to close it, with why (which mail showed it). due: when it's due or
         expected, as 2026-10-24. Only your own threads change; the user's tasks never do."""
         mail = check.fetcher.read_mail(ref[len("mail:"):]) if ref.startswith("mail:") else None
+        if mail is None and not knows_the_thread(ref):
+            return {"result": f"This check doesn't know {ref}: find the mail with search_mail (or read it from "
+                              "new_mail) first, so the thread can be read again later."}
         thread = mail.thread if mail is not None else ""
         source = mail.source if mail is not None else ""
         said = threads.track(check.fetcher.store, ref, kind, title, stage, due=due or None, why=why,
