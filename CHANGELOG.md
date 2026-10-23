@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.2.21 (2026-10-23)
+
+- Today has one "Needs you" list of cards, refreshed by every mail check, in place of the inbox and To close lists: what the watch found in mail (with its suggested action and a way out) and your own reminders and dues (Done / Tomorrow).
+- What the watch did while you were away (its notes, any files it made, the reminders it closed) folds into one line under the cards, with Reopen.
+- The Desk conversation is gone: the watch posts into no chat. Urgent mail and an app that stops working are notifications that open Today.
+- The morning notification says how many things need you and opens Today; if the computer was off at 07:30 it goes out when Odie starts, until noon.
+
 ## v0.2.20 (2026-10-23)
 
 - A word in braces, like {name}, in a Watch for note or memory no longer stops every watch check.
