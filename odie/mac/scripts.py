@@ -48,9 +48,52 @@ def app_in(message: str, fallback: str) -> str:
     return m.group(1).strip() if m else fallback
 
 
+NOT_RUNNING = re.compile(r"\(-600\)")  # "Application isn't running": macOS won't start it for a background service
+LAUNCH_WAIT = 15.0  # seconds to wait for an app opened in the background
+
+
 async def run(name: str, *args: str, app: str = "", timeout: float = TIMEOUT) -> str:
     """Runs one script with its arguments and returns its stdout (JSON for all but the probe).
-    run("mail_new", "2026-10-21T09:00", "25") -> the JSON list; an app that isn't allowed -> MacPermission."""
+    run("mail_new", "2026-10-21T09:00", "25") -> the JSON list; an app that isn't allowed -> MacPermission.
+    Odie runs as a background service, and macOS won't start an app for its Apple events: an app that isn't running
+    answers "(-600)". Then it is opened hidden (open_hidden), and the script runs once more: Calendar closed ->
+    opened in the background, its events read; still not running after that -> the MacError as it came."""
+    try:
+        return await run_once(name, *args, app=app, timeout=timeout)
+    except (MacPermission, MacTimeout):
+        raise
+    except MacError as e:
+        if not app or not NOT_RUNNING.search(str(e)):
+            raise
+    await open_hidden(app)
+    await wait_until_running(app)
+    return await run_once(name, *args, app=app, timeout=timeout)
+
+
+async def open_hidden(app: str) -> None:
+    """Opens a Mac app in the background, without a window coming forward: `open -g -j -a Calendar`."""
+    proc = await asyncio.create_subprocess_exec("open", "-g", "-j", "-a", app, stdout=asyncio.subprocess.PIPE,
+                                                stderr=asyncio.subprocess.PIPE)
+    await proc.communicate()
+
+
+async def wait_until_running(app: str) -> None:
+    """Waits, up to LAUNCH_WAIT seconds, until the app's process is there (pgrep), then a moment more for it to take
+    Apple events; returns either way (the next try says if it still isn't running)."""
+    waited = 0.0
+    while waited < LAUNCH_WAIT:
+        proc = await asyncio.create_subprocess_exec("pgrep", "-x", app, stdout=asyncio.subprocess.PIPE,
+                                                    stderr=asyncio.subprocess.PIPE)
+        await proc.communicate()
+        if proc.returncode == 0:
+            await asyncio.sleep(1.5)
+            return
+        await asyncio.sleep(0.5)
+        waited += 0.5
+
+
+async def run_once(name: str, *args: str, app: str = "", timeout: float = TIMEOUT) -> str:
+    """One try at a script (see run): its stdout, or MacPermission, MacTimeout or MacError."""
     if not ALLOWED:
         raise MacError("the Mac apps are switched off here")
     proc = await asyncio.create_subprocess_exec(

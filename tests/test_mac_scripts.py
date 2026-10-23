@@ -70,3 +70,47 @@ async def test_the_runner_passes_argv_and_maps_errors(monkeypatch):
 def test_available_means_macos_with_osascript(monkeypatch):
     monkeypatch.setattr(platform, "system", lambda: "Linux")
     assert scripts.available() is False
+
+
+@pytest.mark.skipif(platform.system() != "Darwin", reason="the runner execs osascript")
+async def test_an_app_that_isnt_running_is_opened_hidden_and_asked_again(monkeypatch):
+    """Odie runs as a background service, and macOS won't start an app for its Apple events: the app answers
+    "isn't running (-600)" (the Allow button for Calendar failed this way). Odie opens it hidden and asks once more."""
+    monkeypatch.setattr(scripts, "ALLOWED", True)
+    calls = []
+    answers = [FakeProc(1, err=b"execution error: Calendar got an error: Application isn\xe2\x80\x99t running. (-600)"),
+               FakeProc(0, out=b"ok\n")]
+
+    async def create(*argv, **kw):
+        calls.append(argv)
+        if argv[0] == "open":
+            return FakeProc(0)
+        return answers.pop(0)
+
+    async def no_wait(seconds):
+        return None
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", create)
+    monkeypatch.setattr(scripts, "wait_until_running", lambda app: no_wait(0))
+    assert await scripts.run("probe", "Calendar", app="Calendar") == "ok"
+    assert [argv[0] for argv in calls] == ["osascript", "open", "osascript"]
+    assert calls[1] == ("open", "-g", "-j", "-a", "Calendar")
+
+
+@pytest.mark.skipif(platform.system() != "Darwin", reason="the runner execs osascript")
+async def test_an_app_that_still_isnt_running_says_so_once(monkeypatch):
+    monkeypatch.setattr(scripts, "ALLOWED", True)
+    not_running = b"execution error: Calendar got an error: Application isn\xe2\x80\x99t running. (-600)"
+
+    async def create(*argv, **kw):
+        if argv[0] == "open":
+            return FakeProc(0)
+        return FakeProc(1, err=not_running)
+
+    async def no_wait(app):
+        return None
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", create)
+    monkeypatch.setattr(scripts, "wait_until_running", no_wait)
+    with pytest.raises(MacError, match="-600"):
+        await scripts.run("probe", "Calendar", app="Calendar")
