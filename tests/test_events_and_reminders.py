@@ -74,8 +74,8 @@ class FakeRunner:
     async def history(self, date, limit=None, before=None):
         return {"items": [], "total": 0, "start": 0}
 
-    async def post_message(self, text, session_id=None, media=None):
-        FakeRunner.posted = (text, media)
+    async def post_message(self, text, session_id=None, media=None, kind="system"):
+        FakeRunner.posted = (text, media, kind)
 
     async def close(self):
         pass
@@ -132,7 +132,7 @@ async def test_reminder_routes_act_and_dismiss(client):
     pending = (await c.get("/api/reminders/pending")).json()
     assert [p["id"] for p in pending] == [ping, follow] and pending[0]["text"] == "Reminder: Pay the fees"
     assert (await c.post(f"/api/reminders/{ping}/act")).json()["text"] == "Reminder: Pay the fees"
-    assert FakeRunner.posted == ("Reminder: Pay the fees", None)  # Act is what puts it in the chat
+    assert FakeRunner.posted == ("Reminder: Pay the fees", None, "reminder")  # Act is what puts it in the chat
     assert store.one("select status, seen_at from tasks where id=?", (ping,))["status"] == "done"
     assert (await c.post(f"/api/reminders/{follow}/dismiss")).json() == {"ok": True}
     row = store.one("select status, seen_at from tasks where id=?", (follow,))

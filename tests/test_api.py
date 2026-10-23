@@ -18,8 +18,9 @@ class FakeRunner:
     async def history(self, date, limit=None, before=None):
         return {"items": [{"role": "user", "text": "hi", "tools": []}], "total": 1, "start": 0}
 
-    async def post_message(self, text, session_id=None):
+    async def post_message(self, text, session_id=None, media=None, kind="system"):
         self.posted = getattr(self, "posted", []) + [text]
+        FakeRunner.kinds = getattr(FakeRunner, "kinds", []) + [kind]
 
     async def close(self):
         pass
@@ -169,6 +170,7 @@ async def test_voice_transcript_posts_one_message(client):
     c = client[0] if isinstance(client, tuple) else client
     r = await c.post("/api/voice/transcript", json={"lines": [{"who": "you", "text": "What's due?"}, {"who": "odie", "text": "Electricity on the 12th."}]})
     assert r.json()["saved"] is True
+    assert FakeRunner.kinds[-1] == "talk"  # a transcript is not something to show a banner for
     assert (await c.post("/api/voice/transcript", json={"lines": []})).json()["saved"] is False
 
 

@@ -18,10 +18,12 @@ class Chat:
 
     def __init__(self):
         self.posts = []
+        self.kinds = []
         self.focused_turn = "the runner's focused turn"
 
-    async def post_message(self, text, session_id=None, media=None):
+    async def post_message(self, text, session_id=None, media=None, kind="system"):
         self.posts.append((text, session_id, media))
+        self.kinds.append(kind)
 
 
 class NoteFailed(Exception):
@@ -123,6 +125,7 @@ async def test_a_second_kind_runs_through_the_queue_end_to_end(world, statuses, 
     assert notes.made == [("tides", browser, None)]
     assert chat.posts == [("The note about A note on tides is ready.", "chat-1",
                            [{"kind": "note", "url": "/files/note.txt"}])]
+    assert chat.kinds == ["job"]  # a made thing is ready: the Mac's banner says so
     assert pushes == [{"title": "Odie", "body": "The note about A note on tides is ready.", "url": "/#chat",
                        "tag": "note-tides"}]
     data = read_status(job.folder)

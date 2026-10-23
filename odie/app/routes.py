@@ -517,7 +517,7 @@ async def reminder_act(task_id: int, request: Request):
     if not row:
         raise HTTPException(404, "No such reminder.")
     notice = _notice(row)
-    ev = await request.app.state.runner.post_message(notice["text"], media=notice.get("media"))
+    ev = await request.app.state.runner.post_message(notice["text"], media=notice.get("media"), kind="reminder")
     store.mark_seen(task_id)
     if row["kind"] == "reminder" and not row["snoozed_until"]:
         store.update_task(task_id, status="done")
@@ -1507,7 +1507,7 @@ async def voice_transcript(body: TranscriptIn, request: Request):
         return {"saved": False}
     name = persona.get(request.app.state.store)["name"]
     text = "**Talk**\n\n" + "\n\n".join(f"**{'You' if x.who == 'you' else name}:** {x.text.strip()}" for x in lines)
-    await request.app.state.runner.post_message(text)
+    await request.app.state.runner.post_message(text, kind="talk")
     return {"saved": True}
 
 

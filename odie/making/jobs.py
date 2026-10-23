@@ -189,7 +189,7 @@ def push_tag(kind_name: str, slug: str) -> str:
 
 async def tell(tag: str, session_id: str | None, text: str, media: list[dict] | None = None) -> None:
     """Post the message into the chat and push it to the phone (one push per message, with the job's tag)."""
-    await hooks["runner"].post_message(text, session_id, media=media)
+    await hooks["runner"].post_message(text, session_id, media=media, kind="job")
     store = hooks["store"]
     try:
         send_to_all(store, persona.get(store)["name"], text, url="/#chat", tag=tag)

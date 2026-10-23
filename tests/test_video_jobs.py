@@ -24,7 +24,7 @@ class Chat:
     def __init__(self):
         self.posts = []
 
-    async def post_message(self, text, session_id=None, media=None):
+    async def post_message(self, text, session_id=None, media=None, kind="system"):
         self.posts.append((text, session_id, media))
 
 
