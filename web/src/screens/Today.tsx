@@ -1,7 +1,7 @@
 import { AnimatePresence, motion } from "framer-motion";
 import { NeedsYou } from "../components/NeedsYou";
 import { footer, type WatchCardData } from "../watch";
-import { chatRunHash, type Need, type NeedAction } from "../needs";
+import { chatRunHash, type Need, type NeedAction, type WatchNote } from "../needs";
 import { useCallback, useEffect, useState } from "react";
 import { useLive } from "../live";
 import { getJSON, postJSON, todayISO } from "../api";
@@ -79,10 +79,12 @@ export function Today() {
   const [watchClosed, setWatchClosed] = useState<WatchClosedItem[]>([]);
   const [needs, setNeeds] = useState<Need[] | null>(null);
   const [checked, setChecked] = useState("");  // under "Needs you": when the watch last checked, or what isn't working
+  const [notes, setNotes] = useState<WatchNote[]>([]);  // what the watch told the user in the last day
   const loadNeeds = useCallback(() => {
-    type Got = { items: Need[]; watch: Partial<WatchCardData> };
+    type Got = { items: Need[]; watch: Partial<WatchCardData>; notes?: WatchNote[] };
     getJSON<Got>("/api/needs_you").then((g) => {
       setNeeds(g.items);
+      setNotes(g.notes ?? []);
       const w = g.watch;
       setChecked(w.off || (w.checked_at ? footer({ needs_you: [], events: [], unseen: 0, line: "", sources: {}, ...w } as WatchCardData, new Date()) : ""));
     }).catch(() => {});
@@ -164,7 +166,7 @@ export function Today() {
           </AnimatePresence>
 
           <div className="rise" style={delay(0.08)}>
-            <NeedsYou items={needs} footer={checked} closed={watchClosed} onAct={(n, a) => void act(n, a)} onReopen={(id) => void reopen(id)} />
+            <NeedsYou items={needs} footer={checked} closed={watchClosed} notes={notes} onAct={(n, a) => void act(n, a)} onReopen={(id) => void reopen(id)} />
           </div>
 
           <div className="rise" style={delay(0.1)}><UpNext items={up?.items ?? null} loading={upLoading} /></div>

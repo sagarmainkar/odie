@@ -139,7 +139,7 @@ def background_for(store: Store, runner):
                 logging.getLogger("odie").warning("watch push failed", exc_info=True)
         memory = getattr(runner, "memory", None)
         index = build_index(memory.load(), max_chars=3000) if memory is not None and memory.exists() else ""
-        await watch.run_check(store, now(), turn, runner.post_message, push, memory=memory, memory_index=index)
+        await watch.run_check(store, now(), turn, push, memory=memory, memory_index=index)
     # Each wake-up: the mail and calendar watch when it's due (every 30 minutes), then trackers (then, in 9c, parked tasks).
     # Detection (a minute or two), the turn (280 s), and reads when the model didn't: 10 minutes at most.
     bg.parts.insert(0, Part("watch", watch_part, due=lambda _now: watch.due(store, now()), limit=600))

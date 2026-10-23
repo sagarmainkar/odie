@@ -8,7 +8,7 @@ from datetime import datetime
 from odie.watch.fetch import Event, Mail
 
 CARD, FLAGGED, HELD = "watch.card", "watch.flagged", "watch.held"
-PILES = ("alerts", "bills", "events", "personal", "orders")  # where an item belongs (the parked Desk design's buckets)
+PILES = ("alerts", "bills", "events", "personal", "orders")  # where an item belongs (the icon its card gets)
 WHY_MAX = 120
 LABEL_MAX = 40
 DRAFT_MAX = 4000
@@ -99,7 +99,7 @@ def labelled(n: dict) -> dict:
     """The labels of one item the model reported, each kept only when it is usable; a bad one is left out, never the
     item. {"pile": "alerts", "suggestion": {"label": "Reply", "run": "…"}, "due": "2026-10-24"} -> those three;
     {"pile": "urgent", "suggestion": {}, "due": "next week"} -> {}. A suggestion's or escape's tap always sends Odie's
-    own request naming the item ("Show the draft for desk item mail:m1", "Close desk item mail:m1: Not interested"),
+    own request naming the item ("Show the draft for watch item mail:m1", "Close watch item mail:m1: Not interested"),
     whatever run the model wrote."""
     out: dict = {}
     ref = str(n.get("ref") or "")
@@ -109,13 +109,13 @@ def labelled(n: dict) -> dict:
     draft = _draft(n.get("draft"))
     suggestion = _label(n.get("suggestion"))
     if suggestion:  # what a tap sends is Odie's own words, naming the item: a mail can't write it
-        run = f"Desk item {ref}: {suggestion}"
+        run = f"Watch item {ref}: {suggestion}"
         if draft:
-            run = f"Show the draft for desk item {ref}"
+            run = f"Show the draft for watch item {ref}"
         out["suggestion"] = {"label": suggestion, "run": run}
     escape = _label(n.get("escape"))
     if escape:
-        out["escape"] = {"label": escape, "run": f"Close desk item {ref}: {escape}"}
+        out["escape"] = {"label": escape, "run": f"Close watch item {ref}: {escape}"}
     due = _day(n.get("due"))
     if due:
         out["due"] = due
@@ -204,11 +204,14 @@ def fallback(store, now: datetime, mails: list[Mail], events: list[Event], statu
 KEEP_DONE = 10
 
 
-def keep_done(store, now: datetime, message: str, told: bool) -> None:
-    """Note on the card what the watch did for a Watch for entry, told in the chat or not, so a quiet one is still
-    there to look up. The card keeps the last KEEP_DONE."""
+def keep_done(store, now: datetime, message: str, told: bool, media: list | None = None) -> None:
+    """Note on the card what the watch did for a Watch for entry, told or not, so a quiet one is still there to look
+    up; a told one (with any files it made) shows on Today under Needs you. The card keeps the last KEEP_DONE."""
     card = store.get_setting(CARD) or {}
-    done = [*card.get("done", []), {"at": now.isoformat(timespec="seconds"), "message": message[:500], "told": told}]
+    note = {"at": now.isoformat(timespec="seconds"), "message": message[:500], "told": told}
+    if media:
+        note["media"] = media
+    done = [*card.get("done", []), note]
     store.set_setting(CARD, {**card, "done": done[-KEEP_DONE:]})
 
 
@@ -230,21 +233,6 @@ def failing_now(store, statuses: dict) -> list[str]:
             continue
         failures_in_a_row = _failures_before(prev, sid) + 1  # counting this check's
         if failures_in_a_row == SAY_FAILING_AT:
-            apps.add(st.get("app", sid))
-    return sorted(apps)
-
-
-def recovered_now(store, statuses: dict) -> list[str]:
-    """The apps to say "works again" for: the ones that answer in this check after failing at least SAY_FAILING_AT
-    checks in a row, that is after failing_now said so.
-    Example: Gmail had failed 4 checks in a row and answers now -> ["Gmail"]; it had failed only 2 (nothing was said)
-    and answers now -> []."""
-    prev = (store.get_setting("watch.state") or {}).get("sources") or {}
-    apps = set()
-    for sid, st in statuses.items():
-        if not st.get("ok"):
-            continue
-        if _failures_before(prev, sid) >= SAY_FAILING_AT:
             apps.add(st.get("app", sid))
     return sorted(apps)
 

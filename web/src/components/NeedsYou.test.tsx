@@ -25,4 +25,11 @@ describe("Needs you on Today", () => {
     expect(html).toContain("1 done while you were away");
     expect(html).not.toContain("Order: desk lamp");  // folded until tapped
   });
+  it("counts the watch's notes in the same line, each with its files", () => {
+    const notes = [{ at: "2026-10-23T10:00:00+05:30", message: "Made the deck from the PDF", media: [{ id: "abc", title: "deck.pptx", filename: "deck.pptx" }] }];
+    const html = renderToStaticMarkup(<NeedsYou items={[]} footer="" closed={[]} notes={notes} onAct={() => {}} onReopen={() => {}} open />);
+    expect(html).toContain("1 done while you were away");
+    expect(html).toContain("Made the deck from the PDF");
+    expect(html).toContain('href="/api/media/abc"');
+  });
 });

@@ -147,7 +147,7 @@ async def test_a_check_closes_a_paid_bill_and_sees_the_open_ones(store, tmp_path
         seen["open"] = json.loads((await call(tools, "bills_and_orders"))["result"])
         seen["closed"] = (await call(tools, "close_reminder", task_id=tid, why="paid: confirmation mail 21 Oct"))["result"]
         await call(tools, "report", needs_you=[], line="Electricity bill paid.")
-    assert await check.run_check(store, NOW, turn, _post, _push) == "ok"
+    assert await check.run_check(store, NOW, turn, _push) == "ok"
     assert [r["id"] for r in seen["open"]["reminders"]] == [tid]
     assert [e["title"] for e in seen["open"]["events"]] == ["Pay electricity bill - Rs 4,280"]
     assert seen["closed"] == f"Closed reminder #{tid}."
@@ -162,8 +162,8 @@ async def test_the_first_check_catches_up_once(store, tmp_path):
     async def turn(prompt, tools, instruction):
         prompts.append(prompt)
         await call(tools, "report", needs_you=[], line="Caught up.")
-    await check.run_check(store, NOW, turn, _post, _push)
-    await check.run_check(store, NOW + timedelta(minutes=30), turn, _post, _push)
+    await check.run_check(store, NOW, turn, _push)
+    await check.run_check(store, NOW + timedelta(minutes=30), turn, _push)
     assert "catch-up" in prompts[0] and "Wireless Earbuds" in prompts[0] and "Lunch tomorrow" not in prompts[0]
     assert "catch-up" not in prompts[1]
 
@@ -224,6 +224,6 @@ async def test_a_catch_up_that_keeps_failing_is_given_up_after_two_tries(store, 
         prompts.append(prompt)
         raise TimeoutError("the model took too long")
     for n in range(3):
-        await check.run_check(store, NOW + timedelta(minutes=30 * n), times_out, _post, _push)
+        await check.run_check(store, NOW + timedelta(minutes=30 * n), times_out, _push)
     catching = ["catch-up" in p for p in prompts if p.startswith("Run the watch check.")]
     assert catching == [True, True, False]  # two tries, then new mail only

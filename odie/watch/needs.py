@@ -1,17 +1,18 @@
 """Today's "Needs you" (23 Oct 2026): one list of cards, refreshed by every watch check. First the watch's items (what
 it found in mail that needs the user, in the order it ranked them), then the user's own open reminders, dues and
 to-dos, soonest due first. Each card has two buttons; what a button does is decided here, the app only carries it out:
-  "chat": send the value as the user's chat request ("Show the draft for desk item mail:r1");
+  "chat": send the value as the user's chat request ("Show the draft for watch item mail:r1");
   "dismiss": take a watch item off and stop following it (POST /api/watch/done with the ref);
   "done_task" / "snooze_task": tick a task off, or move it to tomorrow 09:00."""
 from __future__ import annotations
 
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from odie.watch import bills, report, threads
 from odie.watch import cards as card_text
 
+NOTES_HOURS = 24  # what the watch told the user stays under Needs you for a day
 MAIL_TITLE = re.compile(r"^Reply to (.+?): (.*)$")  # the title an inbox add-on gives its "reply to" tasks
 
 
@@ -95,3 +96,27 @@ def due_badge(due_at: str | None, now: datetime) -> str:
     if due_at[:10] < now.strftime("%Y-%m-%d"):
         return "Overdue"
     return card_text.day(due_at)
+
+
+def recent_notes(store, now: datetime) -> list[dict]:
+    """What the watch did for a Watch for entry and said was worth telling, in the last NOTES_HOURS, newest first, for
+    Today's "done while you were away": "Added a heads-up for the recital" (told, an hour ago) -> listed with any files;
+    "HN: still no reply" (not told), or a told note from two days ago -> left out."""
+    card = store.get_setting(report.CARD) or {}
+    since = now - timedelta(hours=NOTES_HOURS)
+    out = []
+    for note in card.get("done", []):
+        if not note.get("told"):
+            continue
+        try:
+            at = datetime.fromisoformat(note["at"])
+        except (KeyError, ValueError):
+            continue
+        if at.tzinfo is None:
+            at = at.replace(tzinfo=now.tzinfo)
+        if at < since:
+            continue
+        out.append({"at": note["at"], "message": note.get("message", ""), "media": note.get("media", [])})
+    out.reverse()
+    return out
+

@@ -12,6 +12,6 @@ describe("needs", () => {
     expect(badgeTone("30 Oct, 09:00")).toBe("soft");
   });
   it("sends a chat button's request through the hash", () => {
-    expect(chatRunHash("Show the draft for desk item mail:r1")).toBe("#chat?run=Show%20the%20draft%20for%20desk%20item%20mail%3Ar1");
+    expect(chatRunHash("Show the draft for watch item mail:r1")).toBe("#chat?run=Show%20the%20draft%20for%20watch%20item%20mail%3Ar1");
   });
 });

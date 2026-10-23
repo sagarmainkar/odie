@@ -1,4 +1,4 @@
-"""Chat acting on a Desk card: desk_item shows an item and its drafted reply; desk_close takes it off and closes its thread."""
+"""Chat acting on a watch card: watch_item shows an item and its drafted reply; watch_close takes it off and closes its thread."""
 import pytest
 
 from odie.store.db import Store
@@ -6,8 +6,8 @@ from odie.watch import report, threads
 
 ITEM = {"ref": "mail:m1", "title": "Workshop invite", "why": "Asks your fee by Friday", "pile": "alerts", "done": False,
         "from": "Tom Reyes", "subject": "Quick note", "due": "2026-10-24",
-        "suggestion": {"label": "Reply with your fee", "run": "Show the draft for desk item mail:m1"},
-        "escape": {"label": "Not interested", "run": "Close desk item mail:m1: not interested"},
+        "suggestion": {"label": "Reply with your fee", "run": "Show the draft for watch item mail:m1"},
+        "escape": {"label": "Not interested", "run": "Close watch item mail:m1: not interested"},
         "draft": {"to": "tom@learnhub.example.org", "subject": "Re: Quick note", "body": "Hi Tom, my fee is [fee]."}}
 
 
@@ -20,21 +20,21 @@ def store(isolated_settings, tmp_path):
 
 
 def tools_for(store):
-    from odie.agent.tools.desk import make_desk_tools
-    return {t.name: t.func for t in make_desk_tools(store)}
+    from odie.agent.tools.watch_items import make_watch_item_tools
+    return {t.name: t.func for t in make_watch_item_tools(store)}
 
 
-def test_desk_item_shows_the_item_and_its_draft(store):
-    text = tools_for(store)["desk_item"](ref="mail:m1")
+def test_watch_item_shows_the_item_and_its_draft(store):
+    text = tools_for(store)["watch_item"](ref="mail:m1")
     assert "Workshop invite" in text and "Asks your fee by Friday" in text and "2026-10-24" in text
     assert "tom@learnhub.example.org" in text and "Hi Tom, my fee is [fee]." in text
     assert "UNTRUSTED" in text  # what came from mail is fenced
-    assert "isn't on the Desk" in tools_for(store)["desk_item"](ref="mail:zz")
+    assert "isn't on Today" in tools_for(store)["watch_item"](ref="mail:zz")
 
 
-def test_desk_close_takes_it_off_and_closes_its_thread(store):
+def test_watch_close_takes_it_off_and_closes_its_thread(store):
     threads.track(store, "mail:m1", "reply", "Reply: workshop invite", "owed", due="2026-10-24")
-    said = tools_for(store)["desk_close"](ref="mail:m1", why="not interested")
+    said = tools_for(store)["watch_close"](ref="mail:m1", why="not interested")
     assert "Closed" in said
     assert [i["ref"] for i in store.get_setting(report.CARD)["needs_you"]] == ["mail:m2"]
     assert threads.open_refs(store) == set()
@@ -42,14 +42,14 @@ def test_desk_close_takes_it_off_and_closes_its_thread(store):
     assert row["status"] == "done" and "not interested" in row["notes"]
 
 
-def test_desk_close_needs_a_reason_and_a_known_item(store):
+def test_watch_close_needs_a_reason_and_a_known_item(store):
     tools = tools_for(store)
-    assert "why" in tools["desk_close"](ref="mail:m1", why="").lower()
-    assert "isn't on the Desk" in tools["desk_close"](ref="mail:zz", why="done")
+    assert "why" in tools["watch_close"](ref="mail:m1", why="").lower()
+    assert "isn't on Today" in tools["watch_close"](ref="mail:zz", why="done")
 
 
 def test_a_reminder_card_points_to_task_update(store):
-    assert "task_update" in tools_for(store)["desk_item"](ref="task:7")
+    assert "task_update" in tools_for(store)["watch_item"](ref="task:7")
 
 
 def test_threads_close_by_ref(store):
@@ -60,22 +60,22 @@ def test_threads_close_by_ref(store):
 
 
 def test_everything_the_watch_wrote_is_inside_the_fence(store):
-    text = tools_for(store)["desk_item"](ref="mail:m1")
+    text = tools_for(store)["watch_item"](ref="mail:m1")
     fence = text.index("<<<UNTRUSTED")
     assert text.index("Workshop invite") > fence and text.index("Reply with your fee") > fence
 
 
-def test_closing_on_the_desk_is_the_users_not_the_watchs(store):
+def test_closing_in_chat_is_the_users_not_the_watchs(store):
     from datetime import datetime, timedelta
 
     from odie.watch import bills
     threads.track(store, "mail:m1", "reply", "Reply: workshop invite", "owed")
-    tools_for(store)["desk_close"](ref="mail:m1", why="not interested")
+    tools_for(store)["watch_close"](ref="mail:m1", why="not interested")
     assert bills.closed_by_watch(store, datetime.now().astimezone() - timedelta(minutes=1)) == []
 
 
-def test_desk_item_names_the_app_that_holds_the_mail(store):
+def test_watch_item_names_the_app_that_holds_the_mail(store):
     """Chat opens a mail by its id in the right app (Gmail's connector, not Apple Mail): the item says which."""
     store.set_setting(report.CARD, {"needs_you": [{**ITEM, "app": "Mail Connector"}]})
-    text = tools_for(store)["desk_item"](ref="mail:m1")
+    text = tools_for(store)["watch_item"](ref="mail:m1")
     assert "in Mail Connector, id m1" in text

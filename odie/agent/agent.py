@@ -9,7 +9,7 @@ from google.genai import types
 
 from odie.agent.model import model_for
 from odie.agent.prompt import IDENTITY, Who, rules_text
-from odie.agent.tools.desk import make_desk_tools
+from odie.agent.tools.watch_items import make_watch_item_tools
 from odie.agent.tools.local import make_local_tools
 from odie.agent.tools.shell import make_shell_tool
 from odie.agent.tools.web import make_web_tools
@@ -76,7 +76,7 @@ def build_agent(store: Store, instruction: str | Callable | None = None,
     browser = find.browser_binary() is not None  # the browser capability: tools only when there's a browser to drive
     core = [*make_memory_tools(memory, on_memory_change), make_shell_tool(store=store),
             *make_web_tools(store=store, browser_for=shared if browser else None),
-            *make_local_tools(store, config.settings.timezone, source_done=source_done), *make_desk_tools(store),
+            *make_local_tools(store, config.settings.timezone, source_done=source_done), *make_watch_item_tools(store),
             *make_media_tools(store), *make_file_tools(),
             *(make_browser_tools(store) if browser else [])]
     from odie import addons

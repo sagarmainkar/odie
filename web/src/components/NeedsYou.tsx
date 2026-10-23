@@ -1,19 +1,22 @@
 import { AnimatePresence, motion } from "framer-motion";
 import { useState } from "react";
-import { badgeTone, tileColour, type Need, type NeedAction } from "../needs";
+import { badgeTone, tileColour, type Need, type NeedAction, type WatchNote } from "../needs";
+import { mediaUrl } from "../media";
 import { Orb } from "./Orb";
-import { Tile } from "./Tile";
+import { Icon, Tile } from "./Tile";
 import { WatchClosed, type WatchClosedItem } from "./WatchClosed";
 
 const ask = (q: string) => { location.hash = `#chat?q=${encodeURIComponent(q)}`; };
 
 /** Today's "Needs you": one card per thing to act on, from the watch's last check and the user's own reminders. Each
- * card has its two buttons; the watch's closes fold into one "done while you were away" line with Reopen. */
-export function NeedsYou({ items, footer, closed, onAct, onReopen }: {
-  items: Need[] | null; footer: string; closed: WatchClosedItem[];
-  onAct: (need: Need, act: NeedAction) => void; onReopen: (id: number) => void;
+ * card has its two buttons. What the watch did fold into one "done while you were away" line: its notes (with any
+ * files) and the reminders it closed (with Reopen). open: start unfolded (tests). */
+export function NeedsYou({ items, footer, closed, notes = [], onAct, onReopen, open = false }: {
+  items: Need[] | null; footer: string; closed: WatchClosedItem[]; notes?: WatchNote[];
+  onAct: (need: Need, act: NeedAction) => void; onReopen: (id: number) => void; open?: boolean;
 }) {
-  const [showClosed, setShowClosed] = useState(false);
+  const [showClosed, setShowClosed] = useState(open);
+  const doneCount = closed.length + notes.length;
   return (
     <section className="flex flex-col gap-2.5" aria-label="Needs you">
       <div className="flex items-baseline gap-2 px-1">
@@ -46,13 +49,26 @@ export function NeedsYou({ items, footer, closed, onAct, onReopen }: {
           </motion.div>
         ))}
       </AnimatePresence>
-      {closed.length > 0 && (
+      {doneCount > 0 && (
         <div className="glass rounded-[22px] px-3 py-1">
           <button type="button" onClick={() => setShowClosed(!showClosed)} aria-expanded={showClosed}
             className="w-full flex items-center gap-2 py-2 text-left text-[13.5px] text-good font-semibold">
-            <span className="flex-1">✓ {closed.length} done while you were away</span>
+            <span className="flex-1">✓ {doneCount} done while you were away</span>
             <span className="text-dim" aria-hidden="true">{showClosed ? "‹" : "›"}</span>
           </button>
+          {showClosed && notes.map((n) => (
+            <div key={n.at + n.message} className="flex items-start gap-3 py-2.5 px-1 border-t border-line">
+              <span className="w-9 h-9 shrink-0 rounded-full grid place-items-center bg-good text-white" aria-hidden="true">
+                <Icon name="check" size={18} stroke={2.6} />
+              </span>
+              <div className="flex-1 min-w-0">
+                <div className="text-[14px] leading-[1.35] text-ink-2 break-words">{n.message}</div>
+                {n.media.map((m) => (
+                  <a key={m.id} href={mediaUrl(m)} download={m.filename} className="pill h-8 px-3 text-[12.5px] mt-1.5 inline-flex">{m.filename || m.title}</a>
+                ))}
+              </div>
+            </div>
+          ))}
           {showClosed && <WatchClosed items={closed} onReopen={onReopen} />}
         </div>
       )}
