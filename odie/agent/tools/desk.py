@@ -31,7 +31,10 @@ def item_text(item: dict) -> str:
     draft = item.get("draft")
     if draft:
         from_mail.append(f"drafted reply, to {draft.get('to', '')}, subject {draft.get('subject', '')}:\n{draft['body']}")
-    return f"Desk item {item['ref']}\n" + wrap_untrusted("\n".join(from_mail))
+    where = ""
+    if item.get("app") and item["ref"].startswith("mail:"):
+        where = f" (in {item['app']}, id {item['ref'][len('mail:'):]}: open it there)"
+    return f"Desk item {item['ref']}{where}\n" + wrap_untrusted("\n".join(from_mail))
 
 
 def make_desk_tools(store: Store) -> list[FunctionTool]:

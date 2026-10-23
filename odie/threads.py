@@ -13,7 +13,6 @@ from odie.store.db import Store
 ID_RE = re.compile(r"^(chat-\d{4}-\d{2}-\d{2}(-\d+)?|chat-desk)$")
 DESK = "chat-desk"  # the watch's own conversation: its morning round, urgent items and news (never the user's chat)
 DESK_TITLE = "Desk"
-DESK_URL = f"/#chat?thread={DESK}"  # where a push about the Desk opens the app
 TITLE_MAX = 70
 
 

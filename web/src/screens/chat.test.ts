@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { askedFromHash, composerHeight, threadFromHash } from "./Chat";
+import { askedFromHash, composerHeight, runFromHash, threadFromHash } from "./Chat";
 
 describe("composerHeight", () => {
   it("grows from one to five lines", () => {
@@ -37,5 +37,12 @@ describe("threadFromHash", () => {
     expect(threadFromHash("#chat?thread=chat-desk")).toBe("chat-desk");
     expect(threadFromHash("#chat?q=hello")).toBeNull();
     expect(threadFromHash("#chat")).toBeNull();
+  });
+});
+
+describe("runFromHash", () => {
+  it("reads the request a Today card's button sends", () => {
+    expect(runFromHash("#chat?run=Show%20the%20draft%20for%20desk%20item%20mail%3Ar1")).toBe("Show the draft for desk item mail:r1");
+    expect(runFromHash("#chat?q=hello")).toBeNull();
   });
 });

@@ -68,7 +68,14 @@ def test_everything_the_watch_wrote_is_inside_the_fence(store):
 def test_closing_on_the_desk_is_the_users_not_the_watchs(store):
     from datetime import datetime, timedelta
 
-    from odie.jobs.brief import done_lines
+    from odie.watch import bills
     threads.track(store, "mail:m1", "reply", "Reply: workshop invite", "owed")
     tools_for(store)["desk_close"](ref="mail:m1", why="not interested")
-    assert done_lines(store, datetime.now().astimezone() + timedelta(minutes=1)) == []
+    assert bills.closed_by_watch(store, datetime.now().astimezone() - timedelta(minutes=1)) == []
+
+
+def test_desk_item_names_the_app_that_holds_the_mail(store):
+    """Chat opens a mail by its id in the right app (Gmail's connector, not Apple Mail): the item says which."""
+    store.set_setting(report.CARD, {"needs_you": [{**ITEM, "app": "Mail Connector"}]})
+    text = tools_for(store)["desk_item"](ref="mail:m1")
+    assert "in Mail Connector, id m1" in text

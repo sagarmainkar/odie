@@ -134,8 +134,7 @@ def background_for(store: Store, runner):
 
         def push(title, body):
             try:
-                from odie.threads import DESK_URL
-                send_to_all(store, title, body, url=DESK_URL, tag="watch")
+                send_to_all(store, title, body, url="/#today", tag="watch")  # the card is on Today's Needs you
             except Exception:  # noqa: BLE001
                 logging.getLogger("odie").warning("watch push failed", exc_info=True)
         memory = getattr(runner, "memory", None)
@@ -183,6 +182,13 @@ def start_scheduler(store: Store, runner=None, background=None):
         await expire_approvals(store, runner)
 
     sched.add_job(brief_job, CronTrigger(hour=7, minute=30, timezone=tz), id="brief", misfire_grace_time=3600, coalesce=True)
+    from odie.jobs.brief import missed_today
+    if missed_today(store, datetime.now(tz)):  # the computer was off at 07:30: send it now, after the first watch check
+        from datetime import timedelta
+
+        from apscheduler.triggers.date import DateTrigger
+        sched.add_job(brief_job, DateTrigger(run_date=datetime.now(tz) + timedelta(minutes=2), timezone=tz),
+                      id="brief_missed", misfire_grace_time=600)
     sched.add_job(reminders_job, IntervalTrigger(minutes=1, timezone=tz), id="reminders", misfire_grace_time=120, coalesce=True)
     sched.add_job(expiry_job, IntervalTrigger(minutes=10, timezone=tz), id="expiry", misfire_grace_time=600, coalesce=True)
 

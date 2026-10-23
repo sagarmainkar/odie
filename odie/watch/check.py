@@ -205,9 +205,7 @@ async def run_check(store, now: datetime, turn, post, push, memory=None, memory_
         await say(f"{app} works again: the watch is back.")
     if r is None:
         return "fallback"
-    if to_push:  # what needs the user soon: cards on the Desk, and a push for each
-        await say(cards.round_text("", to_push, []))
-    for it in to_push:
+    for it in to_push:  # what needs the user soon: a push each; the card is on Today's Needs you
         ping(it["title"], it["why"])
     from odie.agent.tools.files import hand_over, workspace
     ws = workspace().resolve()

@@ -171,6 +171,12 @@ export function askedFromHash(hash: string): string | null {
   return m ? decodeURIComponent(m[1]) : null;
 }
 
+/** The request a Today card's button sends with "#chat?run=…", sent at once like a chat card's button; or null. */
+export function runFromHash(hash: string): string | null {
+  const m = hash.match(/^#chat\?run=(.+)$/);
+  return m ? decodeURIComponent(m[1]) : null;
+}
+
 /** The conversation a push opens with "#chat?thread=<id>" (the Desk: "#chat?thread=chat-desk"), or null. */
 export function threadFromHash(hash: string): string | null {
   const m = hash.match(/^#chat\?thread=([\w-]+)$/);
@@ -484,6 +490,19 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
       history.replaceState(null, "", "#chat");
       setInput(q);
       requestAnimationFrame(() => { const f = field.current; if (f) { f.focus(); f.setSelectionRange(q.length, q.length); } });
+    };
+    take();
+    window.addEventListener("hashchange", take);
+    return () => window.removeEventListener("hashchange", take);
+  }, []);
+
+  // A Today card's button (#chat?run=...): its request is sent as soon as the chat is free.
+  useEffect(() => {
+    const take = () => {
+      const run = runFromHash(location.hash);
+      if (run === null) return;
+      history.replaceState(null, "", "#chat");
+      setQueued((q) => [...q, run]);
     };
     take();
     window.addEventListener("hashchange", take);

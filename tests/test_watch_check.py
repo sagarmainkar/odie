@@ -293,7 +293,8 @@ def test_the_watch_reads_like_an_assistant():
 
 
 
-async def test_an_urgent_item_is_a_card_on_the_desk(store, tmp_path):
+async def test_an_urgent_item_pings_the_phone_and_posts_nothing(store, tmp_path):
+    # It shows on Today's Needs you (odie.watch.needs); the push opens Today. No card post on the Desk.
     # The watch's news goes to its own conversation as a card, never into the chat the user is in.
     from odie.plugins import mcp
     from odie.threads import DESK
@@ -310,8 +311,7 @@ async def test_an_urgent_item_is_a_card_on_the_desk(store, tmp_path):
                                                 "escape": {"label": "Skip", "run": "Close desk item mail:m1: skip"}}],
                     line="one")
     await check.run_check(store, DAY, turn, post, push)
-    cards_posted = [(text, where) for (text, _media), where in zip(posts, WHERE) if "```odie-blocks" in text]
-    assert cards_posted and cards_posted[0][1] == DESK and "Deck review" in cards_posted[0][0]
+    assert all("Deck review" not in text for text, _media in posts)
     assert pushes and pushes[0][0] == "Deck review"
 
 
