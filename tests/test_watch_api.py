@@ -62,3 +62,15 @@ async def test_dismissing_on_today_closes_the_watchs_thread(isolated_settings, s
         async with app.router.lifespan_context(app):
             await c.post("/api/watch/done", json={"ref": "mail:m1"})
     assert threads.open_refs(store) == set()
+
+
+async def test_needs_you_serves_the_cards_and_the_checks_footer(isolated_settings, store):
+    from odie.app.main import create_app
+    from tests.test_api import FakeRunner
+    store.add_task("Renew passport", "reminder", due_at="2026-10-30T09:00:00+05:30")
+    app = create_app(runner=FakeRunner(), store=store)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+        async with app.router.lifespan_context(app):
+            got = (await c.get("/api/needs_you")).json()
+    assert [i["title"] for i in got["items"]] == ["Invoice due Friday", "Renew passport"]
+    assert got["watch"]["line"] == "1 new email" and "checked_at" in got["watch"]

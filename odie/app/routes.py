@@ -1652,6 +1652,23 @@ async def watch_get(request: Request) -> dict[str, Any]:
     return {**card, "unseen": sum(1 for i in card.get("needs_you", []) if not i.get("done") and not i.get("seen"))}
 
 
+@router.get("/needs_you")
+async def needs_you_get(request: Request) -> dict[str, Any]:
+    """Today's "Needs you" cards (odie.watch.needs), and the watch's last check for the line under them: when it
+    checked, through what, or what isn't working."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from odie.watch import needs, report
+    store = request.app.state.store
+    now = datetime.now(ZoneInfo(config.settings.timezone))
+    card = store.get_setting(report.CARD) or {}
+    watch = {k: card.get(k) for k in ("checked_at", "line", "off", "sources") if k in card}
+    if not card:
+        watch = {"off": "The first check runs a minute after Odie starts."}
+    return {"items": needs.cards(store, now), "watch": watch, "notes": needs.recent_notes(store, now)}
+
+
 @router.post("/watch/done")
 async def watch_done(body: WatchDoneIn, request: Request) -> dict[str, Any]:
     from odie.watch import report

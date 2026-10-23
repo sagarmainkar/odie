@@ -62,7 +62,7 @@ async def test_a_failing_post_still_saves_the_checks_place(store, tmp_path):
 
     async def post(text, media=None, session_id=None):
         raise RuntimeError("chat is busy")
-    assert await check.run_check(store, NOW, turn, post, lambda t, b: None) == "ok"
+    assert await check.run_check(store, NOW, turn, lambda t, b: None) == "ok"
     assert store.get_setting(fetch.STATE)["last_check"] == NOW.isoformat(timespec="seconds")  # not repeated every 5 minutes
 
 

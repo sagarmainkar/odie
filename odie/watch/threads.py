@@ -86,7 +86,7 @@ def track(store, ref: str, kind: str, title: str, stage: str, due: str | None = 
 
 def close(store, ref: str, why: str, by_user: bool = False) -> str:
     """Closes the watch's open thread for this ref, whatever its kind, and takes its card item off. by_user: the user
-    dismissed it (on Today or the Desk): noted as theirs, so it isn't listed as something the watch got done.
+    dismissed it (on Today, or in chat): noted as theirs, so it isn't listed as something the watch got done.
     ("mail:o1", "delivered") with an open thread -> "Closed thread #12."; no open thread -> "No open thread …"."""
     row = _own_open(store, ref)
     if row is None:

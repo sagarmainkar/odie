@@ -171,10 +171,10 @@ export function askedFromHash(hash: string): string | null {
   return m ? decodeURIComponent(m[1]) : null;
 }
 
-/** The conversation a push opens with "#chat?thread=<id>" (the Desk: "#chat?thread=chat-desk"), or null. */
-export function threadFromHash(hash: string): string | null {
-  const m = hash.match(/^#chat\?thread=([\w-]+)$/);
-  return m ? m[1] : null;
+/** The request a Today card's button sends with "#chat?run=…", sent at once like a chat card's button; or null. */
+export function runFromHash(hash: string): string | null {
+  const m = hash.match(/^#chat\?run=(.+)$/);
+  return m ? decodeURIComponent(m[1]) : null;
 }
 
 /** Composer height for its content, 1 to 5 lines; "" (natural height) while hidden, when there is nothing to measure. */
@@ -490,20 +490,17 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
     return () => window.removeEventListener("hashchange", take);
   }, []);
 
-  // A push names its conversation (#chat?thread=chat-desk): open it, once it is in the threads list.
+  // A Today card's button (#chat?run=...): its request is sent as soon as the chat is free.
   useEffect(() => {
-    const open = () => {
-      const id = threadFromHash(location.hash);
-      if (id === null) return;
+    const take = () => {
+      const run = runFromHash(location.hash);
+      if (run === null) return;
       history.replaceState(null, "", "#chat");
-      getJSON<{ threads: Thread[] }>("/api/threads").then((r) => {
-        const found = r.threads.find((t) => t.id === id);
-        if (found) setThread(found);
-      }).catch(() => {});
+      setQueued((q) => [...q, run]);
     };
-    open();
-    window.addEventListener("hashchange", open);
-    return () => window.removeEventListener("hashchange", open);
+    take();
+    window.addEventListener("hashchange", take);
+    return () => window.removeEventListener("hashchange", take);
   }, []);
 
   function retry(m: Msg) {

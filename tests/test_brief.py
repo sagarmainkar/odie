@@ -49,10 +49,8 @@ async def test_run_brief_stores_and_pushes(monkeypatch, tmp_path):
     assert text.startswith("Dentist at 10")
     row = s.one("select * from briefs order by id desc")
     assert row["date"] == "2026-10-01" and row["text"] == text
-    assert pushed and pushed[0][0] == "Good morning" and "Dentist" in pushed[0][1]   # a short push...
-    assert pushed[0][2] == "/#chat?thread=chat-desk"   # ...that opens the Desk, where the round is
-    from odie.threads import DESK
-    assert posted == [("Good morning. Dentist at 10. Nothing else needs you.", DESK)]   # ...and the Desk's morning round
+    assert pushed == [("Good morning", "Dentist at 10. Nothing else needs you.", "/#today")]  # nothing needs them yet
+    assert posted == []  # the cards are on Today, not in a conversation
     assert s.one("select count(*) n from audit_log where event='brief'")["n"] == 1
 
 
@@ -112,37 +110,45 @@ def test_turn_context_says_brief_is_not_a_calendar():
 
 
 
-async def test_the_morning_round_is_the_opener_then_cards(monkeypatch, tmp_path):
-    # The model writes the opener; the cards come from code: the watch's open items, the user's reminders due today,
-    # and what closed overnight.
+async def test_the_morning_ping_counts_what_needs_the_user_and_opens_today(monkeypatch, tmp_path):
+    # The cards live on Today's Needs you; the morning round is a ping that says how many and opens Today, never a
+    # post in a conversation.
     import odie.jobs.brief as b
-    from odie.threads import DESK
-    from odie.watch import report, threads
+    from odie.watch import report
     s = Store(tmp_path / "a.db")
     s.init_schema()
     s.set_setting(report.CARD, {"needs_you": [
-        {"ref": "mail:m1", "title": "Workshop invite", "why": "Asks your fee by Friday", "pile": "alerts", "done": False,
-         "suggestion": {"label": "Reply with your fee", "run": "Show the draft for desk item mail:m1"}},
+        {"ref": "mail:m1", "title": "Workshop invite", "why": "Asks your fee by Friday", "pile": "alerts", "done": False},
         {"ref": "mail:m2", "title": "Old thing", "why": "x", "done": True}]})
     s.add_task("Pay the gas bill", "reminder", due_at="2026-10-01T09:00+05:30")
-    threads.track(s, "mail:o1", "order", "Order: desk lamp", "shipped")
-    threads.track(s, "mail:o1", "order", "Order: desk lamp", "done", why="delivered")
 
     async def fake_write(prompt, store=None):
         return "Two things need you today."
+    pushed = []
     monkeypatch.setattr(b, "write_with_model", fake_write)
-    monkeypatch.setattr(b, "send_to_all", lambda *a, **k: 1)
+    monkeypatch.setattr(b, "send_to_all", lambda store, title, body, url="/", tag=None: pushed.append((title, body, url)) or 1)
     posted = []
 
     async def post(text, session_id=None):
         posted.append((text, session_id))
     await run_brief(s, NOW, post_message=post)
-    text, where = posted[0]
-    assert where == DESK and text.startswith("Good morning. Two things need you today.")
-    assert "```odie-blocks" in text and "Workshop invite" in text and "Pay the gas bill" in text
-    assert "Old thing" not in text and "Order: desk lamp" in text  # a done item is gone; a closed thread is news
+    assert posted == []
+    assert pushed == [("2 things need you", "Two things need you today.", "/#today")]
 
 
 def test_the_opener_is_short():
     from odie.jobs.brief import brief_system
     assert "Two short sentences at most" in brief_system("Asha")
+
+
+def test_a_missed_morning_round_runs_when_odie_starts_before_noon(tmp_path):
+    """The Mac was off at 07:30: Odie starting at 11:21 sends the morning round then; after noon, or once it ran
+    today, it doesn't."""
+    from odie.jobs.brief import missed_today
+    s = Store(tmp_path / "a.db")
+    s.init_schema()
+    assert missed_today(s, datetime(2026, 10, 23, 11, 21, tzinfo=IST)) is True
+    assert missed_today(s, datetime(2026, 10, 23, 7, 0, tzinfo=IST)) is False   # its time hasn't come
+    assert missed_today(s, datetime(2026, 10, 23, 12, 30, tzinfo=IST)) is False  # too late to be a morning round
+    s.execute("insert into briefs(date, text, items_json) values(?,?,?)", ("2026-10-23", "x", "{}"))
+    assert missed_today(s, datetime(2026, 10, 23, 11, 21, tzinfo=IST)) is False  # it ran

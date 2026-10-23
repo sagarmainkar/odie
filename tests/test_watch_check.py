@@ -48,7 +48,7 @@ async def test_nothing_connected_means_no_model_call(store):
 
     async def turn(prompt, tools, instruction):
         raise AssertionError("no model call without a mail or calendar app")
-    assert await check.run_check(store, DAY, turn, post, push) == "off"
+    assert await check.run_check(store, DAY, turn, push) == "off"
     assert store.get_setting(report.CARD)["off"].startswith("Connect")
 
 
@@ -67,10 +67,12 @@ async def test_a_standing_instruction_makes_the_deck_and_says_so(store, tmp_path
                    line="1 new email from xyz", done=[{"message": "The deck from xyz's PDF is ready", "files": [path]}])
         return "done"
     store.set_setting("watch.state", {"last_check": None, "seen": [], "events": {}, "sources": {"mail:mymail": {"fails": 0}, "calendar:mymail": {"fails": 0}}})
-    assert await check.run_check(store, DAY, turn, post, push) == "ok"
+    assert await check.run_check(store, DAY, turn, push) == "ok"
     assert "## Watch for" in seen_prompt["i"]
-    told = [(text, media) for text, media in posts if text == "The deck from xyz's PDF is ready"]
-    assert told and told[0][1]  # the done message, with the deck as its file (after the urgent item's card)
+    note = store.get_setting(report.CARD)["done"][-1]
+    assert note["message"] == "The deck from xyz's PDF is ready" and note["told"] is True
+    assert note["media"]  # the deck as its file, for Today's "done while you were away"
+    assert posts == []  # nothing goes into a conversation
     assert [t for t, _ in pushes] == ["Deck from xyz", "Odie: done"]
     assert store.get_setting(report.CARD)["needs_you"][0]["ref"] == "mail:m1"
 
@@ -83,7 +85,7 @@ async def test_no_report_still_leaves_a_card_from_the_check(store, tmp_path):
     async def turn(prompt, tools, instruction):
         await call(tools, "new_mail")
         return "I looked."  # never called report
-    assert await check.run_check(store, DAY, turn, post, push) == "fallback"
+    assert await check.run_check(store, DAY, turn, push) == "fallback"
     card = store.get_setting(report.CARD)
     assert "2 new emails" in card["line"] and pushes == []
 
@@ -98,7 +100,7 @@ async def test_a_turn_that_times_out_leaves_the_mail_for_the_next_check(store, t
 
     async def turn(prompt, tools, instruction):
         raise TimeoutError()
-    assert await check.run_check(store, DAY, turn, post, push) == "fallback"
+    assert await check.run_check(store, DAY, turn, push) == "fallback"
     card = store.get_setting(report.CARD)
     assert "2 new emails" in card["line"]
     state = store.get_setting(fetch.STATE)
@@ -121,7 +123,7 @@ async def test_an_email_cant_instruct_the_watcher(store, tmp_path):
         await call(tools, "report", needs_you=[], line="1 new email", done=[])
         return ""
     posts, pushes, post, push = recorder()
-    await check.run_check(store, DAY, turn, post, push)
+    await check.run_check(store, DAY, turn, push)
     assert posts == [] and pushes == []
 
 
@@ -137,13 +139,13 @@ async def test_a_done_item_with_nothing_to_tell_posts_nothing(store, tmp_path):
         await call(tools, "new_mail")
         await call(tools, "report", needs_you=[], line="2 new emails, nothing urgent", done=[{"message": quiet, "files": []}])
         return ""
-    assert await check.run_check(store, DAY, turn, post, push) == "ok"
+    assert await check.run_check(store, DAY, turn, push) == "ok"
     assert posts == [] and pushes == []
     kept = store.get_setting(report.CARD)["done"]
     assert kept[-1]["message"] == quiet and kept[-1]["told"] is False
 
 
-async def test_a_done_item_worth_telling_posts_once_and_pushes(store, tmp_path):
+async def test_a_done_item_worth_telling_is_kept_for_today_and_pushes(store, tmp_path):
     from odie.plugins import mcp
     mcp.write_config({"mymail": spec_for("plain", tmp_path, mail=ZAP_MAIL, events=EVENTS)})
     posts, pushes, post, push = recorder()
@@ -153,8 +155,8 @@ async def test_a_done_item_worth_telling_posts_once_and_pushes(store, tmp_path):
         await call(tools, "new_mail")
         await call(tools, "report", needs_you=[], line="2 new emails", done=[{"message": news, "files": [], "tell": True}])
         return ""
-    assert await check.run_check(store, DAY, turn, post, push) == "ok"
-    assert [t for t, _ in posts] == [news]
+    assert await check.run_check(store, DAY, turn, push) == "ok"
+    assert posts == []
     assert pushes == [("Odie: done", news)]
     assert store.get_setting(report.CARD)["done"][-1]["told"] is True
 
@@ -172,9 +174,10 @@ async def test_a_check_that_added_a_reminder_tells_even_without_tell(store, tmp_
         store.add_task("Heads-up: Asha's recital", "reminder", due_at="2026-10-09T17:30:00+05:30")  # what task_add does
         await call(tools, "report", needs_you=[], line="2 new emails", done=[{"message": news, "files": []}])
         return ""
-    assert await check.run_check(store, DAY, turn, post, push) == "ok"
-    assert [t for t, _ in posts] == [news]
+    assert await check.run_check(store, DAY, turn, push) == "ok"
+    assert posts == []
     assert pushes == [("Odie: done", news)]
+    assert store.get_setting(report.CARD)["done"][-1]["told"] is True
 
 
 @pytest.mark.parametrize("item, told", [
@@ -187,6 +190,14 @@ def test_worth_telling_reads_tell(item, told):
     assert check.worth_telling(item, [], added_task=False) is told
 
 
+def test_a_note_marked_dont_tell_stays_quiet_even_when_the_check_added_a_reminder():
+    """One check added a reminder and also noted "HN: still no reply" with tell false: only the reminder's note is
+    worth a message; the added task must not drag every other note onto the Desk."""
+    assert check.worth_telling({"message": "HN: still no reply", "tell": False}, [], added_task=True) is False
+    assert check.worth_telling({"message": "HN: still no reply", "tell": "false"}, [], added_task=True) is False
+    assert check.worth_telling({"message": "Added a heads-up"}, [], added_task=True) is True
+
+
 async def test_nothing_connected_keeps_the_quiet_record(store):
     kept = [{"at": "2026-10-08T09:00:00", "message": "made it", "told": False}]
     store.set_setting(report.CARD, {"done": kept})
@@ -194,7 +205,7 @@ async def test_nothing_connected_keeps_the_quiet_record(store):
 
     async def turn(prompt, tools, instruction):
         raise AssertionError("no model call")
-    assert await check.run_check(store, DAY, turn, post, push) == "off"
+    assert await check.run_check(store, DAY, turn, push) == "off"
     assert store.get_setting(report.CARD)["done"] == kept
     assert posts == [] and pushes == []
 
@@ -220,7 +231,7 @@ async def test_a_turn_without_report_gets_one_nudge(store, tmp_path):
         assert "report" in prompt and "UNTRUSTED" in prompt  # what it read, fenced, and what to do
         await call(tools, "report", needs_you=[], line="2 new emails, nothing urgent", done=[])
         return ""
-    assert await check.run_check(store, DAY, turn, post, push) == "ok"
+    assert await check.run_check(store, DAY, turn, push) == "ok"
     assert len(prompts) == 2 and store.get_setting(report.CARD)["line"] == "2 new emails, nothing urgent"
 
 
@@ -233,7 +244,7 @@ async def test_two_turns_without_report_fall_back(store, tmp_path):
     async def turn(prompt, tools, instruction):
         calls.append(prompt)
         return "no"
-    assert await check.run_check(store, DAY, turn, post, push) == "fallback" and len(calls) == 2
+    assert await check.run_check(store, DAY, turn, push) == "fallback" and len(calls) == 2
 
 
 def test_the_nudge_carries_what_the_check_read():
@@ -268,10 +279,9 @@ def test_the_watch_reads_like_an_assistant():
 
 
 
-async def test_an_urgent_item_is_a_card_on_the_desk(store, tmp_path):
-    # The watch's news goes to its own conversation as a card, never into the chat the user is in.
+async def test_an_urgent_item_pings_the_phone_and_posts_nothing(store, tmp_path):
+    # It shows on Today's Needs you (odie.watch.needs); the push opens Today. Nothing goes into a conversation.
     from odie.plugins import mcp
-    from odie.threads import DESK
     mcp.write_config({"mymail": spec_for("plain", tmp_path, mail=ZAP_MAIL, events=EVENTS)})
     posts, pushes, post, push = recorder()
     store.set_setting("watch.state", {"last_check": None, "seen": [], "events": {}, "sources": {
@@ -281,12 +291,11 @@ async def test_an_urgent_item_is_a_card_on_the_desk(store, tmp_path):
         await call(tools, "new_mail")
         await call(tools, "report", needs_you=[{"ref": "mail:m1", "title": "Deck review", "why": "Asks for comments by noon",
                                                 "pile": "alerts", "push": True,
-                                                "suggestion": {"label": "Open it", "run": "Tell me about desk item mail:m1"},
-                                                "escape": {"label": "Skip", "run": "Close desk item mail:m1: skip"}}],
+                                                "suggestion": {"label": "Open it", "run": "Tell me about watch item mail:m1"},
+                                                "escape": {"label": "Skip", "run": "Close watch item mail:m1: skip"}}],
                     line="one")
-    await check.run_check(store, DAY, turn, post, push)
-    cards_posted = [(text, where) for (text, _media), where in zip(posts, WHERE) if "```odie-blocks" in text]
-    assert cards_posted and cards_posted[0][1] == DESK and "Deck review" in cards_posted[0][0]
+    await check.run_check(store, DAY, turn, push)
+    assert all("Deck review" not in text for text, _media in posts)
     assert pushes and pushes[0][0] == "Deck review"
 
 
@@ -301,14 +310,14 @@ async def test_tracking_a_thread_is_not_telling_the_user(store, tmp_path):
         await call(tools, "new_mail")
         await call(tools, "track", ref="mail:m1", kind="order", title="Order: desk lamp", stage="placed")
         await call(tools, "report", needs_you=[], line="quiet", done=[{"message": "Nothing new, already covered"}])
-    await check.run_check(store, DAY, turn, post, push)
+    await check.run_check(store, DAY, turn, push)
     assert all("Nothing new" not in text for text, _media in posts)
 
 
-def test_the_watch_and_trackers_never_close_a_desk_item():
+def test_the_watch_and_trackers_never_close_a_watch_item():
     # A mail could steer a background turn into taking a real item off the user's Desk.
     from odie.trackers import guard as trackers_guard
-    tool = SimpleNamespace(name="desk_close")
+    tool = SimpleNamespace(name="watch_close")
     ctx = SimpleNamespace(session=SimpleNamespace(id="tracker-1"), state={})
     assert check.guard(tool, {"ref": "mail:m1", "why": "x"}, ctx) is not None
     assert trackers_guard(tool, {"ref": "mail:m1", "why": "x"}, ctx) is not None
@@ -335,6 +344,6 @@ async def test_the_watch_cant_open_a_thread_for_a_mail_it_hasnt_seen(store, tmp_
         await call(tools, "new_mail")
         said.append(await call(tools, "track", ref="mail:unknown9", kind="order", title="Order: kettle", stage="placed"))
         await call(tools, "report", needs_you=[], line="quiet")
-    await check.run_check(store, DAY, turn, post, push)
+    await check.run_check(store, DAY, turn, push)
     assert "search_mail" in str(said[0])
     assert store.one("select count(*) n from tasks where source_kind = 'watch'")["n"] == 0

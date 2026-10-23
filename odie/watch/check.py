@@ -8,8 +8,7 @@ import logging
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from odie.threads import DESK
-from odie.watch import bills, cards, sources
+from odie.watch import bills, sources
 from odie.watch import report as rep
 from odie.watch.fetch import STATE, Fetcher
 from odie.watch.tools import Check, watch_tools
@@ -69,7 +68,7 @@ def guard(tool, args, tool_context) -> dict | None:
     if refused:
         return refused
     not_for_the_watch = tool.name in ("update_memory", "forget_memory", "run_shell", "hand_over", "task_update",
-                                      "desk_close")
+                                      "watch_close")
     is_browser = tool.name.startswith("browser_")
     if not_for_the_watch or is_browser:
         return {"error": "Not allowed in the background watch: report it as a needs-you item instead."}
@@ -131,7 +130,7 @@ def nudge_text(check) -> str:
             f"Events: {json.dumps([e.brief() for e in check.events], ensure_ascii=False)}")
 
 
-async def run_check(store, now: datetime, turn, post, push, memory=None, memory_index: str = "") -> str:
+async def run_check(store, now: datetime, turn, push, memory=None, memory_index: str = "") -> str:
     if sources.stale(store, now):
         await sources.detect_and_save(store)
     if not sources.saved(store):
@@ -173,7 +172,6 @@ async def run_check(store, now: datetime, turn, post, push, memory=None, memory_
     added_task = _last_task_id(store) > last_task_before  # task_add ran during the check: a reminder for the user
     first = bool(fetcher.first)
     failing = rep.failing_now(store, fetcher.statuses)  # read against the last check, so before commit()
-    recovered = rep.recovered_now(store, fetcher.statuses)
     r = check.report
     to_push: list[dict] = []
     try:
@@ -186,28 +184,16 @@ async def run_check(store, now: datetime, turn, post, push, memory=None, memory_
         # raised (a timeout) and left no report leaves its mail for the next check (fetch.Fetcher.commit)
         fetcher.commit(turn_failed=bool(reason) and r is None)
 
-    async def say(text: str, media=None) -> None:
-        """A message on the Desk, the watch's own conversation, never the chat the user is in."""
-        try:
-            await post(text, media=media, session_id=DESK)
-        except Exception:  # noqa: BLE001
-            log.warning("watch: a message couldn't be posted", exc_info=True)
-
     def ping(title: str, body: str) -> None:
         try:
             push(title, body)
         except Exception:  # noqa: BLE001
             log.warning("watch: a push failed", exc_info=True)
-    for app in failing:
-        await say(f"{app} stopped working for the watch. Fix it in Settings → Connected apps.")
+    for app in failing:  # Today's Needs you says it too, until the app works again
         ping(f"{app} stopped working", "Fix it in Settings → Connected apps.")
-    for app in recovered:
-        await say(f"{app} works again: the watch is back.")
     if r is None:
         return "fallback"
-    if to_push:  # what needs the user soon: cards on the Desk, and a push for each
-        await say(cards.round_text("", to_push, []))
-    for it in to_push:
+    for it in to_push:  # what needs the user soon: a push each; the card is on Today's Needs you
         ping(it["title"], it["why"])
     from odie.agent.tools.files import hand_over, workspace
     ws = workspace().resolve()
@@ -218,17 +204,16 @@ async def run_check(store, now: datetime, turn, post, push, memory=None, memory_
             if not x:
                 continue
             f = Path(x).resolve()
-            if f.is_file() and ws in f.parents:  # only files in Odie's workspace become download cards
+            if f.is_file() and ws in f.parents:  # only files in Odie's workspace can be handed over
                 got = hand_over(f, f.name)
                 if "media" in got:
                     media.append(got["media"])
         message = str(d.get("message") or "Done.")[:500]
         told = worth_telling(d, media, added_task)
-        rep.keep_done(store, now, message, told)
+        rep.keep_done(store, now, message, told, media)  # a told note shows on Today, under Needs you
         if not told:
             log.info("watch: done, not told: %s", message)
             continue
-        await say(message, media=media or None)
         ping("Odie: done", message[:160])
     return "ok"
 
@@ -249,12 +234,15 @@ def worth_telling(item: dict, media: list, added_task: bool) -> bool:
     check that only relayed, found nothing new, found it already covered, or couldn't do something in the background
     tells the user nothing.
     Example: {"message": "The deck from Asha's PDF is ready", "files": [deck]} -> True (a file card);
-    a relay check that added task #41, no tell -> True (a reminder is always told);
+    a relay check that added task #41, no tell -> True (a reminder is told when the model didn't say);
+    the same check's {"message": "HN: still no reply", "tell": false} -> False (the model said quiet);
     {"message": "Asha's flight moved to 18:00", "tell": "True"} -> True;
     {"message": "Relayed the digests; both events already covered, nothing added"}, no task added -> False."""
-    if media or added_task:
+    if media:
         return True
     tell = item.get("tell")
     if isinstance(tell, str):
-        return tell.strip().lower() == "true"
+        tell = tell.strip().lower() == "true"
+    if tell is None:
+        return added_task  # the model said nothing: a reminder the check added is still worth telling
     return tell is True
