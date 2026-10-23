@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.2.20 (2026-10-23)
+
+- A word in braces, like {name}, in a Watch for note or memory no longer stops every watch check.
+- Things the watch is following are counted once: the morning round no longer lists them again as needing the user, and Today shows a reply the watch flagged once, not also as a task.
+- Undoing something the watch closed brings it back still linked to its mail, and the watch only starts following a mail it has actually seen.
+- The Desk keeps a name you give it and stays unpinned once you unpin it; the watch's and the morning round's notifications open the Desk.
+
 ## v0.2.19 (2026-10-22)
 
 - The watch follows things until they're done: orders, bills, replies the user owes and deadlines become threads it reviews every check (a reply closes when the user's answer is in the thread, or comes back when it's overdue; only bills and deadlines remind at their due date).
