@@ -27,6 +27,7 @@ from dataclasses import dataclass, field
 NARRATOR = "narrator"  # the one speaker who may go without a voice of their own: the video voice speaks for them
 DEFAULT_PAUSE = 0.35  # seconds of quiet after a line that names none
 LOUDNESS_STEP = 0.02  # seconds per loudness value: what the mouths follow
+RELEASE = 0.7  # how much of the last step's loudness a mouth keeps as it closes: shut after about 0.1 s of quiet
 SCENE = re.compile(r"^#{2,}\s*Scene\s*:\s*(.*)$", re.IGNORECASE)
 LINE = re.compile(r"^([A-Za-z][\w .'-]{0,40}?)\s*:\s*(.+)$")
 PAUSE = re.compile(r"\s*\[pause\s+(\d+(?:\.\d+)?)\s*\]\s*$", re.IGNORECASE)
@@ -159,8 +160,11 @@ def writer_listing(script: Script) -> str:
 
 
 def loudness(wav: bytes, step: float = LOUDNESS_STEP) -> list[float]:
-    """A spoken line's loudness every `step` seconds (RMS), scaled so its loudest moment is 1.0, two decimals: a tone
-    for 0.2 s then 0.2 s of quiet -> 20 values, about 1.0 for the first ten and 0.0 after. All quiet -> all 0.0."""
+    """A spoken line's loudness every `step` seconds, 0..1 with two decimals, as a mouth should follow it: the RMS of
+    each step, scaled to the line's usual peaks (its 95th percentile is 1.0, louder is held at 1.0, so one click can't
+    leave the voice near 0), then opening at once and closing gently (each step keeps at least RELEASE of the one
+    before), so a mouth doesn't snap shut between syllables. A tone for 0.1 s then quiet -> 1.0 five times, then 0.7,
+    0.49, 0.34 … (under 0.15, closed, after about 0.1 s). All quiet -> all 0.0."""
     with wave.open(io.BytesIO(wav)) as w:
         rate = w.getframerate()
         channels = w.getnchannels()
@@ -173,10 +177,24 @@ def loudness(wav: bytes, step: float = LOUDNESS_STEP) -> list[float]:
     for start in range(0, len(samples), per_step):
         chunk = samples[start:start + per_step]
         levels.append(math.sqrt(sum(v * v for v in chunk) / len(chunk)))
-    loudest = max(levels, default=0.0)
-    if loudest == 0:
+    scale = usual_peak(levels)
+    if scale == 0:
         return [0.0 for _ in levels]
-    return [round(level / loudest, 2) for level in levels]
+    out = []
+    held = 0.0
+    for level in levels:
+        held = max(min(1.0, level / scale), held * RELEASE)
+        out.append(round(held, 2))
+    return out
+
+
+def usual_peak(levels: list[float]) -> float:
+    """The level a line's loud moments usually reach: its 95th percentile. [0, 0, …, 1, 1, 1, 9] -> about 1 (the 9
+    is one click); all 0 -> 0."""
+    if not levels:
+        return 0.0
+    ranked = sorted(levels)
+    return ranked[min(len(ranked) - 1, int(len(ranked) * 0.95))]
 
 
 def lines_script(lines: list[dict]) -> str:

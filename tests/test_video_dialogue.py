@@ -93,7 +93,32 @@ def test_loudness_comes_every_20_ms_from_0_to_1():
     levels = dialogue.loudness(tone_then_quiet(0.2, 0.2))
     assert len(levels) == 20  # 0.4 s in 20 ms steps
     assert max(levels) == 1.0
-    assert levels[2] > 0.9 and levels[-1] == 0.0  # loud while the tone plays, silent after
+    assert levels[2] > 0.9 and levels[-1] < 0.05  # loud while the tone plays, quiet after
+
+
+def test_a_mouth_opens_at_once_and_closes_over_a_tenth_of_a_second():
+    """Speech dips between syllables for a frame or two; a mouth that shut on every dip would flicker. The loudness
+    rises at once but falls off gently: 1.0 then quiet -> 0.7, 0.49, … (closed, under 0.15, after about 0.1 s)."""
+    levels = dialogue.loudness(tone_then_quiet(0.1, 0.2))
+    assert levels[5] == 0.7 and levels[6] == 0.49
+    assert levels[10] < 0.15 <= levels[9]  # closed 0.12 s after the voice stops
+
+
+def test_loudness_is_scaled_to_the_lines_usual_peaks_not_one_spike():
+    """One click far louder than the voice would leave every other moment near 0 (a shut mouth all line long): the
+    scale is the line's 95th percentile, and anything over it is 1.0."""
+    import io as io_lib
+    rate = 24000
+    frames = [int(3000 * math.sin(2 * math.pi * 220 * i / rate)) for i in range(int(rate * 0.5))]
+    frames[100:200] = [30000] * 100  # a click
+    buffer = io_lib.BytesIO()
+    with wave.open(buffer, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(rate)
+        w.writeframes(struct.pack(f"<{len(frames)}h", *frames))
+    levels = dialogue.loudness(buffer.getvalue())
+    assert levels[15] > 0.5  # the voice itself still opens the mouth
 
 
 def test_silence_is_all_zeros_not_an_error():
@@ -207,3 +232,15 @@ async def test_a_dialogue_job_times_its_page_from_the_lines_and_keeps_a_timeline
     assert [(scene["where"], scene["start"], scene["length"]) for scene in kept["scenes"]] == [
         ("A", 0.0, 2.5), ("B", 3.0, 1.0)]
     assert "timeline.json" in kind.ready_text(job)
+
+
+def test_a_lines_quiet_after_its_last_word_is_cut_to_a_short_tail():
+    """A voice leaves up to a second of quiet after a line; in a dialogue that would keep the caption up and the
+    speaker 'talking' with a shut mouth. The pause after the line is the script's to give."""
+    from odie.video import narrate
+    wav = tone_then_quiet(1.0, 0.9)
+    cut = narrate.tail_cut(wav)
+    with wave.open(io.BytesIO(cut)) as w:
+        assert round(w.getnframes() / w.getframerate(), 2) == 1.0 + narrate.MAX_TAIL
+    short = tone_then_quiet(1.0, 0.05)
+    assert narrate.tail_cut(short) == short  # already short: the same bytes

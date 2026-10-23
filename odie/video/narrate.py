@@ -15,6 +15,7 @@ from odie.store.db import Store
 from odie.video import beats, timeline
 
 NO_ANSWER = "Odie's voice didn't answer (Settings → Voice): "
+MAX_TAIL = 0.15  # seconds of quiet a dialogue line keeps after its last word: the script's pause comes after it
 MAX_LEAD = 0.2  # seconds of quiet a scene keeps before its first word: a beat, never a lead-in (voices give up to 0.45)
 WINDOW = 0.01   # seconds of sound measured at a time when looking for the first word
 LOUD = 0.01     # a window is sound when its level is over 1% of full scale (about -40 dB); a voice's quiet is far below
@@ -155,6 +156,33 @@ async def narrate(store: Store, narration: list[str], voice_name: str = "",
     return joined, lengths, scene_beats
 
 
+def tail_cut(wav: bytes, keep: float = MAX_TAIL) -> bytes:
+    """The WAV with its quiet after the last word cut to at most `keep` seconds: a 1 s line followed by 0.9 s of quiet
+    -> 1.15 s; one with 0.05 s after it -> unchanged (the same bytes); all quiet -> unchanged. Found as lead_cut finds
+    the start's, on the WAV read backwards."""
+    with wave.open(io.BytesIO(wav)) as w:
+        params = w.getparams()
+        if params.sampwidth != 2 or params.nchannels != 1:
+            return wav
+        frames = w.readframes(w.getnframes())
+    samples = array.array("h", frames)
+    samples.reverse()
+    backwards = io.BytesIO()
+    with wave.open(backwards, "wb") as w:
+        w.setparams(params)
+        w.writeframes(samples.tobytes())
+    quiet = quiet_at_start(backwards.getvalue())
+    total = len(samples) / params.framerate
+    if quiet <= keep or quiet >= total:
+        return wav
+    kept_frames = round((total - quiet + keep) * params.framerate)
+    out = io.BytesIO()
+    with wave.open(out, "wb") as w:
+        w.setparams(params)
+        w.writeframes(frames[:kept_frames * params.sampwidth])
+    return out.getvalue()
+
+
 def quiet_like(wav: bytes, seconds: float) -> bytes:
     """`seconds` of silence in the same WAV format as `wav`, to lay between two lines: (a 24 kHz mono line, 0.35) ->
     0.35 s of 24 kHz mono quiet."""
@@ -173,7 +201,7 @@ async def narrate_dialogue(store: Store, script, voices: dict[str, str],
                            style: str = "") -> tuple[bytes, list[float], list[list[float]], list[dict]]:
     """A dialogue video's voice (odie.video.dialogue): every line spoken on its own in its speaker's voice
     (`voices`: speaker -> a voice id of the video's engine; the narrator, or anyone without one, has the video
-    voice), its first word at once (lead_cut), the lines of a scene laid end to end with each line's pause after it
+    voice), its first word at once (lead_cut) and at most MAX_TAIL of quiet after its last (tail_cut), the lines of a scene laid end to end with each line's pause after it
     (none after a scene's last line: the usual breath comes between scenes). Returns the whole WAV, each scene's
     length, each scene's beats (where each line starts in it, so s.beatAt is the line being spoken) and every line as
     {index, speaker, text, voice, scene (from 1), at (seconds into its scene), dur, amplitude (dialogue.loudness)}.
@@ -191,7 +219,7 @@ async def narrate_dialogue(store: Store, script, voices: dict[str, str],
     for voice_id, positions in by_voice.items():
         texts = [order[p][2].text for p in positions]
         for position, wav in zip(positions, await speak_all(store, texts, engine, voice_id, transport, style)):
-            spoken[position] = lead_cut(wav)
+            spoken[position] = tail_cut(lead_cut(wav))
 
     scenes = []
     lengths = []
