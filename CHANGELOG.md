@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.2.22 (2026-10-23)
+
+- Videos: Odie knows any video can be 3D (a moving camera, lit objects) and offers it when depth helps; for a planet or a moon it finds the real texture map and the video wraps it on a turning sphere.
+
 ## v0.2.21 (2026-10-23)
 
 - Today has one "Needs you" list of cards, refreshed by every mail check, in place of the inbox and To close lists: what the watch found in mail (with its suggested action and a way out) and your own reminders and dues (Done / Tomorrow).
