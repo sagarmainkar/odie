@@ -148,3 +148,62 @@ def test_the_page_check_draws_with_estimated_lines():
     script = staged.lines_for(timings)
     assert script.startswith("<script>Video.lines(")
     assert '"speaker": "anna"' in script and '"t": 2.5' in script and '"text": "Look."' in script
+
+
+async def test_a_dialogue_job_times_its_page_from_the_lines_and_keeps_a_timeline(isolated_settings, tmp_path,
+                                                                                   monkeypatch):
+    """The making step of a dialogue video: its lines spoken (narrate_dialogue), their timeline in the page
+    (Video.lines, t in seconds into the video), and timeline.json next to the video with every line's text, voice,
+    start and length."""
+    import json as json_lib
+
+    from odie.making import jobs
+    from odie.store.db import Store
+    from odie.video import kind
+    from tests.test_media import make_wav
+    from tests.test_video_jobs import make_job, stand_in_render
+
+    store = Store(tmp_path / "assistant.db")
+    store.init_schema()
+    monkeypatch.setitem(jobs.hooks, "store", store)
+    script = dialogue.parse("## Scene: A\nANNA: Hi. [pause 0.5]\nBEN: Hello.\n## Scene: B\nANNA: Bye.")
+    job = make_job(slug="night", title="Night")
+    job.data = {"narration": dialogue.narration_of(script), "body": "<div></div>",
+                "dialogue": {"script": script.as_data(), "voices": {"anna": "af_bella", "ben": "am_michael"}}}
+
+    async def stand_in_dialogue(store, script, voices, transport=None, style=""):
+        lines = [{"index": 0, "speaker": "anna", "text": "Hi.", "voice": "af_bella", "scene": 1, "at": 0.0,
+                  "dur": 1.0, "amplitude": [1.0]},
+                 {"index": 1, "speaker": "ben", "text": "Hello.", "voice": "am_michael", "scene": 1, "at": 1.5,
+                  "dur": 1.0, "amplitude": [0.5]},
+                 {"index": 2, "speaker": "anna", "text": "Bye.", "voice": "af_bella", "scene": 2, "at": 0.0,
+                  "dur": 1.0, "amplitude": []}]
+        return make_wav(4.0), [2.5, 1.0], [[0.0, 1.5], [0.0]], lines
+
+    seen = {}
+
+    async def watching_render(browser, body, timings, folder, fps, tabs, progress=None, assets_script="",
+                              credits_script="", size=None, brand_script="", lines_script=""):
+        seen["timings"] = timings
+        seen["lines_script"] = lines_script
+        return await stand_in_render(browser, body, timings, folder, fps, tabs)
+
+    def unused_narrate(*args, **kwargs):
+        raise AssertionError("a dialogue video never takes the narrator's path")
+
+    monkeypatch.setattr(kind, "narrate_dialogue", stand_in_dialogue)
+    monkeypatch.setattr(kind, "narrate", unused_narrate)
+    monkeypatch.setattr(kind, "render", watching_render)
+    await kind.make_video(job, browser=object(), transport=None)
+
+    assert seen["timings"] == {"starts": [0.0, 3.0], "lengths": [2.5, 1.0], "beats": [[0.0, 1.5], [0.0]]}
+    placed = json_lib.loads(seen["lines_script"].removeprefix("<script>Video.lines(").removesuffix(")</script>"))
+    assert [(line["speaker"], line["t"]) for line in placed] == [("anna", 0.0), ("ben", 1.5), ("anna", 3.0)]
+    assert "<script>Video.lines(" in (job.folder / "page.html").read_text()
+    kept = json_lib.loads((job.folder / "timeline.json").read_text())
+    assert [(line["speaker"], line["voice"], line["text"], line["start"], line["dur"]) for line in kept["lines"]] == [
+        ("anna", "af_bella", "Hi.", 0.0, 1.0), ("ben", "am_michael", "Hello.", 1.5, 1.0),
+        ("anna", "af_bella", "Bye.", 3.0, 1.0)]
+    assert [(scene["where"], scene["start"], scene["length"]) for scene in kept["scenes"]] == [
+        ("A", 0.0, 2.5), ("B", 3.0, 1.0)]
+    assert "timeline.json" in kind.ready_text(job)

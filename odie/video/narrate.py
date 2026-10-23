@@ -176,14 +176,16 @@ async def narrate_dialogue(store: Store, script, voices: dict[str, str],
     voice), its first word at once (lead_cut), the lines of a scene laid end to end with each line's pause after it
     (none after a scene's last line: the usual breath comes between scenes). Returns the whole WAV, each scene's
     length, each scene's beats (where each line starts in it, so s.beatAt is the line being spoken) and every line as
-    {index, speaker, scene (from 1), at (seconds into its scene), dur, amplitude (dialogue.loudness)}.
+    {index, speaker, text, voice, scene (from 1), at (seconds into its scene), dur, amplitude (dialogue.loudness)}.
     Two 1 s lines with a 0.35 s pause -> a 2.35 s scene, beats [0.0, 1.35]."""
     from odie.video import dialogue
     engine, default_voice = voice.video_tts(store)
     order = [(n, i, line) for n, scene in enumerate(script.scenes) for i, line in enumerate(scene.lines)]
     by_voice: dict[str, list[int]] = {}
+    voice_of: list[str] = []
     for position, (_n, _i, line) in enumerate(order):
         voice_id = voices.get(line.speaker) or default_voice
+        voice_of.append(voice_id)
         by_voice.setdefault(voice_id, []).append(position)
     spoken: list[bytes] = [b""] * len(order)
     for voice_id, positions in by_voice.items():
@@ -204,8 +206,8 @@ async def narrate_dialogue(store: Store, script, voices: dict[str, str],
             wav = spoken[position]
             seconds = wav_seconds(wav)
             starts.append(round(at, 3))
-            lines.append({"index": position, "speaker": line.speaker, "text": line.text, "scene": number + 1,
-                          "at": round(at, 3),
+            lines.append({"index": position, "speaker": line.speaker, "text": line.text, "voice": voice_of[position],
+                          "scene": number + 1, "at": round(at, 3),
                           "dur": round(seconds, 3), "amplitude": dialogue.loudness(wav)})
             pieces.append(wav)
             at += seconds

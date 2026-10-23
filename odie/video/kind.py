@@ -18,7 +18,10 @@ last scene, 0-based, when it has one), "brand_vars" (the kit's bookend words the
 prepared one's name, kind, words, credit, size, length and file; never its data), "dropped" (the lines the writer
 was told about the ones that couldn't be used), "narration" (one string per scene), "body" (the page) and "cues" (the
 sound cues the page placed with Video.sounds, as odie.video.page.CheckResult gives them; [] when none). job.json never
-holds any of these."""
+holds any of these. A dialogue video (odie.video.dialogue) also carries "dialogue": {"script" (the user's script as
+Script.as_data keeps it), "voices" (speaker -> voice id)}; it is spoken line by line (narrate_dialogue), its page gets
+the line timeline, and timeline.json is kept next to the MP4. Without "dialogue" nothing of it runs."""
+import json
 import logging
 from pathlib import Path
 
@@ -27,13 +30,14 @@ from odie.agent import turn as chat_turn
 from odie.agent.tools.files import hand_over
 from odie.browser.engine import BrowserError
 from odie.making import jobs
-from odie.video import assets, brand, sounds, timed, timeline, writer
+from odie.video import assets, brand, dialogue, sounds, timed, timeline, writer
 from odie.video.encode import EncodeError, mux, probe
-from odie.video.narrate import narrate
+from odie.video.narrate import narrate, narrate_dialogue
 from odie.video.page import assemble, credits_scene
 from odie.video.render import render
 
 FOLDER = "videos"
+TIMELINE = "timeline.json"  # a dialogue video's lines and scenes, next to its MP4
 CREDITS_SECONDS = 3.0  # Odie's credits card for web pictures and clips, after the last scene
 
 log = logging.getLogger("odie.video")
@@ -73,8 +77,11 @@ def credits_on_screen(job: jobs.Job, credits: list[str]) -> list[str]:
 
 def ready_text(job: jobs.Job) -> str:
     """The chat's ready message: "The video about Ice is ready.", and for a reel with web pictures, their credits as
-    a line to paste into the post's caption: "For the caption: Photo by A on Unsplash · Pexels, by B"."""
+    a line to paste into the post's caption: "For the caption: Photo by A on Unsplash · Pexels, by B". A dialogue
+    video also says where its timeline.json is."""
     line = jobs.ready_line("video", job.title)
+    if job.data.get("dialogue"):
+        line = f"{line}\n\nIts timeline (every line's time and voice): {job.folder / TIMELINE}"
     credits = job.data.get("caption_credits") or []
     if not credits:
         return line
@@ -134,8 +141,13 @@ async def write(job: jobs.Job, turn, browser) -> None:
     if segment is not None:
         timed_seconds = segment.seconds
     kit = brand.kit_of(job.data, job.folder)  # None for a video without a brand kit
-    written = await writer.write(job.topic, job.minutes, job.brief, job.folder, turn, browser, listing=listing,
-                                 assets_script=assets_script, aspect=aspect, timed_seconds=timed_seconds, kit=kit)
+    script = script_of(job)
+    if script is None:
+        written = await writer.write(job.topic, job.minutes, job.brief, job.folder, turn, browser, listing=listing,
+                                     assets_script=assets_script, aspect=aspect, timed_seconds=timed_seconds, kit=kit)
+    else:
+        written = await writer.write(job.topic, job.minutes, job.brief, job.folder, turn, browser, listing=listing,
+                                     assets_script=assets_script, aspect=aspect, staging=dialogue.staging(script))
     job.title = jobs.title_after_writing(written.title, job)
     job.data["narration"] = written.narration
     job.data["body"] = written.body
@@ -144,6 +156,38 @@ async def write(job: jobs.Job, turn, browser) -> None:
         job.data["timed_scenes"] = list(written.segment)
     if kit is not None:
         job.data["brand_vars"] = written.brand_vars
+
+
+def script_of(job: jobs.Job) -> dialogue.Script | None:
+    """A dialogue video's script, as make_video kept it; None for any other video (and every video before
+    dialogue), which then takes the narrator's path exactly as before."""
+    kept = job.data.get("dialogue")
+    if not kept:
+        return None
+    return dialogue.from_data(kept["script"])
+
+
+def timeline_record(job: jobs.Job, script: dialogue.Script, starts: list[float], lengths: list[float],
+                    lines: list[dict]) -> dict:
+    """What timeline.json keeps, so the work can be re-voiced or re-cut elsewhere: the title, each scene's place
+    (where, start, length) and each line's (index, scene, speaker, voice, text, start, dur), in seconds into the
+    video."""
+    scenes = [{"number": number + 1, "where": scene.where, "start": starts[number], "length": lengths[number]}
+              for number, scene in enumerate(script.scenes)]
+    kept_lines = [{"index": line["index"], "scene": line["scene"], "speaker": line["speaker"], "voice": line["voice"],
+                   "text": line["text"], "start": line["t"], "dur": line["dur"]} for line in lines]
+    return {"title": job.title, "scenes": scenes, "lines": kept_lines}
+
+
+def placed_lines(spoken: list[dict], starts: list[float]) -> list[dict]:
+    """The spoken lines put on the video's timeline: each line's seconds into its scene ("at") plus its scene's start,
+    as "t". A line 1.5 s into scene 1, which starts at 0 -> t 1.5; the first line of scene 2 starting at 3.0 -> 3.0."""
+    out = []
+    for line in spoken:
+        placed = {key: value for key, value in line.items() if key != "at"}
+        placed["t"] = round(starts[line["scene"] - 1] + line["at"], 3)
+        out.append(placed)
+    return out
 
 
 def wants_sounds(job: jobs.Job) -> bool:
@@ -231,8 +275,15 @@ async def make_video(job: jobs.Job, browser, transport) -> Path:
     body = job.data["body"]
     size = timeline.size_of(aspect_of(job))
     style = job.data.get("style", "")  # a job queued before styles has none: Odie's usual voice
-    wav, lengths, beats = await narrate(jobs.hooks["store"], narration, job.voice_name, transport=transport,
-                                        style=style)
+    script = script_of(job)
+    spoken_lines = []
+    if script is None:
+        wav, lengths, beats = await narrate(jobs.hooks["store"], narration, job.voice_name, transport=transport,
+                                            style=style)
+    else:
+        voices = job.data["dialogue"].get("voices", {})
+        wav, lengths, beats, spoken_lines = await narrate_dialogue(jobs.hooks["store"], script, voices,
+                                                                   transport=transport, style=style)
     gaps = [timeline.BREATH] * (len(lengths) - 1)
     clock = None
     fitted_scenes = None  # the timed segment's first and last scene, once its voice is fitted
@@ -285,11 +336,24 @@ async def make_video(job: jobs.Job, browser, transport) -> Path:
     narration_wav.write_bytes(wav)
     sound_wav = await voice_track(job, narration_wav, timings, kit, order)
     assets_script = assets.staple(gathered)
-    page_html = assemble(body, timings, assets_script, credits_script, size=size, brand_script=brand_script)
+    lines_script = ""
+    if script is not None:
+        lines = placed_lines(spoken_lines, starts)
+        lines_script = dialogue.lines_script(lines)
+        record = timeline_record(job, script, starts, lengths, lines)
+        (folder / TIMELINE).write_text(json.dumps(record, indent=1, ensure_ascii=False), encoding="utf-8")
+    page_html = assemble(body, timings, assets_script, credits_script, size=size, brand_script=brand_script,
+                         lines_script=lines_script)
     (folder / "page.html").write_text(page_html, encoding="utf-8")
 
-    segments = await render(browser, body, timings, folder, timeline.FPS, timeline.TABS, assets_script=assets_script,
-                            credits_script=credits_script, size=size, brand_script=brand_script)
+    if script is None:
+        segments = await render(browser, body, timings, folder, timeline.FPS, timeline.TABS,
+                                assets_script=assets_script, credits_script=credits_script, size=size,
+                                brand_script=brand_script)
+    else:
+        segments = await render(browser, body, timings, folder, timeline.FPS, timeline.TABS,
+                                assets_script=assets_script, credits_script=credits_script, size=size,
+                                brand_script=brand_script, lines_script=lines_script)
     mp4 = folder / f"{job.slug}.mp4"
     await mux(segments, sound_wav, mp4)
 

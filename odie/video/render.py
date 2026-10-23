@@ -62,13 +62,14 @@ async def render_range(browser: Browser, html: str, path: Path, fps: int, first:
 async def render(browser: Browser, body: str, timings: dict, folder: Path, fps: int, tabs: int,
                  progress: Callable[[int, int], None] | None = None, assets_script: str = "",
                  credits_script: str = "", size: tuple[int, int] = timeline.LANDSCAPE,
-                 brand_script: str = "") -> list[Path]:
+                 brand_script: str = "", lines_script: str = "") -> list[Path]:
     """Draws every frame of the video at `size` (timeline.LANDSCAPE, or VERTICAL for a reel) and returns the segment
     files (`segment-0.mp4`, ...) in order; every tab's page carries the pictures and clips (`assets_script`) and Odie's
     credits card (`credits_script`, whose scene the timings include), and a brand kit's script (`brand_script`, its
-    bookends in the timings too), see page.assemble. If any tab fails, the others are stopped and the error comes out:
-    no half-written segment is handed back."""
-    html = assemble(body, timings, assets_script, credits_script, size=size, brand_script=brand_script)
+    bookends in the timings too) and a dialogue video's line timeline (`lines_script`), see page.assemble. If any tab
+    fails, the others are stopped and the error comes out: no half-written segment is handed back."""
+    html = assemble(body, timings, assets_script, credits_script, size=size, brand_script=brand_script,
+                    lines_script=lines_script)
     total_seconds = timings["starts"][-1] + timings["lengths"][-1]
     frames = timeline.frame_count(total_seconds, fps)
     counter = Counter(frames, progress)
