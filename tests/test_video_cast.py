@@ -16,7 +16,6 @@ ages:
   - act: Chapter two
     age: 41
 refs: [refs/mira-front.jpg]
-asset: models/mira.glb
 ---
 Speaks slowly; never smiles on the first line of a scene.
 """
