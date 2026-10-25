@@ -28,7 +28,7 @@ describe("photosRow", () => {
 
   it("says how pictures get meaning", () => {
     expect(photosRow({ ...base, meaning: "gemma" }).sub).toBe("9,966 photos · 1,170 videos · people, places, things, dates · by meaning");
-    expect(photosRow({ ...base, meaning: "text" }).sub).toBe("9,966 photos · 1,170 videos · people, places, things, dates · pictures by meaning need EmbeddingGemma 2 on this Mac");
+    expect(photosRow({ ...base, meaning: "text" }).sub).toBe("9,966 photos · 1,170 videos · people, places, things, dates · pictures by meaning need EmbeddingGemma 2 (Odie's service, or on Ollama)");
     expect(photosRow({ ...base, meaning: "none" }).sub).toBe("9,966 photos · 1,170 videos · people, places, things, dates");
     const r = photosRow({ ...base, meaning: "gemma", progress: { running: true, done: 800, total: 7912, phase: "pictures", error: "" } });
     expect(r.sub).toBe("Reading pictures by meaning: 800 of 7,912");

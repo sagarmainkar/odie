@@ -16,7 +16,8 @@ OLLAMA_URL = "http://localhost:11434"
 BATCH = 32
 PICTURE_BATCH = 8  # pictures per request to Odie's own service: about 4 GB of GPU memory at the peak (measured 14 Oct 2026)
 CHECK_SENTENCE = "Odie checks that it can read your notes by meaning."
-NO_PICTURES = "pictures by meaning need EmbeddingGemma 2 on this Mac (Odie's own embedding service)"
+NO_PICTURES = "pictures by meaning need EmbeddingGemma 2: Odie's own embedding service, or embeddinggemma-2 on Ollama"
+PICTURE_SIDE = 1024  # a picture goes to Ollama no wider or taller than this: the model reads a small image anyway
 PREPARING = "the embedding model is still downloading (about 1.5 GB); Odie tries again in a few minutes"
 
 
@@ -45,6 +46,10 @@ class HttpEmbedder:
         body: dict = {"model": self.model, "input": texts if self.says_kind else [flat(t) for t in texts]}
         if self.says_kind:
             body["kind"] = kind
+        return await self._send(c, body)
+
+    async def _send(self, c: httpx.AsyncClient, body: dict) -> list[list[float]]:
+        """One request to the provider, its vectors back; a refusal or an outage as a plain EmbedError."""
         try:
             r = await c.post(self.url, json=body, headers=self.headers)
         except httpx.HTTPError as e:
@@ -71,6 +76,62 @@ class HttpEmbedder:
 
     async def embed_pictures(self, items: list[tuple[str, str | None]]) -> list[list[float]]:
         raise EmbedError(NO_PICTURES)
+
+
+class OllamaEmbedder(HttpEmbedder):
+    """Ollama's /api/embed. A model that sees pictures there (EmbeddingGemma 2, "vision" among its capabilities;
+    ollama_sees_pictures) takes each picture as {"text": its words, "image": base64 JPEG} and gives one vector for
+    both (checked live 25 Oct 2026: two photos sit at 0.69, the words barely move a photo's vector)."""
+
+    def __init__(self, model: str, transport=None, pictures: bool = False) -> None:
+        super().__init__("ollama", model, OLLAMA_URL + "/api/embed", {}, transport)
+        self.sees_pictures = pictures
+
+    async def embed_pictures(self, items: list[tuple[str, str | None]]) -> list[list[float]]:
+        """items: (the picture's words, the path of its copy on this Mac or None). A copy that can't be read as an
+        image goes by its words alone. Sent PICTURE_BATCH at a time."""
+        if not self.sees_pictures:
+            raise EmbedError(NO_PICTURES)
+        out: list[list[float]] = []
+        async with httpx.AsyncClient(timeout=300, transport=self.transport) as c:
+            for i in range(0, len(items), PICTURE_BATCH):
+                body = []
+                for text, path in items[i:i + PICTURE_BATCH]:
+                    image = picture_payload(path) if path else None
+                    body.append({"text": text, "image": image} if image else {"text": text})
+                out += await self._send(c, {"model": self.model, "input": body})
+        return out
+
+
+def picture_payload(path: str) -> str | None:
+    """A picture's copy as the model should get it: a JPEG no wider or taller than PICTURE_SIDE, base64. None when the
+    file can't be read as an image (a movie, a broken copy), so the picture goes by its words.
+      a 4000×3000 JPEG -> base64 of a 1024×768 JPEG;  "clip.mov" or junk bytes -> None"""
+    import base64
+    import io
+    from PIL import Image, ImageOps
+    try:
+        with Image.open(path) as im:
+            im = ImageOps.exif_transpose(im).convert("RGB")
+            im.thumbnail((PICTURE_SIDE, PICTURE_SIDE))
+            buf = io.BytesIO()
+            im.save(buf, format="JPEG", quality=85)
+    except Exception:  # noqa: BLE001 (any unreadable file: words only)
+        return None
+    return base64.b64encode(buf.getvalue()).decode()
+
+
+async def ollama_sees_pictures(model: str, transport=None) -> bool:
+    """Whether this Ollama model takes pictures: "vision" among the capabilities `ollama show` lists. False when Ollama
+    can't be asked or doesn't know the model.
+      embeddinggemma-2:740m (embedding, vision, audio) -> True;  nomic-embed-text (embedding) -> False"""
+    try:
+        async with httpx.AsyncClient(timeout=10, transport=transport) as c:
+            r = await c.post(OLLAMA_URL + "/api/show", json={"model": model})
+            caps = r.json().get("capabilities") or []
+    except (httpx.HTTPError, ValueError, AttributeError):
+        return False
+    return "vision" in caps
 
 
 def flat(item) -> str:
@@ -127,8 +188,9 @@ class ServiceEmbedder(HttpEmbedder):
         return out
 
 
-def make_embedder(provider: str, model: str, store=None, transport=None) -> HttpEmbedder:
-    """provider: openai | lmstudio | ollama | gemma (Odie's own service)."""
+def make_embedder(provider: str, model: str, store=None, transport=None, pictures: bool = False) -> HttpEmbedder:
+    """provider: openai | lmstudio | ollama | gemma (Odie's own service). pictures: the Ollama model sees pictures
+    (the vault setting remembers it, from ollama_sees_pictures when the model was chosen)."""
     if provider == "openai":
         key = load_secret("OPENAI_API_KEY")
         if not key:
@@ -139,7 +201,7 @@ def make_embedder(provider: str, model: str, store=None, transport=None) -> Http
         return HttpEmbedder("lmstudio", model, s.lm_studio_base_url.rstrip("/") + "/embeddings",
                             {"Authorization": f"Bearer {s.lm_studio_api_key}"}, transport)
     if provider == "ollama":
-        return HttpEmbedder("ollama", model, OLLAMA_URL + "/api/embed", {}, transport)
+        return OllamaEmbedder(model, transport, pictures)
     if provider == "gemma":
         from odie import embed_worker
         base = embed_worker.current.url if embed_worker.current is not None else f"http://127.0.0.1:{embed_worker.embed_port()}"

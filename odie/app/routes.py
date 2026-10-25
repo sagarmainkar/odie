@@ -785,8 +785,8 @@ def _photos_view(request: Request) -> dict:
     status = {k: st[k] for k in ("photos", "videos", "photo_vectors", "photos_at")} if st else None
     worker = getattr(request.app.state, "vault_worker", None)
     embedder = vault_settings.embedder_for(store)
-    # how pictures are read by meaning: "gemma" (Odie's own service sees pictures), "text" (an embedder that reads words
-    # only), "none" (no embedder set)
+    # how pictures are read by meaning: "gemma" (an EmbeddingGemma 2 that sees pictures: Odie's own service, or Ollama's),
+    # "text" (an embedder that reads words only), "none" (no embedder set)
     meaning = "none" if embedder is None else ("gemma" if getattr(embedder, "sees_pictures", False) else "text")
     return {"settings": settings.get(store), "status": status, "meaning": meaning,
             "progress": worker.progress() if worker else {"running": False, "done": 0, "total": 0, "phase": "idle", "error": ""}}

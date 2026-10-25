@@ -37,7 +37,9 @@ remembers.
 (EmbeddingGemma 2, `embed_server/`, built by the installer). The first use downloads the model, about 1.5 GB, from
 Hugging Face into `~/.cache/huggingface`; no account is needed. Odie starts the service with itself, on
 `ODIE_EMBED_PORT`, and nothing about your notes leaves the computer; after `ODIE_EMBED_IDLE_MINUTES` without a request
-it unloads the model and gives the memory back. LM Studio, Ollama and OpenAI embeddings stay as choices, for text only.
+it unloads the model and gives the memory back. LM Studio, Ollama and OpenAI embeddings stay as choices: EmbeddingGemma 2
+on Ollama (`ollama pull embeddinggemma-2`, about 1.3 GB, unloaded by Ollama when idle) reads pictures too, and needs
+no service of Odie's own; the rest are text only.
 The first pass over a few thousand notes takes about a quarter of an hour; Settings → Notes counts it up.
 
 ## 3b. Photos and videos
@@ -48,8 +50,8 @@ shows, where and when it was taken, its albums, and Apple's extras (holidays, pe
 picture). Nothing leaves the Mac and nothing is changed; hidden items and the bin are never read. The library is read
 in seconds, again every half hour, into the same index as the notes.
 
-With Odie's own embedding service, each picture also gets one vector from its words and its pixels together (a video
-from its poster frame), about 35 minutes for eight thousand pictures, after the notes. One search then runs over notes
+With Odie's own embedding service, or EmbeddingGemma 2 on Ollama, each picture also gets one vector from its words and
+its pixels together (a video from its poster frame), about 35 minutes for eight thousand pictures, after the notes. One search then runs over notes
 and pictures alike: "pictures of Asha in Goa last May" lists a few with thumbnails and says how many more match. With a
 text-only embedder, pictures are found by their words alone, and the Photos row says so.
 
