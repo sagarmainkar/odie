@@ -234,9 +234,13 @@ class OdiePlugin(BasePlugin):
         inv = getattr(tool_context, "invocation_id", None)
         if _awaiting_tap(result):
             return None  # a gated tool paused for its approval card: it hasn't run, so it isn't a tool call yet
-        from odie.agent import turn
+        from odie.agent import confidential, turn
         if tool.name == "browser_type" and turn.private_sites():  # typing in a signed-in turn: its length, never its text
             tool_args = {**tool_args, "text": f"({len(str(tool_args.get('text', '')))} characters)"}
+        exposed = confidential.label_for(tool.name)  # the user's mail, notes, memory: from here the chat asks before words leave
+        if exposed is not None and turn.mark_read(exposed):
+            from odie.signin import guard as signin_guard
+            signin_guard.remember_read(self.store, session_id, exposed)
         self.store.audit("agent", "tool_call", tool=tool.name, args=tool_args, result_summary=_summarise(result),
                          session_id=session_id, invocation_id=inv)
         from odie import addons

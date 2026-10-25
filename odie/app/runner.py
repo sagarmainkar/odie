@@ -287,6 +287,9 @@ def approval_from_confirmation(fc: Any, invocation_id: str, session_id: str, sto
     elif tool in signin_guard.GUARDED:
         summary, extra = signin_guard.card(tool, targs, session_id, store)
         detail.update({k: v for k, v in extra.items() if v})
+    elif tool == "update_memory":  # only a Watch for entry asks: the background watch would follow it every 30 minutes
+        summary = f"Watch for \"{targs.get('title', '')}\": {str(targs.get('content', ''))[:300]}"
+        detail["why"] = "The background watch follows Watch for entries every 30 minutes, with nobody there to check."
     elif card := next((c for c in addons.call("card", tool, targs, session_id, store) if c), None):
         summary, risk = card.summary, card.risk
         detail.update(card.detail)
@@ -303,6 +306,8 @@ def approval_from_confirmation(fc: Any, invocation_id: str, session_id: str, sto
     from odie.agent import turn
     if private := turn.private_sites():  # a tap resumes this turn: it stays private (resume_approval)
         detail["private"] = sorted(private)
+    if read := turn.read_sources():  # and it still knows what of the user's own it read
+        detail["read"] = sorted(read)
     mails = store.recent_mail_seen(session_id)
     if risk == "normal" and mails:
         risk = "from_email" if any(m.get("turn") == "current" for m in mails) else "mail_earlier"
@@ -633,7 +638,7 @@ class OdieRunner:
         session_id = session_id or self.current_session_id(today)
         lock = self.lock_for(session_id)
         await lock.acquire()
-        turn_token = private_token = compact_token = None
+        turn_token = private_token = read_token = compact_token = None
         was_private = False
         try:
             session_id = await self._ensure_session(session_id)
@@ -660,6 +665,7 @@ class OdieRunner:
             turn_token = turn_words.USER_TEXT.set(text)  # the user's own words, for tools that act only when asked
             from odie.signin import guard as signin_guard  # the signed-in sites this chat has read (signed-in browsing)
             private_token = turn_words.PRIVATE.set(signin_guard.private_of(self.store, session_id))
+            read_token = turn_words.READ.set(signin_guard.read_of(self.store, session_id))  # its mail, notes, memory read so far
             compact_token = turn_words.HISTORY_LIMIT.set(await self._history_limit(session_id))
             sent_text = f"{text}{markers}" + (f"\n\n{blocks}" if blocks else "") + f"\n\n{trailer}"
             parts.insert(0, types.Part(text=sent_text))
@@ -749,6 +755,8 @@ class OdieRunner:
                 try:
                     turn_words.USER_TEXT.reset(turn_token)
                     turn_words.PRIVATE.reset(private_token)
+                    if read_token is not None:
+                        turn_words.READ.reset(read_token)
                     if compact_token is not None:
                         turn_words.HISTORY_LIMIT.reset(compact_token)
                 except ValueError:  # iterated from another context: it ends with that context
@@ -854,6 +862,8 @@ class OdieRunner:
             from odie.signin import guard as signin_guard
             private = turn.PRIVATE.set(set(json.loads(row["detail_json"] or "{}").get("private") or ())
                                        | signin_guard.private_of(self.store, row["session_id"]))
+            read = turn.READ.set(set(json.loads(row["detail_json"] or "{}").get("read") or ())
+                                 | signin_guard.read_of(self.store, row["session_id"]))
             compact = turn.HISTORY_LIMIT.set(await self._history_limit(row["session_id"]))  # the same cut as the paused turn's
             try:
                 async for ev in self.runner.run_async(user_id=s.user_id, session_id=row["session_id"], invocation_id=row["invocation_id"],
@@ -872,6 +882,7 @@ class OdieRunner:
             finally:
                 turn.USER_TEXT.reset(words)
                 turn.PRIVATE.reset(private)
+                turn.READ.reset(read)
                 turn.HISTORY_LIMIT.reset(compact)
         text = "".join(final) or ("Done." if approve else "Okay, I left it.")
         self.store.set_approval_result(approval_id, text)

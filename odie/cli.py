@@ -45,7 +45,7 @@ VOICE_PORT_OFFSET = 771  # 8000 → 8771: each Odie port gets its own voice work
 EMBED_PORT_OFFSET = 772  # the embedding service's port: Odie's + 772 (ODIE_EMBED_PORT overrides)
 TOOL_DIRS = ["/opt/homebrew/bin", "/usr/local/bin"]  # uv, npm, node and tailscale live here, not on launchd's PATH
 SYSTEM_DIRS = ["/usr/bin", "/bin", "/usr/sbin", "/sbin"]
-PASSED_TO_SERVICE = ("ODIE_VOICE", "ODIE_EMBED", "ODIE_PAIRING", "ODIE_SCHEDULER")  # install-time choices the service keeps
+PASSED_TO_SERVICE = ("ODIE_VOICE", "ODIE_EMBED", "ODIE_PAIRING", "ODIE_SCHEDULER", "ODIE_HOSTS")  # install-time choices the service keeps
 COMMAND_MARK = "# The odie command, written by scripts/install.sh"
 HEALTH_WAIT_SECONDS = 60
 LOG_ROTATE_BYTES = 10 * 1024 * 1024
@@ -893,6 +893,10 @@ def update(inst: Install, runner: Runner, force: bool) -> int:
         newest = git(inst, runner, "rev-parse", f"{target}^{{commit}}").out.strip()
     if not newest:
         print(f"There's no {target or 'release'} to update to yet.")
+        return 1
+    pinned = os.environ.get("ODIE_UPDATE_TO", "")  # the app's button: the commit its check showed (odie.update.start)
+    if pinned and newest != pinned:
+        print(f"The newest version changed since the app looked ({short(pinned)} then, {short(newest)} now): check again.")
         return 1
     if newest == current and not force:
         print(f"Already up to date: {version_line(inst, runner)}")

@@ -334,7 +334,7 @@ async def mcp_list(request: Request):
 
 @router.post("/mcp")
 async def mcp_save(body: ServerIn, request: Request):
-    from odie.plugins.mcp import NAME_RE, read_config, unmask, write_config
+    from odie.plugins.mcp import NAME_RE, command_problem, read_config, unmask, write_config
     if not NAME_RE.match(body.name) or not (body.spec.get("url") or body.spec.get("command")):
         raise HTTPException(422, "a lower-case name and a command or url are needed")
     servers, _ = read_config()
@@ -344,6 +344,9 @@ async def mcp_save(body: ServerIn, request: Request):
         edit = unmask(spec, old)  # masked values coming back keep the real secret
     except ValueError as e:
         raise HTTPException(422, str(e))
+    problem = command_problem(edit)
+    if problem:
+        raise HTTPException(422, problem)
     keep = {k: v for k, v in old.items() if k not in (("command", "args", "env") if edit.get("url") else ("url", "headers"))}
     servers[body.name] = {**keep, **edit}  # switches (enabled, alwaysOn) and hand-written keys stay
     write_config(servers)
@@ -385,13 +388,16 @@ async def mcp_presets() -> list[dict[str, Any]]:
 @router.post("/mcp/check")
 async def mcp_check(body: CheckIn) -> dict[str, Any]:
     """Lists a server's tools before it is saved (nothing is saved)."""
-    from odie.plugins.mcp import read_config, unmask
+    from odie.plugins.mcp import command_problem, read_config, unmask
     if not (body.spec.get("url") or body.spec.get("command")):
         raise HTTPException(422, "a command or url is needed")
     try:
         spec = unmask(dict(body.spec), (read_config()[0].get(body.name) or {}) if body.name else {})
     except ValueError as e:
         raise HTTPException(422, str(e))
+    problem = command_problem(spec)  # the check runs the program: never a shell or code handed in as text
+    if problem:
+        raise HTTPException(422, problem)
     return await _check(spec)
 
 
@@ -1749,23 +1755,6 @@ async def approval_get(approval_id: int, request: Request):
 _resuming: set[asyncio.Task] = set()  # strong refs to turns resuming after a tap
 
 
-def _covered_by_new_pass(card: dict, tapped_id: int, session_id: str) -> bool:
-    """The user just tapped 'Allow for 30 min' on one run_shell card: does the new pass cover this other pending card
-    too? Yes when it's another run_shell card in the same chat, and its command isn't on the always-ask list.
-    Example: tapped #7; pending #8 `du -sh ~` in the same chat -> True; #9 `rm a.txt` in the same chat -> False
-    (always asks); a run_shell card from another chat -> False; #7 itself -> False (it's already being approved)."""
-    from odie.agent import shell_grant
-    if card["id"] == tapped_id:
-        return False
-    if card["session_id"] != session_id:
-        return False
-    if card["tool"] != "run_shell":
-        return False
-    args = card.get("args") or {}
-    command = str(args.get("command", ""))
-    return shell_grant.always_ask(command) is None
-
-
 @router.post("/approvals/{approval_id}/decide")
 async def approval_decide(approval_id: int, body: DecideIn, request: Request):
     """Answer at once so the card collapses; the paused turn resumes in its own task (it can take minutes) and
@@ -1785,17 +1774,11 @@ async def approval_decide(approval_id: int, body: DecideIn, request: Request):
         request.app.state.store.audit("user", "shell_allowed", tool="run_shell", result_summary=f"until {until:%H:%M}",
                                       session_id=row["session_id"], approval_id=approval_id)
         out["allowed_until"] = until.isoformat()
-        # Cards asked in the same step as this one (parallel tool calls) were raised before the grant existed:
-        # approve those too, unless they are on the always-ask list.
-        pending = [_approval_dict(r) for r in request.app.state.store.pending_approvals()]
-        out["also_approved"] = [card["id"] for card in pending if _covered_by_new_pass(card, approval_id, row["session_id"])]
+        # One tap approves one card. Other run_shell cards already waiting in this chat (parallel tool calls) were
+        # raised before the pass existed and stay on screen: the pass covers only commands asked from now on, so a
+        # command the user never read is never approved by a tap on another one.
 
-    async def resume_in_order() -> None:
-        runner = request.app.state.runner
-        await runner.resume_approval(approval_id, body.approve)
-        for other in out.get("also_approved", []):
-            await runner.resume_approval(other, True)  # one at a time, as if tapped in turn
-    task = asyncio.create_task(resume_in_order())
+    task = asyncio.create_task(request.app.state.runner.resume_approval(approval_id, body.approve))
     _resuming.add(task)
     task.add_done_callback(_resuming.discard)
     return out
@@ -2158,9 +2141,13 @@ def _base_url(request: Request) -> str:
 
 @router.get("/pair/status")
 async def pair_status(request: Request) -> dict[str, Any]:
+    """Open to any caller (the pairing screen needs it): how many devices are paired is told only to a paired one; an
+    unpaired caller learns just whether any is (0 or 1), which is what the screen's wording needs."""
     store = request.app.state.store
-    return {"on": devices.pairing_on(store), "paired": _device(request) is not None, "devices": len(devices.list_devices(store)),
-            "passcode": devices.has_passcode(store)}
+    paired = _device(request) is not None
+    count = len(devices.list_devices(store))
+    shown = count if paired else min(count, 1)
+    return {"on": devices.pairing_on(store), "paired": paired, "devices": shown, "passcode": devices.has_passcode(store)}
 
 
 @router.post("/pair/code")

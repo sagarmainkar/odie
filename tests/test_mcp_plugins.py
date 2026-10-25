@@ -7,13 +7,15 @@ from odie.plugins.mcp import is_read_only, toolset_for
 TESTER = {"command": sys.executable, "args": [str(Path(__file__).parent / "fixtures" / "mcp_tester.py")]}
 
 
-async def test_read_only_tools_run_freely_others_ask():
+async def test_a_servers_read_only_hint_frees_nothing():
+    """readOnlyHint is the server's word about itself: every tool asks until the user turns on "Reading doesn't need a
+    tap", and even then only a tool whose name says it reads runs freely (echo doesn't)."""
     ts = toolset_for("tester", TESTER)
     try:
         tools = {t.name: t for t in await ts.get_tools()}
         assert set(tools) == {"echo", "write_note"}
         assert is_read_only(tools["echo"]) and not is_read_only(tools["write_note"])
-        assert await tools["echo"].check_require_confirmation({"text": "x"}, None) is False
+        assert await tools["echo"].check_require_confirmation({"text": "x"}, None) is True
         assert await tools["write_note"].check_require_confirmation({"text": "x"}, None) is True
     finally:
         await ts.close()

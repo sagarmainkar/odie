@@ -39,3 +39,23 @@ def mark_private(site: str) -> None:
 
 def private_sites() -> set:
     return set(PRIVATE.get() or ())
+
+
+# What of the user's own this chat has read into its context ("your mail", "your notes": odie.agent.confidential). None
+# outside a chat turn.
+READ: ContextVar[set | None] = ContextVar("odie_read_sources", default=None)
+
+
+def mark_read(label: str) -> bool:
+    """Notes that this chat turn read something of the user's own; True when a chat turn is on (and so the note took),
+    False outside one (a background turn: nothing to note). Example: in a chat, mark_read("your mail") -> True and
+    read_sources() has it; in the watch's turn -> False."""
+    sources = READ.get()
+    if sources is None or not label:
+        return False
+    sources.add(label)
+    return True
+
+
+def read_sources() -> set:
+    return set(READ.get() or ())

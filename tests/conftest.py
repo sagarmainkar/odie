@@ -14,6 +14,7 @@ for _key, _sub in (("ODIE_DATA_DIR", "data"), ("ODIE_CONFIG_DIR", "config"), ("O
 os.environ["ODIE_ADDONS"] = ""  # no add-ons unless a test brings its own: never a real home's
 os.environ["MSG_LEDGER_DIR"] = str(_TEST_ROOT / "no-ledger")  # never the real SMS ledger (the personal add-on reads it)
 os.environ["ODIE_PAIRING"] = "off"  # every API open (the pairing tests turn it on)
+os.environ["ODIE_HOSTS"] = "t,testserver"  # the test clients' made-up hosts (http://t, TestClient) count as Odie's own
 os.environ["ODIE_BROWSER"] = "off"  # the same prompt and tools on every machine (browser tests find one themselves)
 os.environ["ODIE_KEYCHAIN"] = str(_TEST_ROOT / "no-keychain.keychain-db")  # never the login keychain: a stray vault call fails
 os.environ.setdefault("ODIE_TIMEZONE", "Asia/Kolkata")  # the region the existing tests were written in

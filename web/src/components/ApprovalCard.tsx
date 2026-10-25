@@ -10,7 +10,7 @@ export type Approval = {
   detail?: Record<string, unknown> | null; provenance?: { from: string; subject: string }[] | null; result_text?: string | null;
 };
 
-const TOOL_WORD: Record<string, string> = { gmail_send_draft: "Send", gmail_trash: "Trash", calendar_create_event: "Invite", calendar_respond: "RSVP", run_shell: "Run", install_skill: "Install",
+const TOOL_WORD: Record<string, string> = { gmail_send_draft: "Send", gmail_trash: "Trash", calendar_create_event: "Invite", calendar_respond: "RSVP", run_shell: "Run", install_skill: "Install", update_memory: "Memory",
   web_search: "Search", web_fetch: "Open", browser_open: "Open", find_images: "Photos", find_clips: "Clips", browser_click: "Click", browser_type: "Submit", speak: "Read aloud" };
 
 function toolTileFor(tool: string): { icon: IconName; color: TileColor } {
@@ -144,7 +144,7 @@ export function ApprovalCard({ a, onDecided, showResult = true }: { a: Approval;
         </button>
       )}
       <div className="text-[12px] leading-4 text-dim -mt-1">
-        Sending, deleting, invites, commands, app actions and new code always ask first; reading never does. Every action is logged.
+        Sending, deleting, invites, commands, app actions and new code always ask first; reading your own notes and mail doesn't. Every action is logged.
         {expiresIn(a.created_at) && <> · {expiresIn(a.created_at)}</>}
       </div>
     </motion.div>

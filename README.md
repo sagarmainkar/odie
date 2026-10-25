@@ -90,7 +90,8 @@ Odie is inspired by Muse, but it isn't a copy.
 Odie connects to apps through **MCP**, the open standard for giving an AI tools. Any MCP server works: add it in
 Settings → Connected apps, or in `~/.odie/mcp.json`, running on the Mac or over HTTP. A Gmail or Calendar MCP server
 gives Odie your mail and calendar. Zapier and Composio are built-in shortcuts that link many apps at once, but you
-don't need them. Tools the server marks read-only run at once; anything that writes asks for a tap.
+don't need them. Every app tool asks for a tap, unless you turn on "Reading doesn't need a tap" for that app: then
+its tools whose names say they read (find, get, list, search, fetch) run at once, and the rest still ask.
 
 On a Mac, Odie also reads **Apple Mail, Calendar and Reminders** directly, with no MCP server: allow each
 app once in Settings → Mac apps, and macOS asks with its own dialog. Odie reads mail and saves attachments but never

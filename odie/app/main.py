@@ -11,6 +11,7 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
 from odie import config, devices
+from odie.app.origin import OriginGate
 from odie.app.routes import router
 from odie.push.vapid import load_or_create_vapid
 from odie.store.db import Store
@@ -340,6 +341,7 @@ def create_app(runner=None, store: Store | None = None) -> FastAPI:
     install_log_masking()  # links with keys in them (Zapier's) never reach the log
     app = FastAPI(title="Odie", lifespan=lifespan)
     app.add_middleware(DeviceGate, store=store)
+    app.add_middleware(OriginGate)  # outermost: a request from a Host Odie doesn't own, or a change from another page, stops here
     app.include_router(router)
     mount_addon_routes(app)
 

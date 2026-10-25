@@ -33,15 +33,18 @@ def test_change_names_are_not_reads(name):
 
 
 def test_asks():
-    assert asks({"name": "write_note", "read_only": True}, False) is False  # the server says it only reads
+    assert asks({"name": "write_note", "read_only": True}, False) is True  # the server's own word frees nothing
     assert asks({"name": "list_items", "read_only": False}, False) is True  # the switch is off
-    assert asks({"name": "list_items", "read_only": False}, True) is False
+    assert asks({"name": "list_items", "read_only": False}, True) is False  # the user's switch, and a name that reads
+    assert asks({"name": "list_items", "read_only": True}, True) is False
     assert asks({"name": "create_item", "read_only": False}, True) is True
+    assert asks({"name": "delete_thread", "read_only": True}, True) is True  # marked read-only, but its name says otherwise
+    assert asks({"name": "send_mail", "read_only": True}, True) is True
     assert asks({"name": "fetch_report", "read_only": False, "destructive": True}, True) is True
 
 
 async def test_reads_free_only_skips_reads():
-    expect = {False: {"list_items": True, "create_item": True, "fetch_report": True, "get_status": False},
+    expect = {False: {"list_items": True, "create_item": True, "fetch_report": True, "get_status": True},
               True: {"list_items": False, "create_item": True, "fetch_report": True, "get_status": False}}
     for free, want in expect.items():
         ts = toolset_for("apps", {**APPS, "readsFree": free})
@@ -108,6 +111,15 @@ async def test_check_lists_tools_without_saving(client, monkeypatch):
     assert mcp.read_config()[0] == {}
     r = (await client.post("/api/mcp/check", json={"spec": {"url": ZAPIER, "readsFree": True}})).json()
     assert [t["asks"] for t in r["tools"]] == [False, True]
+    for spec in ({"command": "/bin/sh", "args": ["-c", "id > /tmp/x"]}, {"command": "zsh", "args": ["-c", "id"]},
+                 {"command": "python3", "args": ["-c", "import os"]}, {"command": "node", "args": ["-e", "1"]},
+                 {"command": "node", "args": ["server.js"], "env": {"NODE_OPTIONS": "--require /tmp/x.js"}},
+                 {"command": "env", "args": ["sh", "-c", "id > /tmp/x"]},        # the review's live bypasses (25 Oct 2026)
+                 {"command": "python3", "args": ["-cimport pathlib; pathlib.Path('/tmp/x').write_text('hi')"]}):
+        r = await client.post("/api/mcp/check", json={"spec": spec})
+        assert r.status_code == 422, spec  # a shell, code as text or a hooked env: never run, not even to list tools
+        r = await client.post("/api/mcp", json={"name": "evil", "spec": spec})
+        assert r.status_code == 422 and mcp.read_config()[0] == {}, spec  # and never saved, so never respawned at boot
     bad = (await client.post("/api/mcp/check", json={"spec": {"url": ZAPIER.replace("/s/", "/s/fail")}})).json()
     assert bad["ok"] is False and "401" in bad["reason"] and ZAPIER.split("/")[-2] not in bad["reason"]
 

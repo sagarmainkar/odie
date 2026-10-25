@@ -94,7 +94,8 @@ Any MCP server becomes an app. `~/.odie/mcp.json` uses the standard `mcpServers`
 ```
 
 Each app is on demand: its tools switch on when the model loads the app's skill, so the system prompt stays
-small. Tools a server marks read-only run at once; the rest (send, create, delete) ask for a tap. An app whose
+small. Every tool asks for a tap until you turn on "Reading doesn't need a tap" for the app; then tools whose names
+say they read (find, get, list, search, fetch) run at once, and the rest (send, create, delete) still ask. An app whose
 tools look like a mail listing or a calendar is also used by the watcher: trackers like "tell me when she replies"
 and the morning look at what's due. Settings → Apps shows each server's status and tools.
 
