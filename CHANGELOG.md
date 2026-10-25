@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.2.29 (2026-10-25)
+
+- Odie's own embedding service (EmbeddingGemma 2 in PyTorch, `embed_server/`) is no longer built or offered by default: install with `ODIE_EMBED=on` to have it. EmbeddingGemma 2 on Ollama (`ollama pull embeddinggemma-2`) reads notes and pictures the same way, with no download and no process of Odie's own; setup and Settings recommend it when found.
+
 ## v0.2.28 (2026-10-25)
 
 - Search by meaning: setup and Settings → Notes offer "A server somewhere else" (Ollama at its root address, or LM Studio, llama.cpp and any OpenAI-style server at its /v1 address): type the address, Find models, pick one; Odie checks it with one real embedding before saving and asks an Ollama server whether the model reads pictures. The choices now run from what is already running here (a picture-reading Ollama model is recommended), to a server elsewhere, to OpenAI, to Odie's own download last.
