@@ -77,7 +77,7 @@ async def _chat(tmp_path, monkeypatch, limit: int | None = None, turns=TURNS) ->
     r = runner_mod.OdieRunner(store)
     await r.load_plugins()
     if limit is not None:
-        r._compact_limits[SESSION] = limit
+        r._history_limits[SESSION] = limit
     for words, _ in turns:
         events = [e async for e in r.chat(words, session_id=SESSION)]
         assert not [e for e in events if e["type"] == "error"], events
@@ -104,7 +104,7 @@ async def test_a_long_chat_is_cut_in_rare_batches(isolated_settings, tmp_path, m
     long = "Aisle seats, window on night flights, extra legroom when it's cheap. " * 40  # a ~2,800 character memory
     turns = [("Remember my seat", [("update_memory", {"title": "Seat", "content": long, "topic": "Travel"}), "Saved."])]
     turns += [(f"Which seat do I like, {n}?", [("fetch_memory", {"title": "Seat"}), "Aisle."]) for n in range(14)]
-    seen = await _chat(tmp_path, monkeypatch, limit=30_000, turns=turns)  # ~3k per turn
+    seen = await _chat(tmp_path, monkeypatch, limit=23_500, turns=turns)  # 30k characters: ~3k per turn
     changed = []
     for i, (before, now) in enumerate(zip(seen, seen[1:]), 1):
         if not compare("", pieces_of(before), pieces_of(now)).appended:
@@ -181,7 +181,7 @@ async def test_claude_accepts_a_cut_that_drops_older_thoughts(isolated_settings,
     store.init_schema()
     r = runner_mod.OdieRunner(store)
     await r.load_plugins()
-    r._compact_limits[SESSION] = 30_000  # ~3k per turn: the cut moves a few times in 15 turns
+    r._history_limits[SESSION] = 23_500  # 30k characters, ~3k per turn: the cut moves a few times in 15 turns
     for words, _ in turns:
         events = [e async for e in r.chat(words, thinking=True, session_id=SESSION)]
         assert not [e for e in events if e["type"] == "error"], events

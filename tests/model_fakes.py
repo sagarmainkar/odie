@@ -24,7 +24,7 @@ class Reply:
     args: dict = field(default_factory=dict)  # ...with these arguments
     thinking: bool = False  # Claude only: a signed thinking block before it
     cached: int = 90        # input tokens the provider says came from its cache
-    prompt: int = 100
+    prompt: int | None = None  # input tokens the provider reports; None counts the request as a provider would (4 chars a token)
 
 
 @dataclass
@@ -38,6 +38,15 @@ class Script:
     def next(self, body: dict) -> Reply:
         self.bodies.append(body)
         return self.replies[len(self.bodies) - 1]
+
+
+def _prompt_tokens(r: Reply, req) -> int:
+    """The input tokens this reply reports: the scripted number, or the request body counted at 4 characters a token,
+    as a real provider's count grows with the conversation (the cut past the chat's limit reads that count).
+      Reply(prompt=100) -> 100;  Reply() answering a 40,000-character body -> 10,000"""
+    if r.prompt is not None:
+        return r.prompt
+    return max(1, len(req.content) // 4)
 
 
 def _sse(events: list[tuple[str | None, dict | str]]) -> bytes:
@@ -54,8 +63,9 @@ def openai_handler(script: Script, httpx):
     def handle(req):
         body = json.loads(req.content)
         r = script.next(body)
-        usage = {"prompt_tokens": r.prompt, "completion_tokens": 5, "total_tokens": r.prompt + 5,
-                 "prompt_tokens_details": {"cached_tokens": r.cached}}
+        prompt = _prompt_tokens(r, req)
+        usage = {"prompt_tokens": prompt, "completion_tokens": 5, "total_tokens": prompt + 5,
+                 "prompt_tokens_details": {"cached_tokens": min(r.cached, prompt)}}
         call = [{"index": 0, "id": f"call_{len(script.bodies)}", "type": "function", "function": {"name": r.tool, "arguments": json.dumps(r.args)}}]
         if not body.get("stream"):
             msg = {"role": "assistant", "content": r.text or None, **({"tool_calls": [{k: v for k, v in call[0].items() if k != "index"}]} if r.tool else {})}
@@ -155,7 +165,9 @@ def anthropic_handler(script: Script, httpx):
             script.refused.append(body)
             return _refuse(httpx, bad)
         r = script.next(body)
-        usage = {"input_tokens": r.prompt - r.cached, "output_tokens": 5, "cache_read_input_tokens": r.cached, "cache_creation_input_tokens": 0}
+        prompt = _prompt_tokens(r, req)
+        cached = min(r.cached, prompt)
+        usage = {"input_tokens": prompt - cached, "output_tokens": 5, "cache_read_input_tokens": cached, "cache_creation_input_tokens": 0}
         blocks = []
         if r.thinking:
             signature = signature_for(body, len(body["messages"]))

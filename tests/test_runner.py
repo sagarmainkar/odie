@@ -155,11 +155,35 @@ async def test_a_chats_limit_is_read_at_its_first_turn_and_kept(isolated_setting
     s.init_schema()
     s.set_setting("model.chat", {"provider": "ollama", "model": "deepseek-v4.1-flash:cloud"})
     r = OdieRunner(s)
-    assert await r._compact_at("chat-2026-10-15") == 1_136_000            # 300k tokens less the prompt, in characters
+    assert await r._history_limit("chat-2026-10-15") == 300_000           # DeepSeek's 1M: 300k tokens, the cap
     s.set_setting("model.chat", {"provider": "lmstudio", "model": "gemma-4-26b-a4b-it-qat"})
-    assert await r._compact_at("chat-2026-10-15") == 1_136_000            # the same chat keeps its limit
-    assert await r._compact_at("chat-2026-10-16") == 146_000              # a new chat reads Gemma's 70k
+    assert await r._history_limit("chat-2026-10-15") == 300_000           # the same chat keeps its limit
+    assert await r._history_limit("chat-2026-10-16") == 52_500            # a new chat reads Gemma's 70k
     assert not hasattr(r, "maybe_rollover")
+    await r.close()
+
+
+async def test_an_unknown_window_is_asked_again_next_turn_not_pinned(isolated_settings, tmp_path, monkeypatch):
+    """23 Oct: Ollama didn't say DeepSeek's window at the chat's first turn, so the chat kept the 50k 'can't say' limit
+    all day and was trimmed hard, until a restart read 1M and the limit jumped to 300k. Now an unknown window is read
+    again at the next turn, and pinned only once it is known."""
+    import odie.app.runner as runner_mod
+    answers = iter([None, None, 1_048_576, 70_000])
+
+    async def fake_window(sel, transport=None):
+        return next(answers)
+    monkeypatch.setattr(runner_mod, "context_window", fake_window)
+    s = Store(tmp_path / "assistant.db")
+    s.init_schema()
+    s.set_setting("model.chat", {"provider": "ollama", "model": "deepseek-v4.1-flash:cloud"})
+    r = OdieRunner(s)
+    assert await r._history_limit("chat-2026-10-23") == 50_000            # not known yet: the 'can't say' limit
+    assert await r._history_limit("chat-2026-10-23") == 50_000            # asked again (None again)
+    assert await r._history_limit("chat-2026-10-23") == 300_000           # known now, and pinned:
+    assert await r._history_limit("chat-2026-10-23") == 300_000           # the 70,000 answer is never asked for
+    sid = await r._ensure_session("chat-2026-10-23")
+    monkeypatch.setattr(r, "current_session_id", lambda date: sid)
+    assert (await r.context_usage("2026-10-23"))["limit"] == 300_000      # the ring shows this chat's limit
     await r.close()
 
 

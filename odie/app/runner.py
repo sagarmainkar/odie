@@ -408,10 +408,11 @@ class OdieRunner:
         self.memory.ensure()
         self.bus = EventBus()
         self._locks: dict[str, asyncio.Lock] = {}
-        self._compact_limits: dict[str, int] = {}  # session -> its compaction limit (_compact_at)
+        self._history_limits: dict[str, int] = {}  # session -> its history limit in tokens (_history_limit)
         self._recent: dict[str, list[str]] = {}  # previous two user questions per session, for prefetch  # one per session: a reminder never appends mid-turn
         self.history_limit = history_limit_for(None)  # tokens; until the model's real context size is known
         self._limit_key: tuple | None = None
+        self._window_unknown = True  # the provider has not said the model's context size yet: ask again next time
         self.plugins: dict = {"skills": [], "servers": []}
         self._stop: set[str] = set()  # sessions the user asked to stop
         from odie.skills import builder
@@ -470,18 +471,21 @@ class OdieRunner:
                     return text
         return ""
 
-    async def _compact_at(self, session_id: str) -> int:
-        """This chat's limit in characters (odie.agent.compaction), from the chosen model's context size, read at the
-        session's first turn and then kept for the session: a limit that moved mid-chat would move the cut and rewrite
-        history the model has already read.
-          the first turn of chat-2026-10-15 with DeepSeek (1M)  -> 1,136,000, kept for chat-2026-10-15
-          a later turn there, after switching to Gemma (70k)    -> still 1,136,000 (the next session uses Gemma's)
-          a provider that can't say its size                    -> 136,000"""
-        if session_id not in self._compact_limits:
-            from odie.agent import compaction
-            await self.refresh_history_limit()
-            self._compact_limits[session_id] = compaction.compact_at(self.history_limit)
-        return self._compact_limits[session_id]
+    async def _history_limit(self, session_id: str) -> int:
+        """This chat's history limit in tokens (odie.models.history_limit_for; odie.agent.compaction cuts past it),
+        from the chosen model's context size, read at the session's first turn and then kept for the session: a limit
+        that moved mid-chat would move the cut and rewrite history the model has already read. While the provider
+        can't say the size, the 'can't say' limit is used but not kept, so the next turn asks again (23 Oct: a chat
+        pinned at 50k all day was trimmed hard, then jumped to 300k after a restart).
+          the first turn of chat-2026-10-15 with DeepSeek (1M)  -> 300,000, kept for chat-2026-10-15
+          a later turn there, after switching to Gemma (70k)    -> still 300,000 (the next session uses Gemma's)
+          Ollama not saying the size yet                        -> 50,000 this turn; asked again next turn"""
+        if session_id in self._history_limits:
+            return self._history_limits[session_id]
+        limit = await self.refresh_history_limit()
+        if not self._window_unknown:
+            self._history_limits[session_id] = limit
+        return limit
 
     async def _visual_nudge(self, session_id: str, text: str) -> str:
         """The line that reminds the model to draw (odie.agent.visual_nudge), with a line break before it, when this
@@ -656,7 +660,7 @@ class OdieRunner:
             turn_token = turn_words.USER_TEXT.set(text)  # the user's own words, for tools that act only when asked
             from odie.signin import guard as signin_guard  # the signed-in sites this chat has read (signed-in browsing)
             private_token = turn_words.PRIVATE.set(signin_guard.private_of(self.store, session_id))
-            compact_token = turn_words.COMPACT_AT.set(await self._compact_at(session_id))
+            compact_token = turn_words.HISTORY_LIMIT.set(await self._history_limit(session_id))
             sent_text = f"{text}{markers}" + (f"\n\n{blocks}" if blocks else "") + f"\n\n{trailer}"
             parts.insert(0, types.Part(text=sent_text))
             selection = resolve_selection(self.store, "chat")
@@ -746,7 +750,7 @@ class OdieRunner:
                     turn_words.USER_TEXT.reset(turn_token)
                     turn_words.PRIVATE.reset(private_token)
                     if compact_token is not None:
-                        turn_words.COMPACT_AT.reset(compact_token)
+                        turn_words.HISTORY_LIMIT.reset(compact_token)
                 except ValueError:  # iterated from another context: it ends with that context
                     pass
             lock.release()
@@ -850,7 +854,7 @@ class OdieRunner:
             from odie.signin import guard as signin_guard
             private = turn.PRIVATE.set(set(json.loads(row["detail_json"] or "{}").get("private") or ())
                                        | signin_guard.private_of(self.store, row["session_id"]))
-            compact = turn.COMPACT_AT.set(await self._compact_at(row["session_id"]))  # the same cut as the paused turn's
+            compact = turn.HISTORY_LIMIT.set(await self._history_limit(row["session_id"]))  # the same cut as the paused turn's
             try:
                 async for ev in self.runner.run_async(user_id=s.user_id, session_id=row["session_id"], invocation_id=row["invocation_id"],
                                                       new_message=msg, run_config=chat_run_config()):
@@ -868,7 +872,7 @@ class OdieRunner:
             finally:
                 turn.USER_TEXT.reset(words)
                 turn.PRIVATE.reset(private)
-                turn.COMPACT_AT.reset(compact)
+                turn.HISTORY_LIMIT.reset(compact)
         text = "".join(final) or ("Done." if approve else "Okay, I left it.")
         self.store.set_approval_result(approval_id, text)
         from odie.signin import guard as signin_guard
@@ -1047,46 +1051,37 @@ class OdieRunner:
 
     @staticmethod
     def estimate_tokens(events: list[Any]) -> int:
-        chars = 0
-        for ev in events:
-            for p in (ev.content.parts if ev.content and ev.content.parts else []):
-                if p.text:
-                    chars += len(p.text)
-                elif p.function_call:
-                    chars += len(str(p.function_call.args or "")) + 40
-                elif p.function_response:
-                    chars += min(len(str(p.function_response.response or "")), 160)
-        return chars // 4
+        from odie.agent import compaction
+        return compaction.estimate_tokens(events)
 
-    @classmethod
-    def context_tokens(cls, events: list[Any]) -> int:
-        """Tokens the next model call will read: the last reply's real count from the model (system prompt, tools and
-        conversation included) plus an estimate for anything appended since; the estimate alone before any reply."""
-        for i in range(len(events) - 1, -1, -1):
-            u = events[i].usage_metadata
-            if u and u.total_token_count:
-                return u.total_token_count + cls.estimate_tokens(events[i + 1:])
-        return cls.estimate_tokens(events)
+    @staticmethod
+    def context_tokens(events: list[Any]) -> int:
+        """Tokens the next model call will read (odie.agent.compaction.read_tokens): the last reply's real count from
+        the model plus an estimate for anything appended since. The ring shows it; the same number decides the cut."""
+        from odie.agent import compaction
+        return compaction.read_tokens(events)
 
     async def refresh_history_limit(self) -> int:
         """Re-read the chosen model's context size and the history limit that follows from it (3/4, capped). Read
-        again when the model changes, and every time for LM Studio (local, quick), whose loaded size can differ from
-        its maximum."""
+        again when the model changes, every time for LM Studio (local, quick), whose loaded size can differ from its
+        maximum, and while the provider has not said the size (then the limit is the 'can't say' 50k)."""
         sel = resolve_selection(self.store, "chat")
         key = model_key(sel)
-        if key != self._limit_key or sel.provider.id == "lmstudio":
+        if key != self._limit_key or sel.provider.id == "lmstudio" or self._window_unknown:
             self._limit_key = key
-            self.history_limit = history_limit_for(await context_window(sel))
+            window = await context_window(sel)
+            self._window_unknown = window is None
+            self.history_limit = history_limit_for(window)
         return self.history_limit
 
     async def context_usage(self, date: str) -> dict[str, int]:
         """How full today's current segment is: the tokens the model read last time (after any cut) against the
         history limit, past which older turns go as words only."""
         s = config.settings
-        await self.refresh_history_limit()
-        sess = await self.session_service.get_session(app_name=s.app_name, user_id=s.user_id,
-                                                      session_id=self.current_session_id(date))
-        return {"used": self.context_tokens(sess.events) if sess else 0, "limit": self.history_limit}
+        sid = self.current_session_id(date)
+        limit = self._history_limits.get(sid) or await self.refresh_history_limit()  # this chat's, once pinned
+        sess = await self.session_service.get_session(app_name=s.app_name, user_id=s.user_id, session_id=sid)
+        return {"used": self.context_tokens(sess.events) if sess else 0, "limit": limit}
 
     async def new_chat(self, date: str) -> str:
         """The user asked for a clean slate: continue in a new segment with nothing carried over."""
