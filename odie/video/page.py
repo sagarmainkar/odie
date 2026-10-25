@@ -144,14 +144,17 @@ def scene_timings(timings: dict) -> dict:
 
 
 def assemble(body: str, timings: dict, assets_script: str = "", credits_script: str = "",
-             size: tuple[int, int] = timeline.LANDSCAPE, brand_script: str = "", lines_script: str = "") -> str:
+             size: tuple[int, int] = timeline.LANDSCAPE, brand_script: str = "", lines_script: str = "",
+             avatar_script: str = "") -> str:
     """The whole HTML document for a video on a stage of `size` (timeline.LANDSCAPE or VERTICAL; base_style and
     `window.__stage`): KaTeX's CSS, three.js, KaTeX, video.js, the map's data (`window.__geo`)
     and map.js, then `window.__timings`
     ({"starts": [...], "lengths": [...], "beats": [[...], ...]}, in seconds, passed through as given), and for a video
     with a timed segment `window.ODIE_TIMED` (timings["timed"]: {"start", "seconds", "end"}, odie.video.timed), then the
     video's pictures and clips (`assets_script`, odie.video.assets.staple's `<script>Video.assets({...})</script>`,
-    when there are any), then a dialogue video's line timeline (`lines_script`, odie.video.dialogue.lines_script;
+    when there are any), then the 3D characters' loader and list (`avatar_script`, odie.video.avatars.page_script,
+    only when a speaker has a 3D model; before the line timeline, so that avatar.js can keep its own copy of the
+    lines as Odie gives them), then a dialogue video's line timeline (`lines_script`, odie.video.dialogue.lines_script;
     none for any other video), then Odie's credits card (`credits_script`, credits_scene's, when there is one), then a
     brand kit's brand.js and settings (`brand_script`, odie.video.brand.page_script, for a video with a kit), then `body`
     (the model's markup and script), in that order. The credits card comes before the body but plays after it: it
@@ -175,6 +178,8 @@ def assemble(body: str, timings: dict, assets_script: str = "", credits_script: 
         head.append(f"<script>window.ODIE_TIMED = {json.dumps(timings['timed'])};</script>")
     if assets_script:
         head.append(assets_script)
+    if avatar_script:  # only when a speaker has a 3D model (odie.video.avatars.page_script)
+        head.append(avatar_script)
     if lines_script:  # a dialogue video's line timeline (odie.video.dialogue.lines_script); none for any other
         head.append(lines_script)
     if credits_script:

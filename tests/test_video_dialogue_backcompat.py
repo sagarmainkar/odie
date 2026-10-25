@@ -3,7 +3,7 @@ instruction, its message and its submit tool are compared with files saved from 
 the narration and the page are covered by the existing narrate and kit tests, which this work leaves as they were."""
 from pathlib import Path
 
-from odie.video import page, writer
+from odie.video import avatars, dialogue, page, writer
 
 GOLDEN = Path(__file__).parent / "golden_video"
 
@@ -23,3 +23,14 @@ def test_a_video_without_a_script_gets_the_writers_message_and_tool_as_before():
 def test_a_page_without_lines_has_no_line_timeline():
     html = page.assemble('<script>Video.scenes([{draw(t, s) {}}])</script>', {"starts": [0.0], "lengths": [2.0]})
     assert "<script>Video.lines(" not in html
+
+
+def test_a_dialogue_page_without_models_has_no_3d_code():
+    body = '<script>Video.scenes([{draw(t, s) {}}])</script>'
+    timings = {"starts": [0.0], "lengths": [2.0]}
+    lines = dialogue.lines_script([{"index": 0, "speaker": "mira", "scene": 1, "t": 0.5, "dur": 1.0, "amplitude": []}])
+    assert avatars.page_script([]) == ""
+    html = page.assemble(body, timings, lines_script=lines)
+    assert html == page.assemble(body, timings, lines_script=lines, avatar_script="")
+    for word in ("GLTFLoader", "THREE_VRM", "__avatars"):
+        assert word not in html

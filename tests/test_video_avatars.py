@@ -1,9 +1,16 @@
 """A 3D character (phase 3): the cast sheet's asset: is checked and becomes a speaker's Model, only for the speakers
 of the script being made."""
+import asyncio
+import base64
+
 import pytest
 
+from odie.browser import RENDER_ARGS
+from odie.browser.engine import Browser
 from odie.store.db import Store
-from odie.video import avatars, cast
+from odie.video import avatars, cast, dialogue, page
+from tests.test_video_kit import BIN, needs_browser
+from tests.tiny_glb import tiny_glb
 
 MIRA = """---
 id: mira
@@ -125,3 +132,143 @@ def test_the_video_is_refused_when_asked_for_with_a_missing_model(isolated_setti
     (workspace() / "night.md").write_text("## Scene: A workshop\nMIRA: Still here?\n")
     with pytest.raises(cast.CastProblem, match="Mira's asset"):
         tools.dialogue_as_given("night.md", None, store, cast_reference="night-cast")
+
+
+# ---- Handing a model to the page (the bytes over the tab's channel, never in the HTML) ----
+
+BODY = '<script>Video.scenes([{draw(t, s) {}}])</script>'
+TIMINGS = {"starts": [0.0], "lengths": [2.0]}
+LINES = [{"index": 0, "speaker": "mira", "scene": 1, "t": 0.5, "dur": 1.0, "amplitude": []}]
+# The first bytes of a JPEG picture, padded: a file renamed to .glb that isn't one.
+NOT_GLTF = b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00" + b"\x00" * 300
+
+
+def a_model(tmp_path, data: bytes, size: int | None = None) -> avatars.Model:
+    """Mira's model as the file mira.glb holding `data` (its size as checked: len(data) unless given)."""
+    path = tmp_path / "mira.glb"
+    path.write_bytes(data)
+    if size is None:
+        size = len(data)
+    return avatars.Model(speaker="mira", name="Mira", path=path, size=size)
+
+
+class FakeTab:
+    """A sealed tab that records what it is told and answers __avatars.ready() with `ready`."""
+
+    def __init__(self, ready):
+        self.ready = ready
+        self.said = []
+
+    async def eval(self, expression):
+        self.said.append(expression)
+        if expression == "__avatars.ready()":
+            return self.ready
+        return None
+
+
+def test_no_model_no_3d_on_the_page():
+    assert avatars.page_script([]) == ""
+    html = page.assemble(BODY, TIMINGS, lines_script=dialogue.lines_script(LINES))
+    assert html == page.assemble(BODY, TIMINGS, lines_script=dialogue.lines_script(LINES), avatar_script="")
+    for word in ("GLTFLoader", "THREE_VRM", "__avatars"):
+        assert word not in html
+
+
+def test_a_model_brings_the_loader_and_the_list_but_not_its_bytes(tmp_path):
+    model = a_model(tmp_path, b"glTF" + b"\0" * 100)
+    script = avatars.page_script([model])
+    assert "GLTFLoader" in script and "THREE_VRM" in script
+    assert '__avatars.expect({"mira": {"name": "Mira", "kind": "glb", "bytes": 104}})' in script
+    html = page.assemble(BODY, TIMINGS, avatar_script=script, lines_script=dialogue.lines_script(LINES))
+    assert html.index("__avatars.expect") < html.index("<script>Video.lines(")
+
+
+def test_a_name_can_never_close_the_script_it_sits_in(tmp_path):
+    model = avatars.Model(speaker="mira", name="Mira</script>", path=tmp_path / "mira.vrm", size=1)
+    script = avatars.page_script([model])
+    assert script.count("</script>") == 4  # the three kit files' and the list's own
+
+
+def test_frames_are_called_through_the_avatars_only_when_there_are_some():
+    assert avatars.frame_call(1.5, False) == "__frame(1.5)"
+    assert avatars.frame_call(1.5, True) == "__avatars.frame(1.5)"
+
+
+def test_a_model_is_read_once_and_cut_into_4_mb_pieces(tmp_path):
+    data = bytes(range(256)) * (avatars.CHUNK_BYTES // 256 * 2 + 1)  # just over two pieces
+    [loaded] = avatars.load([a_model(tmp_path, data)])
+    assert len(loaded.pieces) == 3
+    assert b"".join(base64.b64decode(piece) for piece in loaded.pieces) == data
+
+
+async def test_hand_over_sends_the_pieces_in_order_then_waits_for_the_parse(tmp_path):
+    tab = FakeTab(ready={"failed": {}})
+    await avatars.hand_over(tab, avatars.load([a_model(tmp_path, b"x" * 10)]))
+    assert tab.said == ['__avatars.bytes("mira", 0, "eHh4eHh4eHh4eA==")', "__avatars.ready()"]
+
+
+async def test_a_model_the_page_cant_parse_is_refused_naming_the_speaker(tmp_path):
+    tab = FakeTab(ready={"failed": {"mira": "Unexpected token"}})
+    with pytest.raises(cast.CastProblem, match=r"Mira's 3D model \(mira.glb\) couldn't be read: Unexpected token"):
+        await avatars.hand_over(tab, avatars.load([a_model(tmp_path, b"x")]))
+
+
+async def handed_over(model, tmp_path, before=None, after="__avatars.ready()"):
+    """Opens a sealed page carrying `model`'s loader, runs the `before` expression (if any), hands the model over and
+    gives back what the `after` expression returns, with the page's errors. A CastProblem from the hand-over is
+    raised; the whole hand-over may take at most 10 s (a hang fails the test, it doesn't wait 120 s)."""
+    html = page.assemble(BODY, TIMINGS, avatar_script=avatars.page_script([model]),
+                         lines_script=dialogue.lines_script(LINES))
+    b = Browser(tmp_path / "p", BIN, extra_args=RENDER_ARGS)
+    try:
+        async with b.sealed_page(html, 1920, 1080) as p:
+            if before:
+                await p.eval(before)
+            await asyncio.wait_for(avatars.hand_over(p, avatars.load([model])), 10)
+            value = await p.eval(after)
+            errors = list(p.errors)
+    finally:
+        await b.close()
+    return value, errors
+
+
+@needs_browser
+async def test_a_tiny_gltf_is_handed_to_a_sealed_tab_and_parsed(tmp_path):
+    ready, errors = await handed_over(a_model(tmp_path, tiny_glb()), tmp_path)
+    assert ready == {"failed": {}}
+    assert errors == []
+
+
+@needs_browser
+async def test_the_parsed_model_is_kept_for_the_helpers_and_frames_draw_after_it(tmp_path):
+    mira = "__avatars.models.get('mira')"
+    after = (f"__avatars.frame(0.75).then(drawn => [drawn, __avatars.time, {mira}.kind, {mira}.vrm,"
+             f" {mira}.gltf.scene.getObjectByName('Head') !== undefined])")
+    value, errors = await handed_over(a_model(tmp_path, tiny_glb()), tmp_path, after=after)
+    assert value == [True, 0.75, "glb", None, True]
+    assert errors == []
+
+
+@needs_browser
+@pytest.mark.parametrize("which", ["a renamed jpeg", "a truncated download"])
+async def test_a_file_that_isnt_gltf_is_refused_in_words_not_a_hang(tmp_path, which):  # Review Focus 1
+    data = NOT_GLTF
+    if which == "a truncated download":
+        data = tiny_glb()[:200]
+    with pytest.raises(cast.CastProblem, match=r"Mira's 3D model \(mira.glb\) couldn't be read: .+") as e:
+        await handed_over(a_model(tmp_path, data), tmp_path)
+    if which == "a renamed jpeg":
+        assert "it isn't a glTF binary file" in str(e.value)
+
+
+@needs_browser
+async def test_a_model_whose_bytes_didnt_all_arrive_is_refused(tmp_path):
+    with pytest.raises(cast.CastProblem, match="only 100 of 150 bytes arrived"):
+        await handed_over(a_model(tmp_path, b"x" * 100, size=150), tmp_path)
+
+
+@needs_browser
+async def test_a_parse_that_never_finishes_is_refused_after_the_page_stops_waiting(tmp_path):
+    never_calls_back = "THREE.GLTFLoader.prototype.parse = function () {}; __avatars.parseSeconds = 0.3; true"
+    with pytest.raises(cast.CastProblem, match="didn't finish within 0.3 s"):
+        await handed_over(a_model(tmp_path, tiny_glb()), tmp_path, before=never_calls_back)
