@@ -43,10 +43,10 @@ def _content(role, parts):
     return types.Content(role=role, parts=parts)
 
 
-async def _run_before(plugin, contents, invocation_id="inv-now"):
+async def _run_before(plugin, contents, invocation_id="inv-now", events=None):
     from google.adk.models.llm_request import LlmRequest
     req = LlmRequest(contents=contents)
-    ctx = SimpleNamespace(invocation_id=invocation_id)
+    ctx = SimpleNamespace(invocation_id=invocation_id, session=SimpleNamespace(id="chat-1", events=events or []))
     await plugin.before_model_callback(callback_context=ctx, llm_request=req)
     return req.contents
 
@@ -78,17 +78,17 @@ async def test_before_model_sends_earlier_turns_as_they_were(tmp_path):
 
 
 async def test_before_model_cuts_past_the_chats_limit(tmp_path):
-    """Past the chat's limit (odie.agent.turn.COMPACT_AT), the earlier turn goes as words only (here the turns are too
-    big to keep five whole); the current turn never changes."""
+    """Past the chat's limit (odie.agent.turn.HISTORY_LIMIT, in tokens; here 4,000 tokens, 4,000 characters), the
+    earlier turn goes as words only (here the turns are too big to keep five whole); the current turn never changes."""
     from odie.agent import turn
     s = Store(tmp_path / "a.db")
     s.init_schema()
     big = "x" * 5000
-    token = turn.COMPACT_AT.set(4000)
+    token = turn.HISTORY_LIMIT.set(4000)
     try:
         out = await _run_before(OdiePlugin(s), _two_turns(big))
     finally:
-        turn.COMPACT_AT.reset(token)
+        turn.HISTORY_LIMIT.reset(token)
     assert [c.role for c in out] == ["user", "model", "user", "model", "user"]
     assert out[0].parts[0].text == "first question" and out[1].parts[0].text == "answer one"  # words only, note gone
     assert "[context: now 07:50" in out[2].parts[0].text                                       # the current turn:
@@ -104,3 +104,28 @@ async def test_after_tool_clamps_search_notes(tmp_path):
     assert len(out["content"][0]["text"]) <= 3600 and out["content"][0]["text"].endswith("…")
 
 
+
+
+async def test_before_model_cuts_by_what_the_model_counted(tmp_path):
+    """The session's events carry the model's own token counts; when the last one passed the chat's limit, the cut
+    comes although the characters alone (10k here against a 50k-token limit) would not have moved it."""
+    import time
+
+    from google.adk.events import Event
+    from google.genai import types
+
+    from odie.agent import turn
+    s = Store(tmp_path / "a.db")
+    s.init_schema()
+    contents = _two_turns("x" * 5000)
+    counted = types.GenerateContentResponseUsageMetadata(prompt_token_count=60_000, candidates_token_count=20, total_token_count=60_020)
+    events = [Event(author="user" if c.role == "user" else "odie", invocation_id="inv", timestamp=time.time(), content=c,
+                    usage_metadata=counted if c.parts[0].text == "answer one" else None) for c in contents[:5]]
+    token = turn.HISTORY_LIMIT.set(50_000)
+    try:
+        out = await _run_before(OdiePlugin(s), contents, events=events)
+    finally:
+        turn.HISTORY_LIMIT.reset(token)
+    assert [c.role for c in out] == ["user", "model", "user", "model", "user"]
+    assert out[0].parts[0].text == "first question" and out[1].parts[0].text == "answer one"
+    assert out[4].parts[0].function_response.response == {"result": "x" * 5000}
