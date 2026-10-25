@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.2.30 (2026-10-25)
+
+- Where you are: with your permission, asked once per device, the web app and the Mac app tell Odie the place you're at when they open; Odie keeps the latest place with its time and learns your home from where you spend nights, and puts the place name (never coordinates) into what it sends to your chat model, so weather, nearby and travel questions work unasked. Settings → Location turns it off or forgets it. Turning a point into a name asks OpenStreetMap only when no recent point nearby is known.
+
 ## v0.2.29 (2026-10-25)
 
 - Odie's own embedding service (EmbeddingGemma 2 in PyTorch, `embed_server/`) is no longer built or offered by default: install with `ODIE_EMBED=on` to have it. EmbeddingGemma 2 on Ollama (`ollama pull embeddinggemma-2`) reads notes and pictures the same way, with no download and no process of Odie's own; setup and Settings recommend it when found.
