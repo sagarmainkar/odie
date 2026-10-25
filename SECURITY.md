@@ -11,8 +11,9 @@ Odie runs on your computer and holds your mail, notes and memory. This is how it
 - Pairing can be turned off (`ODIE_PAIRING=off`). Then any program on the Mac that can reach the port can use Odie.
   Keep pairing on unless the Mac is only yours and you have a reason.
 - Two checks run before any route, pairing on or off (`odie/app/origin.py`). The name a request gives in `Host` must
-  be one Odie answers to: an IP address, `localhost`, a `.local` or `.ts.net` name, the phone address, or a name in
-  `ODIE_HOSTS` in `~/.odie/.env`; anything else gets 421. That is what stops DNS rebinding, where an attacker's name is pointed at your
+  be one Odie answers to: an IP address, `localhost`, a `.ts.net` name, this computer's own `.local` name (not another
+  device's: any device on the LAN can answer for a `.local` name), the phone address, or a name in `ODIE_HOSTS` in
+  `~/.odie/.env`; anything else gets 421. That is what stops DNS rebinding, where an attacker's name is pointed at your
   own computer so their page counts as Odie's. And a browser request that changes something (a POST, an upload, a
   WebSocket) must come from Odie's own page: an `Origin` naming another site gets 403, so a page you happen to have
   open can't act as you even when pairing is off.
