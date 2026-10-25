@@ -94,13 +94,28 @@ async def test_level_takes_the_speaker_in_any_case(tmp_path):
 
 @needs_browser
 async def test_a_frame_looks_the_same_whatever_was_drawn_before(tmp_path):  # Review Focus 2
-    state = "({w: __w, head: " + HEAD + ".quaternion.toArray(), root: __a.root.quaternion.toArray()})"
+    # T 0.93 is inside Mira's loud run and half way through her first blink. One tab drew a quiet frame before it,
+    # the other a loud one and a later one: a level, mouth or blink carried over from an earlier frame would differ.
+    state = "({w: __w, head: " + HEAD + ".quaternion.toArray()})"
+    after_quiet = await evaluated(["__avatars.frame(0.2)", f"__avatars.frame(0.93).then(() => {state})"],
+                                  tmp_path / "a")
+    after_loud = await evaluated(["__avatars.frame(1.0)", "__avatars.frame(3.0)",
+                                  f"__avatars.frame(0.93).then(() => {state})"], tmp_path / "b")
+    assert after_quiet[-1] == after_loud[-1]
+    weights = after_quiet[-1]["w"]
+    assert weights["aa"] > 0.5  # the mouth is open: the frame isn't trivially still
+    assert 0 < weights["blink"] < 1
+    assert after_quiet[-1]["head"] != [0, 0, 0, 1]
+
+
+@needs_browser
+async def test_a_quiet_frame_looks_the_same_whatever_was_drawn_before(tmp_path):
+    state = "({w: __w, head: " + HEAD + ".quaternion.toArray()})"
     after_early = await evaluated(["__avatars.frame(0.1)", "__avatars.frame(0.2)",
                                    f"__avatars.frame(1.37).then(() => {state})"], tmp_path / "a")
     after_late = await evaluated(["__avatars.frame(3.0)", f"__avatars.frame(1.37).then(() => {state})"],
                                  tmp_path / "b")
     assert after_early[-1] == after_late[-1]
-    assert after_early[-1]["head"] != [0, 0, 0, 1]  # the head has moved from rest: the frame isn't trivially still
 
 
 @needs_browser

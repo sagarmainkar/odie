@@ -223,6 +223,10 @@
   // the brows, where the "surprised" and "angry" presets move the whole face.
   const VRM_BROWS = {up: ["*BRW_Surprised"], down: ["*BRW_Angry"]};
 
+  // A VRM's mouth-only smile, when its face mesh has one (VRoid's Fcl_MTH_Fun, ARKit's mouthSmile): it curves just the
+  // mouth, where the "happy" preset moves the whole face and also holds back blinks and the mouth while it shows.
+  const VRM_SMILE = ["Fcl_MTH_Fun", "mouthSmile", "mouthSmileLeft", "mouthSmileRight"];
+
   // ---- The line timeline, kept with each line's running loudness ----
 
   let lines = [];  // [{speaker, t, dur, text, amplitude, sums}]: Video.lines as Odie gave it
@@ -455,7 +459,8 @@
 
   // What the helpers need from a model, worked out once, the first time a character is drawn, while the model still
   // rests on no stage (its world is the frame of the Group that will hold it): its head, the point to aim at, and its
-  // face shapes (a plain glTF: each shape's morph targets; a VRM: only its brow-only shapes, the rest are presets).
+  // face shapes (a plain glTF: each shape's morph targets; a VRM: only its mouth-only smile and brow-only shapes, the
+  // rest are presets).
   // A plain glTF's head keeps its rest turn and its parent's resting orientation in userData, so every frame turns it
   // from rest (see turnFromRest).
   function rigOf(model) {
@@ -464,9 +469,10 @@
     }
     const root = model.gltf.scene;
     root.updateMatrixWorld(true);
-    const rig = {head: null, anchor: null, shapes: {}, brows: {up: [], down: []}};
+    const rig = {head: null, anchor: null, shapes: {}, smile: [], brows: {up: [], down: []}};
     if (model.vrm) {
       rig.head = model.vrm.humanoid.getRawBoneNode("head");
+      rig.smile = morphsNamed(root, VRM_SMILE);
       rig.brows.up = morphsNamed(root, VRM_BROWS.up);
       rig.brows.down = morphsNamed(root, VRM_BROWS.down);
     } else {
@@ -527,8 +533,11 @@
   }
 
   // A VRM's face: every preset this file uses is set, each update, so none keeps a value from an earlier frame.
-  // Brows go to the brow-only shapes when the face has them (set after the VRM's own update, see setBrowShapes);
-  // else to the "surprised" (up) and "angry" (down) presets at half strength, as those move the whole face.
+  // The smile goes to the mouth-only smile shape when the face has one, else to the "happy" preset; brows go to the
+  // brow-only shapes when the face has them, else to the "surprised" (up) and "angry" (down) presets at half strength,
+  // as those move the whole face. The shapes are set after the VRM's own update (see setOwnShapes). A VRoid model
+  // (it has Fcl_MTH_Fun) smiling 0.3 -> Fcl_MTH_Fun 0.3 and "happy" 0, so its blinks still close fully; a VRM
+  // without such a shape -> "happy" 0.3.
   function setExpressions(vrm, rig, face) {
     const presets = vrm.expressionManager;
     if (!presets) {
@@ -540,7 +549,11 @@
     presets.setValue("ee", face.ee);
     presets.setValue("oh", face.oh);
     presets.setValue("blink", face.blink);
-    presets.setValue("happy", face.smile);
+    let happy = 0;
+    if (rig.smile.length === 0) {
+      happy = face.smile;
+    }
+    presets.setValue("happy", happy);
     let surprised = 0;
     let angry = 0;
     if (rig.brows.up.length === 0) {
@@ -560,10 +573,12 @@
     }
   }
 
-  // A VRM's brow-only shapes (when it has them): up for brows above 0, down for brows below.
-  function setBrowShapes(rig, brows) {
-    setShapes(rig.brows.up, Math.max(0, brows));
-    setShapes(rig.brows.down, Math.max(0, -brows));
+  // A VRM's own mouth-only smile and brow-only shapes (when it has them): the smile, then the brows up for brows
+  // above 0, down for brows below.
+  function setOwnShapes(rig, face) {
+    setShapes(rig.smile, face.smile);
+    setShapes(rig.brows.up, Math.max(0, face.brows));
+    setShapes(rig.brows.down, Math.max(0, -face.brows));
   }
 
   // A plain glTF's face: each shape it has, set; shapes it lacks are skipped.
@@ -753,7 +768,8 @@
     // A VRM: its presets set, then its body posed. Spring hair can't simply be set, it swings from where it was; so
     // it starts from rest posed SPRING_WARMUP seconds before t and is run at 1/60 s steps up to t, the body posed at
     // each step, and the frame then sees the same hair however the tab got here. A last update(0) at t applies the
-    // pose, face and eyes without moving the hair. Brow-only shapes and texture scrolls go last, over the update.
+    // pose, face and eyes without moving the hair. The VRM's own smile and brow shapes and its texture scrolls go last,
+    // over the update.
     updateVRM(vrm, rig, t, T, face, point, look) {
       const self = this;
       function poseAt(when) {
@@ -786,7 +802,7 @@
       }
       poseAt(t);
       step(0);
-      setBrowShapes(rig, face.brows);
+      setOwnShapes(rig, face);
       holdMaterialsAt(vrm, t);
     }
 
