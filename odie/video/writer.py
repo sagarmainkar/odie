@@ -27,6 +27,7 @@ INSTRUCTION = Path(__file__).with_name("writer.md").read_text(encoding="utf-8")
 VERTICAL_RULES = Path(__file__).with_name("writer-vertical.md").read_text(encoding="utf-8")
 TIMED_RULES = Path(__file__).with_name("writer-timed.md").read_text(encoding="utf-8")
 DIALOGUE_RULES = Path(__file__).with_name("writer-dialogue.md").read_text(encoding="utf-8")
+AVATAR_RULES = Path(__file__).with_name("writer-dialogue-3d.md").read_text(encoding="utf-8")
 log = logging.getLogger("odie.video")
 
 
@@ -39,7 +40,7 @@ def timed_rules(seconds: float) -> str:
 
 
 def instruction_for(aspect: str, timed_seconds: float | None = None, kit: brand.Kit | None = None,
-                    dialogue: bool = False) -> str:
+                    dialogue: bool = False, avatars: bool = False) -> str:
     """The writer's instruction for the video's aspect, its timed segment and its brand kit: writer.md for a landscape
     video (the guide is written for its 1920 x 1080 stage); for a vertical one, writer.md and then writer-vertical.md
     (the 1080 x 1920 stage, the safe area, one idea a screen); a video with a timed segment (odie.video.timed) then
@@ -48,12 +49,16 @@ def instruction_for(aspect: str, timed_seconds: float | None = None, kit: brand.
     "landscape" -> INSTRUCTION; "vertical" -> INSTRUCTION + the vertical rules; ("vertical", timed_seconds=60) ->
     those + the 60-second segment's rules; with a kit -> those + the kit's. A dialogue video (odie.video.dialogue:
     the user's script, staged word for word) gets writer-dialogue.md after the vertical rules; any other video never
-    sees it."""
+    sees it. A dialogue video with a 3D character (`avatars`: a speaker's sheet names a model) gets
+    writer-dialogue-3d.md right after that: ("landscape", dialogue=True, avatars=True) -> INSTRUCTION + the dialogue
+    rules + the 3D rules; avatars without a dialogue changes nothing."""
     instruction = INSTRUCTION
     if aspect == "vertical":
         instruction = instruction.rstrip() + "\n\n" + VERTICAL_RULES
     if dialogue:
         instruction = instruction.rstrip() + "\n\n" + DIALOGUE_RULES
+        if avatars:
+            instruction = instruction.rstrip() + "\n\n" + AVATAR_RULES
     if timed_seconds:
         instruction = instruction.rstrip() + "\n\n" + timed_rules(timed_seconds)
     if kit is not None:
@@ -514,7 +519,7 @@ async def write(topic: str, minutes: int, brief: str, folder: Path, turn, browse
     [tool] = tools_for(desk, browser, assets_script, size=size, timed_seconds=timed_seconds)
     if staging is not None:
         prompt = prompt_for_dialogue(topic, brief, staging.listing, listing)
-        instruction = instruction_for(aspect, timed_seconds, kit, dialogue=True)
+        instruction = instruction_for(aspect, timed_seconds, kit, dialogue=True, avatars=bool(staging.models))
         return await harness.write(desk, prompt, instruction, tool, DIALOGUE_LINES, turn)
     prompt = prompt_for(topic, minutes, brief, listing)
     return await harness.write(desk, prompt, instruction_for(aspect, timed_seconds, kit), tool, LINES, turn)

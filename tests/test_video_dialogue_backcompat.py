@@ -34,3 +34,12 @@ def test_a_dialogue_page_without_models_has_no_3d_code():
     assert html == page.assemble(body, timings, lines_script=lines, avatar_script="")
     for word in ("GLTFLoader", "THREE_VRM", "__avatars"):
         assert word not in html
+
+
+def test_the_writers_3d_guide_is_added_only_for_a_dialogue_video_with_a_model():
+    # dialogue + a model -> the dialogue guide then the 3D guide; a model without a dialogue, or a dialogue without one,
+    # leaves the instruction exactly as it was
+    assert writer.instruction_for("landscape", avatars=True) == writer.instruction_for("landscape")
+    assert writer.instruction_for("landscape", dialogue=True) == writer.instruction_for("landscape", dialogue=True,
+                                                                                         avatars=False)
+    assert writer.AVATAR_RULES not in writer.instruction_for("vertical", 60, dialogue=True)

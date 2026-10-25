@@ -4,10 +4,13 @@ import io
 import math
 import struct
 import wave
+from pathlib import Path
 
 import pytest
 
-from odie.video import dialogue
+from odie.video import dialogue, writer
+
+DOC = Path(__file__).parent.parent / "docs" / "dialogue-videos.md"
 
 SCRIPT = """---
 title: ignored front matter
@@ -310,3 +313,29 @@ async def test_a_characters_voice_is_checked_again_when_spoken_and_the_narrator_
     voice.set_tts(store, engine="openai", voice="shimmer")  # Settings changed after the video was asked for
     with pytest.raises(voice.VoiceUnavailable, match="af_bella"):
         await narrate.narrate_dialogue(store, script, {"anna": "af_bella"}, transport=kokoro([], 0.5))
+
+
+def test_the_3d_guide_follows_the_dialogue_guide_only_with_a_model():
+    plain = writer.instruction_for("landscape", dialogue=True)
+    with_3d = writer.instruction_for("landscape", dialogue=True, avatars=True)
+    assert with_3d == plain.rstrip() + "\n\n" + writer.AVATAR_RULES
+    assert "s.avatar(" not in plain and writer.instruction_for("landscape", avatars=True) == writer.INSTRUCTION
+    for words in ('s.avatar("', "update(t)", "s.level(", "shot(", "smile(", "one character per speaker per scene"):
+        assert words in writer.AVATAR_RULES, words
+
+
+def test_the_3d_guide_is_short():
+    assert len(writer.AVATAR_RULES.split()) <= 300
+
+
+def test_the_3d_guide_says_to_set_held_reactions_from_the_time():
+    # smile, brows and look are held until changed, and a frame must depend only on its time (four tabs draw
+    # different stretches): set them in setup, or on every draw from t
+    guide = writer.AVATAR_RULES
+    assert "setup" in guide and "held" in guide and "every `draw`" in guide
+
+
+def test_the_user_doc_says_where_characters_come_from():
+    text = DOC.read_text()
+    assert "VRoid Studio" in text and "VRoid Hub" in text and "40 MB" in text and "asset: models/mira.vrm" in text
+    assert "kept for later" not in text
