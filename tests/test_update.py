@@ -124,8 +124,12 @@ def test_start_runs_the_odie_command_detached(monkeypatch, tmp_path):
         seen.update(args=args, **kw)
         return FakeProc()
     monkeypatch.setattr(subprocess, "Popen", popen)
+    monkeypatch.setattr(update, "_last_check", {"current": "aaaaaaa", "latest": "bbbbbbb", "behind": True, "checked_at": 1.0,
+                                                 "latest_commit": "b" * 40})
     assert update.start() == 4242
     assert seen["args"][1:] == ["-P", "-m", "odie.cli", "update"] and seen["start_new_session"] is True
+    assert seen["env"][update.PIN] == "b" * 40  # the version the user saw is the one `odie update` may install
+    assert update.pinned_commit(None) == "" and update.pinned_commit({"latest": "bbbbbbb"}) == ""  # no check: not pinned
     assert seen["cwd"] == Inst.app and update.running()
     monkeypatch.setattr(update, "_started", None)
     assert not update.running()

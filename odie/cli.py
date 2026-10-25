@@ -894,6 +894,10 @@ def update(inst: Install, runner: Runner, force: bool) -> int:
     if not newest:
         print(f"There's no {target or 'release'} to update to yet.")
         return 1
+    pinned = os.environ.get("ODIE_UPDATE_TO", "")  # the app's button: the commit its check showed (odie.update.start)
+    if pinned and newest != pinned:
+        print(f"The newest version changed since the app looked ({short(pinned)} then, {short(newest)} now): check again.")
+        return 1
     if newest == current and not force:
         print(f"Already up to date: {version_line(inst, runner)}")
         return 0

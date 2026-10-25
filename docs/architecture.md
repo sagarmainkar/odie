@@ -28,7 +28,7 @@ flowchart LR
 | Agent and prompt | `odie/agent/` | The system prompt (`prompt.py`): personality, rules, the visual blocks catalogue, the day. Callbacks, the cut that sends a long chat's older turns as words only, tool wrappers. |
 | Blocks | `odie/blocks/catalog.json`, `web/src/blocks/` | The visual language: what each block is for, its fields and an example. The model writes a JSON list in an ```` ```odie-blocks ```` fence; the app parses it leniently (drops what doesn't fit, never shows raw JSON) and draws it. |
 | Skills | `odie/skills/*/SKILL.md`, `~/.odie/skills/` | Instructions the model loads on demand, with extra tools (`metadata.adk_additional_tools`). Documents, podcast, stocks, trackers, the skill builder. |
-| Apps | `odie/plugins/mcp.py` | Each MCP server is a synthetic skill: its tools switch on when loaded. Read-only tools run; others raise an approval card. |
+| Apps | `odie/plugins/mcp.py` | Each MCP server is a synthetic skill: its tools switch on when loaded. Every tool raises an approval card, unless the user's "Reading doesn't need a tap" switch is on and its name says it reads. |
 | Approvals | `odie/store`, `odie/app/routes.py` | Writes pause as a card (the tool, its arguments, what mail it just read); the tap resumes the turn; cards expire after 24 h; everything goes to the audit log. |
 | Memory | `odie/memory/` | One Markdown file: topics as `##`, entries as `### Title (date)`. Titles sit in the prompt; matching entries are prefetched per message; a review every few turns saves what's worth keeping. |
 | Notes | `odie/vault/` | A folder of Markdown, indexed by keyword and (optionally) by meaning; searched with the notes tools. |

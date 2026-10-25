@@ -23,8 +23,9 @@ READ_KEEP = 20
 def note_read(tab: str, url: str) -> None:
     got = [u for u in READ.get(tab, []) if u != url]
     READ[tab] = (got + [url])[-READ_KEEP:]
-WHY_LEAVE = "Odie read your signed-in {sites} in this chat; this would reach another site, and could carry what it read."
+WHY_LEAVE = "Odie read {what} in this chat; this would reach another site, and could carry what it read."
 PRIVATE_KEY = "browser.private."  # + a chat's session id: the signed-in sites it has read (their text is in its context)
+READ_KEY = "chat.read."  # + a chat's session id: what of the user's own it has read (mail, notes, memory: odie.agent.confidential)
 ALLOWED_KEY = "browser.allowed."  # + a chat's session id: the other sites the user okayed in it (a tap, or named)
 WHY_ACT = "On a site you're signed in to, this may order, pay, book or send."
 WHY_FOREIGN = "Odie read your signed-in {sites} in this chat, and this page is another site: what's clicked or typed here reaches it."
@@ -44,6 +45,25 @@ def private_of(store, session_id: str) -> set:
     if store is None or not session_id:
         return set()
     saved = store.get_setting(PRIVATE_KEY + session_id)
+    if not saved:
+        return set()
+    return set(saved)
+
+
+def remember_read(store, session_id: str, label: str) -> None:
+    """This chat read something of the user's own (mail, notes, memory): the rest of it asks before words leave."""
+    if store is None or not session_id or not label:
+        return
+    got = read_of(store, session_id)
+    if label not in got:
+        store.set_setting(READ_KEY + session_id, sorted(got | {label}))
+
+
+def read_of(store, session_id: str) -> set:
+    """What of the user's own this chat has read, by label. Example: fetched mail earlier -> {"your mail"}; none -> set()."""
+    if store is None or not session_id:
+        return set()
+    saved = store.get_setting(READ_KEY + session_id)
     if not saved:
         return set()
     return set(saved)
@@ -122,27 +142,45 @@ def tab_of(tool_context) -> str:
 
 
 # The *_needs_tap predicates below answer one question each: should this tool call wait for the user's tap?
-# "Private chat" means: in this chat turn Odie has read a page where the user is signed in (turn.private_sites()).
+# "Private chat" means: in this chat turn Odie has read a page where the user is signed in (turn.private_sites()), or
+# something of the user's own, mail, notes, memory (turn.read_sources(): odie.agent.confidential).
+
+
+def chat_is_private(store) -> bool:
+    """Whether words leaving this chat could carry something of the user's: it read a signed-in page (with signed-in
+    browsing on), or it read the user's mail, notes, memory or messages. Example: the chat read your amazon.in orders
+    -> True; it fetched a mail -> True (whatever the browsing switch says); it read a public page and nothing else ->
+    False; outside a chat turn (a background check) -> False."""
+    read_a_signed_in_page = bool(turn.private_sites()) and _on(store)
+    read_the_users_own = bool(turn.read_sources())
+    return read_a_signed_in_page or read_the_users_own
+
+
+def what_was_read() -> str:
+    """How the card names what the chat read: "your signed-in amazon.in", "your mail", "your signed-in amazon.in and
+    your mail"; nothing read -> "something of yours"."""
+    parts = [f"your signed-in {site}" for site in sorted(turn.private_sites())] + sorted(turn.read_sources())
+    if not parts:
+        return "something of yours"
+    if len(parts) == 1:
+        return parts[0]
+    return ", ".join(parts[:-1]) + " and " + parts[-1]
 
 
 def query_needs_tap(store) -> bool:
-    """A web search (or anything that sends words out) asks only in a private chat, with signed-in browsing on.
-    Example: the chat read your amazon.in orders, then web_search("kettle reviews") -> True (the card);
-    a chat that read no signed-in page -> False; signed-in browsing off -> False."""
-    if not _on(store):
-        return False
-    chat_is_private = bool(turn.private_sites())
-    return chat_is_private
+    """A web search (or anything that sends words out) asks only in a private chat (chat_is_private).
+    Example: the chat read your amazon.in orders, then web_search("kettle reviews") -> True (the card); the chat read
+    a mail, then web_search(...) -> True; a chat that read neither -> False; a signed-in page read with signed-in
+    browsing off -> False (nothing is signed in while it's off)."""
+    return chat_is_private(store)
 
 
 def url_needs_tap(store, url: str, tab: str = "") -> bool:
     """Opening an address asks in a private chat, unless its site is one the chat may go to freely (_free).
     Example: the chat read amazon.in, then browser_open("https://www.amazon.in/orders") -> False (same site);
-    browser_open("https://evil.example/") -> True; any address in a chat that read no signed-in page -> False."""
-    if not _on(store):
-        return False
-    chat_is_private = bool(turn.private_sites())
-    if not chat_is_private:
+    browser_open("https://evil.example/") -> True; the chat read a mail, then browser_open("https://evil.example/")
+    -> True; any address in a chat that read nothing of the user's -> False."""
+    if not chat_is_private(store):
         return False
     site = sites.site_of(url)
     return site not in _free(store, tab)
@@ -159,11 +197,11 @@ def fetch_needs_tap(store, url: str) -> bool:
 
 
 def foreign(tab: str, store=None) -> bool:
-    """In a private chat, the tab is on a site that isn't one of the chat's signed-in, okayed or named sites.
-    Example: the chat read amazon.in and the tab now shows evil.example -> True; the tab shows amazon.in -> False;
-    a chat that read no signed-in page -> False."""
-    chat_is_private = bool(turn.private_sites())
-    if not chat_is_private:
+    """In a private chat (chat_is_private), the tab is on a site that isn't one of the chat's signed-in, okayed or
+    named sites. Example: the chat read amazon.in and the tab now shows evil.example -> True; the tab shows amazon.in
+    -> False; the chat read a mail and the tab shows a site the user never named -> True; a chat that read nothing of
+    the user's -> False."""
+    if not chat_is_private(store):
         return False
     tab_site = sites.site_of(LAST_URL.get(tab, ""))
     return tab_site not in _free(store, tab)
@@ -174,10 +212,10 @@ def click_needs_tap(store, tab: str, words: str) -> bool:
     ordering, paying, booking or sending (CONSEQUENTIAL).
     Example: on signed-in amazon.in, a click on "Place your order" -> True; on "Next page" -> False;
     any click while the tab is on a foreign site in a private chat -> True."""
-    if not _on(store):
-        return False
     if foreign(tab, store):
         return True  # what's clicked on another site reaches it
+    if not _on(store):
+        return False  # nothing is signed in while the switch is off
     on_signed_in_site = sites.is_signed_in(store, LAST_URL.get(tab, ""))
     if not on_signed_in_site:
         return False
@@ -190,10 +228,10 @@ def type_needs_tap(store, tab: str, field: str, submit: bool) -> bool:
     submitted and either the field sounds consequential or the page is a checkout one (CHECKOUT, on its path).
     Example: on signed-in amazon.in/checkout, typing a coupon with submit=True -> True; the same with submit=False -> False;
     typing a search on amazon.in/s with submit=True into the "Search" field -> False."""
-    if not _on(store):
-        return False
     if foreign(tab, store):
         return True  # a page on another site sees every key typed into it
+    if not _on(store):
+        return False  # nothing is signed in while the switch is off
     if not submit:
         return False  # nothing is sent until the text is submitted
     url = LAST_URL.get(tab, "")
@@ -208,10 +246,9 @@ def fence_for(tab: str, opening: str | None = None, store=None) -> set | None:
     """Where a browser step in a private chat may take the tab: the signed-in, okayed and named sites, plus the page
     it's on, or the address being opened (browser_open asked first when that's another site). None outside one.
     Example: a chat that read amazon.in, its tab on amazon.in -> {"amazon.in"} (plus any okayed or named sites);
-    the same chat opening "https://flipkart.com" after the tap -> {"amazon.in", "flipkart.com"}; a chat that read no
-    signed-in page -> None (no fence)."""
-    chat_is_private = bool(turn.private_sites())
-    if not chat_is_private:
+    the same chat opening "https://flipkart.com" after the tap -> {"amazon.in", "flipkart.com"}; a chat that read
+    nothing of the user's -> None (no fence)."""
+    if not chat_is_private(store):
         return None
     if opening is not None:
         address = opening
@@ -314,17 +351,18 @@ GUARDED = frozenset({"web_search", "web_fetch", "browser_open", "find_images", "
 def card(tool: str, args: dict, tab: str, store) -> tuple[str, dict]:
     """What the tap card says: exactly what would leave, or what would happen."""
     where = ", ".join(sorted(turn.private_sites())) or "a site"
+    leaving = WHY_LEAVE.format(what=what_was_read())
     site = sites.site_of(LAST_URL.get(tab, ""))
     if tool == "web_search":
-        return f"Search the web for: {args.get('query', '')}", {"why": WHY_LEAVE.format(sites=where)}
+        return f"Search the web for: {args.get('query', '')}", {"why": leaving}
     if tool == "find_images":
-        return f"Search for photos of: {args.get('query', '')}", {"why": WHY_LEAVE.format(sites=where)}
+        return f"Search for photos of: {args.get('query', '')}", {"why": leaving}
     if tool == "find_clips":
-        return f"Search for video clips of: {args.get('query', '')}", {"why": WHY_LEAVE.format(sites=where)}
+        return f"Search for video clips of: {args.get('query', '')}", {"why": leaving}
     if tool in ("web_fetch", "browser_open"):
-        return f"Open {args.get('url', '')}", {"why": WHY_LEAVE.format(sites=where)}
+        return f"Open {args.get('url', '')}", {"why": leaving}
     if tool == "speak":
-        return f"Read aloud with OpenAI's voice: {args.get('script', '')[:300]}", {"why": WHY_LEAVE.format(sites=where)}
+        return f"Read aloud with OpenAI's voice: {args.get('script', '')[:300]}", {"why": leaving}
     why = WHY_FOREIGN.format(sites=where) if foreign(tab, store) else WHY_ACT
     if tool == "browser_click":
         return f'Click "{args.get("text", "")}" on {site}', {"why": why, "site": site, "shot": LAST_SHOT.get(tab)}

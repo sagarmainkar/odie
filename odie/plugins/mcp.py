@@ -82,11 +82,52 @@ def is_read_name(name: str) -> bool:
 
 
 def asks(tool: dict, reads_free: bool) -> bool:
-    """Whether a tool ({name, read_only, destructive}) needs the user's tap: unless the server says it only reads, or the
-    server's "Reading doesn't need a tap" switch is on and its name says it reads (never one marked destructive)."""
-    if tool.get("read_only"):
-        return False
-    return not (reads_free and is_read_name(str(tool.get("name", ""))) and not tool.get("destructive"))
+    """Whether a tool ({name, read_only, destructive}) needs the user's tap. Only the user's own switch frees a tool:
+    with the server's "Reading doesn't need a tap" switch (reads_free) on, a tool whose name says it reads
+    (is_read_name) and that the server doesn't mark destructive runs without a tap; everything else asks. The server's
+    readOnlyHint on its own frees nothing: it's the server's word about itself, and a server (or whoever controls it)
+    can write it on any tool.
+    Examples: write_note marked read-only, switch off -> True (asks); list_items, switch off -> True; list_items, switch
+    on -> False; delete_thread marked read-only, switch on -> True (its name says it changes something); fetch_report
+    marked destructive, switch on -> True."""
+    if not reads_free:
+        return True
+    name_reads = is_read_name(str(tool.get("name", "")))
+    marked_destructive = bool(tool.get("destructive"))
+    return not (name_reads and not marked_destructive)
+
+
+SHELLS = frozenset({"sh", "bash", "zsh", "dash", "fish", "ksh", "csh", "tcsh", "cmd", "cmd.exe", "powershell", "pwsh"})
+INLINE_CODE_FLAGS = frozenset({"-c", "-e", "-p", "--eval", "--print", "-r", "--exec", "-x"})  # python -c, node -e, ruby -e, perl -e
+INTERPRETERS = frozenset({"python", "python3", "node", "nodejs", "ruby", "perl", "deno", "bun", "osascript", "php", "lua"})
+# Variables that make a program run code from somewhere else before its own: a spec's env may not set them.
+HOOK_VARS = frozenset({"NODE_OPTIONS", "PYTHONSTARTUP", "PYTHONPATH", "LD_PRELOAD", "LD_LIBRARY_PATH", "DYLD_INSERT_LIBRARIES",
+                       "DYLD_LIBRARY_PATH", "BASH_ENV", "ENV", "ZDOTDIR", "PERL5OPT", "PERL5LIB", "RUBYOPT", "RUBYLIB", "NODE_PATH"})
+
+
+def command_problem(spec: dict) -> str | None:
+    """Why a stdio server's spec may not be run from the API, or None when it may. An MCP server is a program, so saving
+    one is running code; what the API refuses is a spec that is nothing but a way to run arbitrary text: a shell as the
+    command, an interpreter given code on its command line, or an env that hooks code into the program.
+    Examples: {"command": "/bin/sh", "args": ["-c", "id"]} -> "a shell isn't an MCP server";
+    {"command": "python3", "args": ["-c", "..."]} -> "code on the command line isn't an MCP server";
+    {"command": "node", "env": {"NODE_OPTIONS": "--require x"}} -> "NODE_OPTIONS can't be set for a server";
+    {"command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]} -> None;
+    {"command": "python3", "args": ["-m", "my_server"]} -> None; {"url": ...} -> None (not a program)."""
+    command = str(spec.get("command") or "")
+    if not command:
+        return None
+    program = command.rsplit("/", 1)[-1].lower()
+    if program in SHELLS:
+        return "a shell isn't an MCP server"
+    args = [str(a) for a in (spec.get("args") or [])]
+    if program in INTERPRETERS and any(a in INLINE_CODE_FLAGS for a in args):
+        return "code on the command line isn't an MCP server"
+    env = spec.get("env") or {}
+    hooked = next((k for k in env if str(k).upper() in HOOK_VARS), None)
+    if hooked is not None:
+        return f"{hooked} can't be set for a server"
+    return None
 
 
 class PluginMcpToolset(McpToolset):

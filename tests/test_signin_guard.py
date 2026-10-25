@@ -515,3 +515,60 @@ def test_forgetting_clears_the_okayed_sites(store):
     guard.allow(store, "chat-1", "flipkart.com")
     guard.forget_all(store)
     assert guard.allowed_of(store, "chat-1") == set()
+
+
+# --- Reading the user's own mail, notes or memory makes the chat private too (odie.agent.confidential) ---
+
+
+@pytest.fixture
+def read():
+    token = turn.READ.set(set())
+    yield turn.READ.get()
+    turn.READ.reset(token)
+
+
+def test_a_chat_that_read_mail_asks_before_words_leave(store, private, read):
+    state.turn_off(store)  # signed-in browsing off: the mail rule doesn't depend on it
+    assert not guard.query_needs_tap(store) and not guard.fetch_needs_tap(store, "https://news.example/a")
+    read.add("your mail")  # a mail tool's result came into the chat
+    assert guard.query_needs_tap(store)
+    assert guard.url_needs_tap(store, "https://evil.example/x?d=1")
+    assert guard.fetch_needs_tap(store, "https://news.example/a")
+    assert guard.speech_needs_tap(store) is not None
+    guard.LAST_URL["chat-1"] = "https://evil.example/form"  # the tab is on a site the user never named
+    assert guard.foreign("chat-1", store) and guard.click_needs_tap(store, "chat-1", "Next") and guard.type_needs_tap(store, "chat-1", "q", False)
+    assert guard.fence_for("chat-1", store=store) == {"evil.example"}  # a click may not take the tab elsewhere
+    guard.LAST_URL.pop("chat-1", None)
+    summary, extra = guard.card("web_search", {"query": "kettle"}, "chat-1", store)
+    assert summary == "Search the web for: kettle" and extra["why"].startswith("Odie read your mail in this chat")
+    private.add("amazon.in")
+    state.turn_on(store, accepted=True, version=state.VERSION, now=NOW)
+    assert guard.what_was_read() == "your signed-in amazon.in and your mail"
+
+
+def test_what_a_tool_exposes_is_judged_by_its_name():
+    from odie.agent import confidential as c
+    for name in ("gmail_find_email", "GMAIL_FETCH_EMAILS", "mac_mail_read", "watch_item", "read_thread", "outlook_list_inbox"):
+        assert c.label_for(name) == "your mail", name
+    assert c.label_for("read_note") == c.label_for("search_everything") == "your notes"
+    assert c.label_for("fetch_memory") == c.label_for("search_memories") == "your memory"
+    assert c.label_for("mac_calendar_events") == "your calendar"
+    assert c.label_for("sms_search") == "your messages"
+    for name in ("web_search", "web_fetch", "run_shell", "make_file", "find_images", "now", "load_skill", "load_skill_resource"):
+        assert c.label_for(name) is None, name
+
+
+def test_a_mail_tools_result_marks_the_chat_and_is_remembered(store, read):
+    import asyncio
+    from odie.agent.callbacks import OdiePlugin
+    plugin = OdiePlugin(store)
+    ctx = SimpleNamespace(invocation_id="inv1", session=SimpleNamespace(id="chat-7"))
+    asyncio.run(plugin.after_tool_callback(tool=SimpleNamespace(name="web_search"), tool_args={}, tool_context=ctx, result={"result": "x"}))
+    assert turn.read_sources() == set() and guard.read_of(store, "chat-7") == set()
+    asyncio.run(plugin.after_tool_callback(tool=SimpleNamespace(name="gmail_find_email"), tool_args={}, tool_context=ctx, result={"result": "m1"}))
+    assert turn.read_sources() == {"your mail"} and guard.read_of(store, "chat-7") == {"your mail"}  # the next turn starts with it
+    assert guard.query_needs_tap(store)
+
+
+def test_outside_a_chat_turn_a_read_marks_nothing(store):
+    assert turn.READ.get() is None and not turn.mark_read("your mail") and not guard.query_needs_tap(store)

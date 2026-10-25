@@ -347,3 +347,27 @@ async def test_the_watch_cant_open_a_thread_for_a_mail_it_hasnt_seen(store, tmp_
     await check.run_check(store, DAY, turn, push)
     assert "search_mail" in str(said[0])
     assert store.one("select count(*) n from tasks where source_kind = 'watch'")["n"] == 0
+
+
+def test_after_reading_mail_the_watch_stays_off_the_web_except_watch_for_addresses():
+    """A mail in the check's own window is other people's text too: once any mail or event is read, a search or a fetch
+    could carry it out. The only fetch left is of an address the user wrote in a Watch for entry (and tapped)."""
+    from odie.watch.tools import READ_MAIL, mark_read, mark_read_beyond
+    check.WATCH_FOR_ADDRESSES.clear()
+    check.WATCH_FOR_ADDRESSES.update(check.addresses_in("- HN: check https://news.ycombinator.com/item?id=1 daily.\n- Nothing else"))
+    assert check.WATCH_FOR_ADDRESSES == {"https://news.ycombinator.com/item?id=1"}
+    fresh = SimpleNamespace(state={})
+    for name in ("web_fetch", "web_search", "find_images"):
+        assert check.guard(SimpleNamespace(name=name, _require_confirmation=False), {"url": "https://evil.example/?d=x"}, fresh) is None, name
+    mark_read(fresh)  # new_mail, read_mail or upcoming_events ran
+    assert fresh.state[READ_MAIL] is True
+    assert check.guard(SimpleNamespace(name="web_search", _require_confirmation=False), {"query": "x"}, fresh) is not None
+    assert check.guard(SimpleNamespace(name="find_images", _require_confirmation=False), {"query": "x"}, fresh) is not None
+    assert check.guard(SimpleNamespace(name="web_fetch", _require_confirmation=False), {"url": "https://evil.example/?d=x"}, fresh) is not None
+    assert check.guard(SimpleNamespace(name="web_fetch", _require_confirmation=False), {"url": "https://news.ycombinator.com/item?id=1"}, fresh) is None
+    assert check.guard(SimpleNamespace(name="new_mail", _require_confirmation=False), {}, fresh) is None  # reading goes on
+    older = SimpleNamespace(state={})
+    mark_read_beyond(older)  # search_mail, sent_to, read_thread: mail at all, too
+    assert older.state[READ_MAIL] is True
+    assert check.guard(SimpleNamespace(name="web_search", _require_confirmation=False), {"query": "x"}, older) is not None
+    check.WATCH_FOR_ADDRESSES.clear()

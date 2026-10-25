@@ -48,6 +48,7 @@ async def test_an_apps_tools_join_when_its_skill_loads_and_stay_after_a_restart(
     list; they stay in later turns, and after the server restarts (the loaded skill is in the session's state)."""
     from odie.plugins import mcp
     mcp.write_config({"tester": TESTER})
+    monkeypatch.setattr(mcp, "asks", lambda tool, free: False)  # this test is about the tools joining, not their taps (echo asks)
     Scripted.seen = []
     first_run = [
         ("Hi there", ["Hello."]),

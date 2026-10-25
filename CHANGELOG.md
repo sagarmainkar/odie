@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Security review (24 Oct 2026), fixes: a request must name an address Odie owns (`Host`; an unknown name gets 421, so a page can't reach Odie by DNS rebinding), and a change or a live-view WebSocket must come from Odie's own page (`Origin`). Adding an app refuses a shell, inline code or a hooked env as the server, before running it even to list its tools. An app's tool runs without a tap only when *you* switch "Reading doesn't need a tap" on and its name says it reads; a server's own read-only hint frees nothing. "Allow for 30 min" approves the one card tapped, and sees through the ways a command hid what it did (piping decoded text into a shell, globbing around a secret's name, writing files or sending data from inline code, installing packages). Saving a *Watch for* entry asks for a tap. Once a chat has read your mail, notes, memory or messages, a web search, a fetch, another site or a cloud voice asks first, as after a signed-in page. The background watch stays off the web once a check has read mail, except addresses you wrote in a Watch for entry. The app's update button installs exactly the version it showed you. See SECURITY.md.
+
 ## v0.2.26 (2026-10-23)
 
 - Mac apps: an app that isn't running (Calendar, often) is opened in the background and asked again, so Settings → Allow Calendar works and the watch no longer says Calendar isn't working when it's simply closed.

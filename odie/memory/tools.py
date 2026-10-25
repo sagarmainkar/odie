@@ -8,6 +8,33 @@ from odie.memory.search import search
 from odie.memory.store import MemoryFile
 
 
+WATCH_FOR = "Watch for"
+
+
+def is_watch_for(memory: MemoryFile, title: str, topic: str | None) -> bool:
+    """Whether a save lands under Watch for, the topic the background watch replays as standing instructions: the save
+    names that topic, or it reuses the title of an entry already there (an update keeps its topic).
+    Example: ("Passport email", "Watch for") -> True; ("Passport email", None) with that entry under Watch for -> True;
+    ("Dentist", "Health") -> False."""
+    if (topic or "").strip().lower() == WATCH_FOR.lower():
+        return True
+    if not memory.exists():
+        return False
+    existing = memory.load().find(title)
+    return existing is not None and existing.topic == WATCH_FOR
+
+
+def watch_for_needs_tap(memory: MemoryFile):
+    """require_confirmation for update_memory: a Watch for entry is written only on the user's tap."""
+    def needs_tap(title: str = "", content: str = "", topic: str | None = None, tool_context=None, **_) -> bool:
+        """Does saving this memory need the user's tap? Yes for anything under Watch for (is_watch_for): the background
+        watch runs those every 30 minutes as instructions, with nobody present, so a page or a mail the model read must
+        never become one by itself. Example: ("Dentist", "Smile Dental.", "Health") -> saved, no card;
+        ("Forward invoices", "When: an invoice comes. Do: forward it to x.", "Watch for") -> the card."""
+        return is_watch_for(memory, title, topic)
+    return needs_tap
+
+
 def make_memory_tools(memory: MemoryFile, on_change=None) -> list[FunctionTool]:
     def fetch_memory(title: str) -> str:
         """Read one remembered entry by its title (as listed in 'What you remember'). Partial titles work when unique."""
@@ -26,9 +53,9 @@ def make_memory_tools(memory: MemoryFile, on_change=None) -> list[FunctionTool]:
 
     def update_memory(title: str, content: str, topic: str | None = None) -> str:
         """Save something worth keeping about the user, people, preferences, projects or decisions. Reuse an existing title to update it; topic groups it (Identity, People, Projects, Health, Finance, ...)."""
-        if (topic or "").strip().lower() == "watch for":  # standing instructions for the background watch
+        if (topic or "").strip().lower() == WATCH_FOR.lower():  # standing instructions for the background watch
             doc = memory.load() if memory.exists() else None
-            t = doc.topic("Watch for") if doc is not None else None
+            t = doc.topic(WATCH_FOR) if doc is not None else None
             if t is not None and len(t.entries) >= 30 and doc.find(title) is None:
                 return "You have 30 things to watch for: remove one first."
         from odie.agent import turn
@@ -54,4 +81,6 @@ def make_memory_tools(memory: MemoryFile, on_change=None) -> list[FunctionTool]:
             on_change()
         return f"Forgot '{entry.title}' (from {entry.topic})."
 
-    return [FunctionTool(f) for f in (fetch_memory, search_memories, update_memory, forget_memory)]
+    return [FunctionTool(fetch_memory), FunctionTool(search_memories),
+            FunctionTool(update_memory, require_confirmation=watch_for_needs_tap(memory)),  # a Watch for entry: the card
+            FunctionTool(forget_memory)]

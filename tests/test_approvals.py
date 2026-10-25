@@ -188,7 +188,9 @@ async def test_allow_for_30_min_grants_the_conversation(client):
     assert "allowed_until" not in r.json() and not shell_grant.active(s, "chat-z2", datetime.now())  # shell only
 
 
-async def test_allow_for_30_min_also_approves_cards_already_waiting(isolated_settings, tmp_path):
+async def test_allow_for_30_min_approves_one_card_only(isolated_settings, tmp_path):
+    """One tap = one card: other run_shell cards already waiting in the chat (parallel tool calls, raised before the pass
+    existed) stay pending, whatever their command. The pass covers only commands asked from now on."""
     import asyncio
     decided = []
 
@@ -205,12 +207,14 @@ async def test_allow_for_30_min_also_approves_cards_already_waiting(isolated_set
             mk = lambda sid, req, cmd: s.create_approval(sid, "inv", req, "run_shell", {"command": cmd}, summary=f"Run {cmd}",
                                                          detail={"command": cmd}, provenance=[])
             first, second = mk("chat-p", "r1", "df -h"), mk("chat-p", "r2", "du -sh ~/Downloads/* | sort -h | tail -5")
-            risky, elsewhere = mk("chat-p", "r3", "cat ~/.env"), mk("chat-q", "r4", "ls")
+            hidden, elsewhere = mk("chat-p", "r3", "echo aWQgPiAvdG1wL3g= | base64 -d | zsh"), mk("chat-q", "r4", "ls")
             r = await c.post(f"/api/approvals/{first}/decide", json={"approve": True, "allow_minutes": 30})
-            assert r.json()["also_approved"] == [second]
+            assert r.json()["allowed_until"] and "also_approved" not in r.json()
             for _ in range(50):
-                if len(decided) >= 2:
+                if decided:
                     break
                 await asyncio.sleep(0.02)
-            assert decided == [(first, True), (second, True)]  # in order, one after the other
-            assert s.get_approval(risky)["status"] == "pending" and s.get_approval(elsewhere)["status"] == "pending"
+            await asyncio.sleep(0.05)
+            assert decided == [(first, True)]  # the tapped card, and nothing the user didn't read
+            for other in (second, hidden, elsewhere):
+                assert s.get_approval(other)["status"] == "pending"

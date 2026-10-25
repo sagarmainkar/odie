@@ -90,7 +90,8 @@ async def check(force: bool = False) -> dict[str, Any]:
             latest = await _git("rev-parse", f"{newest}^{{commit}}")
     else:
         latest = await _git("rev-parse", f"origin/{branch}")
-    _last_check = {"current": current[:7], "latest": latest[:7], "behind": latest != current, "checked_at": time.time()}
+    _last_check = {"current": current[:7], "latest": latest[:7], "behind": latest != current, "checked_at": time.time(),
+                   "latest_commit": latest}  # the whole id: start() pins the update to it
     return _last_check
 
 
@@ -100,14 +101,28 @@ def running() -> bool:
     return _started is not None and _started.poll() is None
 
 
+PIN = "ODIE_UPDATE_TO"  # the commit `odie update` must find as the newest, or stop: what the user saw is what installs
+
+
+def pinned_commit(last: dict[str, Any] | None) -> str:
+    """The commit the app's button updates to: the one the last check showed the user, so a release that moved (or an
+    origin that changed hands) between "Check now" and the tap installs nothing. Example: a check that found bbbbbbb...
+    -> "bbbbbbb..."; no check yet -> "" (not pinned: `odie update` takes the newest)."""
+    if not last:
+        return ""
+    return str(last.get("latest_commit") or "")
+
+
 def start() -> int:
     """Starts `odie update` with its output in logs/update.log and returns its pid. Its own session, so the restart
-    it does to this server doesn't take it down too (launchd ends the service's process group)."""
+    it does to this server doesn't take it down too (launchd ends the service's process group). The update is pinned
+    to the commit the last check showed (pinned_commit)."""
     global _started
     inst = install()
     inst.logs.mkdir(parents=True, exist_ok=True)
     out = open(inst.update_log, "ab")  # noqa: SIM115  (the child owns it)
-    _started = subprocess.Popen([sys.executable, "-P", "-m", "odie.cli", "update"], cwd=inst.app,
+    env = {**os.environ, PIN: pinned_commit(_last_check)}
+    _started = subprocess.Popen([sys.executable, "-P", "-m", "odie.cli", "update"], cwd=inst.app, env=env,
                                 stdout=out, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, start_new_session=True)
     log.info("odie update started (pid %s) from %s", _started.pid, version())
     return _started.pid

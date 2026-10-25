@@ -661,6 +661,16 @@ def test_update_moves_to_the_newest_and_remembers_the_previous(inst, world, caps
     assert inst.update_log.exists()
 
 
+def test_update_pinned_to_a_commit_stops_when_the_newest_moved(inst, world, capsys, monkeypatch):
+    """The app's button pins the update to the commit its check showed: a release that moved in between installs nothing."""
+    running_world(world)
+    monkeypatch.setenv("ODIE_UPDATE_TO", "c" * 40)
+    assert cli.cmd_update(inst, world) == 1
+    assert "changed since the app looked" in capsys.readouterr().out and world.head == OLD
+    monkeypatch.setenv("ODIE_UPDATE_TO", NEW)
+    assert cli.cmd_update(inst, world) == 0 and world.head == NEW
+
+
 def test_update_skips_the_workers_that_are_off(env, world, capsys):
     inst = cli.install_from({**env, "ODIE_VOICE": "off", "ODIE_EMBED": "off"})
     running_world(world)
