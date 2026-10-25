@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from odie.browser.engine import BrowserError, BrowserTimeout
-from odie.video import beats, timed, timeline
+from odie.video import avatars, beats, timed, timeline
 
 KIT = Path(__file__).parent / "kit"
 
@@ -281,7 +281,8 @@ class CheckResult:
 
 async def check_with_cues(body: str, narration: list[str], browser, assets_script: str = "",
                           size: tuple[int, int] = timeline.LANDSCAPE,
-                          timed_seconds: float | None = None, lines_for=None) -> CheckResult:
+                          timed_seconds: float | None = None, lines_for=None,
+                          models: list[avatars.Model] | None = None) -> CheckResult:
     """Loads the page in a sealed tab of the video's size (1920x1080, or 1080x1920 for a vertical video) with estimated
     timings and the video's pictures and clips
     (`assets_script`, as the render will have them) and draws three moments of every scene, so the chat turn hears
@@ -293,18 +294,30 @@ async def check_with_cues(body: str, narration: list[str], browser, assets_scrip
     timed segment of `timed_seconds` must mark it in Video.scenes (odie.video.timed.marks_problem: no marks -> how to
     mark it), and is drawn with its segment clock running (s.left()) from the marked scenes' estimated start to their
     end; the marks are ignored for any other video. A dialogue video's page is drawn with its line timeline for the
-    estimated timings (`lines_for(timings)`, the page script), so s.speaking() and s.mouth() run in the check too."""
+    estimated timings (`lines_for(timings)`, the page script), so s.speaking() and s.mouth() run in the check too.
+    Its 3D characters (`models`, odie.video.avatars) are handed to the tab as it opens, as the render does, and its
+    frames drawn through them; a model the page can't parse raises cast.CastProblem in the model's words (it isn't
+    the page's fault). Without models nothing of them runs."""
     timings = estimated_timings(narration)
     lines_script = ""
     if lines_for is not None:
         lines_script = lines_for(timings)
+    avatar_script = ""
+    loaded = []
+    if models:
+        avatar_script = avatars.page_script(models)
+        loaded = avatars.load(models)
+    with_avatars = bool(loaded)
     try:
-        html = assemble(body, timings, assets_script, size=size, lines_script=lines_script)
+        html = assemble(body, timings, assets_script, size=size, lines_script=lines_script,
+                        avatar_script=avatar_script)
     except ValueError as e:
         return CheckResult(problem=str(e))
     width, height = size
     async with browser.sealed_page(html, width, height) as tab:
         load_errors = list(tab.errors)
+        if with_avatars:
+            await avatars.hand_over(tab, loaded)
         scene_count = await tab.eval("window.__sceneCount === undefined ? null : window.__sceneCount")
         problem = first_problem(scene_count, len(narration), load_errors, [], scripted=lines_for is not None)
         if problem:
@@ -320,7 +333,7 @@ async def check_with_cues(body: str, narration: list[str], browser, assets_scrip
             await tab.eval(f"window.ODIE_TIMED = {json.dumps(clock)}")
         draw_errors = []
         for number, seconds in enumerate(probe_times(timings)):
-            error = await _draw_error(tab, seconds)
+            error = await _draw_error(tab, seconds, with_avatars)
             if error:
                 scene_index = number // PROBES_PER_SCENE
                 t = round(seconds - timings["starts"][scene_index], 3)  # draw's t: seconds into the scene
@@ -342,14 +355,15 @@ async def check(body: str, narration: list[str], browser, assets_script: str = "
     return result.problem
 
 
-async def _draw_error(tab, seconds: float) -> str | None:
-    """Draws the frame at `seconds`; the page's error text if it threw, else None. An exception thrown by the evaluated
+async def _draw_error(tab, seconds: float, with_avatars: bool = False) -> str | None:
+    """Draws the frame at `seconds` (through the 3D characters' avatar.js when the page has some, see
+    avatars.frame_call); the page's error text if it threw, else None. An exception thrown by the evaluated
     expression comes back as the exception eval raises and (measured) not in tab.errors; should a browser record it
     in both, the first new line in tab.errors is used so it is told once. Not a decision function: it reports."""
     before = len(tab.errors)
     raised = None
     try:
-        await tab.eval(f"__frame({seconds})")
+        await tab.eval(avatars.frame_call(seconds, with_avatars))
     except BrowserTimeout:
         raise  # a frame that never finishes isn't an error the page threw: make_video tells it as a hang
     except BrowserError as e:

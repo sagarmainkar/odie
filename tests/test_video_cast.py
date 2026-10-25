@@ -293,3 +293,111 @@ def test_cast_pictures_are_the_speakers_and_at_most_six(folder, tmp_path):
                                          ("# ACT One", "One")])
 def test_acts_are_read_however_the_heading_is_written(heading, act):
     assert dialogue.parse(f"{heading}\n## Scene: A\nMIRA: Hi.").scenes[0].act == act
+
+
+# ---- 3D characters (phase 3): the writer is told who is 3D, and the job carries their models ----
+
+def test_the_writer_is_told_who_is_3d(folder):
+    script = dialogue.parse("## Scene: The lamp room\nMIRA: Sleep.\nTOBI: Not yet.")
+    characters = cast.read(folder)
+    listing = dialogue.writer_listing(script, characters, modelled=frozenset({"mira"}))
+    assert '  mira (Mira): a 3D model; draw them only with s.avatar("mira").' in listing
+    assert "A tall woman in her thirties" not in listing  # the model is how she looks
+    assert "Notes: Speaks slowly" in listing  # her notes are kept
+    assert "tobi (Tobi): A boy of twelve in a yellow raincoat" in listing  # drawn in code, as described
+    assert dialogue.writer_listing(script, characters) == dialogue.writer_listing(script, characters,
+                                                                                  modelled=frozenset())
+
+
+def with_a_model(folder):
+    """The folder with Mira's sheet naming models/mira.glb, a real (tiny) glTF file there; gives back its path."""
+    from tests.tiny_glb import tiny_glb
+    (folder / "models").mkdir()
+    model_file = folder / "models" / "mira.glb"
+    model_file.write_bytes(tiny_glb())
+    (folder / "mira.md").write_text(MIRA.replace("voice: af_bella\n", "voice: af_bella\nasset: models/mira.glb\n"))
+    return model_file
+
+
+async def test_the_job_stages_a_3d_speaker_for_the_writer(isolated_settings, folder, tmp_path, monkeypatch):
+    from odie.video import assets, avatars, kind, writer
+    model_file = with_a_model(folder)
+    job, _script = a_job_with_a_cast(folder, tmp_path)
+    seen = {}
+
+    async def stand_in_gather(pictures, moving, place):
+        return [], []
+
+    async def stand_in_write(topic, minutes, brief, place, turn, browser, listing="", assets_script="",
+                             aspect="landscape", staging=None):
+        seen["staging"] = staging
+        return writer.Written(title="The lighthouse", narration=staging.narration, body="<div></div>")
+
+    monkeypatch.setattr(assets, "gather", stand_in_gather)
+    monkeypatch.setattr(writer, "write", stand_in_write)
+    await kind.write(job, turn=None, browser=None)
+    staged = seen["staging"]
+    assert staged.models == [avatars.Model("mira", "Mira", model_file.resolve(), model_file.stat().st_size)]
+    assert 'mira (Mira): a 3D model; draw them only with s.avatar("mira").' in staged.listing
+
+
+def two_lines_spoken(calls):
+    """A stand-in for narrate_dialogue: Mira's line then Tobi's, 1.5 s of tone; each call is recorded in `calls`."""
+    from tests.test_media import make_wav
+
+    async def stand_in_dialogue(store, script, voices, transport=None, style="", narrator_voice=""):
+        calls.append(script)
+        lines = [{"index": 0, "speaker": "mira", "text": "Sleep.", "voice": "af_bella", "scene": 1, "at": 0.0,
+                  "dur": 0.6, "amplitude": []},
+                 {"index": 1, "speaker": "tobi", "text": "Not yet.", "voice": "am_michael", "scene": 1, "at": 0.8,
+                  "dur": 0.6, "amplitude": []}]
+        return make_wav(1.5), [1.4], [[0.0, 0.8]], lines
+
+    return stand_in_dialogue
+
+
+def a_job_ready_to_make(folder, tmp_path, monkeypatch):
+    """A cast job whose page is written, with a real store for the voices' cache."""
+    from odie.making import jobs
+    from odie.store.db import Store
+    store = Store(tmp_path / "assistant.db")
+    store.init_schema()
+    monkeypatch.setitem(jobs.hooks, "store", store)
+    job, script = a_job_with_a_cast(folder, tmp_path)
+    job.data["narration"] = dialogue.narration_of(script)
+    job.data["body"] = "<div></div>"
+    return job
+
+
+async def test_the_job_makes_a_3d_speaker_and_keeps_their_still(isolated_settings, folder, tmp_path, monkeypatch):
+    from odie.video import avatars, kind
+    from tests.test_video_jobs import stand_in_render
+    model_file = with_a_model(folder)
+    job = a_job_ready_to_make(folder, tmp_path, monkeypatch)
+    seen = {}
+
+    async def render(browser, body, timings, place, fps, tabs, **given):
+        seen.update(given)
+        return await stand_in_render(browser, body, timings, place, fps, tabs)
+
+    monkeypatch.setattr(kind, "narrate_dialogue", two_lines_spoken([]))
+    monkeypatch.setattr(kind, "render", render)
+    await kind.make_video(job, browser=object(), transport=None)
+    assert seen["models"] == [avatars.Model("mira", "Mira", model_file.resolve(), model_file.stat().st_size)]
+    assert "__avatars.expect" in (job.folder / "page.html").read_text()
+    assert (folder / "refs" / "stills" / "mira-lighthouse.jpg").is_file()
+    assert (folder / "refs" / "stills" / "tobi-lighthouse.jpg").is_file()
+
+
+async def test_a_model_that_went_missing_before_the_make_step_is_told_in_words(isolated_settings, folder, tmp_path,
+                                                                                monkeypatch):
+    from odie.video import kind
+    model_file = with_a_model(folder)
+    job = a_job_ready_to_make(folder, tmp_path, monkeypatch)
+    model_file.unlink()  # deleted after the video was queued
+    spoken = []
+    monkeypatch.setattr(kind, "narrate_dialogue", two_lines_spoken(spoken))
+    with pytest.raises(cast.CastProblem, match=r"Mira's asset \(models/mira.glb\) isn't in cast"):
+        await kind.make_video(job, browser=object(), transport=None)
+    assert spoken == []  # checked before any voice is spoken
+    assert cast.CastProblem in kind.KNOWN_ERRORS  # its words reach the user as they are

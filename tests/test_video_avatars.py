@@ -2,6 +2,7 @@
 of the script being made."""
 import asyncio
 import base64
+from contextlib import asynccontextmanager
 
 import pytest
 
@@ -272,3 +273,82 @@ async def test_a_parse_that_never_finishes_is_refused_after_the_page_stops_waiti
     never_calls_back = "THREE.GLTFLoader.prototype.parse = function () {}; __avatars.parseSeconds = 0.3; true"
     with pytest.raises(cast.CastProblem, match="didn't finish within 0.3 s"):
         await handed_over(a_model(tmp_path, tiny_glb()), tmp_path, before=never_calls_back)
+
+
+# ---- The writer's page check draws with the models ----
+
+SCENE_COUNT = "window.__sceneCount === undefined ? null : window.__sceneCount"
+SCRIPT = dialogue.parse("## Scene: A workshop\nMIRA: Still here?\n")
+
+
+class CheckTab:
+    """A stand-in sealed tab for the page check: a one-scene page that loaded without errors, parsed every model and
+    placed no sound cues. Records every expression it is told."""
+
+    def __init__(self):
+        self.errors = []
+        self.said = []
+
+    async def eval(self, expression):
+        self.said.append(expression)
+        if expression == SCENE_COUNT:
+            return 1
+        if expression == "__avatars.ready()":
+            return {"failed": {}}
+        if expression == "Video.soundCues()":
+            return []
+        return None
+
+
+class CheckBrowser:
+    """A stand-in browser whose sealed page is one CheckTab; keeps the HTML it was given."""
+
+    def __init__(self):
+        self.tab = CheckTab()
+        self.html = ""
+
+    @asynccontextmanager
+    async def sealed_page(self, html, width, height):
+        self.html = html
+        yield self.tab
+
+
+async def test_the_page_check_draws_with_the_models(tmp_path):
+    browser = CheckBrowser()
+    staged = dialogue.staging(SCRIPT)
+    model = a_model(tmp_path, b"x" * 10)
+    result = await page.check_with_cues(BODY, staged.narration, browser, lines_for=staged.lines_for, models=[model])
+    assert result.problem is None
+    said = browser.tab.said
+    assert said[:2] == ['__avatars.bytes("mira", 0, "eHh4eHh4eHh4eA==")', "__avatars.ready()"]
+    probes = [expression for expression in said if "frame(" in expression]
+    assert len(probes) == page.PROBES_PER_SCENE
+    assert all(expression.startswith("__avatars.frame(") for expression in probes)
+    assert "__avatars.expect" in browser.html
+
+
+async def test_the_page_check_without_models_draws_as_before():
+    browser = CheckBrowser()
+    staged = dialogue.staging(SCRIPT)
+    await page.check_with_cues(BODY, staged.narration, browser, lines_for=staged.lines_for)
+    probes = [expression for expression in browser.tab.said if "frame(" in expression]
+    assert all(expression.startswith("__frame(") for expression in probes)
+    assert "__avatars" not in browser.html
+
+
+async def test_a_model_the_check_cant_parse_ends_the_job_in_its_words(tmp_path, monkeypatch):
+    from odie.video import writer
+    from tests.test_video_writer import Context
+    words = "Mira's 3D model (mira.glb) couldn't be read: it isn't a glTF binary file."
+
+    async def unparsed(tab, loaded):
+        raise cast.CastProblem(words)
+
+    monkeypatch.setattr(avatars, "hand_over", unparsed)
+    staged = dialogue.staging(SCRIPT, models=[a_model(tmp_path, b"x" * 10)])
+    desk = writer.Desk(topic="Night", pages=tmp_path / "pages", staging=staged)
+    [submit] = writer.tools_for(desk, CheckBrowser())
+    answer = await submit("Night", BODY, tool_context=Context())
+    assert answer == {"error": words}
+    assert desk.failure == words  # harness.CantCheck: not the writer's fault, so no refusal
+    assert desk.rejected == 0

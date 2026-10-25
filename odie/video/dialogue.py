@@ -202,11 +202,13 @@ def narration_of(script: Script) -> list[str]:
     return [" | ".join(line.text for line in scene.lines) for scene in script.scenes]
 
 
-def writer_listing(script: Script, characters: list | None = None, look: str = "") -> str:
+def writer_listing(script: Script, characters: list | None = None, look: str = "",
+                   modelled: frozenset[str] = frozenset()) -> str:
     """The script as the writer reads it: each scene with where it is (and, with a cast, its act and the ages of
     who speaks in it) and its lines, numbered across the video, with who speaks. With a cast (odie.video.cast
     characters), the sheets of those who speak in this script come first, each description word for word; with a
-    look, it comes before the script. No cast and no look -> the script alone, as phase 1 gave it."""
+    look, it comes before the script. No cast and no look -> the script alone, as phase 1 gave it. A speaker with a
+    3D model (their id in `modelled`) is listed as one instead of by their description (see cast_entry)."""
     out = []
     speakers = set(script.speakers())
     characters = [character for character in characters or [] if character.id in speakers]  # this script's cast
@@ -214,13 +216,7 @@ def writer_listing(script: Script, characters: list | None = None, look: str = "
         out.append("Cast (draw each exactly as described here, in every scene and every video; never change or add "
                    "to how they look):")
         for character in characters:
-            description = character.canonical
-            if not description:
-                description = "(no description given: choose one look and keep it)"
-            entry = f"  {character.id} ({character.display_name}): {description}"
-            if character.notes:
-                entry += f"\n    Notes: {character.notes}"
-            out.append(entry)
+            out.append(cast_entry(character, modelled))
         out.append("")
     if look.strip():
         out.append("Look (for every video of this work; follow it):")
@@ -235,6 +231,25 @@ def writer_listing(script: Script, characters: list | None = None, look: str = "
             out.append(f"  line {index} · {line.speaker}: {line.text}")
             index += 1
     return "\n".join(out)
+
+
+def cast_entry(character, modelled: frozenset[str]) -> str:
+    """One character as the writer's cast listing gives them, with their sheet's notes under. Decides between the two
+    kinds of speaker: Mira with a 3D model ("mira" in `modelled`) -> '  mira (Mira): a 3D model; draw them only with
+    s.avatar("mira").' (the model is how she looks, so her description isn't given); Tobi without one -> '  tobi
+    (Tobi): A boy of twelve in a yellow raincoat, …', his description word for word, or "(no description given:
+    choose one look and keep it)" when the sheet has none."""
+    if character.id in modelled:
+        avatar_call = f's.avatar("{character.id}")'
+        entry = f"  {character.id} ({character.display_name}): a 3D model; draw them only with {avatar_call}."
+    else:
+        description = character.canonical
+        if not description:
+            description = "(no description given: choose one look and keep it)"
+        entry = f"  {character.id} ({character.display_name}): {description}"
+    if character.notes:
+        entry += f"\n    Notes: {character.notes}"
+    return entry
 
 
 def scene_note(scene: Scene, characters: list | None) -> str:
@@ -323,16 +338,23 @@ def estimated_lines(script: Script, timings: dict) -> list[dict]:
 @dataclass
 class Staging:
     """What the video writer needs to stage a script: the script as it reads it (writer_listing), the narration the
-    page is checked against (narration_of: one string a scene, a phrase a line), and the line timeline for the
-    check's estimated timings (estimated_lines, as the page script)."""
+    page is checked against (narration_of: one string a scene, a phrase a line), the line timeline for the
+    check's estimated timings (estimated_lines, as the page script), and the speakers' 3D models
+    (odie.video.avatars.Model; [] when none has one), which the page check draws with."""
     listing: str
     narration: list[str]
     script: Script
+    models: list = field(default_factory=list)
 
     def lines_for(self, timings: dict) -> str:
         return lines_script(estimated_lines(self.script, timings))
 
 
-def staging(script: Script, characters: list | None = None, look: str = "") -> Staging:
-    """The writer's staging of `script` (see Staging), with the cast's sheets and the work's look when there are."""
-    return Staging(listing=writer_listing(script, characters, look), narration=narration_of(script), script=script)
+def staging(script: Script, characters: list | None = None, look: str = "", models: list | None = None) -> Staging:
+    """The writer's staging of `script` (see Staging), with the cast's sheets, the work's look and the speakers' 3D
+    models (odie.video.avatars.models_for) when there are."""
+    if models is None:
+        models = []
+    modelled = frozenset(model.speaker for model in models)
+    listing = writer_listing(script, characters, look, modelled)
+    return Staging(listing=listing, narration=narration_of(script), script=script, models=list(models))
