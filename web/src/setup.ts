@@ -6,7 +6,9 @@ export type Line = { role: "user" | "assistant"; text: string; note?: boolean };
 export type KeyCard = { type: "key"; provider: string; kind: "provider" | "search"; label: string; note: string };
 export type AppCard = { type: "app"; app: string; label: string; where: string; key_label: string; steps?: string[] };
 export type Card = KeyCard | AppCard;
-export type Choice = { id: string; label: string; note: string; recommended: boolean; needs: Card | { type: "path" } | null; value?: unknown };
+/** A server somewhere else: the kinds it can be, each with an example address. */
+export type ServerCard = { type: "server"; kinds: { id: string; label: string; example: string }[] };
+export type Choice = { id: string; label: string; note: string; recommended: boolean; needs: Card | { type: "path" } | ServerCard | null; value?: unknown };
 export type Phone = { tailscale: boolean; serving: boolean; address: string; pairing: boolean; download: string; serve_command: string; steps: string[] };
 /** The current step as the screen shows it: Odie's question (already in the thread), what it is, and its controls. */
 export type Panel = {
@@ -39,9 +41,10 @@ export function brainDone(report: { verdict: string } | undefined): boolean {
   return !!report && report.verdict !== "fail";
 }
 
-/** What a choice needs before it can be saved: a key form, an app form, a folder path, or nothing (Continue saves it). */
-export function formFor(choice: Choice | undefined): "key" | "app" | "path" | null {
-  return (choice?.needs?.type as "key" | "app" | "path" | undefined) ?? null;
+/** What a choice needs before it can be saved: a key form, an app form, a folder path, a server's address and model,
+ * or nothing (Continue saves it). */
+export function formFor(choice: Choice | undefined): "key" | "app" | "path" | "server" | null {
+  return (choice?.needs?.type as "key" | "app" | "path" | "server" | undefined) ?? null;
 }
 
 /** The choice picked when a step opens: the recommended one, else the first. */

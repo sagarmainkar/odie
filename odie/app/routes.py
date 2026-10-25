@@ -741,7 +741,8 @@ async def vault_put(body: VaultIn, request: Request) -> dict[str, Any]:
     if fields.get("embeddings"):
         e = fields["embeddings"]
         try:
-            await embed.check(embed.make_embedder(str(e.get("provider", "")), str(e.get("model", "")), store))
+            await embed.check(embed.make_embedder(str(e.get("provider", "")), str(e.get("model", "")), store,
+                                                  pictures=bool(e.get("pictures")), url=e.get("url")))
         except embed.EmbedError as err:
             raise HTTPException(422, str(err))
     try:
@@ -1165,6 +1166,14 @@ async def setup_panel(step: str, request: Request) -> dict[str, Any]:
     if step not in state.STEPS or step == "brain":
         raise HTTPException(404, "no such step")
     return await panels.panel(request.app.state.store, step)
+
+
+@router.get("/setup/server_models")
+async def setup_server_models(kind: str, url: str) -> dict[str, Any]:
+    """The embedding models a server somewhere else offers, for the address form on the setup screen and in Settings."""
+    from odie.vault import embed
+    models, problem = await embed.server_models(kind, url)
+    return {"models": models, "problem": problem}
 
 
 @router.post("/setup/choose")

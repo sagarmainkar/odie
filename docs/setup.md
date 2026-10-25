@@ -37,9 +37,12 @@ remembers.
 (EmbeddingGemma 2, `embed_server/`, built by the installer). The first use downloads the model, about 1.5 GB, from
 Hugging Face into `~/.cache/huggingface`; no account is needed. Odie starts the service with itself, on
 `ODIE_EMBED_PORT`, and nothing about your notes leaves the computer; after `ODIE_EMBED_IDLE_MINUTES` without a request
-it unloads the model and gives the memory back. LM Studio, Ollama and OpenAI embeddings stay as choices: EmbeddingGemma 2
-on Ollama (`ollama pull embeddinggemma-2`, about 1.3 GB, unloaded by Ollama when idle) reads pictures too, and needs
-no service of Odie's own; the rest are text only.
+it unloads the model and gives the memory back. It is the last choice offered, being the heaviest. Before it come the
+embedding models already running in LM Studio or Ollama on this computer, then **a server somewhere else** (Ollama at
+its root address, such as `http://studio.local:11434`, or LM Studio, llama.cpp and any OpenAI-style server at its `/v1`
+address: type the address, press Find models, pick one), then OpenAI. EmbeddingGemma 2 on Ollama (`ollama pull
+embeddinggemma-2`, about 1.3 GB, unloaded by Ollama when idle) reads pictures too and is recommended when found; the
+rest are text only. Settings → Notes → Change offers the same choices later.
 The first pass over a few thousand notes takes about a quarter of an hour; Settings → Notes counts it up.
 
 ## 3b. Photos and videos
