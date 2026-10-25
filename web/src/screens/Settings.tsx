@@ -411,7 +411,8 @@ function LocationRow() {
     </span>
   );
   const ok: Dot = row.state === "ok";
-  return <Row icon={{ icon: "pin", color: "green" }} ok={ok} title="Location" sub={row.sub} meta={NOTE_TEXT} right={right} />;
+  const meta = row.meta ? <>{row.meta}<br />{NOTE_TEXT}</> : NOTE_TEXT;  // seen and home, then the one-line note
+  return <Row icon={{ icon: "pin", color: "green" }} ok={ok} title="Location" sub={row.sub} meta={meta} right={right} />;
 }
 
 function isApple(): boolean {

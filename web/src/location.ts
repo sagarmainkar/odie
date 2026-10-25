@@ -1,10 +1,10 @@
 /** Where the user is: the server keeps a place name (never coordinates in what reaches the model), and the web app sends a
  * fix on open, after one ask. These are the pure decisions; LocationAsk and Settings' LocationRow render them. */
 export type LocationInfo = { on: boolean | null; place: string; seen: string; home: string; home_set_by_user: boolean };
-export type LocationRow = { sub: string; state: "ok" | "off" | "none" };
+export type LocationRow = { sub: string; meta: string; state: "ok" | "off" | "none" };
 
 export const ASK_TEXT = "Share where you are, for better answers? Odie uses the place name, not coordinates, in what it sends to your chat model.";
-export const NOTE_TEXT = "The place name goes to your chat model with each message. Turning a point into a name may ask OpenStreetMap when nothing nearby is known.";
+export const NOTE_TEXT = "Your model gets the place name; a point may reach OpenStreetMap if none nearby is known.";
 
 /** Whether the one-line ask shows: only while nobody has answered it (`on` is null) and this browser can give a position.
  *  never asked, geolocation available -> true; never asked, a desktop without it -> false; "Not now" earlier -> false;
@@ -47,20 +47,21 @@ export function seenText(iso: string, now: Date): string {
   return `${DAYS[atThere.getUTCDay()]} ${atThere.getUTCDate()} ${MONTHS[atThere.getUTCMonth()]} ${hhmm}`;
 }
 
-/** Settings' Location row, in words:
- *    on, a place known  -> "Northvale, Westshire · seen 14:12 · home Northvale"
- *    on, nothing yet    -> "Waiting for the first fix"
- *    off                -> "Off"
- *    never asked        -> "Not asked yet" */
+/** Settings' Location row, in words. The place has the sub line to itself (a long name truncates there and hides
+ *  nothing else); seen and home go on the shorter meta line under it.
+ *    on, a place known  -> sub "City of Northvale, Westshire", meta "seen 14:12 · home Northvale"
+ *    on, nothing yet    -> sub "Waiting for the first fix", meta ""
+ *    off                -> sub "Off"
+ *    never asked        -> sub "Not asked yet" */
 export function locationRow(info: LocationInfo, now: Date): LocationRow {
-  if (info.on === null) return { sub: "Not asked yet", state: "none" };
-  if (info.on === false) return { sub: "Off", state: "off" };
-  if (!info.place) return { sub: "Waiting for the first fix", state: "ok" };
-  const parts = [info.place];
+  if (info.on === null) return { sub: "Not asked yet", meta: "", state: "none" };
+  if (info.on === false) return { sub: "Off", meta: "", state: "off" };
+  if (!info.place) return { sub: "Waiting for the first fix", meta: "", state: "ok" };
+  const details = [];
   const seen = seenText(info.seen, now);
-  if (seen) parts.push(`seen ${seen}`);
-  if (info.home) parts.push(`home ${info.home}`);
-  return { sub: parts.join(" · "), state: "ok" };
+  if (seen) details.push(`seen ${seen}`);
+  if (info.home) details.push(`home ${info.home}`);
+  return { sub: info.place, meta: details.join(" · "), state: "ok" };
 }
 
 /** Whether this browser can give a position at all (a desktop browser may not). */

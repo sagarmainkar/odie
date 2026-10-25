@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ASK_TEXT, afterAllow, locationRow, seenText, shouldAsk, shouldRefresh, type LocationInfo } from "./location";
+import { ASK_TEXT, NOTE_TEXT, afterAllow, locationRow, seenText, shouldAsk, shouldRefresh, type LocationInfo } from "./location";
 
 const base: LocationInfo = { on: null, place: "", seen: "", home: "", home_set_by_user: false };
 
@@ -31,13 +31,22 @@ describe("location", () => {
     expect(seenText("2026-10-25T14:12:00+05:30", now)).toBe("14:12");
     expect(seenText("2026-10-24T21:40:00+05:30", now)).toBe("Sat 24 Oct 21:40");
     expect(seenText("", now)).toBe("");
-    expect(locationRow({ ...base, on: true, place: "Northvale, Westshire", seen: "2026-10-25T14:12:00+05:30", home: "Northvale" }, now))
-      .toEqual({ sub: "Northvale, Westshire · seen 14:12 · home Northvale", state: "ok" });
+    // The place alone on the sub line (a long one truncates there and nothing else is lost); seen and home on a second,
+    // shorter line.
+    expect(locationRow({ ...base, on: true, place: "City of Northvale, Westshire", seen: "2026-10-25T14:12:00+05:30", home: "Northvale" }, now))
+      .toEqual({ sub: "City of Northvale, Westshire", meta: "seen 14:12 · home Northvale", state: "ok" });
     expect(locationRow({ ...base, on: true, place: "Northvale, Westshire", seen: "2026-10-25T14:12:00+05:30" }, now))
-      .toEqual({ sub: "Northvale, Westshire · seen 14:12", state: "ok" });
-    expect(locationRow({ ...base, on: true }, now)).toEqual({ sub: "Waiting for the first fix", state: "ok" });
-    expect(locationRow({ ...base, on: false }, now)).toEqual({ sub: "Off", state: "off" });
-    expect(locationRow(base, now)).toEqual({ sub: "Not asked yet", state: "none" });
+      .toEqual({ sub: "Northvale, Westshire", meta: "seen 14:12", state: "ok" });
+    expect(locationRow({ ...base, on: true, place: "Northvale, Westshire" }, now)).toEqual({ sub: "Northvale, Westshire", meta: "", state: "ok" });
+    expect(locationRow({ ...base, on: true }, now)).toEqual({ sub: "Waiting for the first fix", meta: "", state: "ok" });
+    expect(locationRow({ ...base, on: false }, now)).toEqual({ sub: "Off", meta: "", state: "off" });
+    expect(locationRow(base, now)).toEqual({ sub: "Not asked yet", meta: "", state: "none" });
+  });
+
+  it("keeps the note to one phone line, still naming OpenStreetMap", () => {
+    expect(NOTE_TEXT.length).toBeLessThanOrEqual(90);
+    expect(NOTE_TEXT).toContain("OpenStreetMap");
+    expect(NOTE_TEXT.toLowerCase()).toContain("nearby");
   });
   it("a browser denial ends the ask; a timeout leaves it", () => {
     expect(afterAllow({ lat: 1, lon: 2, at: "2026-10-25T14:12:00+05:30" })).toBe("send");
