@@ -618,8 +618,10 @@ class OdieRunner:
             self._prompt_session = session_id
         rows = self.store.open_tasks(now.isoformat(timespec="minutes"))[:10]
         brief = self.store.one("select text from briefs where date=? order by id desc limit 1", (now.strftime("%Y-%m-%d"),))
+        from odie import location
+        place, seen, home = location.location_bits(location.get(self.store), now)  # a place name and home, never coordinates
         return build_turn_context(now, self.prefetch(text), threads_summary(self.store), format_open_threads(rows),
-                                  brief["text"] if brief else "", caps=getattr(self, "_caps", ALL_CAPS))
+                                  brief["text"] if brief else "", caps=getattr(self, "_caps", ALL_CAPS), place=place, seen=seen, home=home)
 
     def who(self) -> Who:
         """Who the prompt is for: the profile's name, this computer, the local currency, what this install can do, and

@@ -147,3 +147,47 @@ async def test_location_routes(isolated_settings, tmp_path, monkeypatch):
     assert len(rows) >= 5
     for row in rows:
         assert "18.52" not in (row["result_summary"] or "") and "73.8" not in (row["args_json"] or "")  # nothing of the point itself
+
+
+# --- The context line and the prompt rule ---
+
+
+def test_the_context_line_carries_where_the_user_is_and_home():
+    from odie.agent.prompt import build_turn_context
+    now = datetime(2026, 10, 25, 14, 16, tzinfo=TZ)
+    out = build_turn_context(now, "", "", place=NORTHVALE, seen="14:12", home="Northvale")
+    assert out.startswith(f"[context: now 14:16 Sun 25 Oct · near {NORTHVALE} (seen 14:12) · home: Northvale]")
+    assert "near" not in build_turn_context(now, "", "")
+    assert build_turn_context(now, "", "", place="Harbour Town").startswith("[context: now 14:16 Sun 25 Oct · near Harbour Town]")
+    assert build_turn_context(now, "", "", home="Northvale").startswith("[context: now 14:16 Sun 25 Oct · home: Northvale]")
+
+
+def test_location_bits_render_the_time_and_respect_the_switch():
+    now = datetime(2026, 10, 25, 14, 16, tzinfo=TZ)
+    today = {"on": True, "place": NORTHVALE, "seen": "2026-10-25T14:12:00+05:30", "home": "Northvale"}
+    assert location.location_bits(today, now) == (NORTHVALE, "14:12", "Northvale")
+    stale = {**today, "seen": "2026-10-24T21:40:00+05:30"}
+    assert location.location_bits(stale, now) == (NORTHVALE, "Sat 24 Oct 21:40", "Northvale")  # old, but still sent, with its time
+    assert location.location_bits({**today, "on": False}, now) == ("", "", "")
+    assert location.location_bits({**today, "on": None}, now) == ("", "", "")
+    assert location.location_bits({**today, "seen": ""}, now) == (NORTHVALE, "", "Northvale")
+    assert location.location_bits({**today, "place": ""}, now) == ("", "", "Northvale")  # a fix with no name yet: home alone
+
+
+def test_the_rule_tells_the_model_how_to_use_the_place():
+    from odie.agent.prompt import ALL_CAPS, Who, rules_text
+    text = rules_text(Who(caps=ALL_CAPS), gated=True)
+    assert "where the user is now and where home is" in text and "may be travelling" in text
+    assert "where the user is now" in rules_text(Who(caps=frozenset()), gated=True)  # every install has the line
+
+
+def test_the_runner_puts_the_place_into_the_context_line(isolated_settings, tmp_path):
+    from odie.app.runner import OdieRunner
+    s = Store(tmp_path / "a.db")
+    s.init_schema()
+    r = OdieRunner(s)
+    assert "near" not in r._prepare_prompt("chat-1", "hello")
+    location.record(s, 18.52, 73.85, NORTHVALE, datetime.now(TZ))
+    assert f"near {NORTHVALE} (seen " in r._prepare_prompt("chat-1", "hello")
+    location.decline(s)
+    assert "near" not in r._prepare_prompt("chat-1", "hello")

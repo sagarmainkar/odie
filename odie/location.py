@@ -116,6 +116,34 @@ def forget(store) -> dict:
     return _save(store, {**EMPTY, "fixes": []})
 
 
+def seen_text(seen: str, now: datetime) -> str:
+    """When a fix was seen, as the context line says it: the clock time on the same day as `now` ("14:12"), else the
+    day too ("Sat 24 Oct 21:40"), compared in `now`'s own zone; "" for no time or one that can't be read."""
+    try:
+        at = datetime.fromisoformat(seen)
+    except ValueError:
+        return ""
+    if at.tzinfo is not None and now.tzinfo is not None:
+        at = at.astimezone(now.tzinfo)
+    if at.date() == now.date():
+        return at.strftime("%H:%M")
+    return at.strftime("%a %-d %b %H:%M")
+
+
+def location_bits(setting: dict, now: datetime) -> tuple[str, str, str]:
+    """What the context line may say: (place, when it was seen, home). Nothing while the switch is off or never
+    answered (`on` is not True). A stale fix still goes, with its time; the model decides what it means. A fix with no
+    name yet gives no place, but home still goes.
+    Example: on, "Northvale, Westshire" seen 14:12 today, home "Northvale" -> ("Northvale, Westshire", "14:12",
+    "Northvale"); the same seen yesterday 21:40 -> (..., "Sat 24 Oct 21:40", ...); on=False -> ("", "", "")."""
+    if setting.get("on") is not True:
+        return "", "", ""
+    place = str(setting.get("place") or "")
+    home = str(setting.get("home") or "")
+    seen = seen_text(str(setting.get("seen") or ""), now) if place else ""
+    return place, seen, home
+
+
 def point_is_plausible(lat: float, lon: float) -> bool:
     """Whether a device's point can be a real one: latitude within [-90, 90], longitude within [-180, 180], and not
     exactly (0, 0), which is what a device with no fix at all sends. (18.52, 73.85) -> True; (0, 0) -> False;
