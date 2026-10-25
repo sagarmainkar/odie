@@ -799,6 +799,68 @@ def _photos_view(request: Request) -> dict:
             "progress": worker.progress() if worker else {"running": False, "done": 0, "total": 0, "phase": "idle", "error": ""}}
 
 
+# --- Where the user is (odie.location) ---
+class LocationIn(BaseModel):
+    lat: float
+    lon: float
+    place: str | None = Field(None, max_length=200)  # the device's own name for the point (the Mac app geocodes itself)
+
+
+class LocationPut(BaseModel):
+    on: bool | None = None
+    home: str | None = Field(None, max_length=200)
+
+
+@router.get("/location")
+async def location_get(request: Request) -> dict[str, Any]:
+    from odie import location
+    return location.view(location.get(request.app.state.store))
+
+
+@router.post("/location")
+async def location_post(body: LocationIn, request: Request) -> dict[str, Any]:
+    """A device says where the user is. The place name is the device's own when it sent one, else looked up
+    (odie.location.place_for); the point itself is kept on the server and never comes back out."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from odie import location
+    store = request.app.state.store
+    if not location.point_is_plausible(body.lat, body.lon):
+        raise HTTPException(422, "That isn't a place on Earth.")
+    place = (body.place or "").strip()
+    if not place:
+        place = await location.place_for(store, body.lat, body.lon)
+    now = datetime.now(ZoneInfo(config.settings.timezone))
+    saved = location.record(store, body.lat, body.lon, place, now)
+    store.audit("user", "location", result_summary=f"seen at {place or '(no name yet)'}")
+    return location.view(saved)
+
+
+@router.put("/location")
+async def location_put(body: LocationPut, request: Request) -> dict[str, Any]:
+    """Settings: the switch, or a home the user stated."""
+    from odie import location
+    store = request.app.state.store
+    if body.on is not None:
+        location.set_on(store, body.on)
+        store.audit("user", "location", result_summary="on" if body.on else "off")
+    if body.home is not None:
+        location.set_home(store, body.home)
+        store.audit("user", "location", result_summary=f"home: {body.home.strip() or '(cleared)'}")
+    return location.view(location.get(store))
+
+
+@router.delete("/location")
+async def location_delete(request: Request) -> dict[str, Any]:
+    """Forget: the place, the fixes, home and the answer to the ask."""
+    from odie import location
+    store = request.app.state.store
+    saved = location.forget(store)
+    store.audit("user", "location", result_summary="forgotten")
+    return location.view(saved)
+
+
 @router.get("/photos")
 async def photos_get(request: Request) -> dict[str, Any]:
     return _photos_view(request)

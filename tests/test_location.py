@@ -106,3 +106,44 @@ async def test_place_is_empty_when_nominatim_cannot_answer(isolated_settings, tm
     assert await location.place_for(s, 15.49, 73.82, refused) == ""
     no_address = httpx.MockTransport(lambda r: httpx.Response(200, json={"error": "Unable to geocode"}))
     assert await location.place_for(s, 15.49, 73.82, no_address) == ""
+
+
+# --- The routes a device and Settings use ---
+
+
+def test_a_point_must_be_plausible():
+    assert location.point_is_plausible(18.52, 73.85) and location.point_is_plausible(-33.9, 151.2)
+    for lat, lon in ((0, 0), (91, 0), (-91, 0), (1, 181), (1, -181)):
+        assert not location.point_is_plausible(lat, lon), (lat, lon)
+
+
+async def test_location_routes(isolated_settings, tmp_path, monkeypatch):
+    import httpx
+
+    from odie.app.main import create_app
+    from tests.test_api import FakeRunner
+    s = Store(tmp_path / "a.db")
+    s.init_schema()
+
+    async def fake_place(store, lat, lon, transport=None):
+        return NORTHVALE
+    monkeypatch.setattr(location, "place_for", fake_place)
+    app = create_app(runner=FakeRunner(), store=s)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c, app.router.lifespan_context(app):
+        assert (await c.get("/api/location")).json()["on"] is None
+        r = await c.post("/api/location", json={"lat": 18.52, "lon": 73.85})
+        assert r.status_code == 200 and r.json()["place"] == NORTHVALE and r.json()["seen"]
+        assert set(r.json()) == {"on", "place", "seen", "home", "home_set_by_user"}  # never coordinates, never the fixes
+        r = await c.post("/api/location", json={"lat": 15.49, "lon": 73.82, "place": "Harbour Town, Eastmarch"})
+        assert r.json()["place"] == "Harbour Town, Eastmarch"  # a device's own name is taken as is
+        for bad in ({"lat": 0, "lon": 0}, {"lat": 91, "lon": 0}, {"lat": 1, "lon": 181}):
+            assert (await c.post("/api/location", json=bad)).status_code == 422, bad
+        assert location.get(s)["place"] == "Harbour Town, Eastmarch"  # a bad point changed nothing
+        assert (await c.put("/api/location", json={"home": "Northvale"})).json()["home"] == "Northvale"
+        assert (await c.put("/api/location", json={"on": False})).json()["on"] is False
+        assert (await c.put("/api/location", json={"on": True})).json()["on"] is True
+        assert (await c.delete("/api/location")).json() == {"on": None, "place": "", "seen": "", "home": "", "home_set_by_user": False}
+    rows = s.query("select result_summary, args_json from audit_log where event='location'")
+    assert len(rows) >= 5
+    for row in rows:
+        assert "18.52" not in (row["result_summary"] or "") and "73.8" not in (row["args_json"] or "")  # nothing of the point itself

@@ -116,6 +116,22 @@ def forget(store) -> dict:
     return _save(store, {**EMPTY, "fixes": []})
 
 
+def point_is_plausible(lat: float, lon: float) -> bool:
+    """Whether a device's point can be a real one: latitude within [-90, 90], longitude within [-180, 180], and not
+    exactly (0, 0), which is what a device with no fix at all sends. (18.52, 73.85) -> True; (0, 0) -> False;
+    (91, 0) -> False; (1, 181) -> False."""
+    in_range = -90 <= lat <= 90 and -180 <= lon <= 180
+    null_island = lat == 0 and lon == 0
+    return in_range and not null_island
+
+
+def view(setting: dict) -> dict:
+    """What leaves the server about the location: the switch, the place, when it was seen, home and whether the user
+    stated it. Never the coordinates or the fixes."""
+    return {"on": setting["on"], "place": setting["place"], "seen": setting["seen"], "home": setting["home"],
+            "home_set_by_user": bool(setting["home_set_by_user"])}
+
+
 def km_between(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     """The distance between two points over the ground, in km (haversine). Example: (18.52, 73.85) to (18.55, 73.88)
     -> 4.6."""
