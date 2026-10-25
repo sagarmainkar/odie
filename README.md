@@ -84,6 +84,10 @@ Odie is inspired by Muse, but it isn't a copy.
   saw in it. Each picture gets one vector from its words and its pixels, so one search covers notes and pictures. A
   video plays in the chat after Odie fetches its original from iCloud.
 - **Memory.** What Odie learns about you lives in one Markdown file you can read and edit (`~/.odie/memories.md`).
+- **Where you are.** With your permission, asked once, the app sends a location on open; Odie keeps the place name
+  and puts it (and a learned home) into what goes to your chat model, so weather, "nearby" and travel work without
+  you saying where you are. Coordinates never go to the model (turning a point into a name may ask
+  OpenStreetMap when nothing nearby is known); Settings → Location turns it off or forgets it.
 
 ### Mail, calendar and any other app
 

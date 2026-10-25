@@ -16,7 +16,7 @@ def test_prompt_sections():
     p = build_system_prompt(datetime(2026, 9, 30, 9, 31, tzinfo=IST), ["Asha likes window seats"], "Open: 1 waiting.")
     assert p.startswith("You are Odie") and "UNTRUSTED EMAIL" in p
     assert "Things you know:\n- Asha likes window seats" in p and "Open: 1 waiting." in p
-    assert len(p) < 6000
+    assert len(p) < 6300  # was 6000 until the place rule (25 Oct 2026): the prompt stood at 5998, so the budget moved once
 
 
 def test_prompt_without_memories():

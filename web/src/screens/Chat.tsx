@@ -28,6 +28,7 @@ import { Blocks } from "../blocks/Blocks";
 import { BlocksFence } from "../blocks/BlocksFence";
 import { ReplyPlace } from "../blocks/SavedPlace";
 import { ChatActions } from "../blocks/ChatActions";
+import { LocationAsk } from "../components/LocationAsk";
 import { MarkdownSpan } from "../blocks/InlineText";
 import { remarkInline } from "../blocks/inlineSyntax";
 import type { OrbState } from "../components/Orb";
@@ -730,6 +731,7 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
           </AnimatePresence>
         </div>
 
+        <LocationAsk />
         <form onSubmit={(e) => { e.preventDefault(); void send(input); }} className="chat-composer glass relative z-20 mx-3 mb-[max(env(safe-area-inset-bottom),12px)] rounded-[30px] pt-3 pb-2.5 pl-4 pr-2.5">
           <input ref={fileRef} type="file" accept="image/*" multiple onChange={onPick} className="hidden" />
           {(pending.length > 0 || uploading) && (

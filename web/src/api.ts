@@ -14,6 +14,11 @@ export async function putJSON<T>(url: string, body: unknown): Promise<T> {
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
   return r.json();
 }
+export async function deleteJSON<T>(url: string): Promise<T> {
+  const r = await fetch(url, { method: "DELETE" });
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  return r.json();
+}
 export function todayISO(): string {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;

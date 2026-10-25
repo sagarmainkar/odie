@@ -76,6 +76,10 @@ that updates; the one-line installer fetches `scripts/get.sh` from `main` over H
   their own provider.
 - `~/.odie` is created owner-only. Back it up; delete it to erase everything.
 - Which choices send data out of the computer is shown in Settings → Brain and in the table in the README.
+- **Where you are.** With your permission, the web app and the Mac app send Odie's server a location on open; the
+  server keeps the latest place name and the last 30 days of points on the Mac, and puts only the place name (and a
+  learned home) into what goes to your chat model. Turning a point into a name may ask OpenStreetMap when no recent
+  point nearby is known. Settings → Location turns it off or forgets it.
 
 ## Reporting a problem
 
