@@ -5,8 +5,8 @@ second look. Make one character per speaker per scene, no more. Speakers without
 scene. Captions as usual.
 
 - **Make it in `setup`:** `this.mira = s.avatar("mira", {x: -0.5, turn: 0.3})` (`turn` is radians about y; 0 faces
-  the camera). In every `draw` of a scene they appear in, call `this.mira.update(t)` early, right after the
-  reactions below (it reads them when it runs).
+  the camera). In every `draw` of a scene they appear in, call `this.mira.update(t)` early, after setting the
+  reactions (next bullet): it reads them when it runs.
 - **The stage:** characters are about 1.6 m tall and stand at y = 0. Frame them with `this.mira.shot("bust")` (or
   `"face"`, `"waist"`, `"full"`) in `draw`, or set the camera yourself.
 - **Reactions:** `smile(0..1)`, `brows(-1..1)` and `look(other)` (the listener looks at the speaker; `look(null)`
@@ -21,6 +21,6 @@ setup(s) { this.mira = s.avatar("mira", {x: -0.5, turn: 0.3}); this.tobi = s.ava
 draw(t, s) {
   this.tobi.look(this.mira); this.tobi.smile(t > 4 ? 0.6 : 0);
   this.mira.update(t); this.tobi.update(t);
-  this.mira.shot("bust");
+  this.mira.shot("bust");  // a close-up of Mira; Tobi is off-screen
 }
 ```

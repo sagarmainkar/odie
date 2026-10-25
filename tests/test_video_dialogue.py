@@ -331,11 +331,13 @@ def test_the_3d_guide_is_short():
 def test_the_3d_guide_says_to_set_held_reactions_from_the_time():
     # smile, brows and look are held until changed, and a frame must depend only on its time (four tabs draw
     # different stretches): set them in setup, or on every draw from t
-    guide = writer.AVATAR_RULES
+    guide = " ".join(writer.AVATAR_RULES.split())  # lines may wrap anywhere
     assert "setup" in guide and "held" in guide and "every `draw`" in guide
+    assert "Never only inside an `if` in `draw`" in guide
 
 
 def test_the_user_doc_says_where_characters_come_from():
     text = DOC.read_text()
     assert "VRoid Studio" in text and "VRoid Hub" in text and "40 MB" in text and "asset: models/mira.vrm" in text
     assert "kept for later" not in text
+    assert "`.glb` works too" in text and "face shapes" in text and "VRM extras" in text

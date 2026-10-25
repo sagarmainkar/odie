@@ -94,6 +94,8 @@ A character can appear as a 3D model instead of a drawing.
   has its own terms: check that it allows use in videos.
 - Put the file in the cast folder (for example `models/`) and add `asset: models/mira.vrm` to Mira's sheet. It can be
   `.vrm` or `.glb`, at most 40 MB (VRoid's export can shrink its textures).
+- A plain `.glb` works too if it has face shapes (blend shapes) for the mouth. It doesn't get the VRM extras
+  (expressions, swaying hair, arms posed down).
 - A character without a model is drawn as before, so a scene can mix both: Mira in 3D, Tobi drawn in code.
 - The mouth follows the loudness of the character's voice and guesses vowels from the words: it reads as talking in
   sync, not as exact lip shapes. The character also blinks, breathes and sways.
