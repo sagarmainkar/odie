@@ -20,6 +20,7 @@ import { profileChanged, useProfile } from "../profile";
 import { has, useCaps } from "../capabilities";
 import { notesRow, type VaultInfo } from "../vault";
 import { photosRow, type PhotosInfo } from "../photos";
+import { voiceSection } from "../voiceSettings";
 import { afterTurnOn, locationRow, NOTE_TEXT, sendPosition, type LocationInfo, type LocationRow as LocationWords } from "../location";
 import { LABEL, type Panel, type Step, type Turn } from "../setup";
 import { PhoneBlock, StepPanel } from "./Setup";
@@ -164,9 +165,7 @@ function AssistantSection() {
   );
 }
 
-type VoiceItem = { id: string; label: string; group?: string; note?: string };
-type Engine = { id: string; label: string; note: string; local: boolean; available: boolean; voices: VoiceItem[] };
-type VoiceInfo = { engine: string; voice: string; engines: Engine[]; models: { tts: string; realtime: string }; reminders_spoken?: boolean; local_voice?: boolean };
+type VoiceInfo = import("../voiceSettings").VoiceInfo;  // the shape /api/voice answers (voiceSettings.ts)
 
 /** The phone, after setup: the same block as the setup step (is Tailscale here, does it pass the phone to Odie, the
  *  address and the pairing code), so a skipped phone can be set up from here. Check again asks the server to look. */
@@ -205,7 +204,7 @@ function VoiceSection() {
     if (r.ok) { const j = await r.json(); setV((x) => (x ? { ...x, engine: j.engine, voice: j.voice, reminders_spoken: j.reminders_spoken } : x)); }
   }
   if (!v) return null;
-  const eng = v.engines.find((e) => e.id === v.engine) ?? v.engines[0];
+  const shown = voiceSection(v);  // no engine at all: one plain line, and nothing below reads an engine that isn't there
   // Odie's own voice needs Apple Silicon; on an Intel Mac the server offers no local engine and says so here.
   const noLocal = v.local_voice === false;
   const about = (
@@ -215,17 +214,18 @@ function VoiceSection() {
       {v.engines.some((e) => e.id === "openai") ? <>With your OpenAI key: its voices, and dictation that writes as you speak.</> : <>Add an OpenAI key in Providers for OpenAI voices and live dictation.</>}
     </div>
   );
-  if (!eng) {
-    // No engine at all (an Intel Mac without an OpenAI key): the phone's own voice still reads replies.
+  if (!shown.picker) {
+    // No engine at all (the voice worker off, no OpenAI key): the phone's own voice still reads replies.
     return (
       <Section title="Voice">
         <div className="p-3 flex flex-col gap-3">
           {about}
-          <div className="text-[13px] leading-[18px] text-muted px-1">Until then, replies are read with the browser's own voice.</div>
+          <div className="text-[13px] leading-[18px] text-muted px-1">{shown.note} Until then, replies are read with the browser's own voice.</div>
         </div>
       </Section>
     );
   }
+  const eng = shown.engine;
   return (
     <Section title="Voice">
       <div className="p-3 flex flex-col gap-3">
