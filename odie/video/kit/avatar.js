@@ -776,9 +776,17 @@
         const voice = levelAt(self.id, T - (t - when));  // the voice as it was `t - when` seconds before this frame
         poseVRM(vrm, idleAt(when, voice), look);
       }
-      function settle() {  // the posed bones put into the model, and every world position brought up to date
+      // The posed bones put into the model, the bones its constraints drive (a VRoid sleeve's aim bones follow the arm)
+      // set from them, and every world position brought up to date. The constraints run here as well as in
+      // vrm.update because the hair is reset from this pose, and a sleeve's spring bones hang from constraint bones
+      // that would otherwise still hold the last frame's pose (or the T-pose, on a tab's first frame).
+      function settle() {
         vrm.humanoid.update();
         self.root.updateWorldMatrix(true, true);
+        if (vrm.nodeConstraintManager) {
+          vrm.nodeConstraintManager.update();
+          self.root.updateWorldMatrix(true, true);
+        }
       }
       function step(seconds) {
         settle();
