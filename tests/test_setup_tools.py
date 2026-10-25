@@ -129,8 +129,34 @@ async def test_set_embeddings_checks_first(store, tmp_path, monkeypatch):
         return 768
     monkeypatch.setattr(embed, "check", ok)
     assert "error" not in await tools.run("set_embeddings", {"provider": "ollama", "model": "nomic-embed-text"}, store)
-    assert settings.get(store)["embeddings"] == {"provider": "ollama", "model": "nomic-embed-text"}
+    assert settings.get(store)["embeddings"] == {"provider": "ollama", "model": "nomic-embed-text", "pictures": False}
     assert state.get(store)["steps"]["embeddings"] == "done"
+
+
+async def test_set_embeddings_asks_ollama_whether_the_model_sees_pictures(store, tmp_path, monkeypatch):
+    """EmbeddingGemma 2 on Ollama lists "vision" among its capabilities (ollama show); such a model reads pictures by
+    their look, a text-only one by their words. Odie's own service always sees pictures."""
+    from odie.vault import embed, settings
+    (tmp_path / "Mine").mkdir()
+    settings.put(store, dir=str(tmp_path / "Mine"))
+
+    async def ok(e):
+        return 768
+    monkeypatch.setattr(embed, "check", ok)
+
+    def handler(request):
+        if request.url.path == "/api/show":
+            model = json.loads(request.content)["model"]
+            caps = ["embedding", "vision", "audio"] if model.startswith("embeddinggemma-2") else ["embedding"]
+            return httpx.Response(200, json={"capabilities": caps})
+        return httpx.Response(404)
+    t = httpx.MockTransport(handler)
+    assert "error" not in await tools.run("set_embeddings", {"provider": "ollama", "model": "embeddinggemma-2:740m"}, store, transport=t)
+    assert settings.get(store)["embeddings"]["pictures"] is True
+    assert "error" not in await tools.run("set_embeddings", {"provider": "ollama", "model": "nomic-embed-text"}, store, transport=t)
+    assert settings.get(store)["embeddings"]["pictures"] is False
+    assert "error" not in await tools.run("set_embeddings", {"provider": "lmstudio", "model": "text-embedding-x"}, store, transport=t)
+    assert settings.get(store)["embeddings"]["pictures"] is False
 
 
 async def test_request_key_is_a_card_not_a_key(store):
@@ -245,7 +271,7 @@ async def test_choosing_odies_own_service_before_its_model_is_here_says_it_is_do
     monkeypatch.setattr(embed, "make_embedder", lambda provider, model, store=None, transport=None: object())
     out = await tools.run("set_embeddings", {"provider": "gemma", "model": "google/embeddinggemma-2"}, store)
     assert "error" not in out and "download" in out["result"]["note"].lower() and "1.5 GB" in out["result"]["note"]
-    assert settings.get(store)["embeddings"] == {"provider": "gemma", "model": "google/embeddinggemma-2"}
+    assert settings.get(store)["embeddings"] == {"provider": "gemma", "model": "google/embeddinggemma-2", "pictures": True}
     assert state.get(store)["steps"]["embeddings"] == "done"
 
 

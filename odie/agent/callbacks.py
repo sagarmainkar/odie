@@ -290,11 +290,16 @@ class OdiePlugin(BasePlugin):
     async def before_model_callback(self, *, callback_context, llm_request):
         """Earlier turns go to the model exactly as they went before; once the conversation passes this chat's limit,
         everything before its last five turns goes as words only, in rare cuts (odie.agent.compaction), so every
-        provider can reuse its prompt cache."""
+        provider can reuse its prompt cache. Whether it has passed is read from the model's own counts on the
+        session's events (the number the chat's ring shows) where there are any, else from the characters."""
         if llm_request.contents:
             from odie.agent import compaction, turn
-            limit = turn.COMPACT_AT.get() or compaction.DEFAULT_LIMIT
-            llm_request.contents = compaction.compact(list(llm_request.contents), limit)
+            limit_tokens = turn.HISTORY_LIMIT.get() or compaction.DEFAULT_LIMIT_TOKENS
+            session = getattr(callback_context, "session", None)
+            events = getattr(session, "events", None) or []
+            counts = compaction.counted_before(events) if events else None
+            llm_request.contents = compaction.compact(list(llm_request.contents), compaction.compact_at(limit_tokens),
+                                                      counts=counts, limit_tokens=limit_tokens)
         self._budget(getattr(callback_context, "invocation_id", None), llm_request)
         return None
 

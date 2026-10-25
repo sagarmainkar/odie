@@ -9,16 +9,22 @@ Why words only past the limit: a long chat is mostly tool traffic and thinking, 
 held ~31k tokens of the user's and Odie's words next to ~101k of tool calls and results and ~110k of thinking. Before,
 Odie summarised such a chat into one paragraph and started over; now it keeps every word and drops the rest.
 
-The rule. The limit is the model's (odie.models.history_limit_for, in tokens; compact_at turns it into characters).
-When the history before a user's message passes it, the cut moves to KEEP_TURNS turns before that message (fewer
-when those turns alone would fill more than half the limit, so the chat has room to grow before the next cut):
+The rule. The limit is the model's (odie.models.history_limit_for, in tokens). Whether the history before a user's
+message passes it is read from the model's own count where there is one (the tokens it reported reading for the last
+reply before that message, counted_before; the same number the chat's ring shows) and from the characters at
+CHARS_PER_TOKEN before any reply (compact_at turns the limit into characters). The count matters: on 23 Oct DeepSeek
+read a chat of tool JSON and thinking at 3.6 characters a token, so the ring passed 300k while the characters stayed
+under the 4-a-token budget, and nothing was trimmed. When the limit is passed, the cut moves to KEEP_TURNS turns
+before that message (fewer when those turns alone would fill more than half the limit, so the chat has room to grow
+before the next cut):
   - from the cut on, everything goes as it was: the last KEEP_TURNS turns and the current one, thinking and tools too;
   - before the cut, words only (words_only): the user's messages without Odie's notes, Odie's replies as written; its
     thinking, tool calls and tool results are left out, photos become a line of text, empty messages go;
   - if the words still don't fit, the oldest turns are left out entirely until what's left is half the limit (the
     fallback; no summary).
-Each cut is decided at a user's message from the messages before it only, so every later request finds the same cuts:
-requests grow append-only until the next cut, and the cache breaks only then. No model is called; it's milliseconds.
+Each cut is decided at a user's message from the messages before it only (and the counts the model reported before
+it, which never change), so every later request finds the same cuts: requests grow append-only until the next cut,
+and the cache breaks only then. No model is called; it's milliseconds.
 
 Worked example, limit 100k characters, KEEP_TURNS 5:
   turns 1-30 hold 95k (tool results and thinking included)  -> no cut: every request adds to the one before
@@ -56,7 +62,51 @@ def compact_at(limit_tokens: int) -> int:
     return int(history_tokens * CHARS_PER_TOKEN)
 
 
-DEFAULT_LIMIT = compact_at(50_000)  # odie.models.HISTORY_LIMIT_UNKNOWN: for a request outside a chat turn
+DEFAULT_LIMIT_TOKENS = 50_000                    # odie.models.HISTORY_LIMIT_UNKNOWN: for a request outside a chat turn
+DEFAULT_LIMIT = compact_at(DEFAULT_LIMIT_TOKENS)  # the same in characters
+
+
+def estimate_tokens(events: list[Any]) -> int:
+    """A rough token count of these session events from their characters (CHARS_PER_TOKEN), for what the model has not
+    counted yet: a tool result counts a little (the first 160 characters), as it did in the ring since October.
+      a user message of 400 characters -> 100;  a tool result of 10k characters -> 40"""
+    chars = 0
+    for ev in events:
+        for p in (ev.content.parts if ev.content and ev.content.parts else []):
+            if p.text:
+                chars += len(p.text)
+            elif p.function_call:
+                chars += len(str(p.function_call.args or "")) + 40
+            elif p.function_response:
+                chars += min(len(str(p.function_response.response or "")), CHARS_PER_TOKEN * 40)
+    return chars // CHARS_PER_TOKEN
+
+
+def read_tokens(events: list[Any]) -> int:
+    """Tokens the next request to the model would hold, from the model's own count: the total it reported for the last
+    reply (system prompt, tools and the conversation, reply included) plus an estimate for what was appended since;
+    the estimate alone before any reply. The chat's ring shows this number.
+      [..., reply counted 30,000 total, a tool result of 400 characters] -> 30,040;  [one question of 40 chars] -> 10"""
+    for i in range(len(events) - 1, -1, -1):
+        u = events[i].usage_metadata
+        if u and u.total_token_count:
+            return u.total_token_count + estimate_tokens(events[i + 1:])
+    return estimate_tokens(events)
+
+
+def counted_before(events: list[Any]) -> list[int | None]:
+    """What the model had read before each of the user's messages in these session events, in order: read_tokens of
+    the events before it, or None before its first counted reply. Handed to cut_points as `counts`.
+      [q1, reply (18,200), q2, result, reply (30,000), result 400 chars, q3] -> [None, 18,200, 30,040]"""
+    out: list[int | None] = []
+    counted = False  # a reply with a count has gone by
+    for i, ev in enumerate(events):
+        if is_users_message(ev.content):
+            out.append(read_tokens(events[:i]) if counted else None)
+        u = ev.usage_metadata
+        if u and u.total_token_count:
+            counted = True
+    return out
 
 
 def is_users_message(content: Any) -> bool:
@@ -140,11 +190,15 @@ class Cuts:
     cut: int = 0
 
 
-def cut_points(contents: list[Any], limit: int, keep: int = KEEP_TURNS) -> Cuts:
+def cut_points(contents: list[Any], limit: int, keep: int = KEEP_TURNS,
+               counts: list[int | None] | None = None, limit_tokens: int | None = None) -> Cuts:
     """Where to shorten this history (see the module's notes). Walks the user's messages in order; at each, measures
-    what the request would hold before it with the cuts so far. Over the limit: the cut moves `keep` turns back, or
-    fewer when those turns take more than half the limit (_fits_whole); and if the words still don't fit, the oldest
-    turns are dropped (_oldest_kept).
+    what the request would hold before it with the cuts so far: by the model's count where `counts` has one for that
+    message (counted_before; aligned to the latest messages when shorter) against `limit_tokens`, else by characters
+    against `limit`. Over the limit: the cut moves `keep` turns back, or fewer when those turns take more than half
+    the limit (_fits_whole); and if the words still don't fit, the oldest turns are dropped (_oldest_kept). With a
+    count, the sizing after the cut uses this chat's own characters per token (_rate, read at the first crossing;
+    _limit_here).
     Worked example, limit 1,000, keep 1: [user 10, tool result ~640, model 50, user 10, tool result ~340, model 50,
     user 5]
       at the 2nd user message: ~700 before it, under 1,000                            -> no cut
@@ -152,23 +206,69 @@ def cut_points(contents: list[Any], limit: int, keep: int = KEEP_TURNS) -> Cuts:
       turn goes as words (60); the 2nd turn (~400, under half the limit) and the current one whole"""
     raw = list(accumulate((size_of(c) for c in contents), initial=0))
     words = list(accumulate((size_of(words_only(c)) for c in contents), initial=0))
+    all_users = sum(1 for c in contents if is_users_message(c))
+    first_counted = all_users - len(counts or [])  # counts are for the latest messages: this many go by characters
     users: list[int] = []
     drop = cut = 0
+    rate: float | None = None  # this chat's characters per token, read once at the first crossing by count
     for i, c in enumerate(contents):
         if not is_users_message(c):
             continue
         users.append(i)
         before = (words[cut] - words[drop]) + (raw[i] - raw[cut])
-        if before <= limit:
+        count = _count_for(counts, len(users) - 1 - first_counted)
+        if not _passed(before, limit, count, limit_tokens):
             continue
+        limit_now = limit
+        if count is not None and limit_tokens:
+            if rate is None:
+                rate = _rate(before, count)
+            limit_now = _limit_here(rate, limit_tokens)
         turns_before = len(users) - 1
         if turns_before >= keep:
             cut = max(cut, users[-1 - keep])
-        cut = _fits_whole(users, cut, i, raw, int(limit * ROOM_AFTER_CUT))
+        cut = _fits_whole(users, cut, i, raw, int(limit_now * ROOM_AFTER_CUT))
         whole = raw[i] - raw[cut]
-        if (words[cut] - words[drop]) + whole > limit:
-            drop = _oldest_kept(users, drop, cut, words, _room_for_words(limit, whole))
+        if (words[cut] - words[drop]) + whole > limit_now:
+            drop = _oldest_kept(users, drop, cut, words, _room_for_words(limit_now, whole))
     return Cuts(drop, cut)
+
+
+def _count_for(counts: list[int | None] | None, n: int) -> int | None:
+    """The model's count for the n-th counted message, or None when there is none (no counts, an earlier message than
+    the counts cover, or a message before the model's first counted reply).
+      counts [None, 20_000], n 1 -> 20_000;  n -1 -> None;  counts None -> None"""
+    if counts is None or n < 0 or n >= len(counts):
+        return None
+    return counts[n]
+
+
+def _passed(chars: int, limit: int, count: int | None, limit_tokens: int | None) -> bool:
+    """Whether the history before a user's message has passed the limit: by the model's count against the limit in
+    tokens when there is a count, else by its characters against the limit in characters.
+      count 315,934, limit_tokens 300,000 -> True, whatever the characters;  no count, 1,130,806 characters against
+      1,136,000 -> False"""
+    if count is not None and limit_tokens:
+        return count > limit_tokens
+    return chars > limit
+
+
+def _rate(chars: int, tokens: int) -> float:
+    """This chat's characters per token, from what the model counted: the characters of the history it read over its
+    tokens less the prompt's. Read once, at the first crossing, and kept: a count measured before a cut existed (a chat
+    that crossed under an older rule) would otherwise read as a few tenths of a character per token and squeeze what
+    is kept.
+      1,106,000 characters read as 316,000 tokens -> 3.69"""
+    return chars / max(tokens - PROMPT_ROOM, 1)
+
+
+def _limit_here(rate: float, limit_tokens: int) -> int:
+    """The limit in characters for this chat, from its own rate: the characters its history takes per token, times the
+    tokens the history may reach. Sizes the part kept after a cut, so the request lands at half the real limit, however
+    dense the chat is.
+      3.69 a token, limit 300,000 -> 1,047,000 (4 a token would have allowed 1,136,000)"""
+    history_limit = max(limit_tokens - PROMPT_ROOM, limit_tokens // 4)
+    return int(rate * history_limit)
 
 
 def _fits_whole(users: list[int], cut: int, now: int, raw: list[int], room: int) -> int:
@@ -202,12 +302,13 @@ def _oldest_kept(users: list[int], drop: int, cut: int, words: list[int], room: 
     return cut
 
 
-def compact(contents: list[Any], limit: int = DEFAULT_LIMIT, keep: int = KEEP_TURNS) -> list[Any]:
+def compact(contents: list[Any], limit: int = DEFAULT_LIMIT, keep: int = KEEP_TURNS,
+            counts: list[int | None] | None = None, limit_tokens: int | None = None) -> list[Any]:
     """The request's history with the cuts applied (copies; the session keeps its own). Under the limit it is the
     history exactly as it was. Neighbouring messages of one role in the words-only part are joined into one, so a
     provider that wants turns to alternate gets them that way; the turns after the cut are never changed, except that
-    the words of a last unanswered message join the first of them."""
-    where = cut_points(contents, limit, keep)
+    the words of a last unanswered message join the first of them. `counts` and `limit_tokens` as in cut_points."""
+    where = cut_points(contents, limit, keep, counts, limit_tokens)
     if where.drop == 0 and where.cut == 0:
         return list(contents)
     older = [w for w in (words_only(c) for c in contents[where.drop:where.cut]) if w is not None]

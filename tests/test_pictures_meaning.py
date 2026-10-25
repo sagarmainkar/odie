@@ -104,34 +104,61 @@ async def test_without_an_embedder_search_all_falls_back_to_words(index):
     assert [h.ref for h in await index.search_all("", embedder=None, only="media", people=["Dev"])] == ["B2"]  # filters alone
 
 
-async def test_only_odies_own_service_reads_pictures(isolated_settings, monkeypatch):
+async def test_ollama_reads_pictures_when_its_model_sees_them(isolated_settings, tmp_path):
+    """EmbeddingGemma 2 on Ollama embeds a picture with its words through /api/embed items of {"text", "image"} (25 Oct
+    2026): the image goes as base64 JPEG no wider than 1024 px. A text-only Ollama model keeps words only."""
+    import base64, io, json
+    from PIL import Image
     seen = []
 
     def handler(request: httpx.Request):
-        import json
         seen.append(json.loads(request.content))
-        return httpx.Response(200, json={"data": [{"index": 0, "embedding": [1.0, 0.0]}]})
+        n = len(seen[-1]["input"])
+        return httpx.Response(200, json={"embeddings": [[1.0, 0.0]] * n})
     t = httpx.MockTransport(handler)
-    ollama = make_embedder("ollama", "nomic-embed-text", transport=t)
-    assert ollama.sees_pictures is False
-    with pytest.raises(EmbedError, match="EmbeddingGemma 2 on this Mac"):
-        await ollama.embed_pictures([("x", None)])
-    monkeypatch.setenv("ODIE_EMBED", "off")
-    gemma = make_embedder("gemma", "google/embeddinggemma-2", transport=t)
+    words_only = make_embedder("ollama", "nomic-embed-text", transport=t)
+    assert words_only.sees_pictures is False
+    with pytest.raises(EmbedError, match="EmbeddingGemma 2"):
+        await words_only.embed_pictures([("x", None)])
+    big = tmp_path / "a.jpeg"
+    Image.new("RGB", (2000, 1000), "red").save(big)
+    gemma = make_embedder("ollama", "embeddinggemma-2:740m", transport=t, pictures=True)
     assert gemma.sees_pictures is True
-    from odie import embed_worker
-
-    class Up:
-        url = "http://127.0.0.1:1"
-        problem = ""
-
-        async def ensure(self):
-            return True
-    monkeypatch.setattr(embed_worker, "current", Up())
-    assert await gemma.embed_pictures([("Asha · Beach", "/lib/a.jpeg")]) == [[1.0, 0.0]]
-    assert seen[-1] == {"model": "google/embeddinggemma-2", "kind": "picture", "input": [{"text": "Asha · Beach", "image": "/lib/a.jpeg"}]}
+    assert await gemma.embed_pictures([("Asha · Beach", str(big)), ("words only", None)]) == [[1.0, 0.0], [1.0, 0.0]]
+    sent = seen[-1]
+    assert sent["model"] == "embeddinggemma-2:740m" and [x["text"] for x in sent["input"]] == ["Asha · Beach", "words only"]
+    assert "image" not in sent["input"][1]
+    img = Image.open(io.BytesIO(base64.b64decode(sent["input"][0]["image"])))
+    assert img.format == "JPEG" and img.size == (1024, 512)
     await gemma.embed([{"title": "Trip", "text": "Day 1"}])
-    assert seen[-1]["kind"] == "document" and seen[-1]["input"] == [{"title": "Trip", "text": "Day 1"}]
+    assert seen[-1]["input"] == ["Trip\nDay 1"] and "kind" not in seen[-1]  # notes go as before
+
+
+async def test_a_picture_that_cannot_be_read_goes_by_its_words(isolated_settings, tmp_path):
+    import json
+    seen = []
+
+    def handler(request: httpx.Request):
+        seen.append(json.loads(request.content))
+        return httpx.Response(200, json={"embeddings": [[1.0, 0.0]]})
+    broken = tmp_path / "b.jpeg"
+    broken.write_bytes(b"not a picture")
+    gemma = make_embedder("ollama", "embeddinggemma-2:740m", transport=httpx.MockTransport(handler), pictures=True)
+    assert await gemma.embed_pictures([("Asha", str(broken))]) == [[1.0, 0.0]]
+    assert seen[-1]["input"] == [{"text": "Asha"}]
+
+
+def test_the_setting_remembers_whether_the_model_sees_pictures(isolated_settings, tmp_path):
+    from odie.store.db import Store
+    from odie.vault import settings
+    store = Store(tmp_path / "assistant.db")
+    store.init_schema()
+    settings.put(store, embeddings={"provider": "ollama", "model": "embeddinggemma-2:740m", "pictures": True})
+    assert settings.get(store)["embeddings"] == {"provider": "ollama", "model": "embeddinggemma-2:740m", "pictures": True}
+    assert settings.embedder_for(store).sees_pictures is True
+    settings.put(store, embeddings={"provider": "ollama", "model": "nomic-embed-text"})
+    assert settings.get(store)["embeddings"] == {"provider": "ollama", "model": "nomic-embed-text", "pictures": False}
+    assert settings.embedder_for(store).sees_pictures is False
 
 
 # ── the worker ──

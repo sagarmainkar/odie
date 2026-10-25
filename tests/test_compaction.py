@@ -7,8 +7,8 @@ import json
 
 from google.genai import types
 
-from odie.agent.compaction import (DEFAULT_LIMIT, IMAGE_TEXT, KEEP_TURNS, Cuts, compact, compact_at, cut_points,
-                                   is_users_message, size_of, words_only)
+from odie.agent.compaction import (DEFAULT_LIMIT, IMAGE_TEXT, KEEP_TURNS, Cuts, compact, compact_at, counted_before,
+                                   cut_points, is_users_message, read_tokens, size_of, words_only)
 from odie.prefix_check import compare, pieces
 
 
@@ -34,6 +34,18 @@ def _turn(n: int, size: int = 3000, thought: str = "let me look that up") -> lis
     """One turn: a question with Odie's note, thinking and a tool call, a big result, the answer."""
     return [_user(f"question {n}\n\n[context: now 09:{n % 60:02d} Mon 12 Oct]"), _thinking_call(f"search{n}", thought),
             _result(f"search{n}", "x" * size), _model(f"answer {n}")]
+
+
+def _event(content: types.Content, total: int | None = None):
+    """A session event holding `content`; with `total`, a reply the model counted (its total tokens, prompt and reply)."""
+    import time
+    import uuid
+
+    from google.adk.events import Event
+    usage = types.GenerateContentResponseUsageMetadata(prompt_token_count=total - 50, candidates_token_count=50,
+                                                       total_token_count=total) if total else None
+    return Event(author="user" if content.role == "user" else "odie", invocation_id=f"t-{uuid.uuid4().hex[:6]}",
+                 timestamp=time.time(), content=content, usage_metadata=usage)
 
 
 def _dumps(contents) -> list[str]:
@@ -152,6 +164,51 @@ def test_the_chat_of_15_october_keeps_every_word():
     assert all(any(t.startswith(f"message {n} ") for t in said) for n in range(39))
     assert all(any(t.startswith(f"reply {n} ") for t in said) for n in range(39))
     assert _dumps(out[-(4 * KEEP_TURNS + 1):]) == _dumps(contents[-(4 * KEEP_TURNS + 1):])  # the last 5 turns whole
+
+
+def test_the_models_count_decides_the_cut_when_it_is_known():
+    """DeepSeek counted the chat of 23 October at 3.6 characters a token: the ring passed 300k while the characters
+    stayed under the 4-a-token budget, and nothing was trimmed. With its count, the cut comes when the ring says so."""
+    contents = [*_turn(1), *_turn(2), *_turn(3), _user("question 4")]  # ~9.6k characters, far under 136k
+    counts = [None, 20_000, 40_000, 50_100]  # what the model had read before each question; 50,100 passes 50k
+    assert cut_points(contents, limit=compact_at(50_000), keep=1, counts=counts, limit_tokens=50_000) == Cuts(0, 8)
+    under = [None, 1_000, 2_000, 3_000]      # the characters pass 5,000 but the model's count never passes 50k
+    assert cut_points(contents, limit=5_000, keep=1, counts=under, limit_tokens=50_000) == Cuts(0, 0)
+    out = compact(contents, limit=compact_at(50_000), keep=1, counts=counts, limit_tokens=50_000)
+    assert _dumps(out[-5:]) == _dumps(contents[-5:]) and _no_tools_or_thinking(out[:-5])  # turn 3 and now whole
+
+
+def test_counts_align_to_the_latest_questions_and_the_rest_goes_by_characters():
+    contents = [*_turn(1), *_turn(2), *_turn(3), _user("question 4")]
+    assert cut_points(contents, limit=100_000, keep=1, counts=[40_000, 50_100], limit_tokens=50_000) == Cuts(0, 8)
+    by_chars = cut_points(contents, limit=5_000, keep=1)
+    assert cut_points(contents, limit=5_000, keep=1, counts=[None] * 4, limit_tokens=50_000) == by_chars
+    assert by_chars != Cuts(0, 0)
+
+
+def test_counts_measured_before_a_cut_never_squeeze_the_kept_turns():
+    """A chat that crossed the line under the old rule carries counts measured with no cut in force, so they stay over
+    the limit for the messages after the first cut. The chat's characters per token are read once, at the first
+    crossing, so those counts move the cut along but never squeeze the kept turns or drop the words."""
+    contents = []
+    for n in range(1, 9):
+        contents += _turn(n)
+    contents.append(_user("question 9"))
+    counts = [None, 10_000, 20_000, 30_000, 51_000, 52_000, 53_000, 54_000, 55_000]
+    users = [i for i, c in enumerate(contents) if is_users_message(c)]
+    assert cut_points(contents, limit=compact_at(50_000), keep=1, counts=counts, limit_tokens=50_000) == Cuts(0, users[-2])
+    out = compact(contents, limit=compact_at(50_000), keep=1, counts=counts, limit_tokens=50_000)
+    said = [p.text for c in out for p in c.parts if p.text and not p.thought]
+    assert all(any(t.startswith(f"question {n}") for t in said) for n in range(1, 9))
+
+
+def test_what_the_model_read_before_each_question_comes_from_its_own_counts():
+    events = [_event(_user("question 1")), _event(_model("answer 1"), total=18_200), _event(_user("question 2")),
+              _event(_result("t", "x" * 400)), _event(_model("answer 2"), total=30_000), _event(_result("u", "y" * 400)),
+              _event(_user("question 3"))]
+    assert read_tokens(events[:1]) < 10                    # no reply yet: an estimate from the characters
+    assert read_tokens(events) == 30_000 + 40 + 2          # the last count, plus an estimate of what came after it
+    assert counted_before(events) == [None, 18_200, 30_040]
 
 
 # ── odie.prefix_check ────────────────────────────────────────────────────────────────────────────────────────────

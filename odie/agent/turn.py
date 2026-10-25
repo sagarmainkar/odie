@@ -6,9 +6,9 @@ import re
 from contextvars import ContextVar
 
 USER_TEXT: ContextVar[str | None] = ContextVar("odie_user_text", default=None)
-# This chat's compaction limit in characters (odie.agent.compaction.compact_at), pinned per session by the runner.
-# None outside a chat turn: the default limit.
-COMPACT_AT: ContextVar[int | None] = ContextVar("odie_compact_at", default=None)
+# This chat's history limit in tokens (odie.models.history_limit_for), pinned per session by the runner; past it the
+# older turns go as words only (odie.agent.compaction). None outside a chat turn: the default limit.
+HISTORY_LIMIT: ContextVar[int | None] = ContextVar("odie_history_limit", default=None)
 
 _ASKS = {
     "deck": re.compile(r"\b(decks?|slides?|slide ?show|presentations?|ppts?|pptx|power ?point|keynote|pdf)\b", re.I),
