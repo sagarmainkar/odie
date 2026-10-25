@@ -63,6 +63,14 @@ minute) into `~/.odie/data/photos-fetched`, then it plays, on the phone too. The
 macOS may ask once, on the Mac, to let Odie's Python use Photos; if it refuses, the Photos row says what to allow under
 Privacy & Security.
 
+## 3c. Where you are
+
+The chat asks once, under the composer, whether Odie may know where you are; Allow lets the browser ask its own question
+once, and every later open refreshes the place quietly. The server keeps the latest place name and the last 30 days of
+points, works out home as the place seen most on nights, and puts only the place name and home into the context line
+your chat model gets with each message, never coordinates. Turning a point into a name may ask OpenStreetMap when no
+recent point nearby is known. Settings → Location shows the place, when it was seen and home, with Off and Forget.
+
 ## 4. Web search
 
 Searching the web uses whichever key you add in Settings → Web search: [Tavily](https://tavily.com) (a free tier is
