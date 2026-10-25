@@ -62,7 +62,7 @@ class Install:
     bin_dir: Path
     agents_dir: Path
     voice: bool  # whether Odie runs its local voice worker (ODIE_VOICE=off: no)
-    embed: bool  # whether Odie runs its own embedding service (ODIE_EMBED=off: no)
+    embed: bool  # whether Odie runs its own embedding service (only with ODIE_EMBED=on)
 
     @property
     def app(self) -> Path:
@@ -139,6 +139,12 @@ def voice_wanted(value: str) -> bool:
     return value.strip().lower() not in ("off", "0", "no")
 
 
+def embed_wanted(value: str) -> bool:
+    """Whether ODIE_EMBED asks for Odie's own embedding service: off unless "on", "1" or "yes" (since 25 Oct 2026;
+    EmbeddingGemma 2 on Ollama does the job without it). Example: "on" → True, "" → False, "off" → False."""
+    return value.strip().lower() in ("on", "1", "yes")
+
+
 def install_from(environ: Mapping[str, str]) -> Install:
     user_home = Path.home()
     home = Path(setting(environ, "ODIE_HOME", str(user_home / ".odie"))).expanduser()
@@ -150,7 +156,7 @@ def install_from(environ: Mapping[str, str]) -> Install:
         bin_dir=Path(setting(environ, "ODIE_BIN_DIR", str(user_home / ".local" / "bin"))).expanduser(),
         agents_dir=Path(setting(environ, "ODIE_LAUNCH_AGENTS", str(user_home / "Library" / "LaunchAgents"))).expanduser(),
         voice=voice_wanted(environ.get("ODIE_VOICE", "")),
-        embed=voice_wanted(environ.get("ODIE_EMBED", "")),  # the same words switch it off
+        embed=embed_wanted(environ.get("ODIE_EMBED", "")),  # opt-in: ODIE_EMBED=on builds Odie's own embedding service
     )
 
 
@@ -408,7 +414,7 @@ def remember_rollback_point(inst: Install, commit: str) -> None:
 
 def build_steps(inst: Install) -> list[tuple[str, list[str], Path]]:
     """What a checkout needs before it can run: Python packages, the voice worker's (unless voice is off), the embedding
-    service's (unless ODIE_EMBED is off), and the web app."""
+    service's (only with ODIE_EMBED=on), and the web app."""
     steps = [("uv sync", ["uv", "sync", "--frozen"], inst.app)]
     if inst.voice:
         steps.append(("the voice worker's uv sync", ["uv", "sync", "--frozen"], inst.app / "voice_server"))

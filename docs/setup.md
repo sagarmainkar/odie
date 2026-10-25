@@ -33,16 +33,16 @@ meaning when you choose an embedder. It reads the vault and never changes it. Lo
 `~/.odie/memories.md` (`ODIE_MEMORY_FILE` moves it, into the vault for example), so you can read and edit what it
 remembers.
 
-**Search by meaning, on the Mac.** Setup's "Search by meaning" step offers **Odie's own embedding service**
-(EmbeddingGemma 2, `embed_server/`, built by the installer). The first use downloads the model, about 1.5 GB, from
-Hugging Face into `~/.cache/huggingface`; no account is needed. Odie starts the service with itself, on
-`ODIE_EMBED_PORT`, and nothing about your notes leaves the computer; after `ODIE_EMBED_IDLE_MINUTES` without a request
-it unloads the model and gives the memory back. It is the last choice offered, being the heaviest. Before it come the
-embedding models already running in LM Studio or Ollama on this computer, then **a server somewhere else** (Ollama at
-its root address, such as `http://studio.local:11434`, or LM Studio, llama.cpp and any OpenAI-style server at its `/v1`
-address: type the address, press Find models, pick one), then OpenAI. EmbeddingGemma 2 on Ollama (`ollama pull
-embeddinggemma-2`, about 1.3 GB, unloaded by Ollama when idle) reads pictures too and is recommended when found; the
-rest are text only. Settings → Notes → Change offers the same choices later.
+**Search by meaning, on the Mac.** Setup's "Search by meaning" step offers, in this order: the embedding models
+already running in LM Studio or Ollama on this computer, then **a server somewhere else** (Ollama at its root address,
+such as `http://studio.local:11434`, or LM Studio, llama.cpp and any OpenAI-style server at its `/v1` address: type the
+address, press Find models, pick one), then OpenAI. **EmbeddingGemma 2 on Ollama** (`ollama pull embeddinggemma-2`,
+about 1.3 GB, loaded when asked and unloaded by Ollama when idle) reads notes and pictures alike, nothing leaves the
+computer, and it is recommended when found; the rest are text only. Settings → Notes → Change offers the same choices
+later. Odie's own embedding service (`embed_server/`, EmbeddingGemma 2 in PyTorch) is no longer built by default:
+install with `ODIE_EMBED=on` to have it, and it then appears as the last choice (it downloads the 1.5 GB model from
+Hugging Face into `~/.cache/huggingface` on first use, runs on `ODIE_EMBED_PORT`, and unloads the model after
+`ODIE_EMBED_IDLE_MINUTES` idle).
 The first pass over a few thousand notes takes about a quarter of an hour; Settings → Notes counts it up.
 
 ## 3b. Photos and videos
@@ -172,7 +172,7 @@ Besides the keys (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `OPEN
 | `ODIE_TTS_MODEL`, `ODIE_STT_MODEL` | OpenAI's read-aloud and transcription models, for when OpenAI retires one | `gpt-4o-mini-tts`, `gpt-4o-mini-transcribe` |
 | `ODIE_VIDEO_VOICE` | The voice explainer videos are narrated in (a voice's id or name, any engine), kept when the read-aloud voice changes | the read-aloud voice |
 | `ODIE_PORT` | The port the service listens on | 8000 |
-| `ODIE_EMBED` | `off`: no local embedding service | on |
+| `ODIE_EMBED` | `on`: build and run Odie's own embedding service (EmbeddingGemma 2 in PyTorch); Ollama's `embeddinggemma-2` is the default way | off |
 | `ODIE_EMBED_PORT` | The embedding service's port | Odie's port + 772 |
 | `ODIE_EMBED_IDLE_MINUTES` | Minutes without a request before the embedding model is unloaded (0: never) | 15 |
 | `HF_TOKEN` | A Hugging Face token, passed to the embedding service (not needed: the model is public) | |

@@ -6,8 +6,8 @@
 # Everything it writes comes from these settings, so a trial install beside the real one can use scratch values:
 #   ODIE_HOME (~/.odie)   ODIE_SERVICE_LABEL (dev.odie.server)   ODIE_PORT (8000)   ODIE_BIN_DIR (~/.local/bin)
 #   ODIE_REPO (this folder's origin)   ODIE_BRANCH (releases: the newest tag like v0.2.0; or a branch, e.g. main)
-# and the service keeps these if they're set now: ODIE_VOICE=off (no local voice worker), ODIE_EMBED=off (no local
-# embedding service), ODIE_PAIRING, ODIE_SCHEDULER.
+# and the service keeps these if they're set now: ODIE_VOICE=off (no local voice worker), ODIE_EMBED=on (build Odie's
+# own embedding service; off by default, Ollama's EmbeddingGemma 2 does the job), ODIE_PAIRING, ODIE_SCHEDULER.
 # It refuses to run while something else answers on the port (scripts/start.sh in a terminal): stop that first.
 set -euo pipefail
 ORIGINAL_PATH="$PATH"
@@ -70,7 +70,7 @@ build_in() {
 echo "Building (a few minutes the first time; details in $LOG)…"
 build_in "$APP" uv sync --frozen
 if [ "${ODIE_VOICE:-on}" != "off" ]; then build_in "$APP/voice_server" uv sync --frozen; fi
-if [ "${ODIE_EMBED:-on}" != "off" ]; then build_in "$APP/embed_server" uv sync --frozen; fi
+case "${ODIE_EMBED:-off}" in on|1|yes) build_in "$APP/embed_server" uv sync --frozen ;; esac  # Odie's own embedding service: opt-in
 build_in "$APP/web" npm ci
 build_in "$APP/web" npm run build
 

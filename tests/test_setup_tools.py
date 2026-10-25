@@ -247,6 +247,7 @@ async def test_connect_app_is_a_card(store):
 
 async def test_embedding_options_offer_odies_own_service_when_it_is_installed(store, monkeypatch):
     from odie import embed_worker
+    monkeypatch.setenv("ODIE_EMBED", "on")  # opt-in since 25 Oct 2026
 
     def handler(request):
         return httpx.Response(200, json={"data": [], "models": []})
