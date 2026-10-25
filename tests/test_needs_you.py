@@ -143,3 +143,10 @@ def test_a_task_with_an_unreadable_created_at_has_no_since(store):
     store.update_task(tid, created_at="yesterday")
     [c] = needs.cards(store, NOW)
     assert c["since"] == ""
+
+
+def test_counts_cover_every_pile_with_zeros(store):
+    card_with(store, REPLY, {"ref": "mail:s1", "title": "New sign-in", "pile": "alerts"})
+    store.add_task("Pay electricity bill ₹2,480", "reminder", due_at="2026-10-20T09:00:00+05:30")
+    assert needs.counts(needs.cards(store, NOW)) == {"alerts": 1, "bills": 1, "events": 0, "personal": 1, "orders": 0}
+    assert needs.counts([]) == {"alerts": 0, "bills": 0, "events": 0, "personal": 0, "orders": 0}

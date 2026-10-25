@@ -34,6 +34,16 @@ def cards(store, now: datetime) -> list[dict]:
     return out
 
 
+def counts(cards: list[dict]) -> dict[str, int]:
+    """How many cards sit in each pile, every pile listed (in report.PILES order) even when it has none. One alerts
+    card, one bills card and one personal card -> {"alerts": 1, "bills": 1, "events": 0, "personal": 1, "orders": 0};
+    no cards -> every pile 0."""
+    out = {pile: 0 for pile in report.PILES}
+    for card in cards:
+        out[card["pile"]] += 1
+    return out
+
+
 def shows_as_task(task, on_the_card: set[str]) -> bool:
     """Whether an open task gets its own card. The user's own tasks always do; the watch's threads only when its card
     doesn't already show them and they have a due date (a bill or a deadline). "Pay rent" (the user's) -> True; the

@@ -1746,7 +1746,8 @@ async def needs_you_get(request: Request) -> dict[str, Any]:
     watch = {k: card.get(k) for k in ("checked_at", "line", "off", "sources") if k in card}
     if not card:
         watch = {"off": "The first check runs a minute after Odie starts."}
-    return {"items": needs.cards(store, now), "watch": watch, "notes": needs.recent_notes(store, now)}
+    items = needs.cards(store, now)
+    return {"items": items, "counts": needs.counts(items), "watch": watch, "notes": needs.recent_notes(store, now)}
 
 
 @router.post("/watch/done")
