@@ -1,6 +1,12 @@
 """avatar.js's helpers in a real browser: s.avatar(id) puts a speaker's 3D model on the stage and moves its face and
 head with their voice, and s.level(id) is that speaker's smoothed loudness. A tiny glTF made in code stands in for a
-real model: one triangle, one face shape named "aa", on a node named "Head"."""
+real model: one triangle, one face shape named "aa", on a node named "Head". Two tests also run with a real VRM, on
+a machine where ODIE_TEST_VRM names one (never committed)."""
+import os
+from pathlib import Path
+
+import pytest
+
 from odie.browser import RENDER_ARGS
 from odie.browser.engine import Browser
 from odie.video import avatars, dialogue, page
@@ -26,10 +32,11 @@ def tiny_model(tmp_path) -> avatars.Model:
     return avatars.Model(speaker="mira", name="Mira", path=path, size=path.stat().st_size)
 
 
-async def opened(expressions, tmp_path, body=KEEPS_MIRA, timings=ONE_SCENE):
-    """Opens a sealed page with Mira's tiny model and the lines, hands the model over before any frame, then gives
-    back what each expression returns, in order, and the errors the page raised."""
-    model = tiny_model(tmp_path)
+async def opened(expressions, tmp_path, body=KEEPS_MIRA, timings=ONE_SCENE, model=None):
+    """Opens a sealed page with Mira's model (the tiny one unless `model` is given) and the lines, hands the model over
+    before any frame, then gives back what each expression returns, in order, and the errors the page raised."""
+    if model is None:
+        model = tiny_model(tmp_path)
     html = page.assemble(body, timings, avatar_script=avatars.page_script([model]),
                          lines_script=dialogue.lines_script(LINES))
     b = Browser(tmp_path / "p", BIN, extra_args=RENDER_ARGS)
@@ -45,9 +52,9 @@ async def opened(expressions, tmp_path, body=KEEPS_MIRA, timings=ONE_SCENE):
     return values, errors
 
 
-async def evaluated(expressions, tmp_path, body=KEEPS_MIRA, timings=ONE_SCENE):
+async def evaluated(expressions, tmp_path, body=KEEPS_MIRA, timings=ONE_SCENE, model=None):
     """What each expression returns on a page that raised no error."""
-    values, errors = await opened(expressions, tmp_path, body, timings)
+    values, errors = await opened(expressions, tmp_path, body, timings, model)
     assert errors == []
     return values
 
@@ -200,3 +207,67 @@ async def test_one_speaker_in_two_scenes_shares_one_model(tmp_path):
         f"__avatars.frame(0.5).then(() => {model}.parent.parent === __s1.three.scene)",
     ], tmp_path, body=body, timings={"starts": [0.0, 2.0], "lengths": [2.0, 2.0]})
     assert in_second and in_first
+
+
+# ---- A real VRM (local only) ----
+
+VRM = os.environ.get("ODIE_TEST_VRM")  # a .vrm file on this machine, e.g. pixiv's VRM1_Constraint_Twist_Sample.vrm
+
+# What a real VRM shows after frame T: the helper's weights, the VRM's own presets, its mouth-only smile shape (VRoid's
+# Fcl_MTH_Fun), every spring bone's turn (hair and sleeves), and where its left shoulder and hand are on the stage.
+VRM_STATE = """(() => {
+  const vrm = __a.model().vrm;
+  const presets = vrm.expressionManager;
+  let fun = null;
+  vrm.scene.traverse((o) => {
+    const names = o.morphTargetDictionary ? Object.keys(o.morphTargetDictionary) : [];
+    const name = names.find((n) => n.endsWith("Fcl_MTH_Fun"));
+    if (fun === null && name !== undefined) { fun = o.morphTargetInfluences[o.morphTargetDictionary[name]]; }
+  });
+  const hair = Array.from(vrm.springBoneManager.joints).map((j) => j.bone.quaternion.toArray());
+  const at = (bone) => vrm.humanoid.getRawBoneNode(bone).getWorldPosition(new THREE.Vector3()).toArray();
+  return {isVRM: __a.isVRM, w: __w, aa: presets.getValue("aa"), blink: presets.getValue("blink"),
+          happy: presets.getValue("happy"), fun: fun, hair: hair, shoulder: at("leftUpperArm"), hand: at("leftHand")};
+})()"""
+
+
+def real_vrm() -> avatars.Model:
+    path = Path(VRM).expanduser()
+    return avatars.Model(speaker="mira", name="Mira", path=path, size=path.stat().st_size)
+
+
+def vrm_state_after(T):
+    return f"__avatars.frame({T}).then(() => {VRM_STATE})"
+
+
+@needs_browser
+@pytest.mark.skipif(not VRM, reason="set ODIE_TEST_VRM to a .vrm file to run")
+async def test_a_real_vrm_loads_speaks_and_blinks(tmp_path):
+    loud, quiet, blinking = await evaluated([vrm_state_after(1.0), vrm_state_after(0.2), vrm_state_after(0.95)],
+                                            tmp_path, model=real_vrm())
+    assert loud["isVRM"]
+    assert loud["w"]["aa"] > 0.5 and loud["aa"] > 0.5  # the mouth open with her voice, on the model itself
+    assert quiet["w"]["aa"] == 0 and quiet["aa"] == 0
+    assert blinking["w"]["blink"] > 0.5 and blinking["blink"] > 0.5
+    # The resting smile is the mouth-only shape; the "happy" preset stays 0, so it never holds back a blink.
+    assert quiet["fun"] == pytest.approx(0.3) and quiet["happy"] == 0
+    # Arms down from the T-pose, and facing the camera: a VRM 1.0 faces +z, so her left shoulder is at +x.
+    shoulder, hand = quiet["shoulder"], quiet["hand"]
+    assert hand[1] < shoulder[1] - 0.3
+    assert shoulder[0] > 0
+
+
+@needs_browser
+@pytest.mark.skipif(not VRM, reason="set ODIE_TEST_VRM to a .vrm file to run")
+async def test_a_real_vrm_frame_looks_the_same_whatever_was_drawn_before(tmp_path):  # Review Focus 2, on a VRM
+    # T 0.93: Mira loud and half way through a blink. Her face and her spring hair must not carry anything over, nor
+    # differ on a tab's very first frame (the sample's sleeve springs hang from bones its constraints drive).
+    model = real_vrm()
+    first = await evaluated([vrm_state_after(0.93)], tmp_path / "a", model=model)
+    after_quiet = await evaluated(["__avatars.frame(0.2)", vrm_state_after(0.93)], tmp_path / "b", model=model)
+    after_late = await evaluated(["__avatars.frame(1.0)", "__avatars.frame(3.0)", vrm_state_after(0.93),
+                                  vrm_state_after(3.0)], tmp_path / "c", model=model)
+    assert first[0] == after_quiet[-1] == after_late[2]
+    assert after_quiet[-1]["w"]["aa"] > 0.5 and 0 < after_quiet[-1]["w"]["blink"] < 1
+    assert after_quiet[-1]["hair"]  # the model has spring hair, and it swings: it differs at another moment
+    assert after_late[3]["hair"] != after_late[2]["hair"]
