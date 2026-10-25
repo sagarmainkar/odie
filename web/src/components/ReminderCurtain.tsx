@@ -1,24 +1,22 @@
 import { AnimatePresence, motion } from "framer-motion";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getJSON, postJSON } from "../api";
-import { memoToPlay, withNotice, withoutNotice, type Notice } from "../curtain";
+import { memoToPlay, snoozeChoices, withNotice, withoutNotice, type Notice } from "../curtain";
 import { useLive } from "../live";
 import { mediaUrl } from "../media";
 import { usePersona } from "../persona";
 import { somethingPlaying } from "../playing";
 import { Avatar } from "./Avatar";
 
-/** The event Chat listens for after Act: put the cursor in the composer, ready to type. */
-export const FOCUS_COMPOSER = "odie:focus-composer";
-
 /**
  * A reminder that fired comes down over whatever's on screen, like a curtain from the top: Odie's face, the words,
- * and two choices. Dismiss closes it (the reminder stays on Today under Now). Act puts it into the chat as Odie's
- * message, opens the chat and puts the cursor in the composer, so the reply is one tap away. Several waiting
- * reminders show one at a time, oldest first; a spoken one plays as the curtain opens.
+ * and two choices. Dismiss closes it (the reminder stays on Today). Snooze offers 1 hour, 3 hours or tomorrow 9:00,
+ * and the reminder rings again then. Several waiting reminders show one at a time, oldest first; a spoken one plays
+ * as the curtain opens.
  */
 export function ReminderCurtain() {
   const [queue, setQueue] = useState<Notice[]>([]);
+  const [choosingSnooze, setChoosingSnooze] = useState(false);
   const persona = usePersona();
   const played = useRef<Set<number>>(new Set());
 
@@ -41,15 +39,15 @@ export function ReminderCurtain() {
   }, [current]);
 
   async function dismiss(n: Notice) {
+    setChoosingSnooze(false);
     setQueue((q) => withoutNotice(q, n.id));
     await postJSON(`/api/reminders/${n.id}/dismiss`, {}).catch(() => {});
   }
 
-  async function act(n: Notice) {
+  async function snooze(n: Notice, until: string) {
+    setChoosingSnooze(false);
     setQueue((q) => withoutNotice(q, n.id));
-    await postJSON(`/api/reminders/${n.id}/act`, {}).catch(() => {});
-    location.hash = "#chat";
-    setTimeout(() => window.dispatchEvent(new Event(FOCUS_COMPOSER)), 80);
+    await postJSON(`/api/tasks/${n.id}/snooze`, { until }).catch(() => {});
   }
 
   return (
@@ -66,10 +64,18 @@ export function ReminderCurtain() {
                 {queue.length > 1 && <div className="text-[12px] text-dim mt-1">{queue.length - 1} more waiting</div>}
               </div>
             </div>
-            <div className="flex gap-2 mt-3">
-              <button type="button" onClick={() => void dismiss(current)} className="pill flex-1 h-11 text-[15px] shadow-none">Dismiss</button>
-              <button type="button" onClick={() => void act(current)} className="pill pill-solid flex-1 h-11 text-[15px] shadow-none">Act</button>
-            </div>
+            {choosingSnooze ? (
+              <div className="flex gap-2 mt-3">
+                {snoozeChoices(new Date()).map((choice) => (
+                  <button key={choice.label} type="button" onClick={() => void snooze(current, choice.until)} className="pill flex-1 h-11 text-[14px] shadow-none">{choice.label}</button>
+                ))}
+              </div>
+            ) : (
+              <div className="flex gap-2 mt-3">
+                <button type="button" onClick={() => void dismiss(current)} className="pill flex-1 h-11 text-[15px] shadow-none">Dismiss</button>
+                <button type="button" onClick={() => setChoosingSnooze(true)} className="pill pill-solid flex-1 h-11 text-[15px] shadow-none">Snooze</button>
+              </div>
+            )}
           </div>
         </motion.div>
       )}

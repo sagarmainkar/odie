@@ -54,7 +54,6 @@ import { MediaList } from "../components/MediaList";
 import { PrivateReply } from "../privateReply";
 import { somethingPlaying } from "../playing";
 import { autoplayFor } from "../reminders";
-import { FOCUS_COMPOSER } from "../components/ReminderCurtain";
 import { useProfile } from "../profile";
 import { MicWave } from "../components/MicWave";
 import { composerWith, phoneSpeech, pickMode, startDictation } from "../dictation";
@@ -344,12 +343,6 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
   }, [grow]);
 
   // After Act on a reminder's curtain: the chat is open and the cursor goes to the composer.
-  useEffect(() => {
-    const focus = () => field.current?.focus();
-    window.addEventListener(FOCUS_COMPOSER, focus);
-    return () => window.removeEventListener(FOCUS_COMPOSER, focus);
-  }, []);
-
   useLive(useCallback((e: any) => {
     if (e.type === "message" && e.text !== NEW_CHAT && belongsHere(e.session_id, threadRef.current?.id ?? null, todayISO())) {
       // A reply after a tap is her answer, not a reminder: show it like any other reply.
