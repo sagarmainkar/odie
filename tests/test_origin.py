@@ -101,8 +101,8 @@ def test_hosts_come_from_the_env_file_too_and_reach_the_service(monkeypatch):
     environment, else ~/.odie/.env), the service is started with it, and the 421 page says where it goes."""
     from odie import cli, secrets
     monkeypatch.delenv("ODIE_HOSTS", raising=False)
-    monkeypatch.setattr(secrets, "load_secret", lambda name: "odie.lan, sagars-mini" if name == "ODIE_HOSTS" else None)
-    assert origin.host_allowed("sagars-mini:8000") and origin.host_allowed("odie.lan")
+    monkeypatch.setattr(secrets, "load_secret", lambda name: "odie.lan, studio-mini" if name == "ODIE_HOSTS" else None)
+    assert origin.host_allowed("studio-mini:8000") and origin.host_allowed("odie.lan")
     assert not origin.host_allowed("other.lan")
     assert "ODIE_HOSTS" in cli.PASSED_TO_SERVICE
     assert "~/.odie/.env" in origin.REFUSED_HOST["detail"]
