@@ -166,25 +166,31 @@ async def embedding_options(store, transport=None) -> dict:
             pass
         try:
             r = await c.get("http://localhost:11434/api/tags")
-            options += [{"provider": "ollama", "model": m["name"], "local": True, "note": "on this computer (Ollama)"}
-                        for m in r.json().get("models", []) if "embed" in m.get("name", "").lower()]
+            names = [m["name"] for m in r.json().get("models", []) if "embed" in m.get("name", "").lower()]
         except (httpx.HTTPError, ValueError, AttributeError):
-            pass
+            names = []
+    from odie.vault.embed import ollama_sees_pictures
+    for name in names:
+        sees = await ollama_sees_pictures(name, transport)
+        note = "on this computer (Ollama); reads pictures too" if sees else "on this computer (Ollama)"
+        options.append({"provider": "ollama", "model": name, "local": True, "note": note})
     options.append({"provider": "openai", "model": "text-embedding-3-small", "local": False,
                     "needs_key": not load_secret("OPENAI_API_KEY"),
                     "note": "OpenAI: note text is sent to OpenAI to be read; it usually costs a few cents"})
     return {"options": options}
 
 
-async def set_embeddings(store, provider: str, model: str, runner=None) -> dict:
+async def set_embeddings(store, provider: str, model: str, runner=None, transport=None) -> dict:
     from odie.vault import embed, settings
     if not settings.configured(store):
         raise _Error("There's no vault to read yet: set up the vault first, or skip this step.")
     try:
-        dims = await embed.check(embed.make_embedder(provider, model, store))
+        dims = await embed.check(embed.make_embedder(provider, model, store, transport))
     except embed.EmbedError as e:
         raise _Error(str(e)) from None
-    settings.put(store, embeddings={"provider": provider, "model": model})
+    # the model reads pictures by their look: Odie's own service always; on Ollama, one that lists "vision"
+    pictures = provider == "gemma" or (provider == "ollama" and await embed.ollama_sees_pictures(model, transport))
+    settings.put(store, embeddings={"provider": provider, "model": model, "pictures": pictures})
     state.mark(store, "embeddings", "done")
     await _apply_vault(runner)
     note = ("The model is downloading in the background (about 1.5 GB, a few minutes); reading the notes starts by itself "
@@ -300,7 +306,7 @@ async def run(name: str, args: dict, store, runner=None, transport=None) -> dict
     if fn is None:
         return {"error": f"There's no tool called {name}."}
     kwargs = {k: v for k, v in dict(args or {}).items() if k not in ("runner", "transport")}
-    if name == "embedding_options":
+    if name in ("embedding_options", "set_embeddings"):
         kwargs["transport"] = transport
     if name in ("set_vault", "set_embeddings", "set_photos"):
         kwargs["runner"] = runner
