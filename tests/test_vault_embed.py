@@ -10,6 +10,7 @@ from pathlib import Path
 import httpx
 import pytest
 
+from odie.vault import embed
 from odie.vault.embed import EmbedError, check, make_embedder
 from odie.vault.index import VaultIndex
 
@@ -315,3 +316,47 @@ async def test_odies_own_service_says_when_its_model_is_still_downloading(isolat
     state["cached"] = True
     assert await gemma.preparing() is False
     assert await gemma.embed(["a"]) == [[1.0, 0.0]] and await check(gemma) == 2
+
+
+async def test_an_embedder_can_live_on_another_computer(isolated_settings):
+    """A server somewhere else: Ollama at its root address, or any OpenAI-style server (LM Studio, llama.cpp) at its
+    /v1 base. Without an address the built-in ones stay on this computer."""
+    import json
+    seen = []
+
+    def handler(request: httpx.Request):
+        seen.append((request.method, str(request.url), json.loads(request.content) if request.content else None))
+        if request.url.path.endswith("/api/embed"):
+            return httpx.Response(200, json={"embeddings": [[1.0, 0.0]]})
+        if request.url.path.endswith("/api/show"):
+            return httpx.Response(200, json={"capabilities": ["embedding", "vision"]})
+        return httpx.Response(200, json={"data": [{"index": 0, "embedding": [0.0, 1.0]}]})
+    t = httpx.MockTransport(handler)
+    far = make_embedder("ollama", "embeddinggemma-2", transport=t, pictures=True, url="http://studio.local:11434/")
+    assert await far.embed(["a"]) == [[1.0, 0.0]] and seen[-1][1] == "http://studio.local:11434/api/embed"
+    assert await embed.ollama_sees_pictures("embeddinggemma-2", t, url="http://studio.local:11434") is True
+    assert seen[-1][1] == "http://studio.local:11434/api/show"
+    server = make_embedder("server", "text-embedding-x", transport=t, url="http://192.168.1.20:1234/v1")
+    assert await server.embed(["a"]) == [[0.0, 1.0]] and seen[-1][1] == "http://192.168.1.20:1234/v1/embeddings"
+    assert server.sees_pictures is False and server.name == "server:text-embedding-x"
+    home = make_embedder("ollama", "nomic-embed-text", transport=t)
+    await home.embed(["a"])
+    assert seen[-1][1] == "http://localhost:11434/api/embed"
+    with pytest.raises(EmbedError, match="address"):
+        make_embedder("server", "text-embedding-x", transport=t)
+
+
+async def test_the_models_a_server_offers(isolated_settings):
+    """What an address has to pick from: Ollama's /api/tags, an OpenAI-style server's /v1/models; the embedding ones
+    (their name says embed). Unreachable: no models and a plain reason."""
+    def handler(request: httpx.Request):
+        if request.url.path == "/api/tags":
+            return httpx.Response(200, json={"models": [{"name": "embeddinggemma-2:740m"}, {"name": "gemma4:12b"}]})
+        if request.url.path == "/v1/models":
+            return httpx.Response(200, json={"data": [{"id": "text-embedding-embeddinggemma-2"}, {"id": "gemma-4-12b"}]})
+        return httpx.Response(404)
+    t = httpx.MockTransport(handler)
+    assert await embed.server_models("ollama", "http://studio.local:11434", t) == (["embeddinggemma-2:740m"], "")
+    assert await embed.server_models("server", "http://192.168.1.20:1234/v1", t) == (["text-embedding-embeddinggemma-2"], "")
+    models, why = await embed.server_models("ollama", "http://nowhere.local:11434", httpx.MockTransport(lambda r: (_ for _ in ()).throw(httpx.ConnectError("no route"))))
+    assert models == [] and "couldn't reach" in why

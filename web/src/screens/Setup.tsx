@@ -239,6 +239,8 @@ export function StepPanel({ panel, onChoose, onCheck, busy }: { panel: Panel; on
   const [pick, setPick] = useState(firstPick(panel));
   const [fields, setFields] = useState<Record<string, string>>(Object.fromEntries(panel.fields.map((f) => [f.id, f.value])));
   const [path, setPath] = useState("");
+  const [server, setServer] = useState<{ kind: string; url: string; model: string }>({ kind: "ollama", url: "", model: "" });
+  const [serverModels, setServerModels] = useState<string[] | null>(null);  // null: not looked yet
   const [error, setError] = useState("");
   const [macApps, setMacApps] = useState<MacApps | null>(null);
   // A new step, or the same step with other choices (Check again found Tailscale): start from its recommended choice.
@@ -248,7 +250,21 @@ export function StepPanel({ panel, onChoose, onCheck, busy }: { panel: Panel; on
   const form = formFor(choice);
   async function go(id: string, value?: unknown) { setError(await onChoose(id, value)); }
   const field = "h-11 px-4 rounded-full bg-well border border-line outline-none text-[15px] focus:border-line-2";
-  const canContinue = panel.step === "names" ? !!fields.user_name?.trim() : form === "path" ? !!path.trim() : !!choice && (form === null);
+  const canContinue = panel.step === "names" ? !!fields.user_name?.trim() : form === "path" ? !!path.trim()
+    : form === "server" ? !!server.url.trim() && !!server.model : !!choice && (form === null);
+  const kinds = choice?.needs?.type === "server" ? choice.needs.kinds : [];
+  const example = kinds.find((k) => k.id === server.kind)?.example ?? "";
+  async function findModels() {
+    setError("");
+    setServerModels(null);
+    try {
+      const r = await getJSON<{ models: string[]; problem: string }>(`/api/setup/server_models?kind=${encodeURIComponent(server.kind)}&url=${encodeURIComponent(server.url.trim())}`);
+      if (r.problem) setError(r.problem);
+      else if (r.models.length === 0) setError("That server has no embedding model (none with 'embed' in its name).");
+      setServerModels(r.models);
+      setServer((s) => ({ ...s, model: r.models.includes(s.model) ? s.model : (r.models[0] ?? "") }));
+    } catch { setError("That didn't go through. Try again."); }
+  }
   return (
     <section aria-label={`${panel.label} step`} className="glass rounded-[26px] p-4 flex flex-col gap-3">
       {panel.explain && <div className="text-[13.5px] leading-[20px] text-muted">{panel.explain}</div>}
@@ -286,6 +302,28 @@ export function StepPanel({ panel, onChoose, onCheck, busy }: { panel: Panel; on
               {pick === c.id && form === "key" && <div className="pl-7"><KeyCardView key={`${panel.step}-${c.id}`} card={c.needs as KeyCard} onSaved={() => void go(c.id)} /></div>}
               {pick === c.id && form === "app" && <div className="pl-7"><AppCardView key={`${panel.step}-${c.id}`} card={c.needs as AppCard} onSaved={() => void go(c.id)} /></div>}
               {pick === c.id && form === "path" && <input value={path} onChange={(e) => setPath(e.target.value)} placeholder="/Users/you/Documents/Notes" aria-label="The folder's full path" className={`${field} ml-7`} />}
+              {pick === c.id && form === "server" && (
+                <div className="ml-7 flex flex-col gap-2">
+                  <div role="radiogroup" aria-label="What kind of server" className="flex flex-wrap gap-1.5">
+                    {kinds.map((k) => (
+                      <label key={k.id} className={`px-3 h-9 inline-flex items-center rounded-full border text-[13px] cursor-pointer ${server.kind === k.id ? "border-ember bg-well" : "border-line"}`}>
+                        <input type="radio" name="server-kind" className="sr-only" checked={server.kind === k.id} onChange={() => { setServer({ ...server, kind: k.id, model: "" }); setServerModels(null); }} />{k.label}
+                      </label>
+                    ))}
+                  </div>
+                  <div className="flex gap-2">
+                    <input value={server.url} onChange={(e) => { setServer({ ...server, url: e.target.value, model: "" }); setServerModels(null); }} placeholder={example} aria-label="The server's address" className={`${field} flex-1 min-w-0`} />
+                    <button type="button" disabled={busy || !server.url.trim()} onClick={() => void findModels()} className="h-11 px-4 rounded-full border border-line-2 text-[14px] font-medium disabled:opacity-50">Find models</button>
+                  </div>
+                  {serverModels && serverModels.length > 0 && (
+                    <label className="flex flex-col gap-1 text-[13px] text-muted">Its embedding model
+                      <select value={server.model} onChange={(e) => setServer({ ...server, model: e.target.value })} aria-label="The server's embedding model" className={field}>
+                        {serverModels.map((m) => <option key={m} value={m}>{m}</option>)}
+                      </select>
+                    </label>
+                  )}
+                </div>
+              )}
             </div>
           ))}
         </div>
@@ -293,8 +331,8 @@ export function StepPanel({ panel, onChoose, onCheck, busy }: { panel: Panel; on
       {error && <div role="alert" className="text-[13px] text-ember-text">{error}</div>}
       <div className="flex flex-wrap gap-2 justify-end">
         {panel.skip && <button disabled={busy} onClick={() => void go("skip")} className="h-10 px-4 rounded-full border border-line-2 text-[14px] font-medium disabled:opacity-50">{panel.skip}</button>}
-        {(form === null || form === "path") && panel.choices.length > 0 && (
-          <button disabled={busy || !canContinue} onClick={() => void go(pick, panel.step === "names" ? fields : form === "path" ? path.trim() : undefined)}
+        {(form === null || form === "path" || form === "server") && panel.choices.length > 0 && (
+          <button disabled={busy || !canContinue} onClick={() => void go(pick, panel.step === "names" ? fields : form === "path" ? path.trim() : form === "server" ? { ...server, url: server.url.trim() } : undefined)}
             className="h-10 px-5 rounded-full bg-ember text-on-ember font-semibold disabled:opacity-50">{panel.choices.length === 1 && panel.step !== "names" ? choice?.label : "Continue"}</button>
         )}
       </div>

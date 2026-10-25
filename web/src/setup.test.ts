@@ -63,6 +63,8 @@ describe("setup screen", () => {
     expect(formFor({ id: "openai", label: "OpenAI", note: "", recommended: false, needs: key })).toBe("key");
     expect(formFor({ id: "zapier", label: "Zapier", note: "", recommended: true, needs: { type: "app", app: "zapier", label: "Zapier", where: "", key_label: "" } })).toBe("app");
     expect(formFor({ id: "elsewhere", label: "Another folder", note: "", recommended: false, needs: { type: "path" } })).toBe("path");
+    const server = { type: "server" as const, kinds: [{ id: "ollama", label: "Ollama", example: "http://studio.local:11434" }] };
+    expect(formFor({ id: "elsewhere", label: "A server somewhere else", note: "", recommended: false, needs: server })).toBe("server");
     expect(formFor({ id: "kokoro", label: "Kokoro", note: "", recommended: true, needs: null })).toBeNull();
     expect(formFor(undefined)).toBeNull();
   });

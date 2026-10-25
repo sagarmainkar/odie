@@ -32,9 +32,14 @@ DECLARATIONS = [
     _fn("vault_options", "The Obsidian vaults on this computer, and where a new one would go."),
     _fn("set_vault", "Use a vault: existing (one Obsidian knows), elsewhere (any folder, a full path), new (create one), or skip.",
         {"choice": {"type": "string", "enum": ["existing", "elsewhere", "new", "skip"]}, "path": {"type": "string"}}, ("choice",)),
-    _fn("embedding_options", "The ways to read the vault by meaning: local embedding models found here, or OpenAI."),
-    _fn("set_embeddings", "Read the vault by meaning with this embedding model (it is checked first).",
-        {"provider": {"type": "string", "enum": ["openai", "lmstudio", "ollama"]}, "model": {"type": "string"}}, ("provider", "model")),
+    _fn("embedding_options", "The ways to read the vault by meaning: local embedding models found here, OpenAI, or Odie's own download."),
+    _fn("server_models", "The embedding models a server somewhere else offers: kind ollama (its root address) or server "
+        "(any OpenAI-style server, its /v1 address).",
+        {"kind": {"type": "string", "enum": ["ollama", "server"]}, "url": {"type": "string"}}, ("kind", "url")),
+    _fn("set_embeddings", "Read the vault by meaning with this embedding model (it is checked first). url: only for a server "
+        "somewhere else (provider ollama or server).",
+        {"provider": {"type": "string", "enum": ["openai", "lmstudio", "ollama", "server", "gemma"]}, "model": {"type": "string"},
+         "url": {"type": "string"}}, ("provider", "model")),
     _fn("set_photos", "Read the user's Photos library, read-only and on this Mac, so pictures can be searched by who, where and "
         "when (on: true); or not (on: false).", {"on": {"type": "boolean"}}, ("on",)),
     _fn("search_status", "Which web search is in use, and the keys that would make it better."),
@@ -150,13 +155,12 @@ async def _apply_vault(runner, photos: bool = False) -> None:
 
 
 async def embedding_options(store, transport=None) -> dict:
+    """What can read the vault by meaning, what is already running first: embedding models found in LM Studio and
+    Ollama on this computer (an Ollama model that sees pictures is recommended), OpenAI, and last Odie's own service
+    (the heaviest: a 1.5 GB download) when its environment is here. A server somewhere else is the setup screen's own
+    choice (odie.setup.panels), not an option here."""
     from odie import embed_worker, machine
     options = []
-    # Odie's own service: when its environment is there (uv sync in embed_server) and this Mac is meant to run it
-    # (not an Intel Mac: PyTorch has no build there, and the installer set ODIE_EMBED=off)
-    if embed_worker.EmbedWorker().installed and machine.local_embeddings_wanted():
-        options.append({"provider": "gemma", "model": embed_worker.MODEL, "local": True,
-                        "note": "on this Mac: Odie's own embedding service (EmbeddingGemma 2); nothing leaves the computer"})
     async with httpx.AsyncClient(timeout=4, transport=transport) as c:
         try:
             r = await c.get(config.settings.lm_studio_base_url.rstrip("/") + "/models")
@@ -173,24 +177,38 @@ async def embedding_options(store, transport=None) -> dict:
     for name in names:
         sees = await ollama_sees_pictures(name, transport)
         note = "on this computer (Ollama); reads pictures too" if sees else "on this computer (Ollama)"
-        options.append({"provider": "ollama", "model": name, "local": True, "note": note})
+        options.append({"provider": "ollama", "model": name, "local": True, "note": note, "recommended": sees})
     options.append({"provider": "openai", "model": "text-embedding-3-small", "local": False,
                     "needs_key": not load_secret("OPENAI_API_KEY"),
                     "note": "OpenAI: note text is sent to OpenAI to be read; it usually costs a few cents"})
+    # Odie's own service: when its environment is there (uv sync in embed_server) and this Mac is meant to run it
+    # (not an Intel Mac: PyTorch has no build there, and the installer set ODIE_EMBED=off)
+    if embed_worker.EmbedWorker().installed and machine.local_embeddings_wanted():
+        options.append({"provider": "gemma", "model": embed_worker.MODEL, "local": True,
+                        "note": "on this Mac: Odie's own embedding service (EmbeddingGemma 2) reads notes and pictures; "
+                                "nothing leaves the computer, but it downloads the 1.5 GB model and holds about 2 GB while it works"})
     return {"options": options}
 
 
-async def set_embeddings(store, provider: str, model: str, runner=None, transport=None) -> dict:
+async def server_models(store, kind: str, url: str, transport=None) -> dict:
+    """The embedding models a server somewhere else offers, for the setup screen's address form."""
+    from odie.vault import embed
+    models, problem = await embed.server_models(kind, url, transport)
+    return {"models": models, "problem": problem}
+
+
+async def set_embeddings(store, provider: str, model: str, runner=None, transport=None, url: str | None = None) -> dict:
     from odie.vault import embed, settings
     if not settings.configured(store):
         raise _Error("There's no vault to read yet: set up the vault first, or skip this step.")
+    url = (url or "").strip().rstrip("/") or None  # a server somewhere else; None: on this computer
     try:
-        dims = await embed.check(embed.make_embedder(provider, model, store, transport))
+        dims = await embed.check(embed.make_embedder(provider, model, store, transport, url=url))
     except embed.EmbedError as e:
         raise _Error(str(e)) from None
     # the model reads pictures by their look: Odie's own service always; on Ollama, one that lists "vision"
-    pictures = provider == "gemma" or (provider == "ollama" and await embed.ollama_sees_pictures(model, transport))
-    settings.put(store, embeddings={"provider": provider, "model": model, "pictures": pictures})
+    pictures = provider == "gemma" or (provider == "ollama" and await embed.ollama_sees_pictures(model, transport, url))
+    settings.put(store, embeddings={"provider": provider, "model": model, "pictures": pictures, "url": url})
     state.mark(store, "embeddings", "done")
     await _apply_vault(runner)
     note = ("The model is downloading in the background (about 1.5 GB, a few minutes); reading the notes starts by itself "
@@ -295,7 +313,7 @@ async def finish_setup(store) -> dict:
     return {"done": True}
 
 
-TOOLS = {f.__name__: f for f in (set_names, vault_options, set_vault, embedding_options, set_embeddings, set_photos, search_status,
+TOOLS = {f.__name__: f for f in (set_names, vault_options, set_vault, embedding_options, server_models, set_embeddings, set_photos, search_status,
                                   voice_options, set_voice, apps_options, connect_app, phone_status, request_key, skip_step,
                                   finish_setup)}
 
@@ -306,7 +324,7 @@ async def run(name: str, args: dict, store, runner=None, transport=None) -> dict
     if fn is None:
         return {"error": f"There's no tool called {name}."}
     kwargs = {k: v for k, v in dict(args or {}).items() if k not in ("runner", "transport")}
-    if name in ("embedding_options", "set_embeddings"):
+    if name in ("embedding_options", "server_models", "set_embeddings"):
         kwargs["transport"] = transport
     if name in ("set_vault", "set_embeddings", "set_photos"):
         kwargs["runner"] = runner

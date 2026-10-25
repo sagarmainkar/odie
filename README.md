@@ -72,10 +72,10 @@ Odie is inspired by Muse, but it isn't a copy.
   runs on the Mac's GPU (Apple Silicon). It gives you search over mixed media (notes, pictures and videos together),
   the results are remarkable, and there's a lot of fun to be had with it. The model is about 1.5 GB, downloaded once
   on first use, and unloads itself after 15 idle minutes. You can also use an embedding model from LM Studio or
-  Ollama, or OpenAI's: EmbeddingGemma 2 on Ollama (`ollama pull embeddinggemma-2`) reads pictures too, with no
-  model of Odie's own to download; the others are text only. Without any, search works by words. EmbeddingGemma 2 is
-  Google's model: Odie doesn't include it. It's downloaded from Hugging Face on first use, under its own licence
-  (Apache 2.0).
+  Ollama on this computer, from a server somewhere else on your network (its address and one of its models), or
+  OpenAI's: EmbeddingGemma 2 on Ollama (`ollama pull embeddinggemma-2`) reads pictures too, with no model of Odie's
+  own to download; the others are text only. Without any, search works by words. EmbeddingGemma 2 is Google's model:
+  Odie doesn't include it. It's downloaded from Hugging Face on first use, under its own licence (Apache 2.0).
   Explainer videos are encoded with ffmpeg from the imageio-ffmpeg package, installed with Odie and run as a
   separate program (its bundled ffmpeg is a GPL build); the video kit ships three.js and KaTeX (both MIT).
   Explainer videos can carry pictures (yours or the web's, credited on a closing card), short stock clips and an
