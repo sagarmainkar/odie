@@ -38,6 +38,9 @@ def put(store, dir=_KEEP, ignore=_KEEP, embeddings=_KEEP) -> dict:
     if embeddings is not _KEEP:  # pictures: the model reads pictures by their look (Odie's service; EmbeddingGemma 2 on Ollama)
         v["embeddings"] = ({"provider": embeddings["provider"], "model": embeddings["model"],
                             "pictures": bool(embeddings.get("pictures", False))} if embeddings else None)
+        url = (embeddings or {}).get("url")
+        if url and str(url).strip():  # a server somewhere else: its address, kept without a trailing slash
+            v["embeddings"]["url"] = str(url).strip().rstrip("/")
     store.set_setting(KEY, v)
     return v
 
@@ -78,6 +81,6 @@ def embedder_and_reason(store) -> tuple[Embedder | None, str]:
     if not e:
         return None, ""
     try:
-        return make_embedder(e["provider"], e["model"], store, pictures=e.get("pictures", False)), ""
+        return make_embedder(e["provider"], e["model"], store, pictures=e.get("pictures", False), url=e.get("url")), ""
     except EmbedError as err:
         return None, str(err)

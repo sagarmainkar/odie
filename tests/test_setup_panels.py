@@ -409,3 +409,70 @@ async def test_the_phone_can_be_paired_later_without_losing_the_step(store, monk
     devices.add_device(store, "This Mac")  # no phone yet
     out = await chat.choose(store, "phone", "later", transport=no_models())
     assert not out.get("error") and out["state"]["steps"]["phone"] == "done" and "Settings" in out["reply"]
+
+
+async def test_the_embeddings_step_offers_a_server_somewhere_else_and_odies_download_last(store, monkeypatch):
+    """What is already running comes first, then a server somewhere else (an address and a model), then OpenAI, and
+    Odie's own download last: it is the heaviest choice."""
+    from odie import embed_worker
+    monkeypatch.setattr(embed_worker.EmbedWorker, "installed", property(lambda self: True))
+
+    def handler(request):
+        if request.url.port == 11434 and request.url.path == "/api/tags":
+            return httpx.Response(200, json={"models": [{"name": "embeddinggemma-2:740m"}]})
+        if request.url.path == "/api/show":
+            return httpx.Response(200, json={"capabilities": ["embedding", "vision"]})
+        return httpx.Response(404)
+    p = await panels.panel(store, "embeddings", transport=httpx.MockTransport(handler))
+    assert ids(p) == ["ollama:embeddinggemma-2:740m", "elsewhere", "openai:text-embedding-3-small", "gemma:google/embeddinggemma-2"]
+    local = p["choices"][0]
+    assert local["recommended"] is True and "pictures" in local["note"]
+    elsewhere = p["choices"][1]
+    assert elsewhere["needs"]["type"] == "server"
+    assert elsewhere["needs"]["kinds"] == [{"id": "ollama", "label": "Ollama", "example": "http://studio.local:11434"},
+                                          {"id": "server", "label": "LM Studio, llama.cpp or any OpenAI-style server", "example": "http://192.168.1.20:1234/v1"}]
+    assert "1.5 GB" in p["choices"][-1]["note"]
+
+
+async def test_choosing_a_server_somewhere_else_saves_its_address(store, monkeypatch):
+    from odie.vault import embed, settings
+    from odie.setup import tools as setup_tools
+    import odie.setup.panels as panels_mod
+    (panels_mod.Path(store.path).parent / "Mine").mkdir(exist_ok=True)
+    settings.put(store, dir=str(panels_mod.Path(store.path).parent / "Mine"))
+
+    async def ok(e):
+        return 768
+    monkeypatch.setattr(embed, "check", ok)
+
+    async def sees(model, transport=None, url=None):
+        return url == "http://studio.local:11434"
+    monkeypatch.setattr(embed, "ollama_sees_pictures", sees)
+    line = await panels.apply(store, "embeddings", "elsewhere", {"kind": "ollama", "url": "http://studio.local:11434/", "model": "embeddinggemma-2"}, transport=no_models())
+    assert "embeddinggemma-2" in line and "studio.local" in line
+    assert settings.get(store)["embeddings"] == {"provider": "ollama", "model": "embeddinggemma-2", "pictures": True, "url": "http://studio.local:11434"}
+    with pytest.raises(panels.ChoiceError, match="address"):
+        await panels.apply(store, "embeddings", "elsewhere", {"kind": "ollama", "url": "", "model": "x"}, transport=no_models())
+
+
+async def test_server_models_route(isolated_settings, tmp_path, monkeypatch):
+    """The address form asks the server for its models through Odie (the browser can't reach another computer's Ollama)."""
+    from odie.app.main import create_app
+    from odie.vault import embed
+    from tests.test_api import FakeRunner
+    asked = []
+
+    async def fake(kind, url, transport=None):
+        asked.append((kind, url))
+        return (["embeddinggemma-2:740m"], "") if url.startswith("http://studio") else ([], f"couldn't reach it at {url} (ConnectError)")
+    monkeypatch.setattr(embed, "server_models", fake)
+    s = Store(tmp_path / "a.db")
+    s.init_schema()
+    app = create_app(runner=FakeRunner(), store=s)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+        async with app.router.lifespan_context(app):
+            r = await c.get("/api/setup/server_models", params={"kind": "ollama", "url": "http://studio.local:11434"})
+            assert r.status_code == 200 and r.json() == {"models": ["embeddinggemma-2:740m"], "problem": ""}
+            r = await c.get("/api/setup/server_models", params={"kind": "server", "url": "http://nowhere:1234/v1"})
+            assert r.json()["models"] == [] and "couldn't reach" in r.json()["problem"]
+    assert asked == [("ollama", "http://studio.local:11434"), ("server", "http://nowhere:1234/v1")]

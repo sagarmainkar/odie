@@ -193,8 +193,8 @@ async def test_the_other_steps_say_what_is_there(store):
     assert "error" not in await tools.run("set_voice", {"engine": "kokoro"}, store)
     assert "OpenAI key" in (await tools.run("set_voice", {"engine": "openai"}, store))["error"]
     names = {d["function"]["name"] for d in tools.DECLARATIONS}
-    assert {"set_names", "vault_options", "set_vault", "embedding_options", "set_embeddings", "set_photos", "search_status", "voice_options",
-            "set_voice", "apps_options", "connect_app", "phone_status", "request_key", "skip_step", "finish_setup"} == names
+    assert {"set_names", "vault_options", "set_vault", "embedding_options", "server_models", "set_embeddings", "set_photos", "search_status",
+            "voice_options", "set_voice", "apps_options", "connect_app", "phone_status", "request_key", "skip_step", "finish_setup"} == names
 
 
 async def test_new_vault_names_and_paths_stay_inside(store, home, tmp_path, monkeypatch):
@@ -252,9 +252,9 @@ async def test_embedding_options_offer_odies_own_service_when_it_is_installed(st
         return httpx.Response(200, json={"data": [], "models": []})
     monkeypatch.setattr(embed_worker.EmbedWorker, "installed", property(lambda self: True))
     out = (await tools.run("embedding_options", {}, store, transport=httpx.MockTransport(handler)))["result"]
-    first = out["options"][0]
-    assert (first["provider"], first["model"], first["local"]) == ("gemma", "google/embeddinggemma-2", True)
-    assert "this Mac" in first["note"]
+    last = out["options"][-1]  # the heaviest choice comes last
+    assert (last["provider"], last["model"], last["local"]) == ("gemma", "google/embeddinggemma-2", True)
+    assert "this Mac" in last["note"] and "1.5 GB" in last["note"]
     monkeypatch.setattr(embed_worker.EmbedWorker, "installed", property(lambda self: False))
     out = (await tools.run("embedding_options", {}, store, transport=httpx.MockTransport(handler)))["result"]
     assert all(o["provider"] != "gemma" for o in out["options"])
@@ -268,7 +268,7 @@ async def test_choosing_odies_own_service_before_its_model_is_here_says_it_is_do
     async def preparing(e):
         return 0
     monkeypatch.setattr(embed, "check", preparing)
-    monkeypatch.setattr(embed, "make_embedder", lambda provider, model, store=None, transport=None: object())
+    monkeypatch.setattr(embed, "make_embedder", lambda provider, model, store=None, transport=None, **kw: object())
     out = await tools.run("set_embeddings", {"provider": "gemma", "model": "google/embeddinggemma-2"}, store)
     assert "error" not in out and "download" in out["result"]["note"].lower() and "1.5 GB" in out["result"]["note"]
     assert settings.get(store)["embeddings"] == {"provider": "gemma", "model": "google/embeddinggemma-2", "pictures": True}
@@ -293,3 +293,32 @@ async def test_embedding_options_hide_odies_own_service_where_it_cannot_run(stor
     out = (await tools.run("embedding_options", {}, store, transport=httpx.MockTransport(handler)))["result"]
     assert [o["provider"] for o in out["options"]] == ["openai"]
     monkeypatch.setattr(embed_worker.EmbedWorker, "installed", property(lambda self: False))
+
+
+async def test_set_embeddings_keeps_the_servers_address(store, tmp_path, monkeypatch):
+    """A server somewhere else: the address is saved with the model, the check and the pictures question go to that
+    address, and the embedder is built for it."""
+    from odie.vault import embed, settings
+    (tmp_path / "Mine").mkdir()
+    settings.put(store, dir=str(tmp_path / "Mine"))
+    seen = []
+
+    def handler(request):
+        seen.append(str(request.url))
+        if request.url.path == "/api/show":
+            return httpx.Response(200, json={"capabilities": ["embedding", "vision"]})
+        if request.url.path == "/api/embed":
+            return httpx.Response(200, json={"embeddings": [[1.0, 0.0, 0.0]]})
+        return httpx.Response(200, json={"data": [{"index": 0, "embedding": [1.0, 0.0, 0.0]}]})
+    t = httpx.MockTransport(handler)
+    out = await tools.run("set_embeddings", {"provider": "ollama", "model": "embeddinggemma-2", "url": "http://studio.local:11434/"}, store, transport=t)
+    assert "error" not in out
+    assert settings.get(store)["embeddings"] == {"provider": "ollama", "model": "embeddinggemma-2", "pictures": True, "url": "http://studio.local:11434"}
+    assert all(u.startswith("http://studio.local:11434/") for u in seen)
+    assert settings.embedder_for(store).url == "http://studio.local:11434/api/embed"
+    out = await tools.run("set_embeddings", {"provider": "server", "model": "text-embedding-x", "url": "http://192.168.1.20:1234/v1"}, store, transport=t)
+    assert "error" not in out
+    assert settings.get(store)["embeddings"] == {"provider": "server", "model": "text-embedding-x", "pictures": False, "url": "http://192.168.1.20:1234/v1"}
+    out = await tools.run("server_models", {"kind": "ollama", "url": "http://studio.local:11434"}, store, transport=httpx.MockTransport(
+        lambda r: httpx.Response(200, json={"models": [{"name": "embeddinggemma-2:740m"}]})))
+    assert out["result"] == {"models": ["embeddinggemma-2:740m"], "problem": ""}

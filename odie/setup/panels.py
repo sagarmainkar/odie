@@ -86,6 +86,19 @@ def _app_card(app: str) -> dict:
     return {"type": "app", "app": app, "label": p["title"], "where": p["where"], "steps": COMPOSIO_STEPS, "key_label": p["key_label"]}
 
 
+def _server_card() -> dict:
+    """The address form for a server somewhere else: the kinds it can be, each with an example address."""
+    return {"type": "server", "kinds": [{"id": "ollama", "label": "Ollama", "example": "http://studio.local:11434"},
+                                        {"id": "server", "label": "LM Studio, llama.cpp or any OpenAI-style server",
+                                         "example": "http://192.168.1.20:1234/v1"}]}
+
+
+def _host(url: str) -> str:
+    """The part of an address a line can name: "http://studio.local:11434/" -> "studio.local:11434"."""
+    from urllib.parse import urlparse
+    return urlparse(url).netloc or url
+
+
 def _choice(cid: str, label: str, note: str = "", recommended: bool = False, needs: dict | None = None, value=None) -> dict:
     return {"id": cid, "label": label, "note": note, "recommended": recommended, "needs": needs, "value": value}
 
@@ -109,10 +122,15 @@ async def panel(store, step: str | None = None, transport=None) -> dict | None:
         out["choices"] += [_choice("new", "Make a new vault", opts["new_path"]),
                            _choice("elsewhere", "Another folder", "Type its full path", needs={"type": "path"})]
     elif step == "embeddings":
+        # what runs on this computer first, then a server somewhere else, then OpenAI, then Odie's own download last
         opts = (await tools.embedding_options(store, transport=transport))["options"]
-        for i, o in enumerate(opts):
+        for o in opts:
+            if o["provider"] in ("openai", "gemma") and not any(c["id"] == "elsewhere" for c in out["choices"]):
+                out["choices"].append(_choice("elsewhere", "A server somewhere else",
+                                              "Ollama, LM Studio or any OpenAI-style server on your network: its address and one of its models",
+                                              needs=_server_card()))
             needs = _key_card("openai") if o.get("needs_key") else None
-            out["choices"].append(_choice(f"{o['provider']}:{o['model']}", o["model"], o["note"], needs=needs))
+            out["choices"].append(_choice(f"{o['provider']}:{o['model']}", o["model"], o["note"], recommended=bool(o.get("recommended")), needs=needs))
     elif step == "photos":
         out["choices"] = [_choice("yes", "Yes, read my photos and videos", "A few seconds, in the background; read-only")]
     elif step == "search":
@@ -203,6 +221,13 @@ async def apply(store, step: str, choice: str, value=None, runner=None, transpor
         got = await run("set_vault", choice=choice, path=path)
         return f"I made a new vault at {got['vault']}." if got.get("created") else f"Your notes: {got['vault']}."
     if step == "embeddings":
+        if choice == "elsewhere":
+            v = value if isinstance(value, dict) else {}
+            kind, url, model = str(v.get("kind") or "ollama"), str(v.get("url") or "").strip(), str(v.get("model") or "").strip()
+            if not url or not model:
+                raise ChoiceError("Type the server's address and pick one of its models first.")
+            await run("set_embeddings", provider=kind, model=model, url=url)
+            return f"I'll search your notes by meaning with {model} at {_host(url)}. Reading them runs in the background."
         provider, _, model = choice.partition(":")
         await run("set_embeddings", provider=provider, model=model)
         return f"I'll search your notes by meaning with {model}. Reading them runs in the background."

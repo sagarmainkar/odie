@@ -79,12 +79,13 @@ class HttpEmbedder:
 
 
 class OllamaEmbedder(HttpEmbedder):
-    """Ollama's /api/embed. A model that sees pictures there (EmbeddingGemma 2, "vision" among its capabilities;
-    ollama_sees_pictures) takes each picture as {"text": its words, "image": base64 JPEG} and gives one vector for
-    both (checked live 25 Oct 2026: two photos sit at 0.69, the words barely move a photo's vector)."""
+    """Ollama's /api/embed, on this computer or at `url` (a server somewhere else, its root address). A model that sees
+    pictures there (EmbeddingGemma 2, "vision" among its capabilities; ollama_sees_pictures) takes each picture as
+    {"text": its words, "image": base64 JPEG} and gives one vector for both (checked live 25 Oct 2026: two photos sit
+    at 0.69, the words barely move a photo's vector)."""
 
-    def __init__(self, model: str, transport=None, pictures: bool = False) -> None:
-        super().__init__("ollama", model, OLLAMA_URL + "/api/embed", {}, transport)
+    def __init__(self, model: str, transport=None, pictures: bool = False, url: str | None = None) -> None:
+        super().__init__("ollama", model, (url or OLLAMA_URL).rstrip("/") + "/api/embed", {}, transport)
         self.sees_pictures = pictures
 
     async def embed_pictures(self, items: list[tuple[str, str | None]]) -> list[list[float]]:
@@ -121,17 +122,42 @@ def picture_payload(path: str) -> str | None:
     return base64.b64encode(buf.getvalue()).decode()
 
 
-async def ollama_sees_pictures(model: str, transport=None) -> bool:
-    """Whether this Ollama model takes pictures: "vision" among the capabilities `ollama show` lists. False when Ollama
-    can't be asked or doesn't know the model.
+async def ollama_sees_pictures(model: str, transport=None, url: str | None = None) -> bool:
+    """Whether this Ollama model (on this computer, or at `url`) takes pictures: "vision" among the capabilities
+    `ollama show` lists. False when Ollama can't be asked or doesn't know the model.
       embeddinggemma-2:740m (embedding, vision, audio) -> True;  nomic-embed-text (embedding) -> False"""
     try:
         async with httpx.AsyncClient(timeout=10, transport=transport) as c:
-            r = await c.post(OLLAMA_URL + "/api/show", json={"model": model})
+            r = await c.post((url or OLLAMA_URL).rstrip("/") + "/api/show", json={"model": model})
             caps = r.json().get("capabilities") or []
     except (httpx.HTTPError, ValueError, AttributeError):
         return False
     return "vision" in caps
+
+
+async def server_models(kind: str, url: str, transport=None) -> tuple[list[str], str]:
+    """The embedding models a server somewhere else offers (their name says embed): Ollama's /api/tags at its root
+    address, or an OpenAI-style server's /models at its /v1 base. Can't be reached or read: no models and the reason.
+      ("ollama", "http://studio.local:11434")    -> (["embeddinggemma-2:740m"], "")
+      ("server", "http://192.168.1.20:1234/v1")  -> (["text-embedding-embeddinggemma-2"], "")
+      a wrong address                            -> ([], "couldn't reach it at …")"""
+    base = url.strip().rstrip("/")
+    if not base:
+        return [], "Type the server's address first."
+    path = "/api/tags" if kind == "ollama" else "/models"
+    try:
+        async with httpx.AsyncClient(timeout=8, transport=transport) as c:
+            r = await c.get(base + path)
+            d = r.json()
+    except httpx.HTTPError as e:
+        return [], f"couldn't reach it at {base} ({type(e).__name__})"
+    except ValueError:
+        return [], f"{base} answered, but not like {'Ollama' if kind == 'ollama' else 'an OpenAI-style server'}"
+    if kind == "ollama":
+        names = [m.get("name", "") for m in d.get("models", [])]
+    else:
+        names = [m.get("id", "") for m in d.get("data", [])]
+    return [n for n in names if "embed" in n.lower()], ""
 
 
 def flat(item) -> str:
@@ -188,9 +214,11 @@ class ServiceEmbedder(HttpEmbedder):
         return out
 
 
-def make_embedder(provider: str, model: str, store=None, transport=None, pictures: bool = False) -> HttpEmbedder:
-    """provider: openai | lmstudio | ollama | gemma (Odie's own service). pictures: the Ollama model sees pictures
-    (the vault setting remembers it, from ollama_sees_pictures when the model was chosen)."""
+def make_embedder(provider: str, model: str, store=None, transport=None, pictures: bool = False,
+                  url: str | None = None) -> HttpEmbedder:
+    """provider: openai | lmstudio | ollama | server (any OpenAI-style server at `url`) | gemma (Odie's own service).
+    pictures: the Ollama model sees pictures (the vault setting remembers it, from ollama_sees_pictures when the model
+    was chosen). url: a server somewhere else (Ollama's root address, or an OpenAI-style /v1 base)."""
     if provider == "openai":
         key = load_secret("OPENAI_API_KEY")
         if not key:
@@ -201,12 +229,16 @@ def make_embedder(provider: str, model: str, store=None, transport=None, picture
         return HttpEmbedder("lmstudio", model, s.lm_studio_base_url.rstrip("/") + "/embeddings",
                             {"Authorization": f"Bearer {s.lm_studio_api_key}"}, transport)
     if provider == "ollama":
-        return OllamaEmbedder(model, transport, pictures)
+        return OllamaEmbedder(model, transport, pictures, url)
+    if provider == "server":
+        if not (url or "").strip():
+            raise EmbedError("a server somewhere else needs its address (like http://192.168.1.20:1234/v1)")
+        return HttpEmbedder("server", model, url.strip().rstrip("/") + "/embeddings", {}, transport)
     if provider == "gemma":
         from odie import embed_worker
         base = embed_worker.current.url if embed_worker.current is not None else f"http://127.0.0.1:{embed_worker.embed_port()}"
         return ServiceEmbedder("gemma", model, base + "/v1/embeddings", {}, transport, says_kind=True)
-    raise EmbedError(f"unknown embedding provider {provider!r} (openai, lmstudio, ollama or gemma)")
+    raise EmbedError(f"unknown embedding provider {provider!r} (openai, lmstudio, ollama, server or gemma)")
 
 
 async def check(embedder: Embedder) -> int:
