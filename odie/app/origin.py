@@ -54,7 +54,8 @@ def own_names() -> set[str]:
     learned = config.phone_address()
     if learned:
         names.add(hostname_of(urlsplit(learned).netloc or ""))
-    for extra in (config._raw("ODIE_HOSTS") or "").split(","):
+    hosts = os.environ.get("ODIE_HOSTS") or config._raw("ODIE_HOSTS") or ""  # the environment first, then ~/.odie/.env
+    for extra in hosts.split(","):
         names.add(hostname_of(extra.strip()))
     names.discard("")
     return names
