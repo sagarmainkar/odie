@@ -3,7 +3,7 @@ import { pushSub } from "../push";
 import { brainState } from "../brain";
 import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { getJSON, postJSON, putJSON, urlBase64ToUint8Array } from "../api";
+import { deleteJSON, getJSON, postJSON, putJSON, urlBase64ToUint8Array } from "../api";
 import { applyLook, getLook, type Look } from "../theme";
 import { Icon, Tile, type IconName, type TileColor } from "../components/Tile";
 import { Avatar } from "../components/Avatar";
@@ -20,6 +20,7 @@ import { profileChanged, useProfile } from "../profile";
 import { has, useCaps } from "../capabilities";
 import { notesRow, type VaultInfo } from "../vault";
 import { photosRow, type PhotosInfo } from "../photos";
+import { locationRow, NOTE_TEXT, type LocationInfo, type LocationRow as LocationWords } from "../location";
 import { LABEL, type Panel, type Step, type Turn } from "../setup";
 import { PhoneBlock, StepPanel } from "./Setup";
 import { MacAppsBlock } from "../components/MacAppsBlock";
@@ -383,6 +384,36 @@ function PhotosRow() {
   return <Row icon={{ icon: "photo", color: "orange" }} ok={ok} title="Photos" sub={row.sub} right={right} />;
 }
 
+/** Settings' Location row: the place and when it was seen, home, On/Off and Forget. No map. */
+function LocationRow() {
+  const [v, setV] = useState<{ info: LocationInfo; row: LocationWords } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const show = (info: LocationInfo) => setV({ info, row: locationRow(info, new Date()) });  // the words are written when the answer lands
+  useEffect(() => {
+    let live = true;
+    getJSON<LocationInfo>("/api/location").then((x) => { if (live) show(x); }).catch(() => {});
+    return () => { live = false; };
+  }, []);
+  async function change(go: () => Promise<LocationInfo>) {
+    setBusy(true);
+    try { show(await go()); } catch { /* the row keeps what it showed */ }
+    finally { setBusy(false); }
+  }
+  if (!v) return null;
+  const { info, row } = v;
+  const link = "h-10 px-2 -mx-2 text-ember-text font-medium disabled:opacity-50";
+  const right = (
+    <span className="flex items-center gap-3 shrink-0">
+      {info.on === true
+        ? <button disabled={busy} onClick={() => void change(() => putJSON<LocationInfo>("/api/location", { on: false }))} className={link}>Off</button>
+        : <button disabled={busy} onClick={() => void change(() => putJSON<LocationInfo>("/api/location", { on: true }))} className={link}>Turn on</button>}
+      {(info.place || info.home) && <button disabled={busy} onClick={() => void change(() => deleteJSON<LocationInfo>("/api/location"))} className={link}>Forget</button>}
+    </span>
+  );
+  const ok: Dot = row.state === "ok";
+  return <Row icon={{ icon: "pin", color: "green" }} ok={ok} title="Location" sub={row.sub} meta={NOTE_TEXT} right={right} />;
+}
+
 function isApple(): boolean {
   const touchMac = navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1;  // an iPad asks for the desktop site
   return /iPhone|iPad|iPod/.test(navigator.userAgent) || touchMac;
@@ -554,6 +585,7 @@ export function Settings() {
           <Section title="Memory">
             <NotesRow />
             <PhotosRow />
+            <LocationRow />
             <MemoryRow />
           </Section>
 
