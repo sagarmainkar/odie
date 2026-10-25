@@ -9,8 +9,10 @@ the one ask, False after "Not now" or the Settings switch, True once a fix came 
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import math
+import time
 from collections import Counter
 from datetime import datetime, timedelta
 
@@ -19,6 +21,8 @@ import httpx
 log = logging.getLogger("odie.location")
 KEY = "location"
 NEAR_KM = 5  # a remembered fix this close is the same place: its name is reused, and nothing is asked of the network
+LOOKUP_GAP = 1.0  # seconds between two Nominatim requests, its usage policy
+_last_lookup = 0.0  # when the last Nominatim request went out (time.monotonic)
 NOMINATIM = "https://nominatim.openstreetmap.org/reverse"
 USER_AGENT = "Odie (https://github.com/sagarmainkar/odie)"  # Nominatim's terms: say who is asking
 LOOKUP_TIMEOUT = 6.0
@@ -40,8 +44,9 @@ def _save(store, value: dict) -> dict:
 
 
 def is_night(at: datetime) -> bool:
-    """Whether a fix's own clock says night, 23:00 up to 06:00, in the fix's own offset (a fix taken abroad is judged by
-    the time there): 23:00 -> True; 05:59 -> True; 06:00 -> False; 22:59 -> False."""
+    """Whether a fix's clock says night, 23:00 up to 06:00, in the fix's own offset: a device that says when it took
+    the fix (the Mac app, the web app) is judged by its clock there; a fix the server stamped, by the server's.
+    23:00 -> True; 05:59 -> True; 06:00 -> False; 22:59 -> False."""
     return at.hour >= 23 or at.hour < 6
 
 
@@ -86,13 +91,32 @@ def prune(fixes: list[dict], now: datetime) -> list[dict]:
 
 
 def record(store, lat: float, lon: float, place: str, now: datetime) -> dict:
-    """A device said where the user is: the place, the coordinates and the time are kept, the fix joins the list, and
-    home is worked out again unless the user stated it. `on` becomes True: the ask is answered."""
+    """A device said where the user is: the coordinates and the time are kept, the fix joins the list, and home is
+    worked out again unless the user stated it. `on` becomes True: the ask is answered. A fix with no name (the lookup
+    failed) is still kept, but the place the model hears, and when it was seen, stay the last named ones.
+      "Northvale" at 09:00, then "" at 11:00 -> place "Northvale", seen 09:00, two fixes, the point from 11:00"""
     current = get(store)
     fixes = prune([*current["fixes"], {"place": place, "lat": lat, "lon": lon, "at": now.isoformat()}], now)
     home = current["home"] if current["home_set_by_user"] else home_of(fixes)
-    return _save(store, {**current, "on": True, "place": place, "lat": lat, "lon": lon, "seen": now.isoformat(), "home": home,
+    named = bool(place)
+    place_now = place if named else current["place"]
+    seen_now = now.isoformat() if named or not current["place"] else current["seen"]
+    return _save(store, {**current, "on": True, "place": place_now, "lat": lat, "lon": lon, "seen": seen_now, "home": home,
                          "fixes": fixes})
+
+
+def fix_time(at: str | None, now: datetime) -> datetime:
+    """When a fix was taken: the device's own ISO time with its offset when it sent a valid one, else the server's
+    `now`. "2026-10-25T23:30:00+09:00" -> that moment, +09:00; "" or "not a time" or a time without an offset -> now"""
+    if not at:
+        return now
+    try:
+        parsed = datetime.fromisoformat(at)
+    except ValueError:
+        return now
+    if parsed.tzinfo is None:
+        return now
+    return parsed
 
 
 def decline(store) -> dict:
@@ -146,7 +170,7 @@ def location_bits(setting: dict, now: datetime) -> tuple[str, str, str]:
 
 def point_is_plausible(lat: float, lon: float) -> bool:
     """Whether a device's point can be a real one: latitude within [-90, 90], longitude within [-180, 180], and not
-    exactly (0, 0), which is what a device with no fix at all sends. (18.52, 73.85) -> True; (0, 0) -> False;
+    exactly (0, 0), which is what a device with no fix at all sends. (10.0, 20.0) -> True; (0, 0) -> False;
     (91, 0) -> False; (1, 181) -> False."""
     in_range = -90 <= lat <= 90 and -180 <= lon <= 180
     null_island = lat == 0 and lon == 0
@@ -161,8 +185,8 @@ def view(setting: dict) -> dict:
 
 
 def km_between(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-    """The distance between two points over the ground, in km (haversine). Example: (18.52, 73.85) to (18.55, 73.88)
-    -> 4.6."""
+    """The distance between two points over the ground, in km (haversine). Example: (10.0, 20.0) to (10.03, 20.03)
+    -> 4.7."""
     radius = 6371.0
     d_lat = math.radians(lat2 - lat1)
     d_lon = math.radians(lon2 - lon1)
@@ -199,13 +223,18 @@ def place_from_address(address: dict) -> str:
 async def place_for(store, lat: float, lon: float, transport=None) -> str:
     """The place name for a point. A remembered fix nearby answers first (remembered_place), with no network. Else
     Nominatim is asked once, over https, with Odie's user agent; a point is sent out only here, and only when nothing
-    nearby is known. One request per call and at most one fix per device open keeps well under Nominatim's one request
-    a second. "" when it can't be reached or read (an error status, a timeout, no JSON, no address): the fix is still
-    stored, and the model line falls back to the last place name known."""
+    nearby is known. Two requests keep LOOKUP_GAP apart (two devices opening together wait, rather than break
+    Nominatim's one-a-second policy). "" when it can't be reached or read (an error status, a timeout, no JSON, no
+    address): the fix is still stored, and the model line keeps the last place name known (record)."""
+    global _last_lookup
     known = remembered_place(get(store)["fixes"], lat, lon)
     if known:
         return known
     params = {"format": "jsonv2", "zoom": "10", "lat": f"{lat:.5f}", "lon": f"{lon:.5f}"}
+    wait = LOOKUP_GAP - (time.monotonic() - _last_lookup)
+    if wait > 0:
+        await asyncio.sleep(wait)
+    _last_lookup = time.monotonic()
     try:
         async with httpx.AsyncClient(transport=transport, timeout=LOOKUP_TIMEOUT, headers={"User-Agent": USER_AGENT}) as client:
             response = await client.get(NOMINATIM, params=params)

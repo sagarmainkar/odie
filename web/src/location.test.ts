@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ASK_TEXT, locationRow, seenText, shouldAsk, shouldRefresh, type LocationInfo } from "./location";
+import { ASK_TEXT, afterAllow, locationRow, seenText, shouldAsk, shouldRefresh, type LocationInfo } from "./location";
 
 const base: LocationInfo = { on: null, place: "", seen: "", home: "", home_set_by_user: false };
 
@@ -38,5 +38,10 @@ describe("location", () => {
     expect(locationRow({ ...base, on: true }, now)).toEqual({ sub: "Waiting for the first fix", state: "ok" });
     expect(locationRow({ ...base, on: false }, now)).toEqual({ sub: "Off", state: "off" });
     expect(locationRow(base, now)).toEqual({ sub: "Not asked yet", state: "none" });
+  });
+  it("a browser denial ends the ask; a timeout leaves it", () => {
+    expect(afterAllow({ lat: 1, lon: 2, at: "2026-10-25T14:12:00+05:30" })).toBe("send");
+    expect(afterAllow("denied")).toBe("decline");    // the browser remembers the refusal: asking again would never prompt
+    expect(afterAllow(null)).toBe("leave");           // a timeout or no support: the line stays for next time
   });
 });

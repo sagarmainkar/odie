@@ -69,13 +69,33 @@ export function geolocationSupported(): boolean {
 }
 
 /** One position from the browser, or null when it can't or won't give one; it asks the user the first time, by itself. */
-export function currentPosition(): Promise<{ lat: number; lon: number } | null> {
+export type Position = { lat: number; lon: number; at: string };
+
+/** This browser's position with the moment it was taken in the device's own offset; "denied" when the user refused the
+ * browser's own dialog (code 1); null when it can't answer (no support, a timeout, no fix). */
+export function currentPosition(): Promise<Position | "denied" | null> {
   return new Promise((resolve) => {
     if (!geolocationSupported()) { resolve(null); return; }
     navigator.geolocation.getCurrentPosition(
-      (p) => resolve({ lat: p.coords.latitude, lon: p.coords.longitude }),
-      () => resolve(null),
+      (p) => resolve({ lat: p.coords.latitude, lon: p.coords.longitude, at: localIso(new Date(p.timestamp)) }),
+      (e) => resolve(e.code === 1 ? "denied" : null),
       { timeout: 8000, maximumAge: 600_000 },
     );
   });
+}
+
+/** What Allow leads to: a position is sent; a denial is kept as "Not now" (the browser would never ask again, so
+ * neither should the line); nothing (a timeout, no support) leaves the line for next time. */
+export function afterAllow(got: Position | "denied" | null): "send" | "decline" | "leave" {
+  if (got === "denied") return "decline";
+  if (got === null) return "leave";
+  return "send";
+}
+
+/** A date as ISO text in the device's own offset: 2026-10-25T14:12:00+05:30. */
+export function localIso(d: Date): string {
+  const pad = (n: number) => String(Math.abs(n)).padStart(2, "0");
+  const offset = -d.getTimezoneOffset();
+  const sign = offset >= 0 ? "+" : "-";
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}${sign}${pad(Math.trunc(offset / 60))}:${pad(offset % 60)}`;
 }

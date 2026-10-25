@@ -194,7 +194,10 @@ def build_turn_context(now: datetime, prefetch: str, ledger: str, tasks: str = "
     14:12) · home: Northvale"; nothing known -> "now 14:16 Sun 25 Oct"."""
     bits = [f"now {now.strftime('%H:%M')} {now.strftime('%a %-d %b')}"]
     if place:
-        bits.append(f"near {place} (seen {seen})" if seen else f"near {place}")
+        near = f"near {place}"
+        if seen:
+            near += f" (seen {seen})"
+        bits.append(near)
     if home:
         bits.append(f"home: {home}")
     if ledger.strip():

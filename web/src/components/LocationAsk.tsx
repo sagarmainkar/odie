@@ -1,13 +1,13 @@
 import { useEffect, useState } from "react";
 import { getJSON, postJSON, putJSON } from "../api";
-import { ASK_TEXT, currentPosition, geolocationSupported, shouldAsk, shouldRefresh, type LocationInfo } from "../location";
+import { ASK_TEXT, afterAllow, currentPosition, geolocationSupported, shouldAsk, shouldRefresh, type LocationInfo } from "../location";
 import { Tile } from "./Tile";
 
 /** Sends this browser's position to the server, once; a browser that can't or won't is silent (the server keeps the last place). */
 async function sendPosition(): Promise<LocationInfo | null> {
-  const at = await currentPosition();
-  if (!at) return null;
-  try { return await postJSON<LocationInfo>("/api/location", at); } catch { return null; }
+  const got = await currentPosition();
+  if (got === "denied" || got === null) return null;
+  try { return await postJSON<LocationInfo>("/api/location", got); } catch { return null; }
 }
 
 /** Under the composer: the one ask for where the user is, shown until answered; afterwards a silent refresh on each open. */
@@ -26,9 +26,13 @@ export function LocationAsk() {
   if (!shouldAsk(info, geolocationSupported())) return null;
   async function allow() {
     setBusy(true);
-    const got = await sendPosition();  // the browser asks its own question here; a refusal leaves the line as it was
-    setBusy(false);
-    if (got) setInfo(got);
+    const got = await currentPosition();  // the browser asks its own question here
+    try {
+      const next = afterAllow(got);
+      if (next === "send" && got !== "denied" && got !== null) setInfo(await postJSON<LocationInfo>("/api/location", got));
+      if (next === "decline") setInfo(await putJSON<LocationInfo>("/api/location", { on: false }));  // the browser won't ask again; neither will this line
+    } catch { /* the line stays until the server hears */ }
+    finally { setBusy(false); }
   }
   async function notNow() {
     setBusy(true);

@@ -10,7 +10,7 @@ NORTHVALE = "Northvale, Westshire"
 SEAPORT = "Seaport, Eastmarch"
 
 
-def fix(place, when, lat=18.52, lon=73.85):
+def fix(place, when, lat=10.0, lon=20.0):
     return {"place": place, "lat": lat, "lon": lon, "at": when.isoformat()}
 
 
@@ -39,11 +39,11 @@ def test_record_decline_set_home_and_forget(isolated_settings, tmp_path):
     s.init_schema()
     assert location.get(s)["on"] is None and location.get(s)["place"] == ""
     now = datetime(2026, 10, 25, 14, 12, tzinfo=TZ)
-    v = location.record(s, 18.52, 73.85, NORTHVALE, now)
+    v = location.record(s, 10.0, 20.0, NORTHVALE, now)
     assert v["on"] is True and v["place"] == NORTHVALE and v["seen"] == now.isoformat() and v["home"] == ""
     v = location.set_home(s, "Northvale")
     assert v["home"] == "Northvale" and v["home_set_by_user"] is True
-    v = location.record(s, 15.49, 73.82, "Harbour Town", now + timedelta(days=1))
+    v = location.record(s, 30.0, 40.0, "Harbour Town", now + timedelta(days=1))
     assert v["home"] == "Northvale"  # a stated home is not overwritten by inference
     assert location.decline(s)["on"] is False and location.get(s)["place"] == "Harbour Town"  # declining keeps what was known
     assert location.set_on(s, True)["on"] is True
@@ -54,9 +54,9 @@ def test_fixes_are_kept_to_thirty_days_and_two_hundred(isolated_settings, tmp_pa
     s = Store(tmp_path / "a.db")
     s.init_schema()
     now = datetime(2026, 10, 25, 14, 0, tzinfo=TZ)
-    location.record(s, 18.52, 73.85, "Old", now - timedelta(days=31))
+    location.record(s, 10.0, 20.0, "Old", now - timedelta(days=31))
     for i in range(205):
-        location.record(s, 18.52, 73.85, NORTHVALE, now - timedelta(minutes=i))
+        location.record(s, 10.0, 20.0, NORTHVALE, now - timedelta(minutes=i))
     fixes = location.get(s)["fixes"]
     assert len(fixes) == 200 and all(f["place"] != "Old" for f in fixes)
 
@@ -68,12 +68,12 @@ async def test_place_comes_from_a_remembered_fix_nearby_before_the_network(isola
     import httpx
     s = Store(tmp_path / "a.db")
     s.init_schema()
-    location.record(s, 18.52, 73.85, NORTHVALE, datetime(2026, 10, 25, 9, 0, tzinfo=TZ))
+    location.record(s, 10.0, 20.0, NORTHVALE, datetime(2026, 10, 25, 9, 0, tzinfo=TZ))
 
     def never(request):
         raise AssertionError("no network for a place already known")
-    assert await location.place_for(s, 18.55, 73.88, httpx.MockTransport(never)) == NORTHVALE  # ~4.6 km away
-    assert round(location.km_between(18.52, 73.85, 18.55, 73.88), 1) == 4.6
+    assert await location.place_for(s, 10.03, 20.03, httpx.MockTransport(never)) == NORTHVALE  # ~4.7 km away
+    assert round(location.km_between(10.0, 20.0, 10.03, 20.03), 1) == 4.7
 
 
 async def test_place_is_asked_of_nominatim_when_nothing_nearby_is_known(isolated_settings, tmp_path):
@@ -85,11 +85,11 @@ async def test_place_is_asked_of_nominatim_when_nothing_nearby_is_known(isolated
     def handler(request):
         seen.append(request)
         return httpx.Response(200, json={"address": {"town": "Harbour Town", "state": "Eastmarch", "country": "Nowhere"}})
-    assert await location.place_for(s, 15.49, 73.82, httpx.MockTransport(handler)) == "Harbour Town, Eastmarch"
+    assert await location.place_for(s, 30.0, 40.0, httpx.MockTransport(handler)) == "Harbour Town, Eastmarch"
     assert seen[0].url.host == "nominatim.openstreetmap.org" and seen[0].url.params["zoom"] == "10"
     assert seen[0].url.params["format"] == "jsonv2" and seen[0].headers["user-agent"].startswith("Odie (")
     only_state = httpx.MockTransport(lambda r: httpx.Response(200, json={"address": {"state": "Eastmarch"}}))
-    assert await location.place_for(s, 15.49, 73.82, only_state) == "Eastmarch"
+    assert await location.place_for(s, 30.0, 40.0, only_state) == "Eastmarch"
 
 
 async def test_place_is_empty_when_nominatim_cannot_answer(isolated_settings, tmp_path):
@@ -191,3 +191,56 @@ def test_the_runner_puts_the_place_into_the_context_line(isolated_settings, tmp_
     assert f"near {NORTHVALE} (seen " in r._prepare_prompt("chat-1", "hello")
     location.decline(s)
     assert "near" not in r._prepare_prompt("chat-1", "hello")
+
+
+def test_a_fix_with_no_name_keeps_the_last_named_place(isolated_settings, tmp_path):
+    """The lookup failed (Nominatim down): the fix is kept, but the place the model hears stays the last named one,
+    with its own time, not a blank (review of PR #22)."""
+    from odie.store.db import Store
+    s = Store(tmp_path / "a.db"); s.init_schema()
+    first = datetime(2026, 10, 25, 9, 0, tzinfo=TZ)
+    location.record(s, 10.0, 20.0, NORTHVALE, first)
+    v = location.record(s, 30.0, 40.0, "", first + timedelta(hours=2))
+    assert v["place"] == NORTHVALE and v["seen"] == first.isoformat()        # the named place and when it was seen
+    assert v["lat"] == 30.0 and len(v["fixes"]) == 2 and v["fixes"][-1]["place"] == ""   # the new point is still kept
+    assert location.location_bits(v, first + timedelta(hours=3)) == (NORTHVALE, "09:00", "")
+
+
+async def test_a_devices_own_clock_stamps_the_fix(isolated_settings, tmp_path, monkeypatch):
+    """A device may say when the fix was taken, with its own offset (a Mac abroad): night is judged by that clock.
+    Without one, or with junk, the server's clock stamps it."""
+    from odie.app.main import create_app
+    from tests.test_api import FakeRunner
+    import httpx
+    s = Store(tmp_path / "a.db"); s.init_schema()
+    app = create_app(runner=FakeRunner(), store=s)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+        async with app.router.lifespan_context(app):
+            r = await c.post("/api/location", json={"lat": 35.68, "lon": 139.77, "place": "Harbour Town", "at": "2026-10-25T23:30:00+09:00"})
+            assert r.status_code == 200 and r.json()["seen"] == "2026-10-25T23:30:00+09:00"
+            r = await c.post("/api/location", json={"lat": 35.68, "lon": 139.77, "place": "Harbour Town", "at": "not a time"})
+            assert r.status_code == 200 and r.json()["seen"].endswith("+05:30")   # the server's clock, Asia/Kolkata in tests
+    fixes = location.get(s)["fixes"]
+    assert fixes[0]["at"] == "2026-10-25T23:30:00+09:00" and location.is_night(location._at(fixes[0]))
+
+
+async def test_lookups_keep_a_second_apart(isolated_settings, tmp_path, monkeypatch):
+    """Nominatim allows one request a second: two lookups in a row wait for it."""
+    from odie.store.db import Store
+    import httpx
+    s = Store(tmp_path / "a.db"); s.init_schema()
+    slept = []
+
+    async def fake_sleep(seconds):
+        slept.append(round(seconds, 1))
+    monkeypatch.setattr(location.asyncio, "sleep", fake_sleep)
+    from itertools import chain, repeat
+    from types import SimpleNamespace
+    clock = chain([100.0, 100.0, 100.3, 100.3, 102.0], repeat(102.0))   # read before and after each request
+    monkeypatch.setattr(location, "time", SimpleNamespace(monotonic=lambda: next(clock)))  # the module's clock only
+    location._last_lookup = 0.0
+    ok = httpx.MockTransport(lambda r: httpx.Response(200, json={"address": {"town": "Harbour Town", "state": "Eastmarch"}}))
+    await location.place_for(s, 30.0, 40.0, ok)
+    await location.place_for(s, 50.0, 60.0, ok)   # 0.3 s after the first: waits 0.7
+    await location.place_for(s, 70.0, 80.0, ok)   # 2 s later: no wait
+    assert slept == [0.7]

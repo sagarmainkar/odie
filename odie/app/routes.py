@@ -804,6 +804,7 @@ class LocationIn(BaseModel):
     lat: float
     lon: float
     place: str | None = Field(None, max_length=200)  # the device's own name for the point (the Mac app geocodes itself)
+    at: str | None = Field(None, max_length=40)       # when the device took the fix, ISO with its own offset
 
 
 class LocationPut(BaseModel):
@@ -832,7 +833,8 @@ async def location_post(body: LocationIn, request: Request) -> dict[str, Any]:
     if not place:
         place = await location.place_for(store, body.lat, body.lon)
     now = datetime.now(ZoneInfo(config.settings.timezone))
-    saved = location.record(store, body.lat, body.lon, place, now)
+    taken = location.fix_time(body.at, now)  # the device's clock when it said so, else the server's
+    saved = location.record(store, body.lat, body.lon, place, taken)
     store.audit("user", "location", result_summary=f"seen at {place or '(no name yet)'}")
     return location.view(saved)
 
@@ -844,7 +846,8 @@ async def location_put(body: LocationPut, request: Request) -> dict[str, Any]:
     store = request.app.state.store
     if body.on is not None:
         location.set_on(store, body.on)
-        store.audit("user", "location", result_summary="on" if body.on else "off")
+        word = "on" if body.on else "off"
+        store.audit("user", "location", result_summary=word)
     if body.home is not None:
         location.set_home(store, body.home)
         store.audit("user", "location", result_summary=f"home: {body.home.strip() or '(cleared)'}")
