@@ -94,3 +94,15 @@ def test_a_websocket_from_another_page_is_closed(isolated_settings, tmp_path, mo
         with pytest.raises(WebSocketDisconnect) as closed, c.websocket_connect("/api/browser/live/chat-1", headers={"Origin": EVIL}) as ws:
             ws.receive_json()
         assert closed.value.code == 4403
+
+
+def test_hosts_come_from_the_env_file_too_and_reach_the_service(monkeypatch):
+    """An installed Odie has no shell environment to set ODIE_HOSTS in: it is read like every other setting (the
+    environment, else ~/.odie/.env), the service is started with it, and the 421 page says where it goes."""
+    from odie import cli, secrets
+    monkeypatch.delenv("ODIE_HOSTS", raising=False)
+    monkeypatch.setattr(secrets, "load_secret", lambda name: "odie.lan, sagars-mini" if name == "ODIE_HOSTS" else None)
+    assert origin.host_allowed("sagars-mini:8000") and origin.host_allowed("odie.lan")
+    assert not origin.host_allowed("other.lan")
+    assert "ODIE_HOSTS" in cli.PASSED_TO_SERVICE
+    assert "~/.odie/.env" in origin.REFUSED_HOST["detail"]

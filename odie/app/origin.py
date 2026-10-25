@@ -20,7 +20,8 @@ from urllib.parse import urlsplit
 LOOPBACK = frozenset({"localhost", "127.0.0.1", "::1"})
 OWN_SUFFIXES = (".localhost", ".local", ".ts.net")  # names no public DNS can point at this computer: mDNS and Tailscale
 UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
-REFUSED_HOST = {"detail": "This address isn't one Odie answers to. Open Odie at its own address, or add this name to ODIE_HOSTS."}
+REFUSED_HOST = {"detail": "This address isn't one Odie answers to. Open Odie at its own address, or add this name to "
+                          "ODIE_HOSTS in ~/.odie/.env (comma-separated) and restart Odie."}
 REFUSED_ORIGIN = {"detail": "This request came from a page that isn't Odie's."}
 
 
@@ -45,15 +46,16 @@ def is_ip(name: str) -> bool:
 
 def own_names() -> set[str]:
     """The names this Odie is reached by, besides addresses: the phone address's host (ODIE_PUBLIC_URL, or one learned
-    after start), the host it listens on, and any names in ODIE_HOSTS (comma-separated). Example: ODIE_PUBLIC_URL=
-    https://mac.ts.net and ODIE_HOSTS=odie.lan -> {"mac.ts.net", "odie.lan", "127.0.0.1"} (plus whatever HOST is)."""
+    after start), the host it listens on, and any names in ODIE_HOSTS (comma-separated; the environment, else
+    ~/.odie/.env, like every setting). Example: ODIE_PUBLIC_URL=https://mac.ts.net and ODIE_HOSTS=odie.lan ->
+    {"mac.ts.net", "odie.lan", "127.0.0.1"} (plus whatever HOST is)."""
     from odie import config
     names = {hostname_of(urlsplit(config.settings.public_url).netloc or ""), hostname_of(config.settings.host)}
     learned = config.phone_address()
     if learned:
         names.add(hostname_of(urlsplit(learned).netloc or ""))
-    for extra in os.environ.get("ODIE_HOSTS", "").split(","):
-        names.add(hostname_of(extra))
+    for extra in (config._raw("ODIE_HOSTS") or "").split(","):
+        names.add(hostname_of(extra.strip()))
     names.discard("")
     return names
 

@@ -1,5 +1,6 @@
 """MCP servers the user adds in ~/.odie/mcp.json (standard mcpServers format). Each is on demand by default
-(a synthetic skill whose tools switch on when loaded); tools the server doesn't mark read-only ask for a tap."""
+(a synthetic skill whose tools switch on when loaded); its tools ask for a tap, unless the user switched "Reading
+doesn't need a tap" on for that server and the tool's name says it reads (asks)."""
 from __future__ import annotations
 
 import asyncio
@@ -98,41 +99,97 @@ def asks(tool: dict, reads_free: bool) -> bool:
 
 
 SHELLS = frozenset({"sh", "bash", "zsh", "dash", "fish", "ksh", "csh", "tcsh", "cmd", "cmd.exe", "powershell", "pwsh"})
-INLINE_CODE_FLAGS = frozenset({"-c", "-e", "-p", "--eval", "--print", "-r", "--exec", "-x"})  # python -c, node -e, ruby -e, perl -e
+# Flags that take code or a file to load before the program's own: python -c, node -e/-p/--eval/--print/--require/
+# --import, ruby -e, perl -e/-E/-M, osascript -e, deno eval. Matched as a whole word, joined (-cCODE, --eval=1) or in a
+# cluster (-Sc, -pe).
+INLINE_CODE_FLAGS = frozenset({"-c", "-e", "-p", "--eval", "--print", "-r", "--require", "--import", "--exec", "-x", "-E", "-M"})
+INLINE_CODE_WORDS = frozenset({"eval"})  # deno eval, bun eval: a subcommand that runs text
 INTERPRETERS = frozenset({"python", "python3", "node", "nodejs", "ruby", "perl", "deno", "bun", "osascript", "php", "lua"})
+# Programs that only run the program after them (with their own options first): the next word is the real command.
+WRAPPERS = frozenset({"env", "nohup", "nice", "time", "caffeinate", "xargs", "script", "busybox", "stdbuf", "timeout",
+                      "command", "exec", "ionice", "setsid", "doas", "sudo"})
 # Variables that make a program run code from somewhere else before its own: a spec's env may not set them.
-HOOK_VARS = frozenset({"NODE_OPTIONS", "PYTHONSTARTUP", "PYTHONPATH", "LD_PRELOAD", "LD_LIBRARY_PATH", "DYLD_INSERT_LIBRARIES",
-                       "DYLD_LIBRARY_PATH", "BASH_ENV", "ENV", "ZDOTDIR", "PERL5OPT", "PERL5LIB", "RUBYOPT", "RUBYLIB", "NODE_PATH"})
+HOOK_VARS = frozenset({"NODE_OPTIONS", "PYTHONSTARTUP", "PYTHONPATH", "PYTHONHOME", "PYTHONUSERBASE", "LD_PRELOAD", "LD_LIBRARY_PATH",
+                       "DYLD_INSERT_LIBRARIES", "DYLD_LIBRARY_PATH", "BASH_ENV", "ENV", "ZDOTDIR", "PERL5OPT", "PERL5LIB", "PERLLIB",
+                       "PERL5DB", "RUBYOPT", "RUBYLIB", "GEM_PATH", "NODE_PATH", "PATH"})
+_VERSIONED = re.compile(r"^([a-z][a-z0-9_+]*?)(?:[-.]?\d[\d.]*)?$")  # python3.12, zsh-5.9, node22 -> python, zsh, node
+_SHORT_CLUSTER = re.compile(r"^-[A-Za-z]{1,3}$")  # -Sc, -pe: a few one-letter flags together
+
+
+def program_name(command: str) -> str:
+    """The program a command names, as the lists know it: the last path part, lower-case, spaces and a version
+    dropped, a symlink followed.
+      "/bin/sh" -> "sh";  " sh" -> "sh";  "python3.12" -> "python3";  "zsh-5.9" -> "zsh";  a link to /bin/sh -> sh"""
+    text = command.strip()
+    if "/" in text:
+        try:
+            text = os.path.realpath(text)
+        except OSError:
+            pass
+    name = text.rsplit("/", 1)[-1].lower()
+    m = _VERSIONED.match(name)
+    if m and m.group(1) in SHELLS | INTERPRETERS:
+        return m.group(1)
+    if name.startswith("python3"):
+        return "python3"
+    return name
+
+
+def runs_code_from_args(args: list[str]) -> bool:
+    """Whether these interpreter arguments carry code or a file to load before the program: a flag from
+    INLINE_CODE_FLAGS as a word, joined to its value, or in a short cluster; or an `eval` subcommand.
+      ["-c", "import os"] -> True;  ["-cimport os"] -> True;  ["-Sc", "x"] -> True;  ["--eval=1"] -> True;
+      ["-m", "my_server"] -> False;  ["server.py", "--config", "c.json"] -> False"""
+    code_letters = {f[1] for f in INLINE_CODE_FLAGS if len(f) == 2}
+    for a in args:
+        if a in INLINE_CODE_FLAGS or a in INLINE_CODE_WORDS:
+            return True
+        if a.startswith("--") and a.split("=", 1)[0] in INLINE_CODE_FLAGS:
+            return True
+        if a.startswith("-") and not a.startswith("--") and len(a) > 2 and a[1] in code_letters:
+            return True  # -cCODE, -MFoo, -e'...'
+        if _SHORT_CLUSTER.match(a) and set(a[1:]) & code_letters:
+            return True  # -Sc, -pe
+    return False
 
 
 def command_problem(spec: dict) -> str | None:
     """Why a stdio server's spec may not be run from the API, or None when it may. An MCP server is a program, so saving
     one is running code; what the API refuses is a spec that is nothing but a way to run arbitrary text: a shell as the
-    command, an interpreter given code on its command line, or an env that hooks code into the program.
+    command, an interpreter given code on its command line, or an env that hooks code into the program. Wrappers
+    (env, nohup, xargs…) are looked through to the program they run; names are read without a path, spaces or a
+    version; flags count joined or clustered; env keys are read without spaces or case.
     Examples: {"command": "/bin/sh", "args": ["-c", "id"]} -> "a shell isn't an MCP server";
+    {"command": "env", "args": ["sh", "-c", "id"]} -> the same;
     {"command": "python3", "args": ["-c", "..."]} -> "code on the command line isn't an MCP server";
+    {"command": "python3.12", "args": ["-cimport os"]} -> the same;
     {"command": "node", "env": {"NODE_OPTIONS": "--require x"}} -> "NODE_OPTIONS can't be set for a server";
     {"command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]} -> None;
     {"command": "python3", "args": ["-m", "my_server"]} -> None; {"url": ...} -> None (not a program)."""
     command = str(spec.get("command") or "")
     if not command:
         return None
-    program = command.rsplit("/", 1)[-1].lower()
+    args = [str(a) for a in (spec.get("args") or [])]
+    program = program_name(command)
+    while program in WRAPPERS:  # env FOO=1 sh -c …: the program is the first word that is not an option or an assignment
+        first = next((i for i, a in enumerate(args) if not a.startswith("-") and not (program == "env" and "=" in a)), None)
+        if first is None:
+            break
+        program, args = program_name(args[first]), args[first + 1:]  # what follows keeps its own flags (-c …)
     if program in SHELLS:
         return "a shell isn't an MCP server"
-    args = [str(a) for a in (spec.get("args") or [])]
-    if program in INTERPRETERS and any(a in INLINE_CODE_FLAGS for a in args):
+    if program in INTERPRETERS and runs_code_from_args(args):
         return "code on the command line isn't an MCP server"
     env = spec.get("env") or {}
-    hooked = next((k for k in env if str(k).upper() in HOOK_VARS), None)
+    hooked = next((k for k in env if str(k).strip().upper() in HOOK_VARS), None)
     if hooked is not None:
-        return f"{hooked} can't be set for a server"
+        return f"{str(hooked).strip().upper()} can't be set for a server"
     return None
 
 
 class PluginMcpToolset(McpToolset):
-    """An MCP toolset whose tools need the user's tap unless the server marks them read-only, or reads_free (the
-    server's "Reading doesn't need a tap" switch) and the tool reads."""
+    """An MCP toolset whose tools need the user's tap, unless the user switched "Reading doesn't need a tap" on for
+    the server (reads_free) and the tool's name says it reads (asks); the server's own read-only hint frees nothing."""
 
     def __init__(self, *args, reads_free: bool = False, **kwargs):
         super().__init__(*args, **kwargs)

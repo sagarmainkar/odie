@@ -12,7 +12,7 @@ Odie runs on your computer and holds your mail, notes and memory. This is how it
   Keep pairing on unless the Mac is only yours and you have a reason.
 - Two checks run before any route, pairing on or off (`odie/app/origin.py`). The name a request gives in `Host` must
   be one Odie answers to: an IP address, `localhost`, a `.local` or `.ts.net` name, the phone address, or a name in
-  `ODIE_HOSTS`; anything else gets 421. That is what stops DNS rebinding, where an attacker's name is pointed at your
+  `ODIE_HOSTS` in `~/.odie/.env`; anything else gets 421. That is what stops DNS rebinding, where an attacker's name is pointed at your
   own computer so their page counts as Odie's. And a browser request that changes something (a POST, an upload, a
   WebSocket) must come from Odie's own page: an `Origin` naming another site gets 403, so a page you happen to have
   open can't act as you even when pairing is off.
@@ -28,14 +28,13 @@ Odie runs on your computer and holds your mail, notes and memory. This is how it
 - A connected app's tool runs without a tap only when you turn on "Reading doesn't need a tap" for that app *and*
   the tool's name says it reads (find, get, list, search, fetch). A server's own `readOnlyHint` frees nothing: it is
   the server's word about itself.
-- **Once a chat has read your mail, notes, memory or messages** (or a page you're signed in to), anything that would
-  send words to the web, a search, a fetch, opening another site, a cloud voice, asks first, with a card naming what
-  the chat read. The words a model picks for a search can carry what it just read.
+- **Once a tool in a chat has read your mail, notes, memory or messages** (or a page you're signed in to), a web
+  search, a fetch, opening another site, a picture or clip search and a cloud voice ask first, with a card naming what
+  the chat read. The words a model picks for a search can carry what it just read. Memory Odie already had in mind
+  for the message (the notes it prefetches) doesn't count as a read, and other tools that reach the web (research,
+  markets, a podcast or video) aren't in this list.
 - The background watch stays off the web once a check has read mail or events; the one exception is an address you
   wrote in a Watch for entry yourself.
-- The card also tells you when Odie read mail from someone just before asking to act, so a message can't quietly
-  turn into an action.
-- Every tool call is written to the audit log in `~/.odie/data`.
 - The card also tells you when Odie read mail from someone just before asking to act, so a message can't quietly
   turn into an action.
 - Every tool call is written to the audit log in `~/.odie/data`.

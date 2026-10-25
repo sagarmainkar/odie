@@ -10,7 +10,6 @@ CALENDAR_WORDS = ("calendar", "event", "reminder")
 NOTES = frozenset({"read_note", "related_notes", "search_everything"})
 MEMORY = frozenset({"fetch_memory", "search_memories"})
 # Odie's own plumbing: a skill's name ("mcp-gmail-calendar") says nothing about what the chat has read.
-PLUMBING = ("load_skill", "unload_skill", "list_skills", "install_skill", "adk_")
 
 
 def label_for(tool_name: str) -> str | None:

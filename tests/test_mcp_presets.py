@@ -113,7 +113,9 @@ async def test_check_lists_tools_without_saving(client, monkeypatch):
     assert [t["asks"] for t in r["tools"]] == [False, True]
     for spec in ({"command": "/bin/sh", "args": ["-c", "id > /tmp/x"]}, {"command": "zsh", "args": ["-c", "id"]},
                  {"command": "python3", "args": ["-c", "import os"]}, {"command": "node", "args": ["-e", "1"]},
-                 {"command": "node", "args": ["server.js"], "env": {"NODE_OPTIONS": "--require /tmp/x.js"}}):
+                 {"command": "node", "args": ["server.js"], "env": {"NODE_OPTIONS": "--require /tmp/x.js"}},
+                 {"command": "env", "args": ["sh", "-c", "id > /tmp/x"]},        # the review's live bypasses (25 Oct 2026)
+                 {"command": "python3", "args": ["-cimport pathlib; pathlib.Path('/tmp/x').write_text('hi')"]}):
         r = await client.post("/api/mcp/check", json={"spec": spec})
         assert r.status_code == 422, spec  # a shell, code as text or a hooked env: never run, not even to list tools
         r = await client.post("/api/mcp", json={"name": "evil", "spec": spec})
