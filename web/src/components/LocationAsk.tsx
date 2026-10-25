@@ -1,14 +1,7 @@
 import { useEffect, useState } from "react";
 import { getJSON, postJSON, putJSON } from "../api";
-import { ASK_TEXT, afterAllow, currentPosition, geolocationSupported, shouldAsk, shouldRefresh, type LocationInfo } from "../location";
+import { ASK_TEXT, afterAllow, currentPosition, geolocationSupported, sendPosition, shouldAsk, shouldRefresh, type LocationInfo } from "../location";
 import { Tile } from "./Tile";
-
-/** Sends this browser's position to the server, once; a browser that can't or won't is silent (the server keeps the last place). */
-async function sendPosition(): Promise<LocationInfo | null> {
-  const got = await currentPosition();
-  if (got === "denied" || got === null) return null;
-  try { return await postJSON<LocationInfo>("/api/location", got); } catch { return null; }
-}
 
 // The card sits where the composer sits: mx-3 at phone width, and on a desktop the composer's centred column
 // (styles.css gives .chat-aside the same margins as .chat-composer), so it never spans wider than the composer.

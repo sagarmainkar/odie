@@ -1,5 +1,7 @@
 /** Where the user is: the server keeps a place name (never coordinates in what reaches the model), and the web app sends a
  * fix on open, after one ask. These are the pure decisions; LocationAsk and Settings' LocationRow render them. */
+import { postJSON } from "./api";
+
 export type LocationInfo = { on: boolean | null; place: string; seen: string; home: string; home_set_by_user: boolean };
 export type LocationRow = { sub: string; meta: string; state: "ok" | "off" | "none" };
 
@@ -99,4 +101,20 @@ export function localIso(d: Date): string {
   const offset = -d.getTimezoneOffset();
   const sign = offset >= 0 ? "+" : "-";
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}${sign}${pad(Math.trunc(offset / 60))}:${pad(offset % 60)}`;
+}
+
+
+/** What Settings does once Turn on has been answered: the server said on -> ask the browser for a fix right now (no
+ * reload needed); off, never asked, or no answer at all (the PUT failed) -> nothing, the row keeps what it showed. */
+export function afterTurnOn(info: LocationInfo | null): "fix" | "nothing" {
+  if (info && info.on === true) return "fix";
+  return "nothing";
+}
+
+/** This browser's position, sent to the server once; null when the browser can't or won't give one, or the server
+ * doesn't answer (the server keeps the last place, so silence is fine). Shared by the ask card and Settings' Turn on. */
+export async function sendPosition(): Promise<LocationInfo | null> {
+  const got = await currentPosition();
+  if (got === "denied" || got === null) return null;
+  try { return await postJSON<LocationInfo>("/api/location", got); } catch { return null; }
 }

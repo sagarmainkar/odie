@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ASK_TEXT, NOTE_TEXT, afterAllow, locationRow, seenText, shouldAsk, shouldRefresh, type LocationInfo } from "./location";
+import { ASK_TEXT, NOTE_TEXT, afterAllow, afterTurnOn, locationRow, seenText, shouldAsk, shouldRefresh, type LocationInfo } from "./location";
 
 const base: LocationInfo = { on: null, place: "", seen: "", home: "", home_set_by_user: false };
 
@@ -52,5 +52,11 @@ describe("location", () => {
     expect(afterAllow({ lat: 1, lon: 2, at: "2026-10-25T14:12:00+05:30" })).toBe("send");
     expect(afterAllow("denied")).toBe("decline");    // the browser remembers the refusal: asking again would never prompt
     expect(afterAllow(null)).toBe("leave");           // a timeout or no support: the line stays for next time
+  });
+  it("Turn on in Settings asks for a fix at once; anything else waits", () => {
+    expect(afterTurnOn({ ...base, on: true })).toBe("fix");      // the PUT came back on: ask the browser now, no reload
+    expect(afterTurnOn({ ...base, on: false })).toBe("nothing");
+    expect(afterTurnOn({ ...base, on: null })).toBe("nothing");
+    expect(afterTurnOn(null)).toBe("nothing");                   // the PUT failed: the row keeps what it showed
   });
 });

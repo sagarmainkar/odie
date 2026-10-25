@@ -20,7 +20,7 @@ import { profileChanged, useProfile } from "../profile";
 import { has, useCaps } from "../capabilities";
 import { notesRow, type VaultInfo } from "../vault";
 import { photosRow, type PhotosInfo } from "../photos";
-import { locationRow, NOTE_TEXT, type LocationInfo, type LocationRow as LocationWords } from "../location";
+import { afterTurnOn, locationRow, NOTE_TEXT, sendPosition, type LocationInfo, type LocationRow as LocationWords } from "../location";
 import { LABEL, type Panel, type Step, type Turn } from "../setup";
 import { PhoneBlock, StepPanel } from "./Setup";
 import { MacAppsBlock } from "../components/MacAppsBlock";
@@ -399,6 +399,16 @@ function LocationRow() {
     try { show(await go()); } catch { /* the row keeps what it showed */ }
     finally { setBusy(false); }
   }
+  async function turnOn() {
+    setBusy(true);
+    let answered: LocationInfo | null = null;
+    try { answered = await putJSON<LocationInfo>("/api/location", { on: true }); show(answered); } catch { /* the row keeps what it showed */ }
+    if (afterTurnOn(answered) === "fix") {
+      const fixed = await sendPosition();  // the browser asks its own question if it hasn't yet; a refusal or a timeout changes nothing
+      if (fixed) show(fixed);
+    }
+    setBusy(false);
+  }
   if (!v) return null;
   const { info, row } = v;
   const link = "h-10 px-2 -mx-2 text-ember-text font-medium disabled:opacity-50";
@@ -406,7 +416,7 @@ function LocationRow() {
     <span className="flex items-center gap-3 shrink-0">
       {info.on === true
         ? <button disabled={busy} onClick={() => void change(() => putJSON<LocationInfo>("/api/location", { on: false }))} className={link}>Off</button>
-        : <button disabled={busy} onClick={() => void change(() => putJSON<LocationInfo>("/api/location", { on: true }))} className={link}>Turn on</button>}
+        : <button disabled={busy} onClick={() => void turnOn()} className={link}>Turn on</button>}
       {(info.place || info.home) && <button disabled={busy} onClick={() => void change(() => deleteJSON<LocationInfo>("/api/location"))} className={link}>Forget</button>}
     </span>
   );
