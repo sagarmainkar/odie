@@ -68,14 +68,14 @@ Odie is inspired by Muse, but it isn't a copy.
   once you turn on an embedding model. Ask it to save a note and it writes one with a shell command you approve on a
   card. How you organise the vault is up to you. If you have no vault, setup makes one for you
   (`~/Documents/Odie Vault`).
-- **Search by meaning.** For the best experience, use EmbeddingGemma 2, Google's local embedding model, which Odie
-  runs on the Mac's GPU (Apple Silicon). It gives you search over mixed media (notes, pictures and videos together),
-  the results are remarkable, and there's a lot of fun to be had with it. The model is about 1.5 GB, downloaded once
-  on first use, and unloads itself after 15 idle minutes. You can also use an embedding model from LM Studio or
-  Ollama on this computer, from a server somewhere else on your network (its address and one of its models), or
-  OpenAI's: EmbeddingGemma 2 on Ollama (`ollama pull embeddinggemma-2`) reads pictures too, with no model of Odie's
-  own to download; the others are text only. Without any, search works by words. EmbeddingGemma 2 is Google's model:
-  Odie doesn't include it. It's downloaded from Hugging Face on first use, under its own licence (Apache 2.0).
+- **Search by meaning.** For the best experience, use EmbeddingGemma 2, Google's local embedding model, through
+  Ollama: `ollama pull embeddinggemma-2`, then pick it in setup or Settings → Notes. It gives you search over mixed
+  media (notes, pictures and videos together), the results are remarkable, and there's a lot of fun to be had with
+  it. Ollama loads the 1.3 GB model when Odie asks and unloads it when idle. You can also use an embedding model from
+  LM Studio, from a server somewhere else on your network (its address and one of its models), or OpenAI's; those
+  are text only. Without any, search works by words. Odie's own embedding service (the same model in PyTorch, built
+  with `ODIE_EMBED=on` at install) remains for a Mac without Ollama. EmbeddingGemma 2 is Google's model: Odie doesn't
+  include it; it comes from Ollama's library or Hugging Face under its own licence (Apache 2.0).
   Explainer videos are encoded with ffmpeg from the imageio-ffmpeg package, installed with Odie and run as a
   separate program (its bundled ffmpeg is a GPL build); the video kit ships three.js and KaTeX (both MIT).
   Explainer videos can carry pictures (yours or the web's, credited on a closing card), short stock clips and an

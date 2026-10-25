@@ -12,6 +12,12 @@ def _wanted(value: str) -> bool:
     return value.strip().lower() not in ("off", "0", "no")
 
 
+def _asked_for(value: str) -> bool:
+    """Whether a switch's words ask for a service that is off unless asked: "on", "1" and "yes" turn it on; anything
+    else, or nothing, leaves it off. "on" -> True; "" -> False; "off" -> False."""
+    return value.strip().lower() in ("on", "1", "yes")
+
+
 def local_voice_wanted() -> bool:
     """Whether Odie's own voice (Kokoro) is meant to run here. ODIE_VOICE unset on an M2 -> True; ODIE_VOICE=off, which
     the installer sets on an Intel Mac -> False, and Kokoro is offered nowhere."""
@@ -19,6 +25,8 @@ def local_voice_wanted() -> bool:
 
 
 def local_embeddings_wanted() -> bool:
-    """Whether Odie's own embedding service is meant to run here. ODIE_EMBED unset -> True; ODIE_EMBED=off, the
-    installer's choice on an Intel Mac -> False, and EmbeddingGemma 2 is offered nowhere."""
-    return _wanted(os.environ.get("ODIE_EMBED", ""))
+    """Whether Odie's own embedding service is meant to run here: only when asked for (ODIE_EMBED=on at install).
+    Since 25 Oct 2026 it is off by default: EmbeddingGemma 2 on Ollama reads notes and pictures the same way with no
+    download or torch of Odie's own. ODIE_EMBED unset or off -> False, and Odie's service is offered nowhere;
+    ODIE_EMBED=on -> True."""
+    return _asked_for(os.environ.get("ODIE_EMBED", ""))

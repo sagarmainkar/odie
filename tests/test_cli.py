@@ -652,8 +652,8 @@ def test_update_when_already_up_to_date(inst, world, capsys):
 def test_update_moves_to_the_newest_and_remembers_the_previous(inst, world, capsys):
     running_world(world)
     assert cli.cmd_update(inst, world) == 0
-    assert world.events == ["checkout @b", "build uv sync --frozen @b", "build uv sync --frozen @b", "build uv sync --frozen @b",
-                            "build npm ci @b", "build npm run build @b", "kickstart @b"]  # Odie's, the voice worker's, the embedding service's
+    assert world.events == ["checkout @b", "build uv sync --frozen @b", "build uv sync --frozen @b",
+                            "build npm ci @b", "build npm run build @b", "kickstart @b"]  # Odie's and the voice worker's (the embedding service only with ODIE_EMBED=on)
     assert world.head == NEW and world.running == NEW
     assert inst.previous_file.read_text().strip() == OLD
     out = capsys.readouterr().out
@@ -1086,15 +1086,19 @@ def test_serve_sets_up_and_runs_uvicorn(env, world, monkeypatch, capsys):
     assert "Odie: http://localhost:8999  ·  phone: https://mini.tail1234.ts.net  ·  voice worker: off" in capsys.readouterr().out
 
 
-def test_the_embedding_service_is_built_like_the_voice_worker(tmp_path):
+def test_the_embedding_service_is_built_only_when_asked_for(tmp_path):
+    """Since 25 Oct 2026 Odie's own embedding service is opt-in (ODIE_EMBED=on): EmbeddingGemma 2 on Ollama does the
+    same job with no download or torch of Odie's own. The voice worker stays opt-out."""
     inst = cli.install_from({"ODIE_HOME": str(tmp_path)})
-    assert inst.embed and inst.embed_port == 8000 + 772
+    assert not inst.embed and inst.embed_port == 8000 + 772
     names = [name for name, _, _ in cli.build_steps(inst)]
-    assert "the embedding service's uv sync" in names and "the voice worker's uv sync" in names
-    off = cli.install_from({"ODIE_HOME": str(tmp_path), "ODIE_EMBED": "off"})
-    assert not off.embed and "the embedding service's uv sync" not in [n for n, _, _ in cli.build_steps(off)]
-    folder = next(folder for name, _, folder in cli.build_steps(inst) if name.startswith("the embedding"))
+    assert "the embedding service's uv sync" not in names and "the voice worker's uv sync" in names
+    on = cli.install_from({"ODIE_HOME": str(tmp_path), "ODIE_EMBED": "on"})
+    assert on.embed and "the embedding service's uv sync" in [n for n, _, _ in cli.build_steps(on)]
+    folder = next(folder for name, _, folder in cli.build_steps(on) if name.startswith("the embedding"))
     assert folder == inst.app / "embed_server"
+    for word in ("off", "0", "no", ""):
+        assert not cli.install_from({"ODIE_HOME": str(tmp_path), "ODIE_EMBED": word}).embed, word
 
 
 def test_the_service_environment_names_the_embedding_port(tmp_path):

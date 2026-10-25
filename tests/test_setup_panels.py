@@ -415,6 +415,7 @@ async def test_the_embeddings_step_offers_a_server_somewhere_else_and_odies_down
     """What is already running comes first, then a server somewhere else (an address and a model), then OpenAI, and
     Odie's own download last: it is the heaviest choice."""
     from odie import embed_worker
+    monkeypatch.setenv("ODIE_EMBED", "on")  # Odie's own service is opt-in since 25 Oct 2026
     monkeypatch.setattr(embed_worker.EmbedWorker, "installed", property(lambda self: True))
 
     def handler(request):

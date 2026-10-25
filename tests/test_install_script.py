@@ -9,5 +9,6 @@ SCRIPT = (Path(__file__).resolve().parent.parent / "scripts" / "install.sh").rea
 def test_the_installer_builds_every_worker_the_update_builds():
     assert 'build_in "$APP" uv sync --frozen' in SCRIPT
     assert 'if [ "${ODIE_VOICE:-on}" != "off" ]; then build_in "$APP/voice_server" uv sync --frozen; fi' in SCRIPT
-    assert 'if [ "${ODIE_EMBED:-on}" != "off" ]; then build_in "$APP/embed_server" uv sync --frozen; fi' in SCRIPT
+    # Odie's own embedding service is opt-in (ODIE_EMBED=on), like cli.build_steps
+    assert 'case "${ODIE_EMBED:-off}" in on|1|yes) build_in "$APP/embed_server" uv sync --frozen ;; esac' in SCRIPT
     assert 'build_in "$APP/web" npm ci' in SCRIPT and 'build_in "$APP/web" npm run build' in SCRIPT
