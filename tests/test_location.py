@@ -59,3 +59,50 @@ def test_fixes_are_kept_to_thirty_days_and_two_hundred(isolated_settings, tmp_pa
         location.record(s, 18.52, 73.85, NORTHVALE, now - timedelta(minutes=i))
     fixes = location.get(s)["fixes"]
     assert len(fixes) == 200 and all(f["place"] != "Old" for f in fixes)
+
+
+# --- From a point to a place name (place_for) ---
+
+
+async def test_place_comes_from_a_remembered_fix_nearby_before_the_network(isolated_settings, tmp_path):
+    import httpx
+    s = Store(tmp_path / "a.db")
+    s.init_schema()
+    location.record(s, 18.52, 73.85, NORTHVALE, datetime(2026, 10, 25, 9, 0, tzinfo=TZ))
+
+    def never(request):
+        raise AssertionError("no network for a place already known")
+    assert await location.place_for(s, 18.55, 73.88, httpx.MockTransport(never)) == NORTHVALE  # ~4.6 km away
+    assert round(location.km_between(18.52, 73.85, 18.55, 73.88), 1) == 4.6
+
+
+async def test_place_is_asked_of_nominatim_when_nothing_nearby_is_known(isolated_settings, tmp_path):
+    import httpx
+    s = Store(tmp_path / "a.db")
+    s.init_schema()
+    seen = []
+
+    def handler(request):
+        seen.append(request)
+        return httpx.Response(200, json={"address": {"town": "Harbour Town", "state": "Eastmarch", "country": "Nowhere"}})
+    assert await location.place_for(s, 15.49, 73.82, httpx.MockTransport(handler)) == "Harbour Town, Eastmarch"
+    assert seen[0].url.host == "nominatim.openstreetmap.org" and seen[0].url.params["zoom"] == "10"
+    assert seen[0].url.params["format"] == "jsonv2" and seen[0].headers["user-agent"].startswith("Odie (")
+    only_state = httpx.MockTransport(lambda r: httpx.Response(200, json={"address": {"state": "Eastmarch"}}))
+    assert await location.place_for(s, 15.49, 73.82, only_state) == "Eastmarch"
+
+
+async def test_place_is_empty_when_nominatim_cannot_answer(isolated_settings, tmp_path):
+    import httpx
+    s = Store(tmp_path / "a.db")
+    s.init_schema()
+
+    def down(request):
+        raise httpx.ConnectError("down")
+    assert await location.place_for(s, 15.49, 73.82, httpx.MockTransport(down)) == ""
+    junk = httpx.MockTransport(lambda r: httpx.Response(200, text="<html>"))
+    assert await location.place_for(s, 15.49, 73.82, junk) == ""
+    refused = httpx.MockTransport(lambda r: httpx.Response(429, json={}))
+    assert await location.place_for(s, 15.49, 73.82, refused) == ""
+    no_address = httpx.MockTransport(lambda r: httpx.Response(200, json={"error": "Unable to geocode"}))
+    assert await location.place_for(s, 15.49, 73.82, no_address) == ""

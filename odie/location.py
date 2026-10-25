@@ -9,10 +9,19 @@ the one ask, False after "Not now" or the Settings switch, True once a fix came 
 """
 from __future__ import annotations
 
+import logging
+import math
 from collections import Counter
 from datetime import datetime, timedelta
 
+import httpx
+
+log = logging.getLogger("odie.location")
 KEY = "location"
+NEAR_KM = 5  # a remembered fix this close is the same place: its name is reused, and nothing is asked of the network
+NOMINATIM = "https://nominatim.openstreetmap.org/reverse"
+USER_AGENT = "Odie (https://github.com/sagarmainkar/odie)"  # Nominatim's terms: say who is asking
+LOOKUP_TIMEOUT = 6.0
 KEEP_FIXES = 200
 KEEP_DAYS = 30
 NIGHT_FIXES_NEEDED = 5
@@ -105,3 +114,62 @@ def set_home(store, home: str) -> dict:
 def forget(store) -> dict:
     """Everything cleared: the place, the fixes, home, and the answer to the ask (`on` back to None)."""
     return _save(store, {**EMPTY, "fixes": []})
+
+
+def km_between(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """The distance between two points over the ground, in km (haversine). Example: (18.52, 73.85) to (18.55, 73.88)
+    -> 4.6."""
+    radius = 6371.0
+    d_lat = math.radians(lat2 - lat1)
+    d_lon = math.radians(lon2 - lon1)
+    a = math.sin(d_lat / 2) ** 2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(d_lon / 2) ** 2
+    return 2 * radius * math.asin(math.sqrt(a))
+
+
+def remembered_place(fixes: list[dict], lat: float, lon: float) -> str:
+    """The name of a remembered fix within NEAR_KM of this point, the most recent one first, so the same place keeps
+    one name however the geocoder words it ("Northvale" today is still "Northvale" tomorrow): a fix 4.6 km away named
+    "Northvale, Westshire" -> that; nothing within 5 km -> ""."""
+    for fix in reversed(fixes):
+        place = str(fix.get("place") or "")
+        if not place:
+            continue
+        try:
+            close = km_between(float(fix["lat"]), float(fix["lon"]), lat, lon) <= NEAR_KM
+        except (KeyError, TypeError, ValueError):
+            continue
+        if close:
+            return place
+    return ""
+
+
+def place_from_address(address: dict) -> str:
+    """Nominatim's address as a short place name: the city, town, village or county (the first of those it gives),
+    then the state, joined by ", ". {"town": "Harbour Town", "state": "Eastmarch", "country": ...} -> "Harbour Town,
+    Eastmarch"; {"state": "Eastmarch"} -> "Eastmarch"; {} -> ""."""
+    locality = next((str(address[k]) for k in ("city", "town", "village", "county") if address.get(k)), "")
+    state = str(address.get("state") or "")
+    return ", ".join(part for part in (locality, state) if part)
+
+
+async def place_for(store, lat: float, lon: float, transport=None) -> str:
+    """The place name for a point. A remembered fix nearby answers first (remembered_place), with no network. Else
+    Nominatim is asked once, over https, with Odie's user agent; a point is sent out only here, and only when nothing
+    nearby is known. One request per call and at most one fix per device open keeps well under Nominatim's one request
+    a second. "" when it can't be reached or read (an error status, a timeout, no JSON, no address): the fix is still
+    stored, and the model line falls back to the last place name known."""
+    known = remembered_place(get(store)["fixes"], lat, lon)
+    if known:
+        return known
+    params = {"format": "jsonv2", "zoom": "10", "lat": f"{lat:.5f}", "lon": f"{lon:.5f}"}
+    try:
+        async with httpx.AsyncClient(transport=transport, timeout=LOOKUP_TIMEOUT, headers={"User-Agent": USER_AGENT}) as client:
+            response = await client.get(NOMINATIM, params=params)
+        if response.status_code != 200:
+            log.info("the place lookup answered %s", response.status_code)
+            return ""
+        address = response.json().get("address") or {}
+    except (httpx.HTTPError, ValueError, AttributeError):
+        log.info("the place lookup failed", exc_info=True)
+        return ""
+    return place_from_address(address)
