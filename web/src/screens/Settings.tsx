@@ -21,7 +21,8 @@ import { has, useCaps } from "../capabilities";
 import { notesRow, type VaultInfo } from "../vault";
 import { photosRow, type PhotosInfo } from "../photos";
 import { voiceSection } from "../voiceSettings";
-import { afterTurnOn, locationRow, NOTE_TEXT, sendPosition, type LocationInfo, type LocationRow as LocationWords } from "../location";
+import { afterTurnOn, sendPosition, type LocationInfo } from "../location";
+import { LocationRowView } from "../components/LocationRow";
 import { LABEL, type Panel, type Step, type Turn } from "../setup";
 import { PhoneBlock, StepPanel } from "./Setup";
 import { MacAppsBlock } from "../components/MacAppsBlock";
@@ -384,11 +385,11 @@ function PhotosRow() {
   return <Row icon={{ icon: "photo", color: "orange" }} ok={ok} title="Photos" sub={row.sub} right={right} />;
 }
 
-/** Settings' Location row: the place and when it was seen, home, On/Off and Forget. No map. */
+/** Settings' Location row (components/LocationRow.tsx draws it): loads the setting, and turns the taps into calls. */
 function LocationRow() {
-  const [v, setV] = useState<{ info: LocationInfo; row: LocationWords } | null>(null);
+  const [v, setV] = useState<{ info: LocationInfo; now: Date } | null>(null);
   const [busy, setBusy] = useState(false);
-  const show = (info: LocationInfo) => setV({ info, row: locationRow(info, new Date()) });  // the words are written when the answer lands
+  const show = (info: LocationInfo) => setV({ info, now: new Date() });  // the clock is read when the answer lands, not on each draw
   useEffect(() => {
     let live = true;
     getJSON<LocationInfo>("/api/location").then((x) => { if (live) show(x); }).catch(() => {});
@@ -401,28 +402,20 @@ function LocationRow() {
   }
   async function turnOn() {
     setBusy(true);
-    let answered: LocationInfo | null = null;
-    try { answered = await putJSON<LocationInfo>("/api/location", { on: true }); show(answered); } catch { /* the row keeps what it showed */ }
-    if (afterTurnOn(answered) === "fix") {
-      const fixed = await sendPosition();  // the browser asks its own question if it hasn't yet; a refusal or a timeout changes nothing
-      if (fixed) show(fixed);
-    }
-    setBusy(false);
+    try {
+      const answered = await putJSON<LocationInfo>("/api/location", { on: true });
+      show(answered);
+      if (afterTurnOn(answered) === "fix") {
+        const fixed = await sendPosition();  // the browser asks its own question if it hasn't yet; a refusal or a timeout changes nothing
+        if (fixed) show(fixed);
+      }
+    } catch { /* the row keeps what it showed */ }
+    finally { setBusy(false); }
   }
   if (!v) return null;
-  const { info, row } = v;
-  const link = "h-10 px-2 -mx-2 text-ember-text font-medium disabled:opacity-50";
-  const right = (
-    <span className="flex items-center gap-3 shrink-0">
-      {info.on === true
-        ? <button disabled={busy} onClick={() => void change(() => putJSON<LocationInfo>("/api/location", { on: false }))} className={link}>Off</button>
-        : <button disabled={busy} onClick={() => void turnOn()} className={link}>Turn on</button>}
-      {(info.place || info.home) && <button disabled={busy} onClick={() => void change(() => deleteJSON<LocationInfo>("/api/location"))} className={link}>Forget</button>}
-    </span>
-  );
-  const ok: Dot = row.state === "ok";
-  const meta = row.meta ? <>{row.meta}<br />{NOTE_TEXT}</> : NOTE_TEXT;  // seen and home, then the one-line note
-  return <Row icon={{ icon: "pin", color: "green" }} ok={ok} title="Location" sub={row.sub} meta={meta} right={right} />;
+  return <LocationRowView info={v.info} now={v.now} busy={busy} Row={Row} onTurnOn={() => void turnOn()}
+    onOff={() => void change(() => putJSON<LocationInfo>("/api/location", { on: false }))}
+    onForget={() => void change(() => deleteJSON<LocationInfo>("/api/location"))} />;
 }
 
 function isApple(): boolean {
