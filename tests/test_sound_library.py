@@ -68,7 +68,6 @@ def test_the_libraries_found_in_order(imovie, tmp_path):
 
 def test_a_sound_is_a_loop_a_hit_or_music_by_category_then_length_and_name():
     assert lib.kind_of("Ambience", "Ocean Surf", 60) == "loop"
-    assert lib.kind_of("Textures", "Low Rumble", 3) == "loop"  # a bed category, whatever its length
     assert lib.kind_of("Stingers", "Suspense Hit", 3) == "hit"
     assert lib.kind_of("Foley", "Door Creak", 1.5) == "hit"
     assert lib.kind_of("Jingles", "Acoustic Sunrise", 60) == "music"
@@ -78,6 +77,29 @@ def test_a_sound_is_a_loop_a_hit_or_music_by_category_then_length_and_name():
     assert lib.kind_of("People", "Crowd Murmur", 5) == "loop"  # a crowd is a bed even when short
     assert lib.kind_of("Effects", "Thunder Clap", 2) == "hit"
     assert lib.kind_of("Effects", "Rain Heavy", 30) == "loop"
+
+
+def test_kinds_the_real_library_needs():
+    """iMovie's own names and lengths, as found on a real Mac: Textures are mostly short accents, a few long Foley
+    sounds run under a scene, and a ring, a bell, a clap or a strike plays once however long it is."""
+    assert lib.kind_of("Textures", "Suspense Accents 01", 1.2) == "hit"
+    assert lib.kind_of("Textures", "Mystery Accents 03", 6.6) == "hit"  # "accent" in a name: a hit
+    assert lib.kind_of("Textures", "Super Stager", 35.4) == "loop"  # Textures go by length and name now
+    assert lib.kind_of("Ambience", "Thunder Clap", 12.8) == "hit"
+    assert lib.kind_of("Effects", "Bell Tower", 9.7) == "hit"
+    assert lib.kind_of("Foley", "Antique Clock Strike", 49.8) == "hit"
+    assert lib.kind_of("Work - Home", "Cell Phone Ringing", 17.2) == "hit"
+    assert lib.kind_of("Work - Home", "Old Telephone Ring", 12.0) == "hit"
+    assert lib.kind_of("Foley", "Footsteps", 12.6) == "loop"  # long Foley runs under a scene
+    assert lib.kind_of("Foley", "Clock Wind Up", 32.7) == "loop"
+    assert lib.kind_of("Foley", "Scuba Breathing", 54.4) == "loop"
+    assert lib.kind_of("Foley", "Door Wood Squeak", 2.1) == "hit"
+    assert lib.kind_of("Transportation", "Jet Fly By", 8.7) == "hit"  # a pass-by is an event: as a bed it repeats
+    assert lib.kind_of("Effects", "Train Pass FX 2", 18.4) == "hit"
+    assert lib.kind_of("Transportation", "Police Car Siren Passing", 13.7) == "hit"
+    assert lib.kind_of("Work - Home", "Telephone Number Change", 8.6) == "hit"
+    for name, seconds in (("Chicken", 30.5), ("Basketball Bounce", 13.6), ("Bottle Pour", 10.1)):
+        assert lib.kind_of("Effects", name, seconds) == "hit"  # the overrides: events, not beds
 
 
 def test_the_catalogue_reads_every_sound_once(isolated_settings, imovie, tmp_path):
@@ -176,3 +198,15 @@ def test_the_writers_listing_stays_within_its_budget_for_a_full_library():
     assert len(listing) / 4 <= lib.LISTING_TOKENS
     assert "ambience/sound-name-number-39 · 20s · loop" in listing  # a top category in full
     assert "Effects: 95 sounds" in listing  # a big, less useful one summed up
+
+
+def test_the_cache_is_built_again_when_the_kind_rules_change(isolated_settings, imovie, tmp_path, monkeypatch):
+    """A catalogue cached under older rules (an older Odie) is read again, so new kinds reach a library that hasn't
+    changed."""
+    cache = tmp_path / "cache.json"
+    libraries = lib.find_libraries(imovie, tmp_path / "own")
+    run(lib.catalogue(libraries, cache))
+    monkeypatch.setattr(lib, "RULES_VERSION", lib.RULES_VERSION + 1)
+    monkeypatch.setattr(lib, "kind_of", lambda category, name, seconds: "hit")
+    again = run(lib.catalogue(libraries, cache))
+    assert {e["kind"] for e in again} == {"hit"}

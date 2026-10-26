@@ -129,6 +129,45 @@ def test_a_stinger_transition_needs_a_known_sound_and_a_crossfade_two_to_three_s
         'Scene 1 ("Prelude"), the transition: "wipe" isn\'t one of crossfade, stinger, silence.']
 
 
+def test_a_bed_is_a_loop_the_music_is_music_and_a_cue_is_never_music():
+    script = good_script()
+    script["scenes"][0]["bed"] = {"sound": "foley/door-creak"}
+    script["scenes"][0]["music"] = {"sound": "ambience/ocean-surf"}
+    script["scenes"][0]["lines"][4]["sound_after"] = "jingles/borealis"
+    script["scenes"][0]["transition"] = {"kind": "stinger", "sound": "jingles/borealis"}
+    assert problems(script) == [
+        'Scene 1 ("Prelude"), the bed: "foley/door-creak" is a hit, played once; a bed is a loop from the list.',
+        'Scene 1 ("Prelude"), the music: "ambience/ocean-surf" is a loop; music is a sound marked music in the list.',
+        ('Scene 1 ("Prelude"), line 5: "jingles/borealis" is music; a sound in the lines is a hit (or a loop, which '
+         'plays once for up to 8 seconds).'),
+        ('Scene 1 ("Prelude"), the transition: "jingles/borealis" is music; a stinger is a hit (or a loop, which '
+         'plays once for up to 8 seconds).'),
+    ]
+
+
+def test_a_loop_may_open_the_prelude_as_a_cue():
+    """Seagulls crying, or a crowd's murmur rising, before the narrator speaks: a loop played once, cut at 8 s."""
+    script = good_script()
+    script["scenes"][0]["lines"][0]["sound"] = "ambience/night-forest"
+    assert problems(script) == []
+
+
+def test_a_bed_or_transition_written_as_plain_text_is_read_as_its_id_or_kind():
+    script = good_script()
+    script["scenes"][0]["bed"] = "ambience/ocean-surf"
+    script["scenes"][0]["transition"] = "crossfade"
+    assert problems(script) == []
+    story = writer.parse_script(script)
+    assert story.scenes[0].bed == writer.Sound("ambience/ocean-surf", "normal")
+    assert story.scenes[0].transition == writer.Transition("crossfade", writer.DEFAULT_TRANSITION_SECONDS, None)
+    script["scenes"][0]["bed"] = 42
+    script["scenes"][0]["transition"] = ["crossfade"]
+    assert problems(script) == [
+        'Scene 1 ("Prelude"), the bed: write it as {"sound": id, "level": word}, not 42.',
+        'Scene 1 ("Prelude"), the transition: write it as {"kind": "crossfade", "seconds": 2.5}, not [\'crossfade\'].',
+    ]
+
+
 def test_a_line_with_nothing_to_say_and_a_script_that_is_not_json():
     script = good_script()
     script["scenes"][1]["lines"][0]["text"] = "  "

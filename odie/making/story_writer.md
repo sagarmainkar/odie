@@ -37,11 +37,13 @@ exactly; on a list with no music, give no music).
 - **A bazaar:** a crowd murmur, a temple bell, rain on a tin roof, a vendor's call.
 - **The sea:** surf and gulls, a foghorn far off, rope and wood creaking.
 
-- **Beds** (`bed`): one ambience under the whole scene, looped. **Music** (`music`): at most one music bed, under
-  the ambience. Never more than one bed and one music bed at a time: a scene gives `bed` one sound and `music` one
-  sound at most.
-- **Cues** in the lines (`{"sound": …}`): a sound played once where it stands; the next line starts `lead` seconds
-  after it (0 to 8; 0 plays it under what follows). A sound right after a spoken line: `sound_after`.
+- **Beds** (`bed`): one ambience under the whole scene, looped: always a sound the list marks `loop`. **Music**
+  (`music`): at most one music bed, under the ambience: always a sound marked `music`. Never more than
+  one bed and one music bed at a time: a scene gives `bed` one sound and `music` one sound at most.
+- **Cues** in the lines (`{"sound": …}`): a sound played once where it stands, a `hit`; a `loop` works too and plays
+  its first 8 seconds (gulls crying as the prelude opens). Never music. The next line starts `lead` seconds after it
+  (0 to 8; 0 plays it under what follows). A sound right after a spoken line: `sound_after`. A `stinger` is a hit
+  too.
 - **Levels** are words: `low`, `normal` or `up front`. Odie sets the volumes, under the speech, the same way every
   time.
 

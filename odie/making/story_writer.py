@@ -179,26 +179,82 @@ def where(number: int, scene: dict) -> str:
 
 
 def no_sound(sound_id) -> str:
+    """The problem for a sound id that isn't in the library, in words the writer can act on: "animals/owl" -> 'there
+    is no sound "animals/owl" in the library. Use an id from the sound list.'."""
     return f'there is no sound "{sound_id}" in the library. Use an id from the sound list.'
+
+
+KIND_WORDS = {"hit": "a hit, played once", "loop": "a loop", "music": "music"}
+ONCE = "a hit (or a loop, which plays once for up to 8 seconds)"  # what a cue, a sound_after or a stinger may be
+
+
+def once_problem(sound_id: str, kinds: dict[str, str], what: str) -> str | None:
+    """Decides whether a sound can play once in the flow (a cue, a sound_after, a stinger): a known hit or loop ->
+    None (a loop plays its first 8 seconds, like seagulls crying as the prelude opens); unknown -> no_sound; music ->
+    '"jingles/borealis" is music; a stinger is a hit (or a loop, …).'. `what` names it: "a sound in the lines"."""
+    if sound_id not in kinds:
+        return no_sound(sound_id)
+    if kinds[sound_id] == "music":
+        return f'"{sound_id}" is music; {what} is {ONCE}.'
+    return None
+
+
+def sound_given(given) -> dict | None:
+    """A bed or music as the writer wrote it, as {"sound", "level"}: the object as it is; plain text as its id
+    ("ambience/forest" -> {"sound": "ambience/forest"}); anything else (a number, a list) -> None, for the check to
+    refuse."""
+    if isinstance(given, dict):
+        return given
+    if isinstance(given, str):
+        return {"sound": given}
+    return None
+
+
+def transition_given(given) -> dict | None:
+    """A transition as the writer wrote it: the object as it is; plain text as its kind ("crossfade" -> {"kind":
+    "crossfade"}); anything else -> None, for the check to refuse."""
+    if isinstance(given, dict):
+        return given
+    if isinstance(given, str):
+        return {"kind": given}
+    return None
 
 
 # The checks.
 
-def sound_problem(sound: dict | None, ids: set[str]) -> str | None:
-    """Decides whether a bed or music ({"sound", "level"}) can be played: a known id and level -> None; an unknown id
-    -> 'there is no sound "…" in the library. …'; "loud" -> 'the level "loud" isn't one of low, normal, up front.'."""
-    if sound.get("sound") not in ids:
-        return no_sound(sound.get("sound"))
+def sound_problem(given, kinds: dict[str, str], part: str) -> str | None:
+    """Decides whether a scene's bed or music can be played. `part` is "bed" or "music"; `kinds` the library's id ->
+    kind. A known id of the right kind (a bed is a loop, the music is music) and a known level -> None. Otherwise the
+    problem: an unknown id -> 'there is no sound "…" in the library. …'; a hit as the bed -> '"foley/door-creak" is a
+    hit, played once; a bed is a loop from the list.'; "loud" -> 'the level "loud" isn't one of low, normal, up
+    front.'; 42 -> 'write it as {"sound": id, "level": word}, not 42.'."""
+    sound = sound_given(given)
+    if sound is None:
+        return f'write it as {{"sound": id, "level": word}}, not {given}.'
+    sound_id = sound.get("sound")
+    if sound_id not in kinds:
+        return no_sound(sound_id)
+    kind = kinds[sound_id]
+    if part == "bed" and kind != "loop":
+        return f'"{sound_id}" is {KIND_WORDS[kind]}; a bed is a loop from the list.'
+    if part == "music" and kind != "music":
+        return f'"{sound_id}" is {KIND_WORDS[kind]}; music is a sound marked music in the list.'
+    return level_problem(sound)
+
+
+def level_problem(sound: dict) -> str | None:
+    """Decides whether a sound's level is one of LEVELS (forgiving the spelling): "Up-front" -> None; "loud" -> 'the
+    level "loud" isn't one of low, normal, up front.'."""
     level = level_word(sound.get("level"))
     if level not in LEVELS:
         return f'the level "{sound.get("level")}" isn\'t one of {", ".join(LEVELS)}.'
     return None
 
 
-def line_problem(line: dict, ids: set[str], speakers: list[str], opening: bool) -> str | None:
-    """Decides whether one line can be rendered. A sound cue: a known id and level, and a lead from 0 to 8 seconds
-    (from 2 to 6 for the story's opening sound). A spoken line: a speaker in the cast, something to say, a pause_after
-    from 0 to 4, and a known sound_after. {"speaker": "keeper", "text": "Another storm."} -> None; {"speaker":
+def line_problem(line: dict, kinds: dict[str, str], speakers: list[str], opening: bool) -> str | None:
+    """Decides whether one line can be rendered. A sound cue: a known hit or loop (once_problem), a known level, and a
+    lead from 0 to 8 seconds (from 2 to 6 for the story's opening sound). A spoken line: a speaker in the cast,
+    something to say, a pause_after from 0 to 4, and a sound_after that can play once. {"speaker": "keeper", "text": "Another storm."} -> None; {"speaker":
     "captain", …} -> '"captain" isn't in the cast. …'; {"sound": "animals/seagulls", "lead": 12} as the opening -> "the
     lead is 12 seconds; it can be from 2 to 6 for the prelude's opening sound."."""
     if "speaker" in line:
@@ -211,11 +267,11 @@ def line_problem(line: dict, ids: set[str], speakers: list[str], opening: bool) 
             given = number_text_or_raw(line.get("pause_after"))
             return f"pause_after is {given} seconds; it can be from 0 to {number_text(MAX_PAUSE)}."
         sound_after = line.get("sound_after")
-        if sound_after is not None and sound_after not in ids:
-            return no_sound(sound_after)
+        if sound_after is not None:
+            return once_problem(sound_after, kinds, "a sound in the lines")
         return None
     if "sound" in line:
-        problem = sound_problem(line, ids)
+        problem = once_problem(line["sound"], kinds, "a sound in the lines") or level_problem(line)
         if problem:
             return problem
         lowest, highest = 0.0, MAX_LEAD
@@ -239,17 +295,20 @@ def number_text_or_raw(given) -> str:
     return number_text(value)
 
 
-def transition_problem(transition: dict, ids: set[str]) -> str | None:
-    """Decides whether a transition can be made: a crossfade of 2 to 3 seconds, a stinger with a known sound, or a
-    silence of 0.5 to 3 seconds. {"kind": "crossfade", "seconds": 2.5} -> None; {"kind": "crossfade", "seconds": 6} ->
-    "a crossfade is 2 to 3 seconds, not 6."; {"kind": "wipe"} -> '"wipe" isn't one of crossfade, stinger, silence.'."""
+def transition_problem(given, kinds: dict[str, str]) -> str | None:
+    """Decides whether a transition can be made: a crossfade of 2 to 3 seconds, a stinger with a sound that plays once
+    (a hit, or a loop), or a silence of 0.5 to 3 seconds. {"kind": "crossfade", "seconds": 2.5} -> None; "crossfade"
+    -> None (plain text is its kind); {"kind": "crossfade", "seconds": 6} -> "a crossfade is 2 to 3 seconds, not 6.";
+    {"kind": "wipe"} -> '"wipe" isn't one of crossfade, stinger, silence.'; a stinger of music -> '"jingles/…" is
+    music; a stinger is a hit …'."""
+    transition = transition_given(given)
+    if transition is None:
+        return f'write it as {{"kind": "crossfade", "seconds": 2.5}}, not {given}.'
     kind = transition.get("kind")
     if kind not in TRANSITIONS:
         return f'"{kind}" isn\'t one of {", ".join(TRANSITIONS)}.'
     if kind == "stinger":
-        if transition.get("sound") not in ids:
-            return no_sound(transition.get("sound"))
-        return None
+        return once_problem(transition.get("sound"), kinds, "a stinger")
     limits = CROSSFADE_SECONDS
     if kind == "silence":
         limits = SILENCE_SECONDS
@@ -287,7 +346,7 @@ def bed_count_problem(scene: dict) -> str | None:
     return None
 
 
-def scene_problems(number: int, scene: dict, ids: set[str], speakers: list[str], narrator: str,
+def scene_problems(number: int, scene: dict, kinds: dict[str, str], speakers: list[str], narrator: str,
                    last: bool) -> list[str]:
     """Every problem in one scene, each named with where it is: 'Scene 2 ("The storm"), line 3: …'."""
     place = where(number, scene)
@@ -297,7 +356,7 @@ def scene_problems(number: int, scene: dict, ids: set[str], speakers: list[str],
         return [f"{place}: {stacked}"]
     for part in ("bed", "music"):
         if scene.get(part) is not None:
-            problem = sound_problem(scene[part], ids)
+            problem = sound_problem(scene[part], kinds, part)
             if problem:
                 label = "the bed"
                 if part == "music":
@@ -309,12 +368,12 @@ def scene_problems(number: int, scene: dict, ids: set[str], speakers: list[str],
             found.append(f"{place}: {problem}")
     for index, line in enumerate(scene.get("lines") or [], start=1):
         opening = number == 1 and index == 1
-        problem = line_problem(line, ids, speakers, opening)
+        problem = line_problem(line, kinds, speakers, opening)
         if problem:
             found.append(f"{place}, line {index}: {problem}")
     transition = scene.get("transition")
     if transition is not None and not last:
-        problem = transition_problem(transition, ids)
+        problem = transition_problem(transition, kinds)
         if problem:
             found.append(f"{place}, the transition: {problem}")
     return found
@@ -326,7 +385,7 @@ def script_problems(script, catalogue: list[dict], cast: list[dict], narrator: s
     1: there is no sound "animals/owl" in the library. …']."""
     if not isinstance(script, dict) or not isinstance(script.get("scenes"), list) or not script["scenes"]:
         return ['The script needs "scenes": a list of scenes, each with its "lines".']
-    ids = {entry["id"] for entry in catalogue}
+    kinds = {entry["id"]: entry["kind"] for entry in catalogue}
     speakers = [member["id"] for member in cast]
     scenes = script["scenes"]
     found = []
@@ -334,7 +393,7 @@ def script_problems(script, catalogue: list[dict], cast: list[dict], narrator: s
         if not isinstance(scene, dict):
             found.append(f"Scene {number}: a scene is an object with its title, bed and lines.")
             continue
-        found.extend(scene_problems(number, scene, ids, speakers, narrator, number == len(scenes)))
+        found.extend(scene_problems(number, scene, kinds, speakers, narrator, number == len(scenes)))
     return found
 
 
@@ -359,10 +418,14 @@ def unfenced(text: str) -> str:
 
 # From a checked script to a Story.
 
-def sound_of(given: dict | None) -> Sound | None:
-    if given is None:
+def sound_of(given) -> Sound | None:
+    """A checked bed or music as a Sound, its level word made plain: None -> None (the scene has none); {"sound":
+    "ambience/ocean-surf", "level": "Up-front"} -> Sound("ambience/ocean-surf", "up front"); "ambience/forest" ->
+    Sound("ambience/forest", "normal")."""
+    sound = sound_given(given)
+    if sound is None:
         return None
-    return Sound(given["sound"], level_word(given.get("level")))
+    return Sound(sound["sound"], level_word(sound.get("level")))
 
 
 def line_of(given: dict):
@@ -378,12 +441,13 @@ def transition_of(given: dict | None, last: bool) -> Transition | None:
     STINGER_SECONDS."""
     if last:
         return None
-    if given is None:
+    transition = transition_given(given)
+    if transition is None:
         return Transition("crossfade", DEFAULT_TRANSITION_SECONDS, None)
-    kind = given["kind"]
+    kind = transition["kind"]
     if kind == "stinger":
-        return Transition("stinger", STINGER_SECONDS, given["sound"])
-    return Transition(kind, seconds_of(given.get("seconds"), DEFAULT_TRANSITION_SECONDS), None)
+        return Transition("stinger", STINGER_SECONDS, transition["sound"])
+    return Transition(kind, seconds_of(transition.get("seconds"), DEFAULT_TRANSITION_SECONDS), None)
 
 
 def parse_script(script: dict) -> Story:

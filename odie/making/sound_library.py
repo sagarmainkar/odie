@@ -31,19 +31,28 @@ OWN_FOLDER = "sounds"  # <ODIE_HOME>/sounds/, any subfolders as categories
 OWN_CATEGORY = "Your sounds"  # a sound right inside the user's folder, in no subfolder
 AUDIO_SUFFIXES = (".caf", ".mp3", ".m4a", ".wav", ".aif", ".aiff")
 CACHE_FILE = "sound-library.json"
+RULES_VERSION = 2  # raised when kind_of or build changes, so a cached catalogue is built again with the new rules
 PROBES_AT_ONCE = 8  # ffmpeg reads of durations run side by side, at most this many
 
 MUSIC_CATEGORIES = {"Jingles", "Theme Music"}
-LOOP_CATEGORIES = {"Ambience", "Textures"}
-HIT_CATEGORIES = {"Stingers", "Booms", "Foley"}
-LOOP_SECONDS = 8.0  # in a mixed category, a sound this long or longer can run under a scene
+LOOP_CATEGORIES = {"Ambience"}  # beds, unless the name says it plays once (a thunder clap)
+HIT_CATEGORIES = {"Stingers", "Booms"}  # played once, however long
+LOOP_SECONDS = 8.0  # in any other category, a sound this long or longer can run under a scene
 BED_WORD_SECONDS = 4.0  # a sound whose name says it's a bed (a crowd, rain) is one from this long
 BED_WORDS = ("crowd", "ambience", "ambient", "room tone", "traffic", "rain", "wind", "rumble", "hum", "drone", "forest",
              "jungle", "ocean", "surf", "stream", "river", "fire", "night", "engine", "idle")
-# Sounds the rules above get wrong, found by listening: (category, name in lower case) -> kind.
+# Whole words in a name that make a sound an event, played once however long the file is: a bell tower tolls, a phone
+# rings, an accent is a short musical sting, a jet flies by (looped under a scene, a pass-by would repeat).
+HIT_WORDS = {"accent", "accents", "clap", "strike", "ring", "ringing", "bell", "knock", "slam", "fly", "pass",
+             "passing", "sweep"}
+# Sounds the rules above get wrong, found on a real iMovie library: (category, name in lower case) -> kind.
 OVERRIDES: dict[tuple[str, str], str] = {
     ("Transportation", "car horn"): "hit",
     ("People", "crowd cheer"): "hit",
+    ("Effects", "chicken"): "hit",  # 30 s of one hen: a moment, not a farmyard
+    ("Effects", "basketball bounce"): "hit",
+    ("Effects", "bottle pour"): "hit",
+    ("Work - Home", "telephone number change"): "hit",  # a recorded message
 }
 
 LISTING_TOKENS = 4000  # the writer's listing stays under this many tokens (4 characters a token)
@@ -93,22 +102,28 @@ def has_imovie(libraries: list[Library]) -> bool:
 
 
 def kind_of(category: str, name: str, seconds: float) -> str:
-    """How a sound can be used: "loop" (a bed that runs under a scene), "hit" (played once) or "music". The small
-    OVERRIDES table first, then the category (Jingles and Theme Music are music, Ambience and Textures beds, Stingers,
-    Booms and Foley hits), then the name and length: a name that says it's a bed (a crowd, rain, wind) is a loop from 4
-    seconds, anything else from 8.
-    ("Ambience", "Ocean Surf", 60) -> "loop"; ("Stingers", "Suspense Hit", 3) -> "hit"; ("Jingles", …) -> "music";
-    ("Animals", "Night Camp", 60) -> "loop"; ("Animals", "Bark", 2) -> "hit"; ("People", "Crowd Murmur", 5) -> "loop"."""
-    overridden = OVERRIDES.get((category, name.lower()))
+    """Decides how a sound can be used: "loop" (a bed that runs under a scene), "hit" (played once) or "music". The
+    small OVERRIDES table first; then the category: Jingles and Theme Music are music, Stingers and Booms hits; then a
+    name with a HIT_WORDS word is a hit (a bell, a ring, a clap, an accent), whatever its length; then Ambience is a
+    loop; anything else goes by name and length: a name that says it's a bed (a crowd, rain, wind) is a loop from 4
+    seconds, any other sound from 8.
+    ("Ambience", "Ocean Surf", 60) -> "loop"; ("Ambience", "Thunder Clap", 12.8) -> "hit"; ("Jingles", …) -> "music";
+    ("Textures", "Suspense Accents 01", 1.2) -> "hit"; ("Foley", "Footsteps", 12.6) -> "loop"; ("Foley", "Door Wood
+    Squeak", 2.1) -> "hit"; ("Effects", "Bell Tower", 9.7) -> "hit"; ("Animals", "Bark", 2) -> "hit"; ("People",
+    "Crowd Murmur", 5) -> "loop"."""
+    lowered = name.lower()
+    overridden = OVERRIDES.get((category, lowered))
     if overridden:
         return overridden
     if category in MUSIC_CATEGORIES:
         return "music"
-    if category in LOOP_CATEGORIES:
-        return "loop"
     if category in HIT_CATEGORIES:
         return "hit"
-    lowered = name.lower()
+    name_words = set(re.findall(r"[a-z]+", lowered))
+    if name_words & HIT_WORDS:
+        return "hit"
+    if category in LOOP_CATEGORIES:
+        return "loop"
     sounds_like_a_bed = any(word in lowered for word in BED_WORDS)
     if sounds_like_a_bed and seconds >= BED_WORD_SECONDS:
         return "loop"
@@ -140,8 +155,9 @@ def sound_files(library: Library) -> list[tuple[str, Path]]:
 
 
 def signature(libraries: list[Library]) -> str:
-    """What the libraries hold, as one short text that changes when a file is added, removed or changed."""
-    digest = hashlib.sha1()
+    """What the libraries hold, as one short text that changes when a file is added, removed or changed, or when the
+    rules that read them (RULES_VERSION) change."""
+    digest = hashlib.sha1(f"rules {RULES_VERSION}\n".encode())
     for library in libraries:
         for _category, path in sound_files(library):
             stat = path.stat()
