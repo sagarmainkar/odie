@@ -1416,6 +1416,8 @@ async def voice_get(request: Request):
     hidden = voice.disabled()
 
     def ready(engine_id: str, local: bool) -> bool:
+        """Whether an engine can speak now: Phonon when Ollama has it, Odie's own server when it can, OpenAI with
+        its key. phonon, Ollama has it -> True; kokoro, voice server not set up -> False; openai, no key -> False."""
         if engine_id == "phonon":
             return phonon_ok
         return local_ok if local else openai_ok
@@ -1450,7 +1452,16 @@ def _preview_path(request: Request, engine: str, voice_id: str) -> Path:
     folder = config.settings.data_dir / "voice"
     folder.mkdir(parents=True, exist_ok=True)
     ext = "mp3" if engine == "openai" else "wav"
-    return folder / f"preview-{engine}-{slug(voice_id)}-{slug(name)}-{slug(user or 'you')}.{ext}"
+    return folder / f"preview-{_preview_name(engine, voice_id)}-{slug(name)}-{slug(user or 'you')}.{ext}"
+
+
+def _preview_name(engine: str, voice_id: str) -> str:
+    """A voice's part of its preview file name: a readable slug plus a short hash of the exact id, so ids the slug
+    makes alike stay apart. "Zoey" and "ZOEY" -> "phonon-zoey-1a2b3c" and "phonon-zoey-9f8e7d"; two Cyrillic names
+    (both slug to "custom") -> two files."""
+    import hashlib
+    exact = hashlib.sha1(voice_id.encode()).hexdigest()[:6]
+    return f"{engine}-{slug(voice_id)}-{exact}"
 
 
 async def _preview(request: Request, engine: str, voice_id: str) -> Response:
@@ -1496,7 +1507,8 @@ async def voice_phonon_check(body: PhononCheckIn, request: Request):
         raise HTTPException(422, str(e))
     except voice.VoiceUnavailable as e:
         raise HTTPException(503, str(e))
-    _preview_path(request, "phonon", kept["id"]).write_bytes(kept["audio"])
+    if kept["audio"] is not None:  # a voice Ollama already lists keeps its own preview
+        _preview_path(request, "phonon", kept["id"]).write_bytes(kept["audio"])
     await voice.settle_worker(store)
     engine, current = voice.get_tts(store)
     return {"engine": engine, "voice": current, "voices": voice.engine_voices("phonon", store)}

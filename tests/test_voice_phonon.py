@@ -574,3 +574,86 @@ async def test_the_model_reads_phonons_voices_under_the_same_headings():
     text = voice.voices_text("phonon")
     assert text.startswith("American · Female: Zoey (Playful, upbeat")
     assert "; British · Male: Alfie (" in text and "; Characters: The Snow Queen (" in text
+
+
+async def test_another_voice_that_is_already_listed_is_chosen_not_kept_again(isolated_settings, tmp_path):
+    s = _store(tmp_path)
+    seen = []
+    t = fake_phonons({"phonon": ["zoey", "easton"]}, seen)
+    await voice.phonon_voices(transport=t)
+    for typed in ("easton", "EASTON", " Easton "):
+        kept = await voice.check_phonon_voice(s, typed, transport=t)
+        assert kept == {"id": "easton", "audio": None}  # the listed voice, chosen; no second Easton under "Your voices"
+    assert seen == []  # Ollama isn't asked: the list already says it has the voice
+    assert voice.get_tts(s) == ("phonon", "easton")
+    assert "phonon_extra" not in (s.get_setting("voice") or {})
+
+
+async def test_the_route_leaves_a_listed_voices_preview_alone(isolated_settings, tmp_path, monkeypatch):
+    from urllib.parse import quote
+
+    from odie.app.main import create_app
+    from tests.test_api import FakeRunner
+    s = _store(tmp_path)
+    t = fake_phonons({"phonon": ["zoey"]}, [])
+    await voice.phonon_voices(transport=t)
+    real_check = voice.check_phonon_voice
+
+    async def check(store, name, transport=None):
+        return await real_check(store, name, transport=t)
+    monkeypatch.setattr(voice, "check_phonon_voice", check)
+    app = create_app(runner=FakeRunner(), store=s)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c, app.router.lifespan_context(app):
+        folder = isolated_settings.data_dir / "voice"
+        folder.mkdir(parents=True, exist_ok=True)
+        r = await c.post("/api/voice/phonon/check", json={"name": "ZOEY"})
+        assert r.status_code == 200 and r.json()["voice"] == "zoey"  # the id Ollama lists
+        assert list(folder.glob("preview-*")) == []  # no check line written as Zoey's preview
+        assert (await c.delete("/api/voice/phonon/voices/" + quote("ZOEY"))).status_code == 200
+
+
+def test_previews_of_names_that_differ_only_in_case_or_script_are_separate_files(isolated_settings):
+    from odie.app.routes import _preview_name
+    assert _preview_name("phonon", "Zoey") != _preview_name("phonon", "ZOEY")
+    assert _preview_name("phonon", "Марина (phonon:ru)") != _preview_name("phonon", "Ольга (phonon:ru)")
+    assert _preview_name("phonon", "Captain Silas Blackwater").startswith("phonon-captain-silas-blackwater-")
+
+
+def test_a_missing_model_names_the_model_to_pull():
+    gone = json.dumps({"error": 'model "phonon:fr" not found, try pulling it first'})
+    assert voice.phonon_problem(404, gone, "Noémie", "phonon:fr") == (
+        "Ollama doesn't have phonon:fr: run `ollama pull phonon:fr`, then try again.")
+    plain = json.dumps({"error": 'model "phonon" not found'})
+    assert voice.phonon_problem(404, plain, "zoey", "phonon") == voice.PULL_PHONON
+
+
+async def test_at_launch_nothing_chosen_waits_for_ollama_before_starting_kokoro(isolated_settings, tmp_path, monkeypatch):
+    from odie import voice_worker
+    from odie.app import main
+    monkeypatch.setenv("ODIE_VOICE", "on")
+    monkeypatch.setattr(voice_worker, "VoiceWorker", FakeWorker)
+    s = _store(tmp_path)
+    voice.forget_phonon()
+    await main._launch_voice_worker(s, tmp_path)
+    assert voice_worker.current.calls == []  # nothing chosen: not started before Ollama has been asked
+
+    async def has_phonon(transport=None):
+        voice._PHONON_SEEN["here"] = True
+        return True
+
+    async def no_phonon(transport=None):
+        voice._PHONON_SEEN["here"] = False
+        return False
+
+    async def no_voices(transport=None):
+        return []
+    monkeypatch.setattr(voice, "phonon_voices", no_voices)
+    monkeypatch.setattr(voice, "phonon_available", has_phonon)
+    await main._learn_phonon(s)
+    assert "start" not in voice_worker.current.calls  # Phonon is the default: Kokoro's server never starts
+    voice_worker.current.calls.clear()
+    monkeypatch.setattr(voice, "phonon_available", no_phonon)
+    await main._learn_phonon(s)
+    assert voice_worker.current.calls == ["start"]  # no Phonon: Kokoro is the default, so it starts now
+    voice.forget_phonon()
+    monkeypatch.setattr(voice_worker, "current", None)

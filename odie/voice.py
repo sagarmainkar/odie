@@ -227,6 +227,16 @@ def worker_wanted(store: Store) -> bool:
     return engine in OWN_SERVER
 
 
+def worker_wanted_at_launch(store: Store) -> bool:
+    """Whether Odie's own voice server starts at launch. Before Ollama has been asked, the default engine isn't known
+    (Phonon may be there), so only an engine the user chose counts; _learn_phonon decides the rest once Ollama answers.
+    Kokoro chosen -> True; Phonon chosen -> False; nothing chosen -> False (decided a moment later)."""
+    chosen = (store.get_setting("voice") or {}).get("engine")
+    if not chosen:
+        return False
+    return worker_wanted(store)
+
+
 async def settle_worker(store: Store) -> None:
     """After the read-aloud engine changes: Odie's own voice server is stopped when read-aloud no longer uses it, so the
     process goes away. When it does use it, nothing happens now: the next speech starts it (local_tts asks the worker
@@ -388,7 +398,8 @@ def forget_phonon() -> None:
 
 
 def phonon_here() -> bool:
-    """Whether Ollama had a phonon model the last time Odie asked (phonon_available); False before it has asked."""
+    """Whether Ollama had a phonon model the last time Odie asked (phonon_available); False before it has asked.
+    Asked, Ollama had phonon:latest -> True; asked, Ollama had only gemma -> False; not asked yet -> False."""
     return _PHONON_SEEN.get("here", False)
 
 
@@ -464,7 +475,15 @@ async def ollama_models(transport: httpx.AsyncBaseTransport | None = None) -> li
         models = r.json().get("models") or []
     except (httpx.HTTPError, ValueError, AttributeError):
         return None
-    return [str(m.get("name") or m.get("model") or "") for m in models if isinstance(m, dict)]
+    return [model_name(m) for m in models if isinstance(m, dict)]
+
+
+def model_name(entry: dict) -> str:
+    """A model's name in Ollama's /api/tags list: "name", or "model" in older Ollamas that only send that."""
+    name = entry.get("name")
+    if not name:
+        name = entry.get("model", "")
+    return str(name)
 
 
 async def phonon_models(transport: httpx.AsyncBaseTransport | None = None) -> list[str]:
@@ -538,9 +557,10 @@ def join_wavs(wavs: list[bytes]) -> bytes:
     return pcm_to_wav(pcm.getvalue(), rate=rate)
 
 
-def phonon_problem(status: int, body: str, voice_id: str) -> str:
-    """What to tell the user when Ollama refuses a Phonon request: the model isn't pulled (`ollama pull phonon`), the
-    voice isn't one Phonon has, or Ollama's own words. 404 "model \"phonon\" not found" -> PULL_PHONON;
+def phonon_problem(status: int, body: str, voice_id: str, model: str = "phonon") -> str:
+    """What to tell the user when Ollama refuses a Phonon request: the model isn't pulled (the pull command names that
+    model), the voice isn't one Phonon has, or Ollama's own words. 404 "model \"phonon\" not found" -> PULL_PHONON;
+    the same for a kept voice of phonon:fr -> "Ollama doesn't have phonon:fr: run `ollama pull phonon:fr`…";
     400 "voice \"Nobody\" not found" -> "Phonon has no voice called \"Nobody\"…"; 500 "out of memory" -> "Ollama
     couldn't speak that (500): out of memory"."""
     said = body
@@ -556,7 +576,9 @@ def phonon_problem(status: int, body: str, voice_id: str) -> str:
     if "voice" in lowered and "not found" in lowered:
         return f'Phonon has no voice called "{voice_id}": choose another in Settings → Voice.'
     if status == 404 or ("model" in lowered and "not found" in lowered):
-        return PULL_PHONON
+        if model == PHONON_MODEL:
+            return PULL_PHONON
+        return f"Ollama doesn't have {model}: run `ollama pull {model}`, then try again."
     return f"Ollama couldn't speak that ({status}): {said[:160]}"
 
 
@@ -568,7 +590,7 @@ async def _phonon_piece(client: httpx.AsyncClient, text: str, voice_id: str, mod
     except (httpx.ConnectError, httpx.TimeoutException) as e:
         raise VoiceUnavailable(f"Ollama isn't answering at {ollama_root()}: start Ollama, then try again.") from e
     if r.status_code != 200:
-        raise VoiceUnavailable(phonon_problem(r.status_code, r.text, voice_id))
+        raise VoiceUnavailable(phonon_problem(r.status_code, r.text, voice_id, model))
     return r.content
 
 
@@ -660,8 +682,12 @@ def keep_phonon_voice(store: Store, name: str, model: str) -> str:
 def forget_phonon_voice(store: Store, voice_id: str) -> None:
     """Removes a kept voice; when it was the chosen one, read-aloud goes back to Phonon's default voice."""
     s = dict(store.get_setting("voice") or {})
-    s["phonon_extra"] = [k for k in (s.get("phonon_extra") or [])
-                         if kept_voice_id(str(k.get("name") or ""), str(k.get("model") or PHONON_MODEL)) != voice_id]
+    remaining = []
+    for item in s.get("phonon_extra") or []:
+        item_id = kept_voice_id(str(item.get("name", "")), str(item.get("model", PHONON_MODEL)))
+        if item_id != voice_id:
+            remaining.append(item)
+    s["phonon_extra"] = remaining
     if s.get("phonon_voice") == voice_id:
         s.pop("phonon_voice")
     store.set_setting("voice", s)
@@ -678,19 +704,34 @@ async def _try_voice(client: httpx.AsyncClient, model: str, name: str) -> bytes 
     if r.status_code in (400, 404):
         return None
     if r.status_code != 200:
-        raise VoiceUnavailable(phonon_problem(r.status_code, r.text, name))
+        raise VoiceUnavailable(phonon_problem(r.status_code, r.text, name, model))
     return r.content
+
+
+def listed_phonon_voice(typed: str) -> str | None:
+    """Whether a typed name is a voice Ollama already lists for `phonon` (Ollama matches names in any case), and its
+    listed id. Listed "Zoey": "zoey" -> "Zoey", "ZOEY" -> "Zoey"; "Noémie" -> None (worth asking the other models)."""
+    wanted = typed.lower()
+    for v in engine_voices("phonon"):
+        if v["id"].lower() == wanted:
+            return v["id"]
+    return None
 
 
 async def check_phonon_voice(store: Store, name: str, transport: httpx.AsyncBaseTransport | None = None) -> dict:
     """"Another voice": tries a typed name against `phonon`, then each other Phonon model Ollama has (models_to_try),
     with one short line. The first model that speaks it wins: the voice is kept and chosen, and {"id", "audio"} comes
-    back (the audio is its preview). ValueError, in words a person can act on, when the name isn't worth asking
-    (typed_name_problem) or no model has the voice (NO_SUCH_VOICE); nothing is kept then."""
+    back (the audio is its preview). A name Ollama already lists is simply chosen: {"id": the listed id, "audio": None}
+    and nothing is kept (listed_phonon_voice). ValueError, in words a person can act on, when the name isn't worth
+    asking (typed_name_problem) or no model has the voice (NO_SUCH_VOICE); nothing is kept then."""
     problem = typed_name_problem(name)
     if problem:
         raise ValueError(problem)
     typed = name.strip()
+    listed = listed_phonon_voice(typed)
+    if listed is not None:
+        set_tts(store, "phonon", listed)
+        return {"id": listed, "audio": None}
     installed = await phonon_models(transport)
     async with httpx.AsyncClient(timeout=120, transport=transport) as c:
         for model in models_to_try(installed):
@@ -706,7 +747,8 @@ _PAIRS = {"a": ("af_heart", "am_michael"), "b": ("bf_emma", "bm_george"), "h": (
 
 
 def _one_of(voices: list[dict], gender: str, preferred: str) -> dict | None:
-    """A voice of this gender from the list: the preferred name when it's there, else the first; None when there's none."""
+    """A voice of this gender from the list: the preferred name when it's there, else the first; None when there's none.
+    [zoey, Maeve, easton], "female", "zoey" -> zoey; [Maeve, easton], "female", "zoey" -> Maeve; [easton], "female" -> None."""
     pool = [v for v in voices if v.get("gender") == gender]
     for v in pool:
         if v["id"].lower() == preferred:
@@ -721,14 +763,20 @@ def phonon_hosts(voices: list[dict], chosen: str) -> list[dict]:
     [zoey, easton, Maeve, Alfie]: Alfie chosen -> [zoey, Alfie]; Maeve chosen -> [Maeve, easton];
     Captain Silas Blackwater chosen -> [Captain Silas Blackwater, zoey]; only "default" -> [default, default]."""
     by_id = {v["id"]: v for v in voices}
-    first = by_id.get(chosen) or (voices[0] if voices else dict(PHONON_DEFAULT))
+    first = by_id.get(chosen)
+    if first is None:
+        first = voices[0] if voices else dict(PHONON_DEFAULT)
     others = [v for v in voices if v["id"] != first["id"]]
+    anyone = others[0] if others else first  # when no voice of the wanted gender is listed
+
+    def partner(gender: str, preferred: str) -> dict:
+        found = _one_of(others, gender, preferred)
+        return found if found is not None else anyone
     if first.get("gender") == "female":
-        return [first, _one_of(others, "male", "easton") or (others[0] if others else first)]
+        return [first, partner("male", "easton")]
     if first.get("gender") == "male":
-        return [_one_of(others, "female", "zoey") or (others[0] if others else first), first]
-    partner = _one_of(others, "female", "zoey") or (others[0] if others else first)
-    return [first, partner]
+        return [partner("female", "zoey"), first]
+    return [first, partner("female", "zoey")]
 
 
 def podcast_voices(store: Store) -> list[dict]:

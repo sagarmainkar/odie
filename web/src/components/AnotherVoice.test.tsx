@@ -2,7 +2,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AnotherVoiceView } from "./AnotherVoice";
-import { anotherLine, canTry, previewUrl, tryAnotherVoice, withPhononVoices, type VoiceInfo } from "../voiceSettings";
+import { anotherLine, canTry, previewUrl, triedState, tryAnotherVoice, withPhononVoices, type VoiceInfo } from "../voiceSettings";
 
 const refusal = 'No Phonon model here has a voice called "Noémie". French, German, Spanish and Portuguese voices need another Phonon model, for example: ollama pull phonon:fr';
 
@@ -63,5 +63,14 @@ describe("Another voice", () => {
     expect(after.voice).toBe("Noémie (phonon:fr)");
     expect(after.engines[1].voices).toEqual([zoey, mine]);
     expect(after.engines[0]).toBe(before.engines[0]);  // Kokoro untouched
+  });
+
+  it("says a listed voice was chosen, and a new one kept", () => {
+    const zoey = { id: "zoey", label: "Zoey", group: "American · Female" };
+    const mine = { id: "Noémie (phonon:fr)", label: "Noémie", group: "Your voices", kept: true };
+    const listed = triedState({ engine: "phonon", voice: "zoey", voices: [zoey, mine] }, "ZOEY");
+    expect(listed).toEqual({ kind: "chosen", voice: "Zoey" });
+    expect(anotherLine(listed)).toBe("Zoey is already in the list: chosen.");
+    expect(triedState({ engine: "phonon", voice: "Noémie (phonon:fr)", voices: [zoey, mine] }, "Noémie")).toEqual({ kind: "kept", voice: "Noémie" });
   });
 });

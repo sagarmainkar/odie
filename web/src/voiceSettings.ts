@@ -69,7 +69,8 @@ export function previewUrl(engine: string, voiceId: string): string {
 
 // "Another voice": a Phonon voice name the user types, which the server tries against the Phonon models Ollama has.
 export const NAME_LIMIT = 80;
-export type AnotherState = { kind: "idle" } | { kind: "trying" } | { kind: "kept"; voice: string } | { kind: "refused"; message: string };
+export type AnotherState =
+  | { kind: "idle" } | { kind: "trying" } | { kind: "kept"; voice: string } | { kind: "chosen"; voice: string } | { kind: "refused"; message: string };
 export type PhononAnswer = { engine: string; voice: string; voices: VoiceItem[] };
 
 /** Whether "Try it" may ask the server: a name with something in it, at most NAME_LIMIT characters, and no try
@@ -85,8 +86,18 @@ export function canTry(name: string, state: AnotherState): boolean {
 export function anotherLine(state: AnotherState): string {
   if (state.kind === "trying") return "Trying it…";
   if (state.kind === "kept") return `Kept ${state.voice} under Your voices.`;
+  if (state.kind === "chosen") return `${state.voice} is already in the list: chosen.`;
   if (state.kind === "refused") return state.message;
   return "";
+}
+
+/** How a try that worked went: a voice Ollama already lists was just chosen ("chosen", by its listed name), a new one
+ *  was kept under Your voices ("kept", as typed). Typed "ZOEY", Zoey listed -> chosen "Zoey"; typed "Noémie", answer's
+ *  voice is the kept "Noémie (phonon:fr)" -> kept "Noémie". */
+export function triedState(answer: PhononAnswer, typed: string): AnotherState {
+  const voice = answer.voices.find((x) => x.id === answer.voice);
+  if (voice && !voice.kept) return { kind: "chosen", voice: voice.label };
+  return { kind: "kept", voice: typed };
 }
 
 /** Asks the server to try a typed name: its answer (the chosen voice and Phonon's list) when a model speaks it, else

@@ -267,7 +267,7 @@ function VoiceSection() {
                     <div key={x.id} className={`flex items-center gap-1 rounded-[14px] border pl-3 pr-1 min-h-12 ${on ? "border-ember-text bg-ember-tint" : "border-line"}`}>
                       <button onClick={() => { void save({ voice: x.id }); play(eng.id, x.id); }} className="flex-1 text-left py-1.5 min-w-0">
                         <span className={`block text-[15px] leading-5 ${on ? "font-semibold text-ember-text" : ""}`}>{x.label}</span>
-                        {x.note && <span className="block text-[12px] leading-4 text-dim truncate">{x.note}</span>}
+                        {x.note && <span className="block text-[12px] leading-4 text-dim line-clamp-2">{x.note}</span>}
                       </button>
                       <button onClick={() => play(eng.id, x.id)} aria-label={`Hear ${x.label}`} className="w-10 h-10 rounded-full flex items-center justify-center text-muted shrink-0">
                         {playing === key ? <span className="spinner" /> : <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z" /></svg>}

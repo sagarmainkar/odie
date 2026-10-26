@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { anotherLine, canTry, NAME_LIMIT, tryAnotherVoice, type AnotherState, type PhononAnswer } from "../voiceSettings";
+import { anotherLine, canTry, NAME_LIMIT, triedState, tryAnotherVoice, type AnotherState, type PhononAnswer } from "../voiceSettings";
 
 type ViewProps = { name: string; state: AnotherState; onName: (name: string) => void; onTry: () => void };
 
@@ -27,7 +27,7 @@ export function AnotherVoice({ onKept }: { onKept: (answer: PhononAnswer) => voi
     setState({ kind: "trying" });
     const got = await tryAnotherVoice(name.trim());
     if (!got.ok) { setState({ kind: "refused", message: got.message }); return; }
-    setState({ kind: "kept", voice: name.trim() });
+    setState(triedState(got.answer, name.trim()));
     setName("");
     onKept(got.answer);
   }

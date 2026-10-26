@@ -81,8 +81,13 @@ async def _launch_voice_worker(store: Store, logs) -> None:
     from odie import voice, voice_worker
     logs.mkdir(parents=True, exist_ok=True)
     voice_worker.current = voice_worker.VoiceWorker(log=logs / "voice.log")
-    if not voice.worker_wanted(store):
+    if not voice.worker_wanted_at_launch(store):
         return
+    await _start_voice_worker()
+
+
+async def _start_voice_worker() -> None:
+    from odie import voice_worker
     try:
         await voice_worker.current.start()
     except Exception:  # noqa: BLE001 (voice never decides whether Odie starts)
@@ -91,13 +96,16 @@ async def _launch_voice_worker(store: Store, logs) -> None:
 
 async def _learn_phonon(store: Store) -> None:
     """Asks Ollama once at launch whether it has Phonon and which voices, so read-aloud's default engine knows before
-    Settings is first opened; then Odie's own voice server is stopped if read-aloud turns out not to need it (nothing
-    chosen, Phonon now the default). A missing or slow Ollama is fine: Odie asks again when Settings opens."""
-    from odie import voice
+    Settings is first opened. With no engine chosen, the default is known only now: no Phonon -> Kokoro is the default,
+    so Odie's own voice server starts here (launch left it alone); Phonon -> it never starts. A missing or slow Ollama
+    is fine: Odie asks again when Settings opens."""
+    from odie import voice, voice_worker
     try:
         if await voice.phonon_available():
             await voice.phonon_voices()
         await voice.settle_worker(store)
+        if voice_worker.current is not None and voice.worker_wanted(store):
+            await _start_voice_worker()
     except Exception:  # noqa: BLE001 (voice never decides whether Odie starts)
         logging.getLogger("odie").info("couldn't ask Ollama about Phonon", exc_info=True)
 
