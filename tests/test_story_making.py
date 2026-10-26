@@ -131,7 +131,7 @@ def test_the_mix_graph_has_its_pieces():
     laid = story.lay_out(two_scenes(writer.Transition("crossfade", 2.5)), [2.0, 1.5, 3.0])
     sources = {s.sound: story.Source(path=f"/sounds/{s.sound}.wav", mean_db=-30.0, max_db=-6.0) for s in laid.sounds}
     loops = {sound: dataclasses.replace(source, path=f"/loops/{sound}.wav") for sound, source in sources.items()}
-    plan = story.mix_plan(laid, sources, loops, speech_db=-20.0, sound_level=25)
+    plan = story.mix_plan(laid, sources, loops, speech_db=-20.0, sound_level=25, speech_peak_db=-3.0)
     graph = plan.graph
     assert graph.count("amultiply") == 3  # the three beds, each under the duck envelope
     assert "afade=t=in:d=1.5" in graph and "afade=t=in:d=2.5" in graph
@@ -139,8 +139,10 @@ def test_the_mix_graph_has_its_pieces():
     # a bed matched to the speech (-20 - -30 = +10), at 25 % (-12), raised by 6 between lines: +4 dB
     assert "volume=4.00dB" in graph
     assert "volume=0.00dB" in graph  # the music, 4 dB below
-    # a hit at "low" peaks at 0.3 of full scale: 20·log10(0.3) - -6 = -4.46
-    assert "volume=-4.46dB" in graph
+    # a hit at "low" peaks 10 dB under the speech's peak: -3 - 10 - -6 = -7
+    assert "volume=-7.00dB" in graph
+    # every bed's peaks are held 3 dB under the speech's: -3 - 3 = -6 dBFS (a campfire's crackle can't jump out)
+    assert graph.count("alimiter=limit=0.5012") == 3
     assert graph.count("amix=") == 2  # the story, and the beds alone (for the measured gap)
     looped = [plan.inputs[i + 3] for i, arg in enumerate(plan.inputs) if arg == "-stream_loop"]
     assert looped == ["/loops/ambience/surf.wav", "/loops/jingles/theme.wav", "/loops/ambience/wind.wav"]  # the units
@@ -208,6 +210,42 @@ async def test_a_bed_too_short_to_crossfade_loops_as_it_is(tmp_path):
     bed = noise_bed(tmp_path / "short.wav", seconds=2.0, fade_in=0.1, fade_out=0.1)
     source = await story.measure_source(bed, 2.0)
     assert await story.seamless_loop(source, tmp_path) == source
+
+
+def test_hits_are_set_against_the_speechs_peak():
+    """A "low" owl sits well under the loudest word, "normal" a little under, "up front" about level with it, however
+    hot or quiet the voice is."""
+    owl = story.Source(path="/owl.wav", mean_db=-30.0, max_db=-6.0)
+    assert story.hit_db("low", owl, speech_peak_db=-3.0) == pytest.approx(-7.0)  # its peak at -13: 10 under -3
+    assert story.hit_db("normal", owl, speech_peak_db=-3.0) == pytest.approx(-1.0)  # at -7: 4 under
+    assert story.hit_db("up front", owl, speech_peak_db=-3.0) == pytest.approx(3.0)  # at -3: level
+    assert story.hit_db("up front", owl, speech_peak_db=-12.0) == pytest.approx(-6.0)  # a quiet voice: quieter hits
+
+
+def test_the_master_is_one_gain_then_a_true_peak_limiter():
+    master = story.master_filter(gain_db=4.2, ceiling_db=-2.0)
+    assert master.startswith("volume=4.20dB,")  # one gain for the whole story: the gap stays as mixed
+    assert "aresample=192000,alimiter=limit=0.7943" in master  # oversampled 4×, so it holds the true peak
+    assert "level=false" in master  # never its own make-up gain
+    assert master.endswith("aresample=48000")
+
+
+def test_where_only_the_beds_play_fully_up():
+    """The spans the gap is measured on in the finished file: no one speaks (with the ducking's ramps), no hit
+    plays, the beds are past their fade-in and before their fade-out, and one scene's bed plays."""
+    laid = story.Laid(
+        speech=[story.Spoken("narrator", "Hello.", 6.0, 2.0), story.Spoken("keeper", "Hi.", 12.0, 1.0)],
+        sounds=[story.Placed("bed", "ambience/surf", "normal", 0.0, 16.0, 1.5, 3.0),
+                story.Placed("hit", "foley/door", "normal", 0.0)],
+        length=16.0)
+    spans = story.beds_alone_spans(laid, {"foley/door": 0.8})
+    # up from 1.5 (the fade-in) to 6.0 - 0.55; then 8.0 + 0.55 to 12.0 - 0.55; after 13.55 the fade-out from 13.0
+    assert spans == [(pytest.approx(1.5), pytest.approx(5.45)), (pytest.approx(8.55), pytest.approx(11.45))]
+
+
+def test_the_speech_alone_is_the_speech_with_its_bed_less_the_bed():
+    assert story.speech_alone_db(-18.0, -30.0) == pytest.approx(-18.28, abs=0.01)
+    assert story.speech_alone_db(-18.0, -18.0) is None  # nothing but the bed: no speech to measure
 
 
 # A whole story, rendered.
@@ -280,14 +318,23 @@ async def test_a_story_is_one_file_in_the_story_player(world, tmp_path, monkeypa
     assert not list((tmp_path / "job").glob("*.wav"))  # the working files are gone
 
 
+def roomy_story():
+    """A story with time for its bed alone: a 6 s prelude sound, then lines with 4 s pauses."""
+    return [scene("Prelude", [writer.Cue("foley/door", "normal", 6.0), say("narrator", pause=4.0),
+                              say("keeper", pause=4.0), say("narrator")])]
+
+
 @pytest.mark.parametrize("level", [10, 25, 40])
-async def test_the_speech_sits_above_the_beds_by_what_the_slider_promises(world, tmp_path, level):
+async def test_the_encoded_file_keeps_the_gap_the_slider_promises(world, tmp_path, level):
+    """Measured on the finished .m4a: its loudness and true peak, and the speech above the bed."""
     store, catalogue = world
-    made = await story.render(store, "Gap", short_story(), CAST, "British", level, catalogue, tmp_path / f"job{level}",
+    made = await story.render(store, "Gap", roomy_story(), CAST, "British", level, catalogue, tmp_path / f"job{level}",
                               transport=voices([]))
     promised = -story.slider_db(level)
     assert made.gap_db == pytest.approx(promised, abs=2.0)
-    assert made.loudness_lufs == pytest.approx(story.TARGET_LUFS, abs=1.5)
+    assert made.gap_measured_on == "the encoded file"
+    assert made.loudness_lufs == pytest.approx(story.TARGET_LUFS, abs=1.0)
+    assert made.true_peak_db <= story.MOST_TRUE_PEAK
 
 
 async def test_a_missing_sound_is_skipped_with_a_log_line(world, tmp_path, caplog):

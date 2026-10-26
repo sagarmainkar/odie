@@ -53,6 +53,10 @@ The mix is code, not the model's choice:
   quarter of its loudness; 10 % is 20 dB under, 40 % is 8 dB under. Music sits 4 dB under the ambience.
 - Between lines and in the opening, the ambience rises by up to 6 dB, never closer than 4 dB to the speech, and
   dips back smoothly under the next line.
-- Effects play once, at fixed levels, and never on a line's first word.
-- The story is mastered to about −16 LUFS, like podcasts, as AAC in .m4a. The job's folder
-  (`workspace/stories/<title>/levels.json`) keeps the measured gap between the speech and the sound.
+- Ambience and music loop without a gap: each file's own fade-in and fade-out are cut, and every repeat crossfades
+  into the next.
+- Effects play once, set against the loudest word: "low" about 10 dB under it, "normal" 4 dB under, "up front"
+  about level with it. They never land on a line's first word.
+- The story is mastered to about −16 LUFS, like podcasts, by one gain (so the gap stays as mixed) and a limiter
+  that keeps its true peak under −1.5 dBTP, as AAC in .m4a. The job's folder (`workspace/stories/<title>/levels.json`)
+  keeps the gap, the loudness and the true peak, measured on the finished file.

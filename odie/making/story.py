@@ -8,8 +8,9 @@ step is plain code, the same every time:
 3. mix it with one ffmpeg graph (mix_plan): every bed and music file cut to its steady part and made a loop unit
    that repeats with a crossfade, never a hole, at its seam (seamless_loop), matched to the speech's loudness, then set
    to the slider's level below it, ducked under speech by one smooth envelope (envelope), the hits at fixed peaks;
-4. master it: 48 kHz stereo, loudnorm to about -16 LUFS with a true peak near -1.5 dBTP, then measure how far the
-   speech sits above the beds (the gap the slider promises) and keep it in the job's levels.json;
+4. master it: 48 kHz stereo, one gain to about -16 LUFS and a true-peak limiter at -2 dBTP, encoded as AAC; then
+   measure the encoded file: its loudness, its true peak, and how far the speech sits above the beds (the gap the
+   slider promises), kept in the job's levels.json;
 5. save one file, AAC in .m4a, as the chat's story player. Nothing else is posted.
 
 Importing this module registers the kind as "story", with its jobs under <workspace>/stories/<slug>/ (job.json,
@@ -61,6 +62,10 @@ MUSIC_BELOW_AMBIENCE_DB = 4.0  # a music bed sits this far under the ambience
 RISE_DB = 6.0  # beds rise by up to this much between lines and in the prelude…
 CEILING_DB = -4.0  # …but never above this, against the speech
 MATCH_LIMIT_DB = 30.0  # the most a file is raised or lowered to match the speech (a near-silent file isn't blown up)
+# A bed's peaks are held this far under the speech's loudest word: a sparse bed matched by its average (a campfire's
+# crackle, quiet between pops) would otherwise peak far over full scale. Its loudness, and so the gap, stays as matched.
+BED_PEAK_UNDER_SPEECH_PEAK_DB = 3.0
+LOWEST_LIMIT = 0.0625  # alimiter's lowest limit (-24 dBFS)
 
 ENVELOPE_RATE = 1000  # values a second in the duck envelope (it is upsampled in the mix)
 DUCK_PAD = 0.15  # the beds are fully down this long before a line's first word and after its last
@@ -78,14 +83,22 @@ BED_FADE_IN = 1.5  # a scene's bed and music fade in over this long
 BED_FADE_OUT = 1.5  # …and out over this long at a stinger or a silence (a crossfade takes its own seconds)
 STORY_TAIL = 3.0  # after the last line, the beds play on this long, fading out
 
-HIT_PEAK = {"low": 0.3, "normal": 0.5, "up front": 0.8}  # a hit's peak, as a share of full scale, by the writer's word
+# A hit's peak against the loudest word, by the writer's word: a low owl well under the speech, an up-front door slam
+# about as loud as the loudest line. Set against the speech, not full scale, so a hot voice and a quiet one get the
+# same balance.
+HIT_UNDER_SPEECH_PEAK_DB = {"low": -10.0, "normal": -4.0, "up front": 0.0}
 HIT_ATTACK = 0.3  # a hit's first 0.3 s is its loud part: it never covers a line's first word
 HIT_MAX_SECONDS = 8.0  # a hit plays at most this long…
 HIT_FADE = 0.3  # …and a longer one fades out over its last 0.3 s
 
-TARGET_LUFS = -16.0  # the whole story's loudness, as podcasts are
-TRUE_PEAK = -1.5  # dBTP
-LOUDNESS_RANGE = 11.0  # LU, loudnorm's target range
+TARGET_LUFS = -16.0  # the whole story's loudness, as podcasts are: one gain takes the mix there…
+LIMIT_CEILING = -2.0  # …and a limiter holds its true peak here (dBTP), before the AAC encoding…
+MOST_TRUE_PEAK = -1.5  # …so the encoded file's true peak stays at or under this; over it, the limiter goes lower once
+OVERSAMPLE = 4  # the limiter runs at 4 × 48 kHz, so it catches the peaks between samples (the true peak)
+LIMITER_ATTACK_MS = 1.0
+LIMITER_RELEASE_MS = 60.0
+SILENT_LUFS = -70.0  # a mix this quiet or quieter has nothing to bring up: its gain stays 0
+MIN_ALONE = 0.5  # seconds: a span shorter than this, where only the beds play, isn't measured
 MEASURE_SECONDS = 60  # how much of a sound file is measured for its loudness
 MEASURE_FRAME = 256  # samples a frame when measuring only where people speak
 AAC_BITRATE = "160k"
@@ -94,6 +107,8 @@ PEAKS_RATE = 4000  # the waveform is drawn from a small mono copy
 MEAN = re.compile(r"mean_volume: (-?[\d.]+) dB")
 WINDOW_RMS = re.compile(r"lavfi\.astats\.Overall\.RMS_level=(\S+)")
 MAX = re.compile(r"max_volume: (-?[\d.]+) dB")
+INTEGRATED = re.compile(r"I:\s+(-?[\d.]+) LUFS")
+PEAK = re.compile(r"Peak:\s+(-?[\d.]+|-inf) dBFS")
 CHANNELS = re.compile(r"Audio: [^\n]*?, \d+ Hz, ([^,\n]+)")
 
 
@@ -149,11 +164,14 @@ class MixPlan:
 
 @dataclass
 class Made:
-    """A finished story: the player's media, the measured gap (dB the speech sits above the beds; None without beds),
-    the mastered loudness, and the sounds left out."""
+    """A finished story: the player's media; the gap (dB the speech sits above the beds; None without beds) and
+    where it was measured ("the encoded file", or "the mix" when the beds never play alone); the encoded file's
+    loudness and true peak; and the sounds left out."""
     media: dict
     gap_db: float | None
     loudness_lufs: float | None
+    true_peak_db: float | None = None
+    gap_measured_on: str = ""
     skipped: list[str] = field(default_factory=list)
 
 
@@ -335,10 +353,12 @@ def matched_db(speech_db: float, source: Source) -> float:
     return max(-MATCH_LIMIT_DB, min(MATCH_LIMIT_DB, gain))
 
 
-def hit_db(level: str, source: Source) -> float:
-    """The gain that puts a hit's peak at its word's share of full scale: "low" (0.3) on a file peaking at -6 dB ->
-    20·log10(0.3) + 6 = -4.46."""
-    return 20 * math.log10(HIT_PEAK.get(level, HIT_PEAK["normal"])) - source.max_db
+def hit_db(level: str, source: Source, speech_peak_db: float) -> float:
+    """The gain that puts a hit's peak where its word says, against the speech's loudest peak
+    (HIT_UNDER_SPEECH_PEAK_DB): "low" on a file peaking at -6 dB, the speech peaking at -3 -> -3 - 10 - -6 = -7;
+    "up front" -> +3 (level with the speech's peak)."""
+    under = HIT_UNDER_SPEECH_PEAK_DB.get(level, HIT_UNDER_SPEECH_PEAK_DB["normal"])
+    return speech_peak_db + under - source.max_db
 
 
 def db_text(gain: float) -> str:
@@ -357,13 +377,22 @@ def to_story_format(channels: int) -> str:
     return f"aresample={RATE},{layout},aformat=sample_fmts=fltp"
 
 
-def bed_filter(k: int, placed: Placed, source: Source, gain: float, envelope_label: str, out: str) -> str:
-    """One bed or music bed, input k (read round and round): cut to its time, faded in and out, set to its gain,
-    delayed to its start, then multiplied by the duck envelope, and split for the story and the beds-only bus."""
+def bed_limit(speech_peak_db: float) -> float:
+    """The limiter's level for a bed's peaks, as a share of full scale: BED_PEAK_UNDER_SPEECH_PEAK_DB under the
+    speech's peak, never under alimiter's lowest. Speech peaking at -3 dBFS -> 0.5012 (-6 dBFS); at -30 -> 0.0625."""
+    return max(LOWEST_LIMIT, 10 ** ((speech_peak_db - BED_PEAK_UNDER_SPEECH_PEAK_DB) / 20))
+
+
+def bed_filter(k: int, placed: Placed, source: Source, gain: float, limit: float, envelope_label: str,
+               out: str) -> str:
+    """One bed or music bed, input k (read round and round): cut to its time, faded in and out, set to its gain, its
+    peaks held at `limit` (bed_limit), delayed to its start, then multiplied by the duck envelope, and split for the
+    story and the beds-only bus."""
     fade_out_start = max(0.0, placed.seconds - placed.fade_out)
     return (f"[{k}:a]{to_story_format(source.channels)},atrim=duration={seconds_text(placed.seconds)},"
             f"asetpts=PTS-STARTPTS,afade=t=in:d={seconds_text(placed.fade_in)},"
             f"afade=t=out:st={seconds_text(fade_out_start)}:d={seconds_text(placed.fade_out)},volume={db_text(gain)},"
+            f"alimiter=limit={limit:.4f}:attack={LIMITER_ATTACK_MS}:release={LIMITER_RELEASE_MS}:level=false,"
             f"adelay={round(placed.start * 1000)}:all=1[pre{out}];[pre{out}][{envelope_label}]amultiply,"
             f"asplit=2[m{out}][q{out}]")
 
@@ -379,11 +408,11 @@ def hit_filter(k: int, placed: Placed, source: Source, gain: float, out: str) ->
 
 
 def mix_plan(laid: Laid, sources: dict[str, Source], loops: dict[str, Source], speech_db: float,
-             sound_level: float) -> MixPlan:
+             sound_level: float, speech_peak_db: float) -> MixPlan:
     """The one ffmpeg graph for the whole story. Input 0 is the speech track; input 1 the duck envelope (when there
     are beds); then each sound. Beds and music play from their loop units (`loops`, read round and round), matched to
     the speech (matched_db), set to the slider's level under it and raised by the rise (the envelope takes them back
-    down under speech); hits play from `sources`, set by their peak.
+    down under speech); hits play from `sources`, set by their peak against the speech's (hit_db).
     The outputs: [story], the speech with everything under it, and [beds], the beds alone, for the measured gap."""
     slider = slider_db(sound_level)
     rise = rise_db(slider)
@@ -407,14 +436,14 @@ def mix_plan(laid: Laid, sources: dict[str, Source], loops: dict[str, Source], s
         else:
             under = bed_under_db(placed.level, slider)
         gain = matched_db(speech_db, source) + under + rise
-        parts.append(bed_filter(k, placed, source, gain, f"e{n}", f"b{n}"))
+        parts.append(bed_filter(k, placed, source, gain, bed_limit(speech_peak_db), f"e{n}", f"b{n}"))
         inputs += ["-stream_loop", "-1", "-i", source.path]
         story_labels += f"[mb{n}]"
         bed_labels += f"[qb{n}]"
         k += 1
     for n, placed in enumerate(hits):
         source = sources[placed.sound]
-        parts.append(hit_filter(k, placed, source, hit_db(placed.level, source), f"h{n}"))
+        parts.append(hit_filter(k, placed, source, hit_db(placed.level, source, speech_peak_db), f"h{n}"))
         inputs += ["-i", source.path]
         story_labels += f"[h{n}]"
         k += 1
@@ -533,9 +562,9 @@ async def window_levels(path: Path) -> list[float]:
     """A sound's level over time, in dBFS, one value every LEVEL_WINDOW seconds (silence as -120): a steady tone ->
     the same value throughout; iMovie's Ocean Surf -> about -96 at the start, rising to about -22 by 1.7 s."""
     samples = round(RATE * LEVEL_WINDOW)
-    command = [encode.ffmpeg(), "-hide_banner", "-nostats", "-i", str(path), "-af",
-               f"aresample={RATE},asetnsamples=n={samples}:p=0,astats=metadata=1:reset=1,"
-               f"ametadata=print:key=lavfi.astats.Overall.RMS_level", "-f", "null", "-"]
+    windows = (f"aresample={RATE},asetnsamples=n={samples}:p=0,astats=metadata=1:reset=1,"
+               f"ametadata=print:key=lavfi.astats.Overall.RMS_level")
+    command = [encode.ffmpeg(), "-hide_banner", "-nostats", "-i", str(path), "-af", windows, "-f", "null", "-"]
     _code, stderr = await encode.run(command)
     levels = []
     for value in WINDOW_RMS.findall(stderr.decode("utf-8", errors="replace")):
@@ -612,6 +641,13 @@ async def seamless_loops(sounds: list[Placed], sources: dict[str, Source], folde
     return loops
 
 
+async def measure_peak(path: Path) -> float | None:
+    """A file's loudest sample, in dBFS (the speech's loudest word, for the hits); None when ffmpeg can't read it."""
+    command = [encode.ffmpeg(), "-hide_banner", "-nostats", "-i", str(path), "-af", "volumedetect", "-f", "null", "-"]
+    _code, stderr = await encode.run(command)
+    return number_after(MAX, stderr.decode("utf-8", errors="replace"))
+
+
 def source_path(entry: dict, role: str) -> str:
     """The file a sound plays from: for a bed or music, its longest cut (a jingle's Long), else the file itself."""
     variants = entry.get("variants") or []
@@ -657,56 +693,175 @@ async def run_ffmpeg(command: list[str]) -> str:
     return stderr.decode("utf-8", errors="replace")
 
 
-def loudnorm_report(text: str) -> dict:
-    """The JSON loudnorm prints at the end of its report: {"input_i": "-23.1", …}; {} when there is none."""
-    start = text.rfind("{")
-    end = text.rfind("}")
-    if start < 0 or end < start:
-        return {}
-    try:
-        return json.loads(text[start:end + 1])
-    except json.JSONDecodeError:
-        return {}
+@dataclass(frozen=True)
+class Loudness:
+    """How loud a file is over its whole length (EBU R 128): its integrated loudness and its true peak."""
+    lufs: float
+    true_peak_db: float
 
 
-def is_measured(report: dict) -> bool:
-    """Decides whether loudnorm's first pass measured something usable for its second: numbers for every value ->
-    True; a silent mix ("-inf") or no report -> False (the second pass then measures on its own)."""
-    for key in ("input_i", "input_tp", "input_lra", "input_thresh", "target_offset"):
-        try:
-            value = float(report[key])
-        except (KeyError, TypeError, ValueError):
-            return False
-        if not math.isfinite(value):
-            return False
-    return True
-
-
-def loudnorm_filter(report: dict) -> str:
-    """The second pass's loudnorm: the targets, and the first pass's measurements when it has them (linear, so the
-    whole story moves by one gain and the gap between speech and beds stays as mixed)."""
-    targets = f"loudnorm=I={TARGET_LUFS}:TP={TRUE_PEAK}:LRA={LOUDNESS_RANGE}"
-    if not is_measured(report):
-        return f"{targets}:print_format=json"
-    return (f"{targets}:measured_I={report['input_i']}:measured_TP={report['input_tp']}:"
-            f"measured_LRA={report['input_lra']}:measured_thresh={report['input_thresh']}:"
-            f"offset={report['target_offset']}:linear=true:print_format=json")
-
-
-async def master(mix: Path, out: Path) -> float | None:
-    """The mix normalised to TARGET_LUFS with a true peak near TRUE_PEAK, in two passes, as 48 kHz stereo 16-bit;
-    returns the loudness it came out at."""
-    first = await run_ffmpeg([encode.ffmpeg(), "-hide_banner", "-nostats", "-i", str(mix), "-af",
-                              f"loudnorm=I={TARGET_LUFS}:TP={TRUE_PEAK}:LRA={LOUDNESS_RANGE}:print_format=json",
-                              "-f", "null", "-"])
-    second = await run_ffmpeg([encode.ffmpeg(), "-hide_banner", "-nostats", "-y", "-i", str(mix),
-                               "-af", loudnorm_filter(loudnorm_report(first)), "-ar", str(RATE), "-ac", "2",
-                               "-c:a", "pcm_s16le", str(out)])
-    output = loudnorm_report(second).get("output_i")
-    try:
-        return float(output)
-    except (TypeError, ValueError):
+async def loudness_of(path: Path) -> Loudness | None:
+    """A file's integrated loudness (LUFS) and true peak (dBTP), from ffmpeg's ebur128 summary; None when there is
+    none (an unreadable file)."""
+    report = await run_ffmpeg([encode.ffmpeg(), "-hide_banner", "-nostats", "-i", str(path), "-af",
+                               "ebur128=peak=true", "-f", "null", "-"])
+    summary = report[report.rfind("Summary:"):]
+    lufs = number_after(INTEGRATED, summary)
+    found = PEAK.search(summary)
+    if lufs is None or found is None:
         return None
+    peak_text = found.group(1)
+    true_peak = -120.0
+    if peak_text != "-inf":
+        true_peak = float(peak_text)
+    return Loudness(lufs=lufs, true_peak_db=true_peak)
+
+
+def master_gain_db(mix: Loudness | None) -> float:
+    """The one gain that takes the mix to TARGET_LUFS: a mix at -21.4 LUFS -> +5.4; a silent or unmeasured mix -> 0."""
+    if mix is None or mix.lufs <= SILENT_LUFS:
+        return 0.0
+    return TARGET_LUFS - mix.lufs
+
+
+def master_filter(gain_db: float, ceiling_db: float) -> str:
+    """The master as ffmpeg filters: one gain for the whole story (so the speech-to-bed gap stays as mixed), then a
+    limiter at the ceiling, run oversampled so it holds the true peak, never adding gain of its own. (4.2, -2.0) ->
+    "volume=4.20dB,aresample=192000,alimiter=limit=0.7943:…:level=false:…,aresample=48000"."""
+    limit = 10 ** (ceiling_db / 20)
+    return (f"volume={db_text(gain_db)},aresample={RATE * OVERSAMPLE},alimiter=limit={limit:.4f}:"
+            f"attack={LIMITER_ATTACK_MS}:release={LIMITER_RELEASE_MS}:level=false:latency=true,aresample={RATE}")
+
+
+def lower_ceiling(ceiling_db: float, true_peak_db: float) -> float | None:
+    """Decides whether the master is made again with a lower limiter, from the encoded file's true peak (the AAC
+    encoding can push it up a little): at or under MOST_TRUE_PEAK -> None (it stands); over -> the ceiling lowered by
+    the overshoot and 0.3 dB more. (-2.0, -1.8) -> None; (-2.0, -1.2) -> -2.6."""
+    if true_peak_db <= MOST_TRUE_PEAK:
+        return None
+    return round(ceiling_db - (true_peak_db - MOST_TRUE_PEAK) - 0.3, 2)
+
+
+@dataclass(frozen=True)
+class Mastered:
+    """The encoded story (AAC in .m4a), its waveform's small copy, and how loud it came out."""
+    encoded: Path
+    peaks: Path
+    loudness: Loudness | None
+    gain_db: float
+    ceiling_db: float
+
+
+async def master(mix: Path, folder: Path) -> Mastered:
+    """The mix brought to TARGET_LUFS by one gain, its true peak held by the limiter at LIMIT_CEILING, encoded as AAC
+    and measured; made once more with a lower ceiling when the encoded file's true peak is over MOST_TRUE_PEAK."""
+    gain = master_gain_db(await loudness_of(mix))
+    ceiling = LIMIT_CEILING
+    mastered = folder / "master.wav"
+    encoded = folder / "story.m4a"
+    for _attempt in range(2):
+        await run_ffmpeg([encode.ffmpeg(), "-y", "-loglevel", "error", "-i", str(mix), "-af",
+                          master_filter(gain, ceiling), "-ar", str(RATE), "-ac", "2", "-c:a", "pcm_f32le",
+                          str(mastered)])
+        await run_ffmpeg([encode.ffmpeg(), "-y", "-loglevel", "error", "-i", str(mastered), "-c:a", "aac",
+                          "-b:a", AAC_BITRATE, "-movflags", "+faststart", str(encoded)])
+        loudness = await loudness_of(encoded)
+        if loudness is None:
+            break
+        lower = lower_ceiling(ceiling, loudness.true_peak_db)
+        if lower is None:
+            break
+        log.info("audio story master: true peak %.1f dBTP after AAC; limiting at %.1f instead", loudness.true_peak_db,
+                 lower)
+        ceiling = lower
+    peaks = folder / "peaks.wav"
+    await run_ffmpeg([encode.ffmpeg(), "-y", "-loglevel", "error", "-i", str(mastered), "-ac", "1",
+                      "-ar", str(PEAKS_RATE), "-c:a", "pcm_s16le", str(peaks)])
+    return Mastered(encoded=encoded, peaks=peaks, loudness=loudness, gain_db=gain, ceiling_db=ceiling)
+
+
+# Measuring the gap in the finished file.
+
+def without(spans: list[tuple[float, float]], cuts: list[tuple[float, float]]) -> list[tuple[float, float]]:
+    """The spans with the cuts taken out: [(0, 10)] less [(2, 3), (5, 6)] -> [(0, 2), (3, 5), (6, 10)]."""
+    left = list(spans)
+    for cut_start, cut_end in cuts:
+        kept = []
+        for start, end in left:
+            if cut_end <= start or cut_start >= end:
+                kept.append((start, end))
+                continue
+            if start < cut_start:
+                kept.append((start, cut_start))
+            if cut_end < end:
+                kept.append((cut_end, end))
+        left = kept
+    return left
+
+
+def beds_alone_spans(laid: Laid, hit_seconds: dict[str, float]) -> list[tuple[float, float]]:
+    """Decides where the finished story has its beds alone and fully up, to measure them there: inside a bed's (or a
+    music bed's) steady part, past its fade-in and before its fade-out (so never in a crossfade); outside every
+    ducked span and its DUCK_RAMP; away from every hit while it plays (hit_seconds by id, else HIT_MAX_SECONDS); at
+    least MIN_ALONE long. A bed 0–16 s (fades 1.5 and 3) under lines at 6–8 and 12–13, a 0.8 s door at 0 ->
+    [(1.5, 5.45), (8.55, 11.45)]."""
+    steady = []
+    for placed in laid.sounds:
+        if placed.role != "hit":
+            steady.append((placed.start + placed.fade_in, placed.start + placed.seconds - placed.fade_out))
+    cuts = []
+    for start, end in ducked_spans([(line.start, line.start + line.seconds) for line in laid.speech]):
+        cuts.append((start - DUCK_RAMP, end + DUCK_RAMP))
+    for placed in laid.sounds:
+        if placed.role == "hit":
+            seconds = min(hit_seconds.get(placed.sound, HIT_MAX_SECONDS), HIT_MAX_SECONDS)
+            cuts.append((placed.start, placed.start + seconds))
+    alone = without(merged(steady), cuts)
+    return [(round(start, 3), round(end, 3)) for start, end in alone if end - start >= MIN_ALONE]
+
+
+def merged(spans: list[tuple[float, float]]) -> list[tuple[float, float]]:
+    """Overlapping spans as one: [(0, 5), (4, 9), (12, 14)] -> [(0, 9), (12, 14)]."""
+    joined: list[list[float]] = []
+    for start, end in sorted(spans):
+        if end <= start:
+            continue
+        if joined and start <= joined[-1][1]:
+            joined[-1][1] = max(joined[-1][1], end)
+        else:
+            joined.append([start, end])
+    return [(start, end) for start, end in joined]
+
+
+def speech_alone_db(with_beds_db: float, beds_db: float) -> float | None:
+    """The speech's own level from the level where it speaks (the speech and the ducked beds under it) and the beds'
+    level there, taking the beds' power out: (-18.0, -30.0) -> -18.28; the beds as loud as everything -> None."""
+    speech_power = 10 ** (with_beds_db / 10) - 10 ** (beds_db / 10)
+    if speech_power <= 0:
+        return None
+    return 10 * math.log10(speech_power)
+
+
+async def gap_in_file(path: Path, beds: Path, laid: Laid, hit_seconds: dict[str, float]) -> float | None:
+    """How far the speech sits above the beds in the finished file `path`. Where the beds play alone, fully up
+    (beds_alone_spans), the file holds the beds alone; the mix's beds-only output (`beds`) says how much quieter they
+    are under the lines than there (the rise, and the bed's own ups and downs between those moments). So the beds'
+    level under the speech in the file is their level alone in the file less that difference; the speech is measured
+    in the file where it speaks, the beds' power taken out. None when the beds never play alone."""
+    alone = beds_alone_spans(laid, hit_seconds)
+    spoken = [(line.start, line.start + line.seconds) for line in laid.speech]
+    if not alone or not spoken:
+        return None
+    measured = [await measure_db(path, alone), await measure_db(path, spoken), await measure_db(beds, alone),
+                await measure_db(beds, spoken)]
+    if any(level is None for level in measured):
+        return None
+    file_alone, file_spoken, stem_alone, stem_spoken = measured
+    beds_under = file_alone - (stem_alone - stem_spoken)
+    speech = speech_alone_db(file_spoken, beds_under)
+    if speech is None:
+        return None
+    return round(speech - beds_under, 1)
 
 
 # 5. The whole making step.
@@ -749,13 +904,16 @@ async def render(store: Store, title: str, scenes: list[story_writer.Scene], cas
         speech_db = await measure_db(speech, spans)
         if speech_db is None:
             speech_db = -20.0
+        speech_peak_db = await measure_peak(speech)
+        if speech_peak_db is None:
+            speech_peak_db = -3.0
         loops = await seamless_loops(laid.sounds, sources, folder)
-        plan = mix_plan(laid, sources, loops, speech_db, sound_level)
+        plan = mix_plan(laid, sources, loops, speech_db, sound_level, speech_peak_db)
 
         command = [encode.ffmpeg(), "-y", "-loglevel", "error", "-i", str(speech)]
+        rise = rise_db(slider_db(sound_level))
         if plan.has_beds:
             envelope_file = folder / "envelope.f32"
-            rise = rise_db(slider_db(sound_level))
             envelope_file.write_bytes(envelope_bytes(envelope(spans, laid.length, rise)))
             command += ["-f", "f32le", "-ar", str(ENVELOPE_RATE), "-ac", "1", "-i", str(envelope_file)]
         mix = folder / "mix.wav"
@@ -767,28 +925,41 @@ async def render(store: Store, title: str, scenes: list[story_writer.Scene], cas
             command += ["-map", "[beds]", "-t", length, "-c:a", "pcm_s16le", str(beds)]
         await run_ffmpeg(command)
 
+        mastered = await master(mix, folder)
         gap = None
+        measured_on = ""
         if plan.has_beds:
-            beds_db = await measure_db(beds, spans)
-            if beds_db is not None:
-                gap = round(speech_db - beds_db, 1)
-
-        mastered = folder / "master.wav"
-        loudness = await master(mix, mastered)
-        peaks = folder / "peaks.wav"
-        await run_ffmpeg([encode.ffmpeg(), "-y", "-loglevel", "error", "-i", str(mastered), "-ac", "1",
-                          "-ar", str(PEAKS_RATE), "-c:a", "pcm_s16le", str(peaks)])
-        encoded = folder / "story.m4a"
-        await run_ffmpeg([encode.ffmpeg(), "-y", "-loglevel", "error", "-i", str(mastered), "-c:a", "aac",
-                          "-b:a", AAC_BITRATE, "-movflags", "+faststart", str(encoded)])
+            hit_seconds = {sound: source.seconds for sound, source in sources.items() if source.seconds > 0}
+            gap = await gap_in_file(mastered.encoded, beds, laid, hit_seconds)
+            measured_on = "the encoded file"
+        if plan.has_beds and gap is None:
+            gap = await mix_gap(beds, spans, speech_db)  # the beds never play alone: the gap as mixed
+            measured_on = "the mix"
 
         transcript, hosts = transcript_and_hosts(laid, cast, voices)
-        meta = {**media.wav_info(peaks.read_bytes()), "format": "story", "hosts": hosts, "transcript": transcript}
-        saved = media.save(encoded.read_bytes(), "podcast", "m4a", "audio/mp4", title, meta)
+        meta = {**media.wav_info(mastered.peaks.read_bytes()), "format": "story", "hosts": hosts,
+                "transcript": transcript}
+        saved = media.save(mastered.encoded.read_bytes(), "podcast", "m4a", "audio/mp4", title, meta)
 
-    log.info("audio story %r: speech %s dB above the beds (the slider promises %.1f), %s LUFS",
-             title, gap, -slider_db(sound_level), loudness)
-    return Made(media=saved, gap_db=gap, loudness_lufs=loudness, skipped=skipped)
+    loudness = mastered.loudness
+    lufs = None
+    true_peak = None
+    if loudness is not None:
+        lufs = loudness.lufs
+        true_peak = loudness.true_peak_db
+    log.info("audio story %r: speech %s dB above the beds on %s (the slider promises %.1f); %s LUFS, true peak %s "
+             "dBTP (gain %.1f dB, limited at %.1f)", title, gap, measured_on, -slider_db(sound_level), lufs, true_peak,
+             mastered.gain_db, mastered.ceiling_db)
+    return Made(media=saved, gap_db=gap, loudness_lufs=lufs, true_peak_db=true_peak, gap_measured_on=measured_on,
+                skipped=skipped)
+
+
+async def mix_gap(beds: Path, spans: list[tuple[float, float]], speech_db: float) -> float | None:
+    """The gap as mixed, before mastering: the speech's level over its lines less the beds-only output's there."""
+    beds_db = await measure_db(beds, spans)
+    if beds_db is None:
+        return None
+    return round(speech_db - beds_db, 1)
 
 
 async def write(job: jobs.Job, turn, browser) -> None:
@@ -814,7 +985,8 @@ async def make(job: jobs.Job, browser, transport) -> dict:
     made = await render(jobs.hooks["store"], job.title, job.data["scenes"], request.cast, request.accent, sound_level,
                         job.data["catalogue"], job.folder, transport=transport)
     levels = {"sound_level": sound_level, "promised_gap_db": -slider_db(sound_level), "measured_gap_db": made.gap_db,
-              "loudness_lufs": made.loudness_lufs, "sounds_left_out": made.skipped, "note": job.data.get("note", "")}
+              "gap_measured_on": made.gap_measured_on, "loudness_lufs": made.loudness_lufs,
+              "true_peak_db": made.true_peak_db, "sounds_left_out": made.skipped, "note": job.data.get("note", "")}
     (job.folder / "levels.json").write_text(json.dumps(levels, indent=1), encoding="utf-8")
     return made.media
 
