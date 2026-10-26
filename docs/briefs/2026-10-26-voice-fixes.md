@@ -1,0 +1,31 @@
+Two small voice fixes after the Phonon release (0.2.33), in this repo, on a new branch `voice-fixes` cut from `origin/main`. Work test-first, one commit per item, then push the branch and open a pull request against `main`. Do NOT merge, tag or release. A reviewer in another session will verify and close the PR.
+
+## Working rules (binding)
+- Read CLAUDE.md first and follow it: plain named steps; every decision function (predicate, guard, `is_*`/`should_*`) carries a comment saying in words what it decides, with a concrete worked example (input -> outcome).
+- TDD: failing test first, see it fail for the right reason, minimal code, see it pass. Before the PR: `TZ=UTC uv run pytest -q` (CI is on UTC) and in `web/`: `npm ci && npm run lint && npx vitest run && npm run build`.
+- Tests never touch a real `~/.odie`: use the `isolated_settings` fixture (tests/conftest.py). No test reaches a real Ollama (tests/conftest.py already guards this; network goes through `httpx.MockTransport`).
+- Commits: the author is the repo owner (git is configured); end every commit message with exactly one trailer line `Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>` and nothing else. Never `--no-verify`. The pre-push leak scan refuses private words and the owner's name: neutral names in fixtures.
+- Don't carry the briefs folder into the `voice-fixes` branch.
+
+## Item 1: a speech-only model is never the chat model
+Seen live after 0.2.33: the server log said `Fallback model (used while nothing is chosen in Settings): ollama / phonon:latest`. When no chat model is chosen, `odie/models.py` `pick_fallback` takes the first model a local provider lists, and Ollama lists the most recently pulled first, so after `ollama pull phonon` the fallback chat model is Phonon, which can only speak. The model list in Settings would offer it as a chat model too. `list_models` already skips non-chat models by name with `EMBEDDING_RE` (`odie/models.py` near the top: embed, tts, whisper, ...).
+- Make Phonon count as not-a-chat model there (e.g. add `phonon` to the pattern; keep it a plain, readable pattern and give it the CLAUDE.md comment with examples: `phonon:latest` -> skipped; `phonon:fr` -> skipped; `deepseek-v4.1-flash:1017-cloud` -> kept; `gemma4:e4b` -> kept).
+- Optional, only if it stays small: Ollama's `POST /api/show` answers `capabilities` (a speech model has no "completion"); don't add per-model calls to the listing unless you can keep it cheap. A name rule is fine. Say in the PR what you chose.
+- Tests: `pick_fallback` with Ollama listing `["phonon:latest", "deepseek-v4.1-flash:cloud"]` picks DeepSeek; `list_models` (MockTransport for Ollama's model list, mirror the existing tests: `grep -rn "list_models\|pick_fallback" tests`) leaves Phonon out.
+
+## Item 2: voice previews play quickly and reliably on the phone (PWA)
+What the owner sees: in the installed web app on the phone, tapping a voice's play button takes a long time and often doesn't play at all. What the server log shows: every preview request answered 200, but the same voice is fetched two or three times in a row (`GET /api/voice/preview/phonon/Harper` x3, `Zoey` x3), and every tap fetches again.
+Why (read the code to confirm):
+- `_preview` in `odie/app/routes.py` answers `Response(path.read_bytes(), ...)`: the whole file, no byte ranges. Safari (iOS, and so the PWA on an iPhone) loads `<audio>`/`new Audio(url)` by first asking for `Range: bytes=0-1` and expects `206 Partial Content` with `Accept-Ranges: bytes`; given a plain 200 it stalls, retries, or gives up. Elsewhere in routes.py media is served with `FileResponse`, which answers ranges (see the comment "ranges served: a video scrubs"; Starlette 1.7 here).
+- The service worker (`web/src/sw.ts`) only precaches the app shell; /api isn't cached by it. The web side (`play` in `web/src/screens/Settings.tsx`, `previewUrl` in `web/src/voiceSettings.ts`) makes a new `Audio(url)` on every tap, so nothing played before is reused. Read-aloud (`web/src/voice.ts`) already does it the reliable way: fetch the bytes, `URL.createObjectURL(blob)`, play that.
+Do:
+- Server: once the preview file exists (it is generated and kept under `data_dir/voice/` as today), answer with `FileResponse(path, media_type=..., headers={"Cache-Control": "private, max-age=86400"})` so ranges, `ETag` and `Last-Modified` come for free. `private` because previews are behind the device gate and carry the user's and assistant's names. Keep the existing first-time generation and the 404/503/502 answers as they are.
+- Web: a small preview cache in `web/src/voiceSettings.ts` (or its own tiny module): `previewAudio(engine, id)` fetches the preview once per page load, keeps the Blob URL in a Map keyed by `engine/id`, and returns it; Settings plays from that URL. While a fetch for a key is under way, a second tap doesn't start another fetch (reuse the same promise). A failed fetch isn't cached (the next tap tries again) and the voice's play button shows a short "Couldn't play: tap again" under that voice for a few seconds instead of silently resetting the spinner. Revoke the Blob URLs when the Settings screen unmounts. Removing a kept Phonon voice drops its cached entry.
+- Apply the same to the other places that play a preview URL directly if any (grep `previewUrl` and `/api/voice/preview`); `ReminderCurtain`/`VoiceMemo` play media through `mediaUrl`, which is already served with ranges: leave those alone.
+- Tests: route test that `GET /api/voice/preview/<engine>/<id>` with `Range: bytes=0-1` answers 206, `Content-Range: bytes 0-1/<size>`, `Accept-Ranges: bytes`, and a plain GET answers 200 with `Cache-Control: private, max-age=86400` (use an engine/voice the existing preview tests already fake, e.g. tests/test_voice_phonon.py's route test). Vitest for the cache: two calls for the same key -> one fetch; a failed fetch -> the next call fetches again; different keys -> separate fetches; the "Couldn't play" state appears on failure.
+
+## Not in scope
+Read-aloud of replies (`/api/tts`, already a blob), the realtime Talk voice, the Mac app.
+
+## PR description
+What changed per item, the test counts, what you decided that this brief left open, and what you could not try (a real iPhone: say so; the reviewer here will check with curl ranges and on the phone).
