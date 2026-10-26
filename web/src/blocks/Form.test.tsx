@@ -3,12 +3,13 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { YourMessage } from "../components/YourMessage";
 import { ChatActions } from "./ChatActions";
 import { Form, FormView } from "./Form";
 import { answerMessage, sentTime, startingValues } from "./formAnswer";
 import { readBlocks } from "./parse";
+import { FencePlace, ReplyPlace } from "./SavedPlace";
 import type { FormBlock } from "./parse/form";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -95,5 +96,65 @@ describe("your message", () => {
     expect(html).toContain("Where: Hills · Pace: Easy");
     expect(html).not.toContain("odie-form-answer");
     expect(html).not.toContain("&quot;form&quot;");
+  });
+});
+
+describe("the form after a reload", () => {
+  const REPLY = { sessionId: "chat-2026-10-26", messageKey: "3f2b9c1e-5d4a-4c8e-9a51-0b7d2e6f1a90" };
+  const filled = { ...startingValues(trip), name: "Asha", where: "Beach" };
+
+  async function mountInReply(saved: Record<string, unknown>, answers?: Record<string, Record<string, unknown>>) {
+    const calls: { method: string; body?: any }[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (_url: string, init?: RequestInit) => {
+      calls.push({ method: init?.method ?? "GET", body: init?.body ? JSON.parse(String(init.body)) : undefined });
+      return new Response(JSON.stringify({ values: saved }), { status: 200 });
+    }));
+    const send = vi.fn();
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    await act(async () => {
+      root.render(
+        <ChatActions.Provider value={{ send, fill: () => {}, busy: false }}>
+          <ReplyPlace.Provider value={{ ...REPLY, text: "", answers: answers as any }}>
+            <FencePlace.Provider value={{ reply: REPLY, fence: 0 }}><Form {...trip} /></FencePlace.Provider>
+          </ReplyPlace.Provider>
+        </ChatActions.Provider>);
+    });
+    await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+    const nameBox = () => host.querySelector("input[placeholder='e.g. Asha']") as HTMLInputElement;
+    return { host, send, calls, nameBox, sendButton: () => host.querySelector("button[type=submit]") as HTMLButtonElement };
+  }
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("draws a saved answer greyed, with its values and the time it was sent", async () => {
+    const at = new Date(2026, 9, 26, 15, 42).getTime();
+    const { host, nameBox, sendButton } = await mountInReply({ "0/0": { sent_at: new Date(at).toISOString(), values: filled } });
+    expect(host.querySelector("fieldset")!.disabled).toBe(true);
+    expect(nameBox().value).toBe("Asha");
+    expect((host.querySelector("select") as HTMLSelectElement).value).toBe("Beach");
+    expect(host.textContent).toContain("✓ Sent 15:42");
+    expect(sendButton().disabled).toBe(true);
+  });
+
+  it("with nothing saved, takes an answer a later message carries, and draws it greyed", async () => {
+    const { host, nameBox } = await mountInReply({}, { trip: filled });
+    expect(host.querySelector("fieldset")!.disabled).toBe(true);
+    expect(nameBox().value).toBe("Asha");
+    expect(host.textContent).toContain("✓ Sent");
+  });
+
+  it("with neither, is a live form; Send saves the answer with the reply", async () => {
+    const { host, nameBox, sendButton, calls, send } = await mountInReply({});
+    expect(host.querySelector("fieldset")!.disabled).toBe(false);
+    expect(host.textContent).not.toContain("✓ Sent");
+    type(nameBox(), "Asha");
+    await act(async () => { sendButton().click(); await new Promise((r) => setTimeout(r, 0)); });
+    expect(send).toHaveBeenCalledTimes(1);
+    const put = calls.find((c) => c.method === "PUT")!;
+    expect(put.body.block_path).toBe("0/0");
+    expect(put.body.value.values).toEqual({ ...startingValues(trip), name: "Asha" });
+    expect(typeof put.body.value.sent_at).toBe("string");
   });
 });

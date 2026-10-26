@@ -2,7 +2,9 @@
 import { describe, expect, it } from "vitest";
 import { readBlocks } from "./parse";
 import type { FormBlock } from "./parse/form";
-import { answerMessage, canSend, humanLine, readFormAnswers, startingValues, withoutFormAnswers } from "./formAnswer";
+import {
+  answerMessage, answeredState, answersAfterEach, canSend, humanLine, readFormAnswers, readSavedAnswer, startingValues, withoutFormAnswers,
+} from "./formAnswer";
 
 function form(raw: object): FormBlock {
   return readBlocks(JSON.stringify([{ type: "form", ...raw }]))!.blocks[0] as FormBlock;
@@ -76,5 +78,37 @@ describe("a sent form", () => {
     expect(canSend(f, filled, true, false)).toBe(false);  // a reply is streaming
     expect(canSend(f, filled, false, true)).toBe(false);  // already sent
     expect(canSend(f, { ...filled, name: "  " }, false, false)).toBe(false);  // spaces aren't a name
+  });
+});
+
+describe("an answered form, found again", () => {
+  const f = form({ id: "trip", fields: [
+    { id: "where", kind: "select", label: "Where", options: ["Hills", "Beach"] }, { id: "spend", kind: "slider", label: "Budget", min: 5, max: 30 }] });
+
+  it("reads what was saved: when it was sent and the values of this form's fields only", () => {
+    const at = "2026-10-26T10:12:00.000Z";
+    expect(readSavedAnswer({ sent_at: at, values: { where: "Beach", spend: 12, stray: "x" } }, f))
+      .toEqual({ at: Date.parse(at), values: { where: "Beach", spend: 12 } });
+    expect(readSavedAnswer({ values: { where: "Beach" } }, f)).toEqual({ at: null, values: { where: "Beach" } });  // no time saved
+    for (const bad of [undefined, null, "sent", [1], { sent_at: at }, { values: [] }]) expect(readSavedAnswer(bad, f), JSON.stringify(bad)).toBeNull();
+  });
+
+  it("finds, for each message, the answers in the user's messages after it (the nearest one for a repeated id)", () => {
+    const answer = (where: string) => answerMessage(f, { where, spend: 10 });
+    const msgs = [
+      { role: "odie", text: "a form" }, { role: "user", text: answer("Hills") },
+      { role: "odie", text: "the same form again" }, { role: "user", text: answer("Beach") }, { role: "odie", text: "done" }];
+    const after = answersAfterEach(msgs);
+    expect(after[0]).toEqual({ trip: { where: "Hills", spend: 10 } });  // the first form: answered by the next message
+    expect(after[2]).toEqual({ trip: { where: "Beach", spend: 10 } });  // the second: by its own answer, not the first's
+    expect(after[4]).toEqual({});
+  });
+
+  it("shows the saved answer first, else one found in a later message, else none", () => {
+    const saved = { at: 1, values: { where: "Hills" } };
+    const later = { where: "Beach" };
+    expect(answeredState(saved, later)).toEqual(saved);
+    expect(answeredState(null, later)).toEqual({ at: null, values: later });
+    expect(answeredState(null, undefined)).toBeNull();
   });
 });

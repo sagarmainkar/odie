@@ -117,3 +117,49 @@ export function sentTime(at: number): string {
   const d = new Date(at);
   return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 }
+
+// --- An answered form, found again after a reload ---------------------------------------------------------------------
+
+/** A sent form: when (null when that isn't known: an answer found in a later message) and its values by field id. */
+export type Answered = { at: number | null; values: FormValues };
+
+/** What was saved for a form, as an answered form it can show; null when nothing usable was saved. Only the values of
+ *  this form's fields are kept.
+ *    {sent_at: "2026-10-26T10:12:00.000Z", values: {where: "Beach", stray: "x"}} → {at: <that time>, values: {where: "Beach"}}
+ *    {values: {where: "Beach"}} → {at: null, values: {where: "Beach"}};  "sent", [1], {sent_at: …} → null */
+export function readSavedAnswer(saved: unknown, form: FormBlock): Answered | null {
+  if (!saved || typeof saved !== "object" || Array.isArray(saved)) return null;
+  const { sent_at: sentAt, values } = saved as { sent_at?: unknown; values?: unknown };
+  if (!values || typeof values !== "object" || Array.isArray(values)) return null;
+  const kept: FormValues = {};
+  for (const f of form.fields) {
+    if (f.id in values) kept[f.id] = (values as FormValues)[f.id];
+  }
+  const at = typeof sentAt === "string" ? Date.parse(sentAt) : NaN;
+  return { at: Number.isNaN(at) ? null : at, values: kept };
+}
+
+/** For each message, the form answers in the user's messages after it, by form id; for an id answered twice, the
+ *  nearest answer after it, so a form asked again isn't marked with the first one's answer.
+ *  [form, answer trip=Hills, form again, answer trip=Beach, done] → [{trip: Hills}, {trip: Beach}, {trip: Beach}, {}, {}] */
+export function answersAfterEach(messages: { role: string; text: string }[]): Record<string, FormValues>[] {
+  const out: Record<string, FormValues>[] = new Array(messages.length);
+  let after: Record<string, FormValues> = {};
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    out[i] = after;
+    if (messages[i].role !== "user" || !messages[i].text.includes("odie-form-answer")) continue;
+    const here: Record<string, FormValues> = {};
+    for (const a of readFormAnswers(messages[i].text)) here[a.form] = a.values;
+    after = { ...after, ...here };  // this message is nearer to the ones before it
+  }
+  return out;
+}
+
+/** Which answer a form shows: the one saved with its reply (it knows when it was sent), else one a later message
+ *  carries (the save failed, or another device), else none: the form is live.
+ *    saved and later → saved;  only later → {at: null, values: later};  neither → null */
+export function answeredState(saved: Answered | null, later: FormValues | undefined): Answered | null {
+  if (saved) return saved;
+  if (later) return { at: null, values: later };
+  return null;
+}

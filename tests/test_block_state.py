@@ -37,9 +37,11 @@ def test_ticks_are_saved_per_reply_and_block_and_replaced_on_each_save(store):
 
 
 def test_a_value_too_big_is_refused(store):
+    assert store.BLOCK_VALUE_MAX == 16000  # a 12-field form with long text fits (26 Oct 2026; it was 4,000)
+    store.save_block_state("chat-2026-10-11", REPLY, "0/0", list(range(2000)))  # about 9,000 characters: fits now
     with pytest.raises(ValueError, match="over"):
-        store.save_block_state("chat-2026-10-11", REPLY, "0/0", list(range(2000)))
-    assert store.block_state("chat-2026-10-11", REPLY) == {}
+        store.save_block_state("chat-2026-10-11", REPLY, "0/0", list(range(4000)))
+    assert store.block_state("chat-2026-10-11", REPLY) == {"0/0": list(range(2000))}  # the refused one changed nothing
 
 
 def test_a_reply_holds_a_limited_number_of_saved_blocks(store):
@@ -87,7 +89,7 @@ async def test_get_refuses_bad_names(client):
 
 
 async def test_put_refuses_a_value_too_big(client):
-    body = {"session_id": "chat-2026-10-11", "message_key": REPLY, "block_path": "0/1", "value": list(range(2000))}
+    body = {"session_id": "chat-2026-10-11", "message_key": REPLY, "block_path": "0/1", "value": list(range(4000))}
     r = await client.put("/api/block-state", json=body)
     assert r.status_code == 413
 
@@ -150,3 +152,13 @@ async def test_a_streamed_reply_says_which_session_it_is_in(isolated_settings, t
     assert texts == [{"type": "token", "text": "Pack ", "key": "ev-1", "session_id": "chat-2099-01-01-2"},
                      {"type": "text", "text": "Pack these.", "key": "ev-1", "session_id": "chat-2099-01-01-2"}]
     await r.close()
+
+
+async def test_a_sent_forms_answer_round_trips(client):
+    """A form's answered state: when it was sent and its values by field id (never its options)."""
+    answer = {"sent_at": "2026-10-26T10:12:00.000Z",
+              "values": {"where": "Hills", "pace": "Easy", "add": ["Music", "Food stops"], "spend": 12, "notes": "w" * 500}}
+    body = {"session_id": "chat-2026-10-26", "message_key": REPLY, "block_path": "1/0", "value": answer}
+    assert (await client.put("/api/block-state", json=body)).status_code == 200
+    got = await client.get("/api/block-state", params={"session_id": "chat-2026-10-26", "message_key": REPLY})
+    assert got.json()["values"] == {"1/0": answer}

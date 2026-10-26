@@ -1,12 +1,13 @@
 import { useContext, useState } from "react";
 import { ChatActions } from "./ChatActions";
 import { formatWithUnit } from "./fenceValues";
-import { answerMessage, canSend, sentTime, startingValues, type FormValue, type FormValues } from "./formAnswer";
+import { answerMessage, canSend, sentTime, startingValues, type Answered, type FormValue, type FormValues } from "./formAnswer";
 import { InCard } from "./InCard";
 import { InlineText } from "./InlineText";
 import { TEXT_VALUE, type FormBlock, type FormField, type FormOption } from "./parse/form";
+import { useAnsweredForm } from "./SavedPlace";
 
-type Sent = { at: number } | null;
+type Sent = Answered | null;
 type ViewProps = {
   form: FormBlock; values: FormValues; sent: Sent; ready: boolean;
   onChange: (id: string, value: FormValue) => void; onSend: () => void;
@@ -14,18 +15,20 @@ type ViewProps = {
 
 /** A form in a reply: the user changes the model's prefilled answers and presses Send. Sending is an ordinary user
  *  message (the same send the reply's buttons use): a line for the bubble and an odie-form-answer block the model
- *  reads by field id. A form is sent once; then it turns grey with the choices still showing and "✓ Sent 15:42". */
+ *  reads by field id. A form is sent once; then it turns grey with the choices still showing and "✓ Sent 15:42", and
+ *  stays so after a reload and on another device (useAnsweredForm). */
 export function Form(form: FormBlock) {
   const { send, busy } = useContext(ChatActions);
   const [values, setValues] = useState<FormValues>(() => startingValues(form));
-  const [sent, setSent] = useState<Sent>(null);
-  const ready = canSend(form, values, busy, sent !== null);
+  const [answered, markSent] = useAnsweredForm(form);
+  const ready = canSend(form, values, busy, answered !== null);
+  const shown = answered ? { ...startingValues(form), ...answered.values } : values;  // the choices that were sent
   function onSend() {
     if (!ready) return;
-    setSent({ at: Date.now() });
+    markSent(values);  // saved as the message goes
     send(answerMessage(form, values));
   }
-  return <FormView form={form} values={values} sent={sent} ready={ready} onChange={(id, v) => setValues((all) => ({ ...all, [id]: v }))} onSend={onSend} />;
+  return <FormView form={form} values={shown} sent={answered} ready={ready} onChange={(id, v) => setValues((all) => ({ ...all, [id]: v }))} onSend={onSend} />;
 }
 
 /** The form as drawn for these values: live, or grey and still once sent. */
@@ -46,7 +49,7 @@ export function FormView({ form, values, sent, ready, onChange, onSend }: ViewPr
         ))}
       </fieldset>
       <div className="flex items-center justify-end gap-3 mt-3">
-        {answered && <span className="flex-1 text-[12.5px] font-semibold text-muted">✓ Sent {sentTime(sent.at)}</span>}
+        {answered && <span className="flex-1 text-[12.5px] font-semibold text-muted">✓ Sent{sent.at !== null ? ` ${sentTime(sent.at)}` : ""}</span>}
         <button type="submit" disabled={!ready} className="pill pill-solid h-11 px-5 text-[14.5px] shadow-none disabled:opacity-40">{form.submit}</button>
       </div>
     </form>
