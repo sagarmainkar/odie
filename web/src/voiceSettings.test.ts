@@ -8,7 +8,7 @@ const base: VoiceInfo = { engine: "", voice: "", engines: [], models: { tts: "",
 describe("the voice section", () => {
   it("shows a plain line, and no picker, when there is no engine at all", () => {
     expect(voiceSection(base)).toEqual({ picker: false, note: NO_VOICE_TEXT });
-    expect(NO_VOICE_TEXT).toBe("No voice yet: turn on Odie's own voice at install (ODIE_VOICE) or add an OpenAI key in Settings → Keys.");
+    expect(NO_VOICE_TEXT).toBe("No voice yet: turn on Odie's own voice at install (ODIE_VOICE) or add an OpenAI key in Settings → Providers.");
   });
 
   it("shows the picker when an engine exists, picking the chosen one or the first", () => {
