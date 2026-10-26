@@ -98,7 +98,9 @@ A character can appear as a 3D model instead of a drawing.
   (expressions, swaying hair, arms posed down).
 - A character without a model is drawn as before, so a scene can mix both: Mira in 3D, Tobi drawn in code.
 - The mouth follows the loudness of the character's voice and guesses vowels from the words: it reads as talking in
-  sync, not as exact lip shapes. The character also blinks, breathes and sways.
+  sync, not as exact lip shapes. A VRM also blinks, breathes and sways its hair. A plain `.glb` turns its
+  head (a slow sway, a nod with the voice, a glance at the other speaker) only if a part of it has "head" in its
+  name, and blinks only if it has a blink shape; it doesn't breathe.
 - The look is the model's own: an anime model stays anime.
 
 The demo cast has no model.

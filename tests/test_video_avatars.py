@@ -62,8 +62,8 @@ def test_a_glb_is_a_glb(folder):
 
 
 @pytest.mark.parametrize("asset, words", [
-    ("/tmp/mira.vrm", "inside the cast folder"),
-    ("../mira.vrm", "inside the cast folder"),
+    ("/tmp/mira.vrm", "inside the folder cast"),
+    ("../mira.vrm", "inside the folder cast"),
     ("models/mira.fbx", "a .vrm or .glb"),
     ("models/gone.vrm", "isn't in"),
 ])
@@ -80,7 +80,7 @@ def test_a_link_out_of_the_folder_is_refused(folder, tmp_path):
     outside = tmp_path / "outside.vrm"
     outside.write_bytes(b"x")
     (folder / "models" / "mira.vrm").symlink_to(outside)
-    with pytest.raises(cast.CastProblem, match="inside the cast folder"):
+    with pytest.raises(cast.CastProblem, match="inside the folder cast"):
         avatars.models_for(cast.read(folder), ["mira"])
 
 
@@ -210,8 +210,33 @@ async def test_hand_over_sends_the_pieces_in_order_then_waits_for_the_parse(tmp_
 
 async def test_a_model_the_page_cant_parse_is_refused_naming_the_speaker(tmp_path):
     tab = FakeTab(ready={"failed": {"mira": "Unexpected token"}})
-    with pytest.raises(cast.CastProblem, match=r"Mira's 3D model \(mira.glb\) couldn't be read: Unexpected token"):
+    with pytest.raises(cast.CastProblem) as e:
         await avatars.hand_over(tab, avatars.load([a_model(tmp_path, b"x")]))
+    assert str(e.value) == ("Mira's 3D model (mira.glb) couldn't be read; export it again (VRoid Studio: .vrm) or "
+                            "remove asset: from their sheet. The loader said: Unexpected token")
+
+
+async def test_the_advice_comes_first_and_the_loaders_full_stop_is_dropped(tmp_path):
+    tab = FakeTab(ready={"failed": {"mira": "it isn't a glTF binary file." + " (long)" * 60}})
+    with pytest.raises(cast.CastProblem) as e:
+        await avatars.hand_over(tab, avatars.load([a_model(tmp_path, b"x")]))
+    assert "remove asset: from their sheet" in str(e.value)[:200]  # the job's one-line summary cuts at 200 characters
+    tab = FakeTab(ready={"failed": {"mira": "it isn't a glTF binary file."}})
+    with pytest.raises(cast.CastProblem) as e:
+        await avatars.hand_over(tab, avatars.load([a_model(tmp_path, b"x")]))
+    assert str(e.value).endswith("The loader said: it isn't a glTF binary file")
+
+
+def test_a_model_deleted_after_the_check_is_refused_naming_the_speaker(folder):
+    (folder / "models" / "mira.vrm").write_bytes(b"x" * 10)
+    [model] = avatars.models_for(cast.read(sheet_with(folder, "models/mira.vrm")), ["mira"])
+    model.path.unlink()
+    with pytest.raises(cast.CastProblem) as e:
+        avatars.load([model])
+    message = str(e.value)
+    assert message.startswith("Mira's asset (mira.vrm)")
+    assert "couldn't be read" in message and "put the file back" in message
+    assert message.endswith("(speaker id: mira).")
 
 
 async def handed_over(model, tmp_path, before=None, after="__avatars.ready()"):
@@ -252,11 +277,12 @@ async def test_the_parsed_model_is_kept_for_the_helpers_and_frames_draw_after_it
 
 @needs_browser
 @pytest.mark.parametrize("which", ["a renamed jpeg", "a truncated download"])
-async def test_a_file_that_isnt_gltf_is_refused_in_words_not_a_hang(tmp_path, which):  # Review Focus 1
+async def test_a_file_that_isnt_gltf_is_refused_in_words_not_a_hang(tmp_path, which):  # jpeg, cut-off file
     data = NOT_GLTF
     if which == "a truncated download":
         data = tiny_glb()[:200]
-    with pytest.raises(cast.CastProblem, match=r"Mira's 3D model \(mira.glb\) couldn't be read: .+") as e:
+    mira_words = r"Mira's 3D model \(mira.glb\) couldn't be read; export it again .+The loader said: .+"
+    with pytest.raises(cast.CastProblem, match=mira_words) as e:
         await handed_over(a_model(tmp_path, data), tmp_path)
     if which == "a renamed jpeg":
         assert "it isn't a glTF binary file" in str(e.value)
@@ -339,7 +365,7 @@ async def test_the_page_check_without_models_draws_as_before():
 async def test_a_model_the_check_cant_parse_ends_the_job_in_its_words(tmp_path, monkeypatch):
     from odie.video import writer
     from tests.test_video_writer import Context
-    words = "Mira's 3D model (mira.glb) couldn't be read: it isn't a glTF binary file."
+    words = "Mira's 3D model (mira.glb) couldn't be read; export it again. The loader said: it isn't a glTF binary file"
 
     async def unparsed(tab, loaded):
         raise cast.CastProblem(words)

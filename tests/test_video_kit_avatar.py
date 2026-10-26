@@ -100,7 +100,7 @@ async def test_level_takes_the_speaker_in_any_case(tmp_path):
 
 
 @needs_browser
-async def test_a_frame_looks_the_same_whatever_was_drawn_before(tmp_path):  # Review Focus 2
+async def test_a_frame_looks_the_same_whatever_was_drawn_before(tmp_path):  # four tabs start at different frames
     # T 0.93 is inside Mira's loud run and half way through her first blink. One tab drew a quiet frame before it,
     # the other a loud one and a later one: a level, mouth or blink carried over from an earlier frame would differ.
     state = "({w: __w, head: " + HEAD + ".quaternion.toArray()})"
@@ -145,7 +145,7 @@ async def test_a_blink_closes_the_eyes_shortly_after_the_scene_starts(tmp_path):
 
 
 @needs_browser
-async def test_a_speaker_without_a_model_is_told_in_words(tmp_path):  # Review Focus 5
+async def test_a_speaker_without_a_model_is_told_in_words(tmp_path):  # the writer asks for a speaker who has no model
     body = '<script>Video.scenes([{setup(s) { this.t = s.avatar("Tobi"); }, draw(t, s) {}}]);</script>'
     _, errors = await opened([], tmp_path, body=body)
     assert errors
@@ -162,6 +162,26 @@ async def test_smile_and_brows_are_held_until_changed(tmp_path):
     assert resting == [0.3, 0]  # a hint of a smile while quiet, unless the writer set one
     assert asked == [0.8, -0.5]  # the tiny model has no smile or brow shape: still reported, nothing throws
     assert held == [0.8, -0.5]
+
+
+@needs_browser
+async def test_smile_null_goes_back_to_the_resting_smile(tmp_path):
+    # Mira is quiet at 0.2 s (resting smile 0.3) and her mouth is mostly open at 0.66 s (0.3 * (1 - amount), a little);
+    # smile(0.8) holds 0.8, and smile(null), or smile() with nothing, gives the automatic smile back
+    quiet, partly, asked, null_quiet, null_partly, nothing_partly = await evaluated([
+        "__avatars.frame(0.2).then(() => __w.smile)",
+        "__avatars.frame(0.66).then(() => __w.smile)",
+        "__a.smile(0.8); __avatars.frame(0.66).then(() => __w.smile)",
+        "__a.smile(null); __avatars.frame(0.2).then(() => __w.smile)",
+        "__a.smile(null); __avatars.frame(0.66).then(() => __w.smile)",
+        "__a.smile(0.8); __a.smile(); __avatars.frame(0.66).then(() => __w.smile)",
+    ], tmp_path)
+    assert quiet == 0.3
+    assert 0 < partly < 0.3
+    assert asked == 0.8
+    assert null_quiet == quiet
+    assert null_partly == partly
+    assert nothing_partly == partly
 
 
 @needs_browser
@@ -259,7 +279,7 @@ async def test_a_real_vrm_loads_speaks_and_blinks(tmp_path):
 
 @needs_browser
 @pytest.mark.skipif(not VRM, reason="set ODIE_TEST_VRM to a .vrm file to run")
-async def test_a_real_vrm_frame_looks_the_same_whatever_was_drawn_before(tmp_path):  # Review Focus 2, on a VRM
+async def test_a_real_vrm_frame_looks_the_same_whatever_was_drawn_before(tmp_path):  # a real model, four tabs
     # T 0.93: Mira loud and half way through a blink. Her face and her spring hair must not carry anything over, nor
     # differ on a tab's very first frame (the sample's sleeve springs hang from bones its constraints drive).
     model = real_vrm()

@@ -59,10 +59,16 @@ class Loaded:
 
 def load(models: list[Model]) -> list[Loaded]:
     """Each model's file read once and cut into CHUNK_BYTES pieces, each as base64 text: a 9 MB file -> 3 pieces
-    (4 MB, 4 MB, 1 MB)."""
+    (4 MB, 4 MB, 1 MB). A file that was checked but is gone or unreadable now (deleted or moved since) raises
+    cast.CastProblem like the sheet's other refusals: Mira's mira.vrm deleted -> "Mira's asset (mira.vrm) couldn't be
+    read: put the file back or remove asset: from the sheet (speaker id: mira)."."""
     loaded = []
     for model in models:
-        data = model.path.read_bytes()
+        try:
+            data = model.path.read_bytes()
+        except OSError:
+            raise cast.CastProblem(f"{model.name}'s asset ({model.path.name}) couldn't be read: put the file back or "
+                                   f"remove asset: from the sheet (speaker id: {model.speaker}).") from None
         pieces = []
         for offset in range(0, len(data), CHUNK_BYTES):
             piece = data[offset:offset + CHUNK_BYTES]
@@ -122,5 +128,7 @@ async def hand_over(tab, loaded: list[Loaded]) -> None:
         if error is None:
             continue
         model = one.model
-        raise cast.CastProblem(f"{model.name}'s 3D model ({model.path.name}) couldn't be read: {error}. Export it "
-                               "again (VRoid Studio: .vrm), or remove asset: from their sheet.")
+        said = error.rstrip(".")  # the loader's own full stop would leave ".." where the sentence ends
+        # The advice comes first: the job's one-line summary keeps only the first 200 characters.
+        raise cast.CastProblem(f"{model.name}'s 3D model ({model.path.name}) couldn't be read; export it again "
+                               f"(VRoid Studio: .vrm) or remove asset: from their sheet. The loader said: {said}")

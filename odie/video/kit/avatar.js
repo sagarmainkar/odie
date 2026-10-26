@@ -662,7 +662,13 @@
       return model;
     }
 
+    // The writer's smile, held until changed: smile(0.8) -> 0.8; smile(2) -> 1; smile(null) or smile() -> back to the
+    // automatic resting smile (0.3 * (1 - amount): 0.3 while quiet, fading as the mouth opens), not 0.
     smile(amount) {
+      if (amount === null || amount === undefined) {
+        this.smileAsked = null;
+        return;
+      }
       this.smileAsked = Math.min(1, Math.max(0, amount));
     }
 

@@ -91,10 +91,10 @@ class Character:
     def model_file(self) -> Path | None:
         """The character's 3D model, checked: no asset: on the sheet -> None; models/mira.vrm that is a file in the
         folder, a .vrm or .glb (any case) of at most 40 MB -> its resolved path. Anything else raises CastProblem,
-        naming the character and the asset: /tmp/mira.vrm or ../mira.vrm or a link out of the folder -> "must be
-        inside the cast folder"; models/mira.fbx -> "a 3D character is a .vrm or .glb file"; models/gone.vrm ->
-        "isn't in cast"; a 41 MB file -> "a 3D character can be at most 40 MB"; an asset on a character with no
-        folder -> "has no cast folder"."""
+        naming the character and the asset: /tmp/mira.vrm or ../mira.vrm or a link out of the folder (named cast) ->
+        "must be inside the folder cast"; models/mira.fbx -> "a 3D character is a .vrm or .glb file";
+        models/gone.vrm -> "isn't in cast"; a 41 MB file -> "a 3D character can be at most 40 MB"; an asset on a
+        character with no folder -> "has no cast folder"."""
         if not self.asset:
             return None
         start = f"{self.display_name}'s asset ({self.asset})"
@@ -104,20 +104,20 @@ class Character:
         home = self.folder.resolve()
         path = (self.folder / self.asset).resolve()
         if Path(self.asset).is_absolute() or not path.is_relative_to(home):
-            raise CastProblem(f"{start} must be inside the cast folder {self.folder.name} {who}")
+            raise CastProblem(f"{start} must be inside the folder {self.folder.name} {who}")
         suffix = path.suffix.lower()
         if suffix not in MODEL_SUFFIXES:
             named = suffix or "file with no ending"
-            raise CastProblem(f"{start} is a {named}; a 3D character is a .vrm or .glb file (VRoid Studio exports "
-                              f".vrm) {who}")
+            raise CastProblem(f"{start} is a {named}; a 3D character is a .vrm or .glb file; VRoid Studio "
+                              f"exports .vrm {who}")
         if not path.is_file():
             raise CastProblem(f"{start} isn't in {self.folder.name}: put the file there or remove asset: from the "
                               f"sheet {who}")
         size = path.stat().st_size
         if size > MAX_MODEL_BYTES:
             megabytes = size / (1024 * 1024)
-            raise CastProblem(f"{start} is {megabytes:.1f} MB; a 3D character can be at most {MAX_MODEL_MB} MB "
-                              f"(VRoid Studio's export can shrink its textures) {who}")
+            raise CastProblem(f"{start} is {megabytes:.1f} MB; a 3D character can be at most {MAX_MODEL_MB} MB; "
+                              f"VRoid Studio's export can shrink its textures {who}")
         return path
 
     def as_data(self) -> dict:
