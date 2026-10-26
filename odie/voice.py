@@ -443,17 +443,24 @@ async def phonon_voices(transport: httpx.AsyncBaseTransport | None = None) -> li
     return list(listed)
 
 
-async def phonon_models(transport: httpx.AsyncBaseTransport | None = None) -> list[str]:
-    """The Phonon models Ollama has (GET /api/tags): every model whose name starts with "phonon", as Ollama names them
-    ("phonon:latest", "phonon:fr"); [] when Ollama can't be asked."""
+async def ollama_models(transport: httpx.AsyncBaseTransport | None = None) -> list[str] | None:
+    """The models Ollama has (GET /api/tags), by name; None when Ollama can't be asked, so "no Ollama" and "Ollama
+    without phonon" can be told apart. Ollama with phonon and gemma -> ["phonon:latest", "gemma4:e4b"]; Ollama with
+    nothing -> []; no Ollama -> None."""
     try:
         async with httpx.AsyncClient(timeout=3, transport=transport) as c:
             r = await c.get(f"{ollama_root()}/api/tags")
         r.raise_for_status()
         models = r.json().get("models") or []
     except (httpx.HTTPError, ValueError, AttributeError):
-        return []
-    names = [str(m.get("name") or m.get("model") or "") for m in models if isinstance(m, dict)]
+        return None
+    return [str(m.get("name") or m.get("model") or "") for m in models if isinstance(m, dict)]
+
+
+async def phonon_models(transport: httpx.AsyncBaseTransport | None = None) -> list[str]:
+    """The Phonon models Ollama has: every model whose name starts with "phonon", as Ollama names them
+    ("phonon:latest", "phonon:fr"); [] when there are none or Ollama can't be asked."""
+    names = await ollama_models(transport) or []
     return [n for n in names if n.startswith("phonon")]
 
 
@@ -568,10 +575,25 @@ async def phonon_tts(text: str, voice_id: str, transport: httpx.AsyncBaseTranspo
 _PAIRS = {"a": ("af_heart", "am_michael"), "b": ("bf_emma", "bm_george"), "h": ("hf_alpha", "hm_omega")}
 
 
+def phonon_hosts(voices: list[dict], chosen: str) -> list[dict]:
+    """A podcast's two hosts when Phonon speaks: the chosen voice first, then another of Phonon's: Easton (or Zoey when
+    Easton is the chosen one) when Ollama lists them, else the first other voice it lists. One voice only (Phonon's
+    "default") -> that voice for both. [zoey, easton, freya] with freya chosen -> [freya, easton]; with easton chosen
+    -> [easton, zoey]."""
+    by_id = {v["id"]: v for v in voices}
+    first = by_id.get(chosen) or (voices[0] if voices else dict(PHONON_DEFAULT))
+    partner_name = "zoey" if first["id"].lower() == "easton" else "easton"
+    others = [v for v in voices if v["id"] != first["id"]]
+    partner = next((v for v in others if v["id"].lower() == partner_name), others[0] if others else first)
+    return [first, partner]
+
+
 def podcast_voices(store: Store) -> list[dict]:
     """A podcast's two hosts, [a woman, a man], from the chosen engine and with the chosen voice's accent; the chosen
-    voice is one of them."""
+    voice is one of them. Phonon's two come from the voices Ollama lists (phonon_hosts)."""
     eng, v = get_tts(store)
+    if eng == "phonon":
+        return phonon_hosts(engine_voices("phonon"), v)
     if eng != "openai":
         eng, v = "kokoro", v if v in {x["id"] for x in KOKORO_VOICES} else _DEFAULT_VOICE["kokoro"]
     voices = {x["id"]: x for x in engine_voices(eng)}

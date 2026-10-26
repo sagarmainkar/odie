@@ -44,7 +44,7 @@ DECLARATIONS = [
         "when (on: true); or not (on: false).", {"on": {"type": "boolean"}}, ("on",)),
     _fn("search_status", "Which web search is in use, and the keys that would make it better."),
     _fn("voice_options", "The voices for reading replies aloud."),
-    _fn("set_voice", "Read replies aloud with this voice engine.", {"engine": {"type": "string", "enum": ["kokoro", "openai"]}}, ("engine",)),
+    _fn("set_voice", "Read replies aloud with this voice engine.", {"engine": {"type": "string", "enum": ["phonon", "kokoro", "openai"]}}, ("engine",)),
     _fn("apps_options", "How to connect apps such as Gmail and Calendar (Zapier or Composio)."),
     _fn("connect_app", "Show the user the form for their Zapier or Composio link. You never see the link; you're told when it is saved.",
         {"app": {"type": "string", "enum": ["zapier", "composio"]}}, ("app",)),
@@ -232,25 +232,44 @@ async def search_status(store) -> dict:
             "offer": [{"provider": p.id, "name": p.name} for p in PROVIDERS if p.id not in have]}
 
 
-async def voice_options(store) -> dict:
-    from odie import machine
+PHONON_READY = {"engine": "phonon", "label": "Phonon through Ollama", "note": "free, private, quick; runs in Ollama on this computer",
+                "recommended": True}
+PHONON_TO_PULL = {"engine": "phonon", "label": "Phonon through Ollama", "note": "run `ollama pull phonon` first (113 MB)",
+                  "needs": "ollama pull phonon"}
+
+
+async def voice_options(store, transport=None) -> dict:
+    """The read-aloud choices, what is already here first: Phonon when Ollama has it (recommended), Kokoro where Odie's
+    own voice server runs, then Phonon when Ollama is up but hasn't pulled it (with the command), then OpenAI. No Ollama
+    -> no Phonon at all. An M2 with Ollama and phonon -> [phonon, kokoro, openai]; the same without phonon -> [kokoro,
+    phonon (pull first), openai]; an Intel Mac without Ollama -> [openai]."""
+    from odie import machine, voice
     has_openai = bool(load_secret("OPENAI_API_KEY"))
+    models = await voice.ollama_models(transport)
+    ollama_up = models is not None
+    phonon_pulled = any(name.startswith("phonon") for name in models or [])
     options = []
-    if machine.local_voice_wanted():  # Kokoro needs Apple Silicon: an Intel Mac gets OpenAI's voices only
-        options.append({"engine": "kokoro", "label": "Free local voice", "note": "private, runs on this computer"})
+    if phonon_pulled:
+        options.append(dict(PHONON_READY))
+    if machine.local_voice_wanted():  # Kokoro needs Apple Silicon: an Intel Mac doesn't get Odie's own voice server
+        options.append({"engine": "kokoro", "label": "Kokoro", "note": "Odie's own voice server on this computer"})
+    if ollama_up and not phonon_pulled:
+        options.append(dict(PHONON_TO_PULL))
     options.append({"engine": "openai", "label": "OpenAI voice", "note": "natural; the text goes to OpenAI", "needs_key": not has_openai})
     return {"options": options, "or": "skip: the app can still read replies with the browser's own voice"}
 
 
-async def set_voice(store, engine: str) -> dict:
+async def set_voice(store, engine: str, transport=None) -> dict:
     from odie import voice
+    if engine not in ("phonon", "kokoro", "openai"):
+        raise _Error("engine is phonon, kokoro or openai (or skip the step).")
     if engine == "openai" and not load_secret("OPENAI_API_KEY"):
         raise _Error("The OpenAI voice needs an OpenAI key: call request_key('openai') first.")
-    if engine not in ("kokoro", "openai"):
-        raise _Error("engine is kokoro or openai (or skip the step).")
     from odie import machine
     if engine == "kokoro" and not machine.local_voice_wanted():
-        raise _Error("Odie's own voice doesn't run on this Mac (it needs Apple Silicon): choose openai, or skip the step.")
+        raise _Error("Odie's own voice doesn't run on this Mac (it needs Apple Silicon): choose phonon or openai, or skip the step.")
+    if engine == "phonon" and not await voice.phonon_available(transport):
+        raise _Error("Ollama doesn't have Phonon yet: run `ollama pull phonon` (113 MB), then choose it again.")
     voice.set_tts(store, engine=engine)
     await voice.settle_worker(store)
     state.mark(store, "voice", "done")
@@ -325,7 +344,7 @@ async def run(name: str, args: dict, store, runner=None, transport=None) -> dict
     if fn is None:
         return {"error": f"There's no tool called {name}."}
     kwargs = {k: v for k, v in dict(args or {}).items() if k not in ("runner", "transport")}
-    if name in ("embedding_options", "server_models", "set_embeddings"):
+    if name in ("embedding_options", "server_models", "set_embeddings", "voice_options", "set_voice"):
         kwargs["transport"] = transport
     if name in ("set_vault", "set_embeddings", "set_photos"):
         kwargs["runner"] = runner

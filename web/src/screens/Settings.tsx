@@ -20,7 +20,7 @@ import { profileChanged, useProfile } from "../profile";
 import { has, useCaps } from "../capabilities";
 import { notesRow, type VaultInfo } from "../vault";
 import { photosRow, type PhotosInfo } from "../photos";
-import { voiceSection } from "../voiceSettings";
+import { engineLine, voiceGroups, voiceSection } from "../voiceSettings";
 import { afterTurnOn, sendPosition, type LocationInfo } from "../location";
 import { LocationRowView } from "../components/LocationRow";
 import { LABEL, type Panel, type Step, type Turn } from "../setup";
@@ -227,6 +227,7 @@ function VoiceSection() {
     );
   }
   const eng = shown.engine;
+  const line = engineLine(eng);  // on this computer or not, and what to do when it can't speak (Phonon: ollama pull)
   return (
     <Section title="Voice">
       <div className="p-3 flex flex-col gap-3">
@@ -241,15 +242,14 @@ function VoiceSection() {
           ))}
         </div>
         <div className="text-[13px] leading-[18px] px-1 flex items-start gap-2">
-          {eng.available && <Pill tone={eng.local ? "moss" : "ember"}>{eng.local ? "on this computer" : "leaves this computer"}</Pill>}
-          <span className="text-muted">{eng.available ? eng.note : eng.local ? "The local voice service isn't running: odie restart starts it." : "Add an OpenAI key in Providers to use these voices."}</span>
+          {line.pill && <Pill tone={line.pill === "on this computer" ? "moss" : "ember"}>{line.pill}</Pill>}
+          <span className="text-muted">{line.text}</span>
         </div>
-        {(["female", "male", "neutral"] as const).map((g) => {
-          const list = eng.voices.filter((x) => (x.group ?? "neutral") === g);
-          if (!list.length) return null;
+        {voiceGroups(eng).map((g) => {
+          const list = g.voices;
           return (
-            <div key={g}>
-              <div className="px-1 pb-1.5 text-[13px] font-semibold text-muted">{g === "female" ? "Female voices" : g === "male" ? "Male voices" : "Neutral"}</div>
+            <div key={g.key}>
+              {g.title && <div className="px-1 pb-1.5 text-[13px] font-semibold text-muted">{g.title}</div>}
               <div className="grid grid-cols-2 gap-2">
                 {list.map((x) => {
                   const on = x.id === v.voice;

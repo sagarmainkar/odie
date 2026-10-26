@@ -18,3 +18,45 @@ export function voiceSection(v: VoiceInfo): VoiceSection {
   if (!chosen) return { picker: false, note: NO_VOICE_TEXT };
   return { picker: true, engine: chosen };
 }
+
+export const PULL_PHONON_TEXT = "Ollama doesn't have Phonon yet: run `ollama pull phonon` (113 MB), then open Settings again.";
+export type VoiceGroup = { key: string; title: string; voices: VoiceItem[] };
+export type EngineLine = { pill: "on this computer" | "leaves this computer" | null; text: string };
+
+const GENDER_TITLES: [string, string][] = [["female", "Female voices"], ["male", "Male voices"], ["neutral", "Neutral"]];
+
+/** The picker's groups for one engine, each with its heading. Kokoro's and OpenAI's female, male and neutral groups
+ *  keep their headings and that order (a voice with no group counts as neutral, as before); any other group (Phonon's
+ *  "American · Female", "Characters") is drawn under its own name, in the order the server lists the voices; a group
+ *  of "" gets no heading.
+ *    Kokoro [michael (male), heart (female)]   -> Female voices [heart], Male voices [michael]
+ *    Phonon [Zoey (American · Female), Easton (American · Male), Ada (American · Female)]
+ *                                               -> American · Female [Zoey, Ada], American · Male [Easton]
+ *    Phonon [zoey (""), easton ("")]            -> one group with no heading [zoey, easton] */
+export function voiceGroups(eng: Engine): VoiceGroup[] {
+  const byGender = new Map<string, VoiceItem[]>();
+  const others = new Map<string, VoiceItem[]>();
+  for (const voice of eng.voices) {
+    const group = voice.group ?? "neutral";
+    const isGender = GENDER_TITLES.some(([key]) => key === group);
+    const into = isGender ? byGender : others;
+    into.set(group, [...(into.get(group) ?? []), voice]);
+  }
+  const genderGroups = GENDER_TITLES.filter(([key]) => byGender.has(key))
+    .map(([key, title]) => ({ key, title, voices: byGender.get(key) ?? [] }));
+  const otherGroups = [...others.entries()].map(([key, voices]) => ({ key, title: key, voices }));
+  return [...genderGroups, ...otherGroups];
+}
+
+/** The line under the engine buttons: whether its voices stay on this computer, and the engine's note; when it can't
+ *  speak, what to do instead.
+ *    Phonon, Ollama has it        -> pill "on this computer", its note
+ *    Phonon, Ollama doesn't       -> no pill, PULL_PHONON_TEXT
+ *    Kokoro, its server can't run -> no pill, "The local voice service isn't running: odie restart starts it."
+ *    OpenAI without its key       -> no pill, "Add an OpenAI key in Providers to use these voices." */
+export function engineLine(eng: Engine): EngineLine {
+  if (eng.available) return { pill: eng.local ? "on this computer" : "leaves this computer", text: eng.note };
+  if (eng.id === "phonon") return { pill: null, text: PULL_PHONON_TEXT };
+  if (eng.local) return { pill: null, text: "The local voice service isn't running: odie restart starts it." };
+  return { pill: null, text: "Add an OpenAI key in Providers to use these voices." };
+}

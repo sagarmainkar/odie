@@ -319,3 +319,95 @@ async def test_kokoro_stays_choosable_while_its_server_is_stopped(isolated_setti
         monkeypatch.setattr(voice_worker, "current", FakeWorker(installed=False))  # never `uv sync`ed
         kokoro = next(e for e in (await c.get("/api/voice")).json()["engines"] if e["id"] == "kokoro")
         assert kokoro["available"] is False
+# --- Item 3: setup, the setup panel, podcasts and narration ---
+
+
+def no_ollama():
+    def down(request):
+        raise httpx.ConnectError("refused")
+    return httpx.MockTransport(down)
+
+
+async def test_setup_offers_what_is_already_here_first(isolated_settings, tmp_path, monkeypatch):
+    from odie.setup import tools
+    monkeypatch.setenv("ODIE_VOICE", "on")
+    monkeypatch.setattr(tools, "load_secret", lambda name: None)
+    s = _store(tmp_path)
+    ready = (await tools.run("voice_options", {}, s, transport=ollama(tags=("phonon:latest",))))["result"]["options"]
+    assert [o["engine"] for o in ready] == ["phonon", "kokoro", "openai"]
+    assert ready[0] == {"engine": "phonon", "label": "Phonon through Ollama", "note": "free, private, quick; runs in Ollama on this computer",
+                        "recommended": True}
+    assert ready[1]["note"] == "Odie's own voice server on this computer" and ready[2]["needs_key"] is True
+    not_pulled = (await tools.run("voice_options", {}, s, transport=ollama(tags=("gemma4:e4b",))))["result"]["options"]
+    assert [o["engine"] for o in not_pulled] == ["kokoro", "phonon", "openai"]  # what's here first, then what needs a step
+    phonon = next(o for o in not_pulled if o["engine"] == "phonon")
+    assert phonon["needs"] == "ollama pull phonon" and phonon["note"] == "run `ollama pull phonon` first (113 MB)"
+    assert "recommended" not in phonon
+    monkeypatch.setenv("ODIE_VOICE", "off")
+    nothing = (await tools.run("voice_options", {}, s, transport=no_ollama()))["result"]["options"]
+    assert [o["engine"] for o in nothing] == ["openai"]  # no Ollama, an Intel Mac: only OpenAI
+
+
+async def test_setup_chooses_phonon_only_when_ollama_has_it(isolated_settings, tmp_path, monkeypatch):
+    from odie.setup import state, tools
+    s = _store(tmp_path)
+    refused = await tools.run("set_voice", {"engine": "phonon"}, s, transport=ollama(tags=("gemma4:e4b",)))
+    assert "ollama pull phonon" in refused["error"] and state.get(s)["steps"].get("voice") != "done"
+    chose = await tools.run("set_voice", {"engine": "phonon"}, s, transport=ollama(tags=("phonon:latest",)))
+    assert chose == {"result": {"voice": "phonon"}} and voice.get_tts(s)[0] == "phonon"
+    assert state.get(s)["steps"]["voice"] == "done"
+    declared = next(d["function"] for d in tools.DECLARATIONS if d["function"]["name"] == "set_voice")
+    assert declared["parameters"]["properties"]["engine"]["enum"] == ["phonon", "kokoro", "openai"]
+
+
+async def test_the_setup_panel_shows_the_same_order_and_the_pull_hint(isolated_settings, tmp_path, monkeypatch):
+    from odie.setup import panels
+    monkeypatch.setenv("ODIE_VOICE", "on")
+    monkeypatch.setattr(panels, "load_secret", lambda name: None)
+    s = _store(tmp_path)
+    ready = await panels.panel(s, "voice", transport=ollama(tags=("phonon:latest",)))
+    assert [c["id"] for c in ready["choices"]] == ["phonon", "kokoro", "openai"]
+    assert ready["choices"][0]["recommended"] is True and ready["choices"][0]["label"] == "Phonon through Ollama"
+    not_pulled = await panels.panel(s, "voice", transport=ollama(tags=()))
+    phonon = next(c for c in not_pulled["choices"] if c["id"] == "phonon")
+    assert phonon["note"] == "Run `ollama pull phonon` first (113 MB)" and phonon["needs"] is None  # a text note, no new card
+    assert [c["id"] for c in not_pulled["choices"]] == ["kokoro", "phonon", "openai"]
+    with pytest.raises(panels.ChoiceError) as e:
+        await panels.apply(s, "voice", "phonon", transport=ollama(tags=()))
+    assert "ollama pull phonon" in str(e.value)
+
+
+def test_a_podcast_with_phonon_is_spoken_at_local_speed():
+    from odie.skills.podcast import tools
+    assert tools.speaking_speed("phonon") == tools.LOCAL_SPEED
+
+
+async def test_a_podcast_with_phonon_has_two_phonon_hosts(isolated_settings, tmp_path):
+    s = _store(tmp_path)
+    t = ollama(voices=["zoey", "easton", "freya"])
+    await voice.phonon_available(transport=t)
+    await voice.phonon_voices(transport=t)
+    voice.set_tts(s, "phonon", "freya")
+    hosts = voice.podcast_voices(s)
+    assert [h["id"] for h in hosts] == ["freya", "easton"]  # the chosen voice, and another of Phonon's
+    voice.set_tts(s, "phonon", "easton")
+    assert [h["id"] for h in voice.podcast_voices(s)] == ["easton", "zoey"]
+
+
+async def test_narration_with_phonon_asks_one_phrase_at_a_time(isolated_settings, tmp_path, monkeypatch):
+    import asyncio
+
+    from odie.video import narrate
+    running = 0
+    most = 0
+
+    async def speak(store, text, engine, voice_id, transport, style=""):
+        nonlocal running, most
+        running += 1
+        most = max(most, running)
+        await asyncio.sleep(0.01)
+        running -= 1
+        return ollama_wav(b"\x00\x00")
+    monkeypatch.setattr(narrate, "speak", speak)
+    await narrate.speak_all(_store(tmp_path), ["One.", "Two.", "Three."], "phonon", "zoey", None)
+    assert most == 1
