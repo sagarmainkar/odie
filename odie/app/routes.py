@@ -1407,11 +1407,21 @@ async def voice_get(request: Request):
     from odie import machine, voice
     from odie.secrets import load_secret
     store = request.app.state.store
+    phonon_ok = await voice.phonon_available()  # Ollama has a phonon model: one quick /api/tags per Settings open
+    if phonon_ok:
+        await voice.phonon_voices()  # Ollama's list, asked once per process
     engine, current = voice.get_tts(store)
     openai_ok = bool(load_secret("OPENAI_API_KEY"))
-    local_ok = await voice.local_available() if machine.local_voice_wanted() else False  # not asked for where it can't run
+    local_ok = await voice.own_server_can_speak() if machine.local_voice_wanted() else False  # not asked for where it can't run
     hidden = voice.disabled()
-    engines = [{"id": k, **v, "available": local_ok if v["local"] else openai_ok, "voices": voice.engine_voices(k)}
+
+    def ready(engine_id: str, local: bool) -> bool:
+        """Whether an engine can speak now: Phonon when Ollama has it, Odie's own server when it can, OpenAI with
+        its key. phonon, Ollama has it -> True; kokoro, voice server not set up -> False; openai, no key -> False."""
+        if engine_id == "phonon":
+            return phonon_ok
+        return local_ok if local else openai_ok
+    engines = [{"id": k, **v, "available": ready(k, v["local"]), "voices": voice.engine_voices(k, store)}
                for k, v in voice.ENGINES.items() if k not in hidden and (v["local"] or openai_ok)]  # OpenAI only with its key
     # local_voice: whether Odie's own voice is meant to run on this Mac at all (False on an Intel Mac: Settings says why)
     return {"available": openai_ok, "engine": engine, "voice": current, "talk_voice": voice.get_voice(store), "engines": engines,
@@ -1425,6 +1435,7 @@ async def voice_put(body: VoiceIn, request: Request):
     from odie import voice
     store = request.app.state.store
     engine, v = voice.set_tts(store, body.engine, body.voice)
+    await voice.settle_worker(store)  # away from Kokoro: Odie's own voice server stops
     if engine == "openai" and body.voice:
         voice.set_voice(store, body.voice)  # an OpenAI voice is also Talk's voice
     if body.reminders_spoken is not None:
@@ -1432,17 +1443,36 @@ async def voice_put(body: VoiceIn, request: Request):
     return {"engine": engine, "voice": v, "reminders_spoken": voice.reminders_spoken(store)}
 
 
-async def _preview(request: Request, engine: str, voice_id: str) -> Response:
-    from odie import persona, voice
-    if engine not in voice.ENGINES or engine in voice.disabled() or voice_id not in {v["id"] for v in voice.engine_voices(engine)}:
-        raise HTTPException(404, "no such voice")
-    from odie import profile
+def _preview_path(request: Request, engine: str, voice_id: str) -> Path:
+    """Where a voice's preview is kept: one file per engine, voice, assistant name and user name (a rename makes a new
+    one). The voice id goes in as a slug: Phonon's names have spaces, accents and brackets ("Noémie (phonon:fr)")."""
+    from odie import persona, profile
     name = persona.get(request.app.state.store)["name"]
     user = profile.get(request.app.state.store)["user_name"]
     folder = config.settings.data_dir / "voice"
     folder.mkdir(parents=True, exist_ok=True)
     ext = "mp3" if engine == "openai" else "wav"
-    path = folder / f"preview-{engine}-{voice_id}-{slug(name)}-{slug(user or 'you')}.{ext}"  # a rename makes a new one
+    return folder / f"preview-{_preview_name(engine, voice_id)}-{slug(name)}-{slug(user or 'you')}.{ext}"
+
+
+def _preview_name(engine: str, voice_id: str) -> str:
+    """A voice's part of its preview file name: a readable slug plus a short hash of the exact id, so ids the slug
+    makes alike stay apart. "Zoey" and "ZOEY" -> "phonon-zoey-1a2b3c" and "phonon-zoey-9f8e7d"; two Cyrillic names
+    (both slug to "custom") -> two files."""
+    import hashlib
+    exact = hashlib.sha1(voice_id.encode()).hexdigest()[:6]
+    return f"{engine}-{slug(voice_id)}-{exact}"
+
+
+async def _preview(request: Request, engine: str, voice_id: str) -> Response:
+    from odie import persona, profile, voice
+    store = request.app.state.store
+    if engine not in voice.ENGINES or engine in voice.disabled() or voice_id not in {v["id"] for v in voice.engine_voices(engine, store)}:
+        raise HTTPException(404, "no such voice")
+    name = persona.get(store)["name"]
+    user = profile.get(store)["user_name"]
+    path = _preview_path(request, engine, voice_id)
+    ext = path.suffix.lstrip(".")
     if not path.exists():
         hi = f"Hi {user}" if user else "Hi"
         line = (f"{hi}! <laugh> I'm {name}. This is how I sound when I read to you." if engine == "maya1"
@@ -1458,6 +1488,41 @@ async def _preview(request: Request, engine: str, voice_id: str) -> Response:
             raise HTTPException(502, f"{engine} preview failed: {type(e).__name__}")
         path.write_bytes(audio)
     return Response(path.read_bytes(), media_type="audio/mpeg" if ext == "mp3" else "audio/wav", headers={"Cache-Control": "public, max-age=86400"})
+
+
+class PhononCheckIn(BaseModel):
+    name: str = Field("", max_length=400)  # longer than a voice name may be: typed_name_problem says why it's refused
+
+
+@router.post("/voice/phonon/check")
+async def voice_phonon_check(body: PhononCheckIn, request: Request):
+    """"Another voice": the typed name is tried against the Phonon models Ollama has; the first that speaks it keeps
+    it as the chosen voice, and the line it spoke becomes its preview. A name no model has, or one not worth asking
+    about, is a 422 that says why in words."""
+    from odie import voice
+    store = request.app.state.store
+    try:
+        kept = await voice.check_phonon_voice(store, body.name)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    except voice.VoiceUnavailable as e:
+        raise HTTPException(503, str(e))
+    if kept["audio"] is not None:  # a voice Ollama already lists keeps its own preview
+        _preview_path(request, "phonon", kept["id"]).write_bytes(kept["audio"])
+    await voice.settle_worker(store)
+    engine, current = voice.get_tts(store)
+    return {"engine": engine, "voice": current, "voices": voice.engine_voices("phonon", store)}
+
+
+@router.delete("/voice/phonon/voices/{voice_id}")
+async def voice_phonon_forget(voice_id: str, request: Request):
+    """Removes a voice kept with "Another voice"; the chosen voice falls back to Phonon's default when it was this one."""
+    from odie import voice
+    store = request.app.state.store
+    voice.forget_phonon_voice(store, voice_id)
+    _preview_path(request, "phonon", voice_id).unlink(missing_ok=True)
+    engine, current = voice.get_tts(store)
+    return {"engine": engine, "voice": current, "voices": voice.engine_voices("phonon", store)}
 
 
 @router.get("/voice/preview/{voice_id}")

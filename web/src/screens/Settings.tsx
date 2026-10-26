@@ -20,7 +20,8 @@ import { profileChanged, useProfile } from "../profile";
 import { has, useCaps } from "../capabilities";
 import { notesRow, type VaultInfo } from "../vault";
 import { photosRow, type PhotosInfo } from "../photos";
-import { voiceSection } from "../voiceSettings";
+import { engineLine, previewUrl, voiceGroups, voiceSection, withPhononVoices, type PhononAnswer } from "../voiceSettings";
+import { AnotherVoice } from "../components/AnotherVoice";
 import { afterTurnOn, sendPosition, type LocationInfo } from "../location";
 import { LocationRowView } from "../components/LocationRow";
 import { LABEL, type Panel, type Step, type Turn } from "../setup";
@@ -195,10 +196,18 @@ function VoiceSection() {
     audio.current?.pause();
     const key = `${engine}/${id}`;
     if (playing === key) { setPlaying(null); return; }
-    const a = new Audio(`/api/voice/preview/${engine}/${id}`);
+    const a = new Audio(previewUrl(engine, id));
     audio.current = a; setPlaying(key);
     a.onended = () => setPlaying(null); a.onerror = () => setPlaying(null);
     void a.play().catch(() => setPlaying(null));
+  }
+  function kept(answer: PhononAnswer) {
+    setV((x) => (x ? withPhononVoices(x, answer) : x));
+    play("phonon", answer.voice);  // the line the check spoke is the new voice's preview
+  }
+  async function forget(voiceId: string) {
+    const r = await fetch(`/api/voice/phonon/voices/${encodeURIComponent(voiceId)}`, { method: "DELETE" });
+    if (r.ok) { const answer = await r.json() as PhononAnswer; setV((x) => (x ? withPhononVoices(x, answer) : x)); }
   }
   async function save(body: { engine?: string; voice?: string; reminders_spoken?: boolean }) {
     const r = await fetch("/api/voice", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
@@ -227,6 +236,7 @@ function VoiceSection() {
     );
   }
   const eng = shown.engine;
+  const line = engineLine(eng);  // on this computer or not, and what to do when it can't speak (Phonon: ollama pull)
   return (
     <Section title="Voice">
       <div className="p-3 flex flex-col gap-3">
@@ -241,15 +251,14 @@ function VoiceSection() {
           ))}
         </div>
         <div className="text-[13px] leading-[18px] px-1 flex items-start gap-2">
-          {eng.available && <Pill tone={eng.local ? "moss" : "ember"}>{eng.local ? "on this computer" : "leaves this computer"}</Pill>}
-          <span className="text-muted">{eng.available ? eng.note : eng.local ? "The local voice service isn't running: odie restart starts it." : "Add an OpenAI key in Providers to use these voices."}</span>
+          {line.pill && <Pill tone={line.pill === "on this computer" ? "moss" : "ember"}>{line.pill}</Pill>}
+          <span className="text-muted">{line.text}</span>
         </div>
-        {(["female", "male", "neutral"] as const).map((g) => {
-          const list = eng.voices.filter((x) => (x.group ?? "neutral") === g);
-          if (!list.length) return null;
+        {voiceGroups(eng).map((g) => {
+          const list = g.voices;
           return (
-            <div key={g}>
-              <div className="px-1 pb-1.5 text-[13px] font-semibold text-muted">{g === "female" ? "Female voices" : g === "male" ? "Male voices" : "Neutral"}</div>
+            <div key={g.key}>
+              {g.title && <div className="px-1 pb-1.5 text-[13px] font-semibold text-muted">{g.title}</div>}
               <div className="grid grid-cols-2 gap-2">
                 {list.map((x) => {
                   const on = x.id === v.voice;
@@ -258,11 +267,12 @@ function VoiceSection() {
                     <div key={x.id} className={`flex items-center gap-1 rounded-[14px] border pl-3 pr-1 min-h-12 ${on ? "border-ember-text bg-ember-tint" : "border-line"}`}>
                       <button onClick={() => { void save({ voice: x.id }); play(eng.id, x.id); }} className="flex-1 text-left py-1.5 min-w-0">
                         <span className={`block text-[15px] leading-5 ${on ? "font-semibold text-ember-text" : ""}`}>{x.label}</span>
-                        {x.note && <span className="block text-[12px] leading-4 text-dim truncate">{x.note}</span>}
+                        {x.note && <span className="block text-[12px] leading-4 text-dim line-clamp-2">{x.note}</span>}
                       </button>
                       <button onClick={() => play(eng.id, x.id)} aria-label={`Hear ${x.label}`} className="w-10 h-10 rounded-full flex items-center justify-center text-muted shrink-0">
                         {playing === key ? <span className="spinner" /> : <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z" /></svg>}
                       </button>
+                      {x.kept && <button onClick={() => void forget(x.id)} aria-label={`Remove ${x.label}`} className="w-8 h-10 flex items-center justify-center text-dim shrink-0">×</button>}
                     </div>
                   );
                 })}
@@ -270,6 +280,7 @@ function VoiceSection() {
             </div>
           );
         })}
+        {eng.id === "phonon" && eng.available && <AnotherVoice onKept={kept} />}
         {eng.id === "maya1" && <div className="text-[12px] leading-4 text-dim px-1">The first preview loads Maya1 (about half a minute). Replies are read with laughs, sighs and other expressions where they fit.</div>}
         <div className="flex items-start gap-3 pt-1">
           <div className="flex-1 min-w-0">

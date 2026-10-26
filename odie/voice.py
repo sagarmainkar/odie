@@ -9,7 +9,11 @@ data, and every real action still gets an approval card."""
 from __future__ import annotations
 
 import asyncio
+import io
+import json
 import logging
+import re
+import struct
 
 import httpx
 
@@ -89,25 +93,33 @@ ENGINES = {
     "openai": {"label": "OpenAI", "note": "gpt-4o-mini-tts. Natural, quick, text goes to OpenAI.", "local": False},
     "kokoro": {"label": "Kokoro", "note": "On this computer. Instant, no expressions.", "local": True},
     "maya1": {"label": "Maya1", "note": "On this computer. Expressive (laughs, sighs), takes about twice the speech length to prepare; long replies are summarised.", "local": True},
+    "phonon": {"label": "Phonon (Ollama)", "note": "On this computer through Ollama. Quick, streams, no expressions.", "local": True},
 }
 # Maya1 is hidden until its pipeline is rebuilt from the official prompt format (2026-10-01: through mlx-audio's generic
 # loader it read tags out as words or produced noise).
 _HIDDEN = {"maya1"}
+OWN_SERVER = {"kokoro", "maya1"}  # the engines Odie's own voice server speaks (odie.voice_worker); Phonon is Ollama's
 
 
 def disabled() -> set[str]:
-    """The engines not offered on this machine: Maya1 always (above), and the local ones when Odie's own voice isn't
-    meant to run here (ODIE_VOICE=off: an Intel Mac, see odie.machine). An M2 -> {"maya1"}; an Intel Mac -> {"maya1",
-    "kokoro"}."""
+    """The engines not offered on this machine: Maya1 always (above), and the ones Odie's own voice server speaks when
+    that server isn't meant to run here (ODIE_VOICE=off: an Intel Mac, see odie.machine). Phonon runs in Ollama, so it
+    is offered everywhere. An M2 -> {"maya1"}; an Intel Mac -> {"maya1", "kokoro"}."""
     if machine.local_voice_wanted():
         return set(_HIDDEN)
-    return _HIDDEN | {k for k, v in ENGINES.items() if v["local"]}
+    return _HIDDEN | OWN_SERVER
 
 
 def default_engine() -> str:
-    """The engine when none is chosen, or the chosen one isn't offered here: Kokoro where it runs, else OpenAI (which
-    needs its key; without one, read-aloud says so). An M2 -> "kokoro"; an Intel Mac -> "openai"."""
-    return "kokoro" if machine.local_voice_wanted() else "openai"
+    """The engine when none is chosen, or the chosen one isn't offered here: Phonon when Ollama had it the last time
+    Odie asked (phonon_here), else Kokoro where Odie's own voice runs, else OpenAI (which needs its key; without one,
+    read-aloud says so). Ollama with phonon, on any Mac -> "phonon"; no phonon, an M2 -> "kokoro"; no phonon, an Intel
+    Mac -> "openai"."""
+    if phonon_here():
+        return "phonon"
+    if machine.local_voice_wanted():
+        return "kokoro"
+    return "openai"
 
 
 def _chosen_engine(s: dict) -> str:
@@ -121,19 +133,59 @@ _ENGINE_VOICES = {"openai": VOICES, "kokoro": KOKORO_VOICES, "maya1": MAYA_VOICE
 _DEFAULT_VOICE = {"openai": DEFAULT_VOICE, "kokoro": "af_heart", "maya1": "in_female"}
 
 
-def engine_voices(engine: str) -> list[dict]:
-    return _ENGINE_VOICES.get(engine, [])
+def engine_voices(engine: str, store: Store | None = None) -> list[dict]:
+    """An engine's voices. Phonon's are the ones Ollama listed (phonon_voices), kept for the process, then, given the
+    store, the ones the user found with "Another voice" (kept_voices); before Ollama has been asked, the one voice that
+    always works, "default"."""
+    if engine != "phonon":
+        return _ENGINE_VOICES.get(engine, [])
+    listed = list(_PHONON_VOICES.get(PHONON_MODEL) or [PHONON_DEFAULT])
+    if store is None:
+        return listed
+    ids = {v["id"] for v in listed}
+    return listed + [v for v in kept_voices(store) if v["id"] not in ids]
+
+
+def default_voice(engine: str) -> str:
+    """The voice an engine speaks in when none of its voices is chosen: Phonon's from what Ollama lists
+    (default_phonon_voice), the others' fixed ones. "kokoro" -> "af_heart"; "phonon" with Zoey listed -> "zoey"."""
+    if engine == "phonon":
+        return default_phonon_voice(engine_voices("phonon"))
+    return _DEFAULT_VOICE[engine]
+
+
+def voice_is_offered(engine: str, voice_id: str | None, store: Store | None = None) -> bool:
+    """Whether a saved or asked-for voice can be used with this engine. Kokoro's and OpenAI's are a fixed list. Phonon's
+    are whatever Ollama listed; before Odie has asked Ollama (a restart), a saved Phonon voice is trusted, since Ollama
+    is the one to say no (it answers 400, said plainly by phonon_tts). "af_heart" for kokoro -> True; "nova" for
+    openai -> False; "easton" for phonon with Ollama's list read and Easton on it -> True; "easton" for phonon before
+    the list is read -> True; "nobody" for phonon with the list read -> False."""
+    if not voice_id:
+        return False
+    if engine == "phonon" and PHONON_MODEL not in _PHONON_VOICES:
+        return True
+    return voice_id in {x["id"] for x in engine_voices(engine, store)}
+
+
+def _local_instead_of_openai() -> str | None:
+    """The engine read-aloud uses when OpenAI is chosen but its key is gone: Phonon when Ollama has it, else Kokoro
+    where it runs, else none (read-aloud then says the key is missing). Ollama with phonon -> "phonon"; an M2 without
+    it -> "kokoro"; an Intel Mac without it -> None."""
+    if phonon_here():
+        return "phonon"
+    if "kokoro" not in disabled():
+        return "kokoro"
+    return None
 
 
 def get_tts(store: Store) -> tuple[str, str]:
     """(engine, voice) for read-aloud. The realtime Talk voice is get_voice() (OpenAI only)."""
     s = store.get_setting("voice") or {}
     engine = _chosen_engine(s)
-    if engine == "openai" and not load_secret("OPENAI_API_KEY") and "kokoro" not in disabled():
-        engine = "kokoro"  # Kokoro is the default where it runs; OpenAI voices need its key
+    if engine == "openai" and not load_secret("OPENAI_API_KEY"):
+        engine = _local_instead_of_openai() or engine  # OpenAI voices need its key
     v = s.get("voice") if engine == "openai" else s.get(f"{engine}_voice")
-    ids = {x["id"] for x in engine_voices(engine)}
-    return engine, (v if v in ids else _DEFAULT_VOICE[engine])
+    return engine, (v if voice_is_offered(engine, v, store) else default_voice(engine))
 
 
 def video_tts(store: Store) -> tuple[str, str]:
@@ -149,7 +201,7 @@ def video_tts(store: Store) -> tuple[str, str]:
     for engine in ENGINES:
         if engine in disabled():
             continue
-        for v in engine_voices(engine):
+        for v in engine_voices(engine, store):
             if pinned in (v["id"], v["label"].lower()):
                 return engine, v["id"]
     log.warning("video_voice %r isn't a voice offered here; videos speak in the read-aloud voice", pinned)
@@ -161,10 +213,39 @@ def set_tts(store: Store, engine: str | None = None, voice: str | None = None) -
     if engine in ENGINES and engine not in disabled():
         s["engine"] = engine
     eng = _chosen_engine(s)  # the same default as get_tts
-    if voice and voice in {x["id"] for x in engine_voices(eng)}:
+    if voice and voice_is_offered(eng, voice, store):
         s["voice" if eng == "openai" else f"{eng}_voice"] = voice
     store.set_setting("voice", s)
     return get_tts(store)
+
+
+def worker_wanted(store: Store) -> bool:
+    """Whether read-aloud uses Odie's own voice server (odie.voice_worker), so it should run: the engine read-aloud
+    speaks with is one that server speaks (OWN_SERVER). Kokoro chosen -> True; Phonon chosen -> False; OpenAI with its
+    key -> False."""
+    engine, _ = get_tts(store)
+    return engine in OWN_SERVER
+
+
+def worker_wanted_at_launch(store: Store) -> bool:
+    """Whether Odie's own voice server starts at launch. Before Ollama has been asked, the default engine isn't known
+    (Phonon may be there), so only an engine the user chose counts; _learn_phonon decides the rest once Ollama answers.
+    Kokoro chosen -> True; Phonon chosen -> False; nothing chosen -> False (decided a moment later)."""
+    chosen = (store.get_setting("voice") or {}).get("engine")
+    if not chosen:
+        return False
+    return worker_wanted(store)
+
+
+async def settle_worker(store: Store) -> None:
+    """After the read-aloud engine changes: Odie's own voice server is stopped when read-aloud no longer uses it, so the
+    process goes away. When it does use it, nothing happens now: the next speech starts it (local_tts asks the worker
+    to be up first). Called by the async callers of set_tts, which is synchronous."""
+    from odie import voice_worker
+    worker = voice_worker.current
+    if worker is None or worker_wanted(store):
+        return
+    await worker.stop()
 
 
 SCRIPT_PROMPT = ("Rewrite the assistant's reply below as a short script for a voice actor to read aloud to the user. Plain speech: "
@@ -197,6 +278,10 @@ async def maya_script(text: str, transport: httpx.AsyncBaseTransport | None = No
 
 
 async def local_tts(engine: str, text: str, voice: str, transport: httpx.AsyncBaseTransport | None = None) -> bytes:
+    """`text` spoken on this computer as WAV bytes: Phonon through Ollama, or Kokoro and Maya1 through Odie's own voice
+    server (started again if it died)."""
+    if engine == "phonon":
+        return await phonon_tts(text, voice, transport=transport)
     if engine == "kokoro":
         v = next((x for x in KOKORO_VOICES if x["id"] == voice), KOKORO_VOICES[0])
         body = {"engine": "kokoro", "text": text, "voice": v["id"], "lang": v["lang"]}
@@ -224,6 +309,19 @@ async def local_available(transport: httpx.AsyncBaseTransport | None = None) -> 
         return False
 
 
+async def own_server_can_speak() -> bool:
+    """Whether Kokoro can be chosen now: Odie's own voice server answers, or it is set up and would start the first time
+    Kokoro speaks (it runs only while read-aloud uses it, so with Phonon chosen it is stopped). Running -> True; set up
+    but stopped -> True; never set up (no `uv sync` in voice_server) -> False."""
+    from odie import voice_worker
+    worker = voice_worker.current
+    if worker is None:
+        return await local_available()
+    if await worker.healthy():
+        return True
+    return bool(worker.installed)
+
+
 async def speak(store: Store, text: str, engine: str | None = None, voice: str | None = None) -> tuple[bytes, str]:
     """Read-aloud with the chosen engine. Returns (audio, media type). Maya1 gets a tagged script from local Gemma first."""
     eng, v = get_tts(store)
@@ -242,13 +340,15 @@ async def speak_wav(store: Store, text: str, voice: str | None = None, transport
                     engine: str | None = None, style: str = "") -> bytes:
     """`text` as a 16-bit WAV in the chosen engine (a voice memo, a podcast's turn). OpenAI is asked for raw PCM, so
     both engines' audio joins alike. `engine` with `voice` speaks in that engine instead (a video's own voice,
-    video_tts). `style` steers an OpenAI voice for this text (tts); Kokoro has no steering and never sees it."""
+    video_tts). `style` steers an OpenAI voice for this text (tts); Kokoro and Phonon have no steering and never see it."""
     from odie.media import pcm_to_wav
     eng, v = get_tts(store)
     if engine and voice:
         eng, v = engine, voice
     if eng == "openai":
         return pcm_to_wav(await tts(text, voice or v, transport=transport, fmt="pcm", style=style))
+    if eng == "phonon":
+        return await phonon_tts(text, voice or v, transport=transport)
     return await local_tts("kokoro", text, voice or (v if eng == "kokoro" else _DEFAULT_VOICE["kokoro"]), transport=transport)
 
 
@@ -273,13 +373,418 @@ def dictation_available() -> bool:
     return bool(load_secret("OPENAI_API_KEY"))
 
 
+# ── Phonon through Ollama: the voices it lists, its speech route, long text split and joined ──
+PHONON_MODEL = "phonon"
+PHONON_MAX_CHARS = 4000  # Ollama takes up to 4,096 characters a request; a little room under that
+PHONON_DEFAULT = {"id": "default", "label": "Default", "group": ""}  # the voice Phonon always has
+PULL_PHONON = "Ollama doesn't have phonon: run `ollama pull phonon` (113 MB), then choose it again."
+_PHONON_VOICES: dict[str, list[dict]] = {}  # model -> the voices Ollama listed for it, read once per process
+_PHONON_SEEN: dict[str, bool] = {}  # "here" -> whether Ollama had a phonon model the last time Odie asked
+_SENTENCE_END = re.compile(r"(?<=[.!?])\s+|\n+")
+
+
+def ollama_root() -> str:
+    """Ollama's own address (no /v1), from the OLLAMA_BASE_URL setting the chat side reads (odie.models): nothing set ->
+    "http://localhost:11434"; OLLAMA_BASE_URL=http://studio.local:11434/v1 -> "http://studio.local:11434"."""
+    from odie.models import OLLAMA_BASE_URL, provider_base_url
+    url = provider_base_url("ollama", OLLAMA_BASE_URL)
+    return url.removesuffix("/v1")
+
+
+def forget_phonon() -> None:
+    """Drops what this process learnt about Phonon (its voices, whether Ollama has it): the next ask goes to Ollama."""
+    _PHONON_VOICES.clear()
+    _PHONON_SEEN.clear()
+
+
+def phonon_here() -> bool:
+    """Whether Ollama had a phonon model the last time Odie asked (phonon_available); False before it has asked.
+    Asked, Ollama had phonon:latest -> True; asked, Ollama had only gemma -> False; not asked yet -> False."""
+    return _PHONON_SEEN.get("here", False)
+
+
+def voice_label(name: str) -> str:
+    """How a voice name Ollama lists is shown: capitalised when Ollama spells it all lower-case, else as Ollama spells
+    it. "zoey" -> "Zoey"; "Captain Silas Blackwater" -> as it is; "ZOEY" -> as it is."""
+    if name == name.lower():
+        return name.capitalize()
+    return name
+
+
+def phonon_voice(name: str) -> dict:
+    """One voice Ollama lists, as the picker shows it: its group, a short note and its gender from the catalogue
+    (odie.voice_phonon). "zoey" -> {"id": "zoey", "label": "Zoey", "group": "American · Female", "note": "Playful…",
+    "gender": "female"}."""
+    from odie import voice_phonon
+    return {"id": name, "label": voice_label(name), **voice_phonon.describe(name)}
+
+
+def default_phonon_voice(voices: list[dict]) -> str:
+    """The Phonon voice used when none is chosen: Zoey when Ollama lists her (in any case), else the first voice it
+    lists, else "default", which Phonon always has. [freya, ZOEY] -> "ZOEY"; [freya, easton] -> "freya"; [] ->
+    "default"."""
+    for v in voices:
+        if v["id"].lower() == "zoey":
+            return v["id"]
+    if voices:
+        return voices[0]["id"]
+    return PHONON_DEFAULT["id"]
+
+
+def _names_in(listed) -> list[str]:
+    """The voice names in /api/show's `voices`: plain names, or objects with a name. Blank ones are dropped."""
+    names = []
+    for item in listed or []:
+        name = item.get("name") if isinstance(item, dict) else item
+        if isinstance(name, str) and name.strip():
+            names.append(name.strip())
+    return names
+
+
+async def phonon_voices(transport: httpx.AsyncBaseTransport | None = None) -> list[dict]:
+    """Phonon's voices, as Ollama lists them (POST /api/show {"model": "phonon"}), asked once per process and kept, so
+    Settings opening again doesn't ask Ollama again. "default" alone when the list is empty or Ollama can't be asked;
+    that answer isn't kept, so the next open asks again."""
+    kept = _PHONON_VOICES.get(PHONON_MODEL)
+    if kept:
+        return list(kept)
+    try:
+        async with httpx.AsyncClient(timeout=5, transport=transport) as c:
+            r = await c.post(f"{ollama_root()}/api/show", json={"model": PHONON_MODEL})
+        r.raise_for_status()
+        names = _names_in(r.json().get("voices"))
+    except (httpx.HTTPError, ValueError, AttributeError):
+        names = []
+    if not names:
+        return [dict(PHONON_DEFAULT)]
+    from odie import voice_phonon
+    named = [phonon_voice(n) for n in names if n.lower() != "default"]  # "default" is never shown as a choice
+    listed = voice_phonon.ordered(named) or [dict(PHONON_DEFAULT)]
+    _PHONON_VOICES[PHONON_MODEL] = listed
+    return list(listed)
+
+
+async def ollama_models(transport: httpx.AsyncBaseTransport | None = None) -> list[str] | None:
+    """The models Ollama has (GET /api/tags), by name; None when Ollama can't be asked, so "no Ollama" and "Ollama
+    without phonon" can be told apart. Ollama with phonon and gemma -> ["phonon:latest", "gemma4:e4b"]; Ollama with
+    nothing -> []; no Ollama -> None."""
+    try:
+        async with httpx.AsyncClient(timeout=3, transport=transport) as c:
+            r = await c.get(f"{ollama_root()}/api/tags")
+        r.raise_for_status()
+        models = r.json().get("models") or []
+    except (httpx.HTTPError, ValueError, AttributeError):
+        return None
+    return [model_name(m) for m in models if isinstance(m, dict)]
+
+
+def model_name(entry: dict) -> str:
+    """A model's name in Ollama's /api/tags list: "name", or "model" in older Ollamas that only send that."""
+    name = entry.get("name")
+    if not name:
+        name = entry.get("model", "")
+    return str(name)
+
+
+async def phonon_models(transport: httpx.AsyncBaseTransport | None = None) -> list[str]:
+    """The Phonon models Ollama has: every model whose name starts with "phonon", as Ollama names them
+    ("phonon:latest", "phonon:fr"); [] when there are none or Ollama can't be asked."""
+    names = await ollama_models(transport) or []
+    return [n for n in names if n.startswith("phonon")]
+
+
+async def phonon_available(transport: httpx.AsyncBaseTransport | None = None) -> bool:
+    """Whether Phonon can speak here: Ollama answers and has a model whose name starts with "phonon". Remembered for
+    default_engine. Ollama with phonon:latest -> True; only phonon:fr -> True; no phonon, or no Ollama -> False."""
+    here = bool(await phonon_models(transport))
+    _PHONON_SEEN["here"] = here
+    return here
+
+
+def split_for_phonon(text: str, limit: int = PHONON_MAX_CHARS) -> list[str]:
+    """`text` in pieces Ollama takes (at most `limit` characters each), cut at sentence ends; a single sentence longer
+    than that is cut at its last space before the limit. A 9,000-character reply of short sentences -> three pieces;
+    "Short. Two." -> ["Short. Two."]."""
+    pieces: list[str] = []
+    current = ""
+    for sentence in _SENTENCE_END.split(text.strip()):
+        sentence = sentence.strip()
+        while len(sentence) > limit:  # no sentence end in reach: cut at a space
+            cut = sentence.rfind(" ", 0, limit)
+            if cut <= 0:
+                cut = limit
+            if current:
+                pieces.append(current)
+                current = ""
+            pieces.append(sentence[:cut].strip())
+            sentence = sentence[cut:].strip()
+        if not sentence:
+            continue
+        joined = f"{current} {sentence}" if current else sentence
+        if len(joined) <= limit:
+            current = joined
+            continue
+        pieces.append(current)
+        current = sentence
+    if current:
+        pieces.append(current)
+    return pieces
+
+
+def _wav_parts(wav: bytes) -> tuple[bytes, int]:
+    """The PCM in one WAV from Ollama and its sample rate. Its size fields can't be trusted (it streams before it knows
+    the length), so the PCM is everything after the data chunk's header. No fmt chunk -> Phonon's 24 kHz."""
+    rate = 24000
+    fmt_at = wav.find(b"fmt ")
+    if fmt_at != -1 and len(wav) >= fmt_at + 16:
+        rate = struct.unpack("<I", wav[fmt_at + 12:fmt_at + 16])[0]
+    data_at = wav.find(b"data")
+    if data_at == -1:
+        return b"", rate
+    return wav[data_at + 8:], rate
+
+
+def join_wavs(wavs: list[bytes]) -> bytes:
+    """Ollama's WAVs (16-bit mono) as one WAV: their PCM end to end, under one header whose sizes are right."""
+    from odie.media import pcm_to_wav
+    pcm = io.BytesIO()
+    rate = 24000
+    for i, wav in enumerate(wavs):
+        part, part_rate = _wav_parts(wav)
+        if i == 0:
+            rate = part_rate
+        pcm.write(part)
+    return pcm_to_wav(pcm.getvalue(), rate=rate)
+
+
+def phonon_problem(status: int, body: str, voice_id: str, model: str = "phonon") -> str:
+    """What to tell the user when Ollama refuses a Phonon request: the model isn't pulled (the pull command names that
+    model), the voice isn't one Phonon has, or Ollama's own words. 404 "model \"phonon\" not found" -> PULL_PHONON;
+    the same for a kept voice of phonon:fr -> "Ollama doesn't have phonon:fr: run `ollama pull phonon:fr`…";
+    400 "voice \"Nobody\" not found" -> "Phonon has no voice called \"Nobody\"…"; 500 "out of memory" -> "Ollama
+    couldn't speak that (500): out of memory"."""
+    said = body
+    try:
+        error = json.loads(body).get("error")
+    except (ValueError, AttributeError):
+        error = None
+    if isinstance(error, dict):
+        said = str(error.get("message") or body)
+    elif error:
+        said = str(error)
+    lowered = said.lower()
+    if "voice" in lowered and "not found" in lowered:
+        return f'Phonon has no voice called "{voice_id}": choose another in Settings → Voice.'
+    if status == 404 or ("model" in lowered and "not found" in lowered):
+        if model == PHONON_MODEL:
+            return PULL_PHONON
+        return f"Ollama doesn't have {model}: run `ollama pull {model}`, then try again."
+    return f"Ollama couldn't speak that ({status}): {said[:160]}"
+
+
+async def _phonon_piece(client: httpx.AsyncClient, text: str, voice_id: str, model: str) -> bytes:
+    """One request to Ollama's speech route; the WAV bytes, or VoiceUnavailable with a reason a person can act on."""
+    body = {"model": model, "input": text, "voice": voice_id, "response_format": "wav"}
+    try:
+        r = await client.post(f"{ollama_root()}/v1/audio/speech", json=body)
+    except (httpx.ConnectError, httpx.TimeoutException) as e:
+        raise VoiceUnavailable(f"Ollama isn't answering at {ollama_root()}: start Ollama, then try again.") from e
+    if r.status_code != 200:
+        raise VoiceUnavailable(phonon_problem(r.status_code, r.text, voice_id, model))
+    return r.content
+
+
+async def phonon_tts(text: str, voice_id: str, transport: httpx.AsyncBaseTransport | None = None) -> bytes:
+    """`text` spoken by Phonon through Ollama as one WAV, through the model the voice belongs to (speaker_of): long
+    text in sentence-sized pieces (split_for_phonon), asked one after another, joined (join_wavs). Nothing leaves this
+    computer but the request to Ollama."""
+    model, name = speaker_of(voice_id)
+    wavs = []
+    async with httpx.AsyncClient(timeout=300, transport=transport) as c:
+        for piece in split_for_phonon(text):
+            wavs.append(await _phonon_piece(c, piece, name, model))
+    return join_wavs(wavs)
+
+
+# ── "Another voice": a name the user types, checked against the Phonon models Ollama has, then kept ──
+NAME_LIMIT = 80
+CHECK_LINE = "Hello, this is how I sound."
+NO_SUCH_VOICE = ('No Phonon model here has a voice called "{name}". French, German, Spanish and Portuguese voices need '
+                 "another Phonon model, for example: ollama pull phonon:fr")
+_KEPT_ID = re.compile(r"^(?P<name>.+) \((?P<model>phonon[^()]*)\)$")
+
+
+def speaker_of(voice_id: str) -> tuple[str, str]:
+    """Which model a voice id speaks through, and the voice's own name. A kept voice from another Phonon model carries
+    the model in brackets; any other id is a voice of `phonon` itself. "Noémie (phonon:fr)" -> ("phonon:fr",
+    "Noémie"); "Zoey" -> ("phonon", "Zoey"); "Captain Silas Blackwater" -> ("phonon", "Captain Silas Blackwater")."""
+    found = _KEPT_ID.match(voice_id)
+    if found is None:
+        return PHONON_MODEL, voice_id
+    return found.group("model"), found.group("name")
+
+
+def kept_voice_id(name: str, model: str) -> str:
+    """The id a kept voice gets: its name when `phonon` speaks it, else the name with its model in brackets, so speaking
+    knows where to send it (speaker_of). ("Ziggy", "phonon") -> "Ziggy"; ("Noémie", "phonon:fr") -> "Noémie
+    (phonon:fr)"."""
+    if model == PHONON_MODEL:
+        return name
+    return f"{name} ({model})"
+
+
+def typed_name_problem(name: str) -> str | None:
+    """Whether a typed name is worth asking Ollama about: None when it is, else what's wrong. Empty or blank -> "Type a
+    voice name first."; over 80 characters -> "That name is too long: 80 characters at most."; "Noémie" -> None."""
+    typed = (name or "").strip()
+    if not typed:
+        return "Type a voice name first."
+    if len(typed) > NAME_LIMIT:
+        return f"That name is too long: {NAME_LIMIT} characters at most."
+    return None
+
+
+def models_to_try(installed: list[str]) -> list[str]:
+    """The Phonon models a typed name is tried against, in order: `phonon` first, then every other Phonon model Ollama
+    has (`phonon:latest` is `phonon` again). ["phonon:latest", "phonon:fr"] -> ["phonon", "phonon:fr"]; [] ->
+    ["phonon"]."""
+    others = [m for m in installed if m not in (PHONON_MODEL, f"{PHONON_MODEL}:latest")]
+    return [PHONON_MODEL, *others]
+
+
+def kept_voices(store: Store) -> list[dict]:
+    """The voices the user found with "Another voice", as the picker shows them, under "Your voices"."""
+    from odie import voice_phonon
+    kept = (store.get_setting("voice") or {}).get("phonon_extra") or []
+    out = []
+    for item in kept:
+        name = str(item.get("name") or "")
+        model = str(item.get("model") or PHONON_MODEL)
+        if not name:
+            continue
+        out.append({"id": kept_voice_id(name, model), "label": name, "group": voice_phonon.YOURS, "note": f"through {model}",
+                    "gender": None, "kept": True})
+    return out
+
+
+def keep_phonon_voice(store: Store, name: str, model: str) -> str:
+    """Keeps a voice the check found: listed under "Your voices", and the chosen read-aloud voice from now on."""
+    s = dict(store.get_setting("voice") or {})
+    kept = [k for k in (s.get("phonon_extra") or []) if not (k.get("name") == name and k.get("model") == model)]
+    s["phonon_extra"] = [*kept, {"name": name, "model": model}]
+    voice_id = kept_voice_id(name, model)
+    s["engine"] = "phonon"
+    s["phonon_voice"] = voice_id
+    store.set_setting("voice", s)
+    return voice_id
+
+
+def forget_phonon_voice(store: Store, voice_id: str) -> None:
+    """Removes a kept voice; when it was the chosen one, read-aloud goes back to Phonon's default voice."""
+    s = dict(store.get_setting("voice") or {})
+    remaining = []
+    for item in s.get("phonon_extra") or []:
+        item_id = kept_voice_id(str(item.get("name", "")), str(item.get("model", PHONON_MODEL)))
+        if item_id != voice_id:
+            remaining.append(item)
+    s["phonon_extra"] = remaining
+    if s.get("phonon_voice") == voice_id:
+        s.pop("phonon_voice")
+    store.set_setting("voice", s)
+
+
+async def _try_voice(client: httpx.AsyncClient, model: str, name: str) -> bytes | None:
+    """One short line in this voice from this model: the WAV, or None when the model doesn't have the voice (400) or
+    isn't pulled (404). Anything else is a problem with Ollama itself, said plainly."""
+    body = {"model": model, "input": CHECK_LINE, "voice": name, "response_format": "wav"}
+    try:
+        r = await client.post(f"{ollama_root()}/v1/audio/speech", json=body)
+    except (httpx.ConnectError, httpx.TimeoutException) as e:
+        raise VoiceUnavailable(f"Ollama isn't answering at {ollama_root()}: start Ollama, then try again.") from e
+    if r.status_code in (400, 404):
+        return None
+    if r.status_code != 200:
+        raise VoiceUnavailable(phonon_problem(r.status_code, r.text, name, model))
+    return r.content
+
+
+def listed_phonon_voice(typed: str) -> str | None:
+    """Whether a typed name is a voice Ollama already lists for `phonon` (Ollama matches names in any case), and its
+    listed id. Listed "Zoey": "zoey" -> "Zoey", "ZOEY" -> "Zoey"; "Noémie" -> None (worth asking the other models)."""
+    wanted = typed.lower()
+    for v in engine_voices("phonon"):
+        if v["id"].lower() == wanted:
+            return v["id"]
+    return None
+
+
+async def check_phonon_voice(store: Store, name: str, transport: httpx.AsyncBaseTransport | None = None) -> dict:
+    """"Another voice": tries a typed name against `phonon`, then each other Phonon model Ollama has (models_to_try),
+    with one short line. The first model that speaks it wins: the voice is kept and chosen, and {"id", "audio"} comes
+    back (the audio is its preview). A name Ollama already lists is simply chosen: {"id": the listed id, "audio": None}
+    and nothing is kept (listed_phonon_voice). ValueError, in words a person can act on, when the name isn't worth
+    asking (typed_name_problem) or no model has the voice (NO_SUCH_VOICE); nothing is kept then."""
+    problem = typed_name_problem(name)
+    if problem:
+        raise ValueError(problem)
+    typed = name.strip()
+    listed = listed_phonon_voice(typed)
+    if listed is not None:
+        set_tts(store, "phonon", listed)
+        return {"id": listed, "audio": None}
+    installed = await phonon_models(transport)
+    async with httpx.AsyncClient(timeout=120, transport=transport) as c:
+        for model in models_to_try(installed):
+            audio = await _try_voice(c, model, typed)
+            if audio is None:
+                continue
+            voice_id = keep_phonon_voice(store, typed, model)
+            return {"id": voice_id, "audio": join_wavs([audio])}
+    raise ValueError(NO_SUCH_VOICE.format(name=typed))
+
+
 _PAIRS = {"a": ("af_heart", "am_michael"), "b": ("bf_emma", "bm_george"), "h": ("hf_alpha", "hm_omega")}
+
+
+def _one_of(voices: list[dict], gender: str, preferred: str) -> dict | None:
+    """A voice of this gender from the list: the preferred name when it's there, else the first; None when there's none.
+    [zoey, Maeve, easton], "female", "zoey" -> zoey; [Maeve, easton], "female", "zoey" -> Maeve; [easton], "female" -> None."""
+    pool = [v for v in voices if v.get("gender") == gender]
+    for v in pool:
+        if v["id"].lower() == preferred:
+            return v
+    return pool[0] if pool else None
+
+
+def phonon_hosts(voices: list[dict], chosen: str) -> list[dict]:
+    """A podcast's two hosts when Phonon speaks, [a woman, a man] as with the other engines, from the voices Ollama lists
+    and the catalogue's genders: the chosen voice is one of them, the other is Zoey or Easton when listed, else the first
+    of that gender. A chosen character or unknown voice comes first, with another listed voice after it.
+    [zoey, easton, Maeve, Alfie]: Alfie chosen -> [zoey, Alfie]; Maeve chosen -> [Maeve, easton];
+    Captain Silas Blackwater chosen -> [Captain Silas Blackwater, zoey]; only "default" -> [default, default]."""
+    by_id = {v["id"]: v for v in voices}
+    first = by_id.get(chosen)
+    if first is None:
+        first = voices[0] if voices else dict(PHONON_DEFAULT)
+    others = [v for v in voices if v["id"] != first["id"]]
+    anyone = others[0] if others else first  # when no voice of the wanted gender is listed
+
+    def partner(gender: str, preferred: str) -> dict:
+        found = _one_of(others, gender, preferred)
+        return found if found is not None else anyone
+    if first.get("gender") == "female":
+        return [first, partner("male", "easton")]
+    if first.get("gender") == "male":
+        return [partner("female", "zoey"), first]
+    return [first, partner("female", "zoey")]
 
 
 def podcast_voices(store: Store) -> list[dict]:
     """A podcast's two hosts, [a woman, a man], from the chosen engine and with the chosen voice's accent; the chosen
-    voice is one of them."""
+    voice is one of them. Phonon's two come from the voices Ollama lists (phonon_hosts)."""
     eng, v = get_tts(store)
+    if eng == "phonon":
+        return phonon_hosts(engine_voices("phonon", store), v)
     if eng != "openai":
         eng, v = "kokoro", v if v in {x["id"] for x in KOKORO_VOICES} else _DEFAULT_VOICE["kokoro"]
     voices = {x["id"]: x for x in engine_voices(eng)}
@@ -309,7 +814,7 @@ def voices_text(engine: str) -> str:
     for v in engine_voices(engine):
         name = f"{v['label']} ({v['note']})" if v.get("note") else v["label"]
         groups.setdefault(v["group"], []).append(name)
-    return "; ".join(f"{_GROUP_NAMES[g]}: {', '.join(names)}" for g, names in groups.items())
+    return "; ".join(f"{_GROUP_NAMES.get(g, g or 'voices')}: {', '.join(names)}" for g, names in groups.items())
 
 
 def voice_in_chosen_engine(store: Store, asked: str) -> dict:
@@ -319,7 +824,7 @@ def voice_in_chosen_engine(store: Store, asked: str) -> dict:
     Kokoro chosen: "Michael" -> am_michael; " AM_FENRIR " -> am_fenrir; "cedar" (OpenAI's) -> ValueError."""
     engine, _ = get_tts(store)
     wanted = (asked or "").strip().lower()
-    for v in engine_voices(engine):
+    for v in engine_voices(engine, store):
         if wanted in (v["id"], v["label"].lower()):
             return v
     label = ENGINES[engine]["label"]

@@ -99,6 +99,14 @@ def _host(url: str) -> str:
     return urlparse(url).netloc or url
 
 
+def _first_upper(note: str) -> str:
+    """A note as the panel shows it, like the other steps' notes: its first letter upper case. "free, private, quick" ->
+    "Free, private, quick"; "run `ollama pull phonon` first" -> "Run `ollama pull phonon` first"; "" -> ""."""
+    if not note:
+        return note
+    return note[0].upper() + note[1:]
+
+
 def _choice(cid: str, label: str, note: str = "", recommended: bool = False, needs: dict | None = None, value=None) -> dict:
     return {"id": cid, "label": label, "note": note, "recommended": recommended, "needs": needs, "value": value}
 
@@ -139,13 +147,12 @@ async def panel(store, step: str | None = None, transport=None) -> dict | None:
         out["choices"] = [_choice(p.id, p.name + (" (key saved)" if p.id in have else ""), tools.KEYS[p.id][2],
                                   needs=None if p.id in have else _key_card(p.id)) for p in PROVIDERS]
     elif step == "voice":
-        from odie import machine
+        # setup's own order (tools.voice_options): what is already here first; a Phonon to pull says the command as its note
         has_openai = bool(load_secret("OPENAI_API_KEY"))
-        out["choices"] = []
-        if machine.local_voice_wanted():  # Kokoro needs Apple Silicon: an Intel Mac is offered OpenAI's voices only
-            out["choices"].append(_choice("kokoro", "Kokoro", "Free, private: runs on this computer"))
-        out["choices"].append(_choice("openai", "OpenAI voice", "Natural; the text goes to OpenAI",
-                                      needs=None if has_openai else _key_card("openai")))
+        opts = (await tools.voice_options(store, transport=transport))["options"]
+        for o in opts:
+            needs = _key_card("openai") if o["engine"] == "openai" and not has_openai else None
+            out["choices"].append(_choice(o["engine"], o["label"], _first_upper(o["note"]), recommended=bool(o.get("recommended")), needs=needs))
     elif step == "apps":
         out["choices"] = [_choice("zapier", "Zapier", "mcp.zapier.com", needs=_app_card("zapier")),
                           _choice("composio", "Composio", "dashboard.composio.dev", needs=_app_card("composio"))]

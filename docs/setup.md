@@ -121,8 +121,15 @@ Browsers that haven't paired see nothing but the pairing screen. `odie pair` aga
 
 ## 7. Voices
 
-- **Read-aloud and podcasts** use Kokoro on the Mac by default (Odie's own voice worker, started with the service;
-  `ODIE_VOICE=off` turns it off). OpenAI voices are an option with an OpenAI key.
+- **Read-aloud and podcasts** run on the Mac. Setup recommends **Phonon through Ollama** when Ollama has it: run
+  `ollama pull phonon` (113 MB) and choose it. With Phonon the text goes to Ollama on this computer and nowhere else
+  (to that computer, if `OLLAMA_BASE_URL` names another), and Odie's own voice server doesn't run at all. **Kokoro** is Odie's own voice server: it starts only while Kokoro is
+  the chosen voice (`ODIE_VOICE=off` keeps it off for good). **OpenAI** voices are the cloud option, with an OpenAI key.
+- **Finding a voice**: Settings → Voice shows Phonon's voices in groups (American and British, female and male, then
+  the characters), each with a line about how it sounds and a preview. Under them, "Another voice" tries a name you
+  type against every Phonon model Ollama has and keeps the first that speaks it under "Your voices" (× removes it).
+  French, German, Spanish and Portuguese voices live in other Phonon models: `ollama pull phonon:fr` (or `:de`, `:es`,
+  `:pt`), then try the name.
 - **Dictation**: with an OpenAI key the words appear as you speak; without, the phone's own keyboard mic works.
 - **Talk** (a spoken conversation) needs an OpenAI key.
 
@@ -173,10 +180,10 @@ Besides the keys (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `OPEN
 |---|---|---|
 | `ODIE_MODEL` | The model used when none is chosen in Settings, if a local provider lists it | |
 | `LM_STUDIO_BASE_URL` | LM Studio's address | `http://localhost:1234/v1` |
-| `OLLAMA_BASE_URL` | Ollama's address (another computer works) | `http://localhost:11434/v1` |
+| `OLLAMA_BASE_URL` | Ollama's address (another computer works); chat, Ollama's search and the Phonon voice all use it | `http://localhost:11434/v1` |
 | `OPENAI_BASE_URL`, `OPENROUTER_BASE_URL`, `GEMINI_BASE_URL`, `ANTHROPIC_BASE_URL` | A provider's address | the provider's own |
 | `ODIE_TIMEZONE`, `ODIE_LOCALE`, `ODIE_CURRENCY` | The clock, number and money formats in the prompt | from the Mac |
-| `ODIE_VOICE` | `off`: no local voice worker | on |
+| `ODIE_VOICE` | `off`: Odie's own voice server (Kokoro) is never offered or started; Phonon through Ollama and OpenAI still are | on (started only while Kokoro is the chosen voice) |
 | `ODIE_TTS_MODEL`, `ODIE_STT_MODEL` | OpenAI's read-aloud and transcription models, for when OpenAI retires one | `gpt-4o-mini-tts`, `gpt-4o-mini-transcribe` |
 | `ODIE_VIDEO_VOICE` | The voice explainer videos are narrated in (a voice's id or name, any engine), kept when the read-aloud voice changes | the read-aloud voice |
 | `ODIE_PORT` | The port the service listens on | 8000 |

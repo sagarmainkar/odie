@@ -1,6 +1,6 @@
 /** Settings' Voice section: which engine to show, or the one line that stands in when there is none (the voice worker
  * off with ODIE_VOICE=off and no OpenAI key): the rest of Settings must render whatever /api/voice answers. */
-export type VoiceItem = { id: string; label: string; group?: string; note?: string };
+export type VoiceItem = { id: string; label: string; group?: string; note?: string; gender?: string | null; kept?: boolean };
 export type Engine = { id: string; label: string; note: string; local: boolean; available: boolean; voices: VoiceItem[] };
 export type VoiceInfo = { engine: string; voice: string; engines: Engine[]; models: { tts: string; realtime: string }; reminders_spoken?: boolean; local_voice?: boolean };
 export type VoiceSection = { picker: true; engine: Engine } | { picker: false; note: string };
@@ -17,4 +17,105 @@ export function voiceSection(v: VoiceInfo): VoiceSection {
   const chosen = v.engines.find((e) => e.id === v.engine) ?? v.engines[0];
   if (!chosen) return { picker: false, note: NO_VOICE_TEXT };
   return { picker: true, engine: chosen };
+}
+
+export const PULL_PHONON_TEXT = "Ollama doesn't have Phonon yet: run `ollama pull phonon` (113 MB), then open Settings again.";
+export type VoiceGroup = { key: string; title: string; voices: VoiceItem[] };
+export type EngineLine = { pill: "on this computer" | "leaves this computer" | null; text: string };
+
+const GENDER_TITLES: [string, string][] = [["female", "Female voices"], ["male", "Male voices"], ["neutral", "Neutral"]];
+
+/** The picker's groups for one engine, each with its heading. Kokoro's and OpenAI's female, male and neutral groups
+ *  keep their headings and that order (a voice with no group counts as neutral, as before); any other group (Phonon's
+ *  "American · Female", "Characters") is drawn under its own name, in the order the server lists the voices; a group
+ *  of "" gets no heading.
+ *    Kokoro [michael (male), heart (female)]   -> Female voices [heart], Male voices [michael]
+ *    Phonon [Zoey (American · Female), Easton (American · Male), Ada (American · Female)]
+ *                                               -> American · Female [Zoey, Ada], American · Male [Easton]
+ *    Phonon [zoey (""), easton ("")]            -> one group with no heading [zoey, easton] */
+export function voiceGroups(eng: Engine): VoiceGroup[] {
+  const byGender = new Map<string, VoiceItem[]>();
+  const others = new Map<string, VoiceItem[]>();
+  for (const voice of eng.voices) {
+    const group = voice.group ?? "neutral";
+    const isGender = GENDER_TITLES.some(([key]) => key === group);
+    const into = isGender ? byGender : others;
+    into.set(group, [...(into.get(group) ?? []), voice]);
+  }
+  const genderGroups = GENDER_TITLES.filter(([key]) => byGender.has(key))
+    .map(([key, title]) => ({ key, title, voices: byGender.get(key) ?? [] }));
+  const otherGroups = [...others.entries()].map(([key, voices]) => ({ key, title: key, voices }));
+  return [...genderGroups, ...otherGroups];
+}
+
+/** The line under the engine buttons: whether its voices stay on this computer, and the engine's note; when it can't
+ *  speak, what to do instead.
+ *    Phonon, Ollama has it        -> pill "on this computer", its note
+ *    Phonon, Ollama doesn't       -> no pill, PULL_PHONON_TEXT
+ *    Kokoro, its server can't run -> no pill, "The local voice service isn't running: odie restart starts it."
+ *    OpenAI without its key       -> no pill, "Add an OpenAI key in Providers to use these voices." */
+export function engineLine(eng: Engine): EngineLine {
+  if (eng.available) return { pill: eng.local ? "on this computer" : "leaves this computer", text: eng.note };
+  if (eng.id === "phonon") return { pill: null, text: PULL_PHONON_TEXT };
+  if (eng.local) return { pill: null, text: "The local voice service isn't running: odie restart starts it." };
+  return { pill: null, text: "Add an OpenAI key in Providers to use these voices." };
+}
+
+/** A voice's preview address. Phonon's voice ids are names as Ollama spells them, with spaces, accents and brackets
+ *  ("Noémie (phonon:fr)"), so the id is encoded: "Captain Silas Blackwater" -> ".../Captain%20Silas%20Blackwater". */
+export function previewUrl(engine: string, voiceId: string): string {
+  return `/api/voice/preview/${encodeURIComponent(engine)}/${encodeURIComponent(voiceId)}`;
+}
+
+// "Another voice": a Phonon voice name the user types, which the server tries against the Phonon models Ollama has.
+export const NAME_LIMIT = 80;
+export type AnotherState =
+  | { kind: "idle" } | { kind: "trying" } | { kind: "kept"; voice: string } | { kind: "chosen"; voice: string } | { kind: "refused"; message: string };
+export type PhononAnswer = { engine: string; voice: string; voices: VoiceItem[] };
+
+/** Whether "Try it" may ask the server: a name with something in it, at most NAME_LIMIT characters, and no try
+ *  already under way. "Noémie" -> true; "   " -> false; 81 characters -> false; "Noémie" while trying -> false. */
+export function canTry(name: string, state: AnotherState): boolean {
+  const typed = name.trim();
+  if (!typed || typed.length > NAME_LIMIT) return false;
+  return state.kind !== "trying";
+}
+
+/** The line under the box: nothing before a try, "Trying it…" during one, where a kept voice went, or the server's
+ *  own words for a refusal (they say which model to pull). */
+export function anotherLine(state: AnotherState): string {
+  if (state.kind === "trying") return "Trying it…";
+  if (state.kind === "kept") return `Kept ${state.voice} under Your voices.`;
+  if (state.kind === "chosen") return `${state.voice} is already in the list: chosen.`;
+  if (state.kind === "refused") return state.message;
+  return "";
+}
+
+/** How a try that worked went: a voice Ollama already lists was just chosen ("chosen", by its listed name), a new one
+ *  was kept under Your voices ("kept", as typed). Typed "ZOEY", Zoey listed -> chosen "Zoey"; typed "Noémie", answer's
+ *  voice is the kept "Noémie (phonon:fr)" -> kept "Noémie". */
+export function triedState(answer: PhononAnswer, typed: string): AnotherState {
+  const voice = answer.voices.find((x) => x.id === answer.voice);
+  if (voice && !voice.kept) return { kind: "chosen", voice: voice.label };
+  return { kind: "kept", voice: typed };
+}
+
+/** Asks the server to try a typed name: its answer (the chosen voice and Phonon's list) when a model speaks it, else
+ *  the server's reason, or a plain line when the server couldn't be reached. */
+export async function tryAnotherVoice(name: string): Promise<{ ok: true; answer: PhononAnswer } | { ok: false; message: string }> {
+  try {
+    const r = await fetch("/api/voice/phonon/check", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name }) });
+    const body = await r.json();
+    if (r.ok) return { ok: true, answer: body as PhononAnswer };
+    return { ok: false, message: String(body?.detail || "That voice couldn't be tried.") };
+  } catch {
+    return { ok: false, message: "Odie didn't answer: try again." };
+  }
+}
+
+/** The picker after the server answered about Phonon's voices (a kept or removed voice): the chosen engine and voice,
+ *  and Phonon's new list; the other engines stay exactly as they were. */
+export function withPhononVoices(v: VoiceInfo, answer: PhononAnswer): VoiceInfo {
+  const engines = v.engines.map((e) => (e.id === "phonon" ? { ...e, voices: answer.voices } : e));
+  return { ...v, engine: answer.engine, voice: answer.voice, engines };
 }
