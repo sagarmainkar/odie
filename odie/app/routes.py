@@ -1407,11 +1407,19 @@ async def voice_get(request: Request):
     from odie import machine, voice
     from odie.secrets import load_secret
     store = request.app.state.store
+    phonon_ok = await voice.phonon_available()  # Ollama has a phonon model: one quick /api/tags per Settings open
+    if phonon_ok:
+        await voice.phonon_voices()  # Ollama's list, asked once per process
     engine, current = voice.get_tts(store)
     openai_ok = bool(load_secret("OPENAI_API_KEY"))
     local_ok = await voice.local_available() if machine.local_voice_wanted() else False  # not asked for where it can't run
     hidden = voice.disabled()
-    engines = [{"id": k, **v, "available": local_ok if v["local"] else openai_ok, "voices": voice.engine_voices(k)}
+
+    def ready(engine_id: str, local: bool) -> bool:
+        if engine_id == "phonon":
+            return phonon_ok
+        return local_ok if local else openai_ok
+    engines = [{"id": k, **v, "available": ready(k, v["local"]), "voices": voice.engine_voices(k)}
                for k, v in voice.ENGINES.items() if k not in hidden and (v["local"] or openai_ok)]  # OpenAI only with its key
     # local_voice: whether Odie's own voice is meant to run on this Mac at all (False on an Intel Mac: Settings says why)
     return {"available": openai_ok, "engine": engine, "voice": current, "talk_voice": voice.get_voice(store), "engines": engines,

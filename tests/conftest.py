@@ -49,6 +49,16 @@ def pytest_collection_modifyitems(items):
             item.add_marker(pytest.mark.skip(reason=f"only on a Mac with Odie built: {reason}"))
 
 @pytest.fixture(autouse=True)
+def no_real_ollama_voice(monkeypatch):
+    """The voice side never reaches a real Ollama from a test (the owner's Mac runs one): its address is a closed port,
+    and what a process learnt about Phonon (its voices, whether Ollama has it) starts empty in every test. A test that
+    speaks to Ollama brings an httpx.MockTransport."""
+    from odie import voice
+    monkeypatch.setattr(voice, "ollama_root", lambda: "http://127.0.0.1:9")
+    voice.forget_phonon()
+
+
+@pytest.fixture(autouse=True)
 def no_model_probe(monkeypatch):
     """Tests never ask the real LM Studio or Ollama for a model's context size (a test that needs one patches it)."""
     async def unknown(sel, transport=None):

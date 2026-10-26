@@ -271,5 +271,7 @@ async def test_the_voice_route_hides_the_local_voice_where_it_cannot_run(client,
     c = client[0] if isinstance(client, tuple) else client
     j = (await c.get("/api/voice")).json()
     assert j["local_voice"] is False and j["engine"] == "openai"
-    assert [e["id"] for e in j["engines"]] == ["openai"]
+    # Phonon runs in Ollama, not Odie's own voice server, so an Intel Mac is offered it too (not available: no Ollama here)
+    assert [e["id"] for e in j["engines"]] == ["openai", "phonon"]
+    assert next(e for e in j["engines"] if e["id"] == "phonon")["available"] is False
     assert (await c.get("/api/voice/preview/kokoro/af_heart")).status_code == 404  # not an engine here

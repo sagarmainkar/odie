@@ -74,6 +74,16 @@ def mount_addon_routes(app: FastAPI) -> None:
             logging.getLogger("odie").warning("add-on %s: its routes couldn't be mounted", a.name, exc_info=True)
 
 
+async def _learn_phonon(voice) -> None:
+    """Asks Ollama once at launch whether it has Phonon and which voices, so read-aloud's default engine knows before
+    Settings is first opened. A missing or slow Ollama is fine: Odie asks again when Settings opens."""
+    try:
+        if await voice.phonon_available():
+            await voice.phonon_voices()
+    except Exception:  # noqa: BLE001 (voice never decides whether Odie starts)
+        logging.getLogger("odie").info("couldn't ask Ollama about Phonon", exc_info=True)
+
+
 class DeviceGate:
     """While pairing is on, every API answers only a paired browser (odie.devices); anyone else is told it's private."""
 
@@ -269,6 +279,9 @@ def create_app(runner=None, store: Store | None = None) -> FastAPI:
         if devices.offer_setup(store):
             logging.getLogger("odie").info("No device is paired yet: the installer opens the link in %s", devices.setup_file())
         from odie import embed_worker, machine, voice_worker
+        if runner is None:  # whether Ollama has Phonon, and its voices, in the background: Ollama never delays Odie starting
+            from odie import voice
+            app.state.phonon_task = asyncio.create_task(_learn_phonon(voice))
         logs = (s.home / "logs") if s.home else s.data_dir
         if runner is None and machine.local_voice_wanted():  # the real server, on a Mac that runs Odie's own voice
             logs.mkdir(parents=True, exist_ok=True)
