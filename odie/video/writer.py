@@ -19,7 +19,7 @@ from pathlib import Path
 from odie.browser.engine import BrowserError, BrowserTimeout
 from odie.making import writer as harness
 from odie.making.chat import text_or_empty
-from odie.video import brand, dialogue, sounds, timed, timeline
+from odie.video import brand, cast, dialogue, sounds, timed, timeline
 from odie.video import page as video_page
 from odie.video.limits import narration_problem, page_problem
 
@@ -27,6 +27,7 @@ INSTRUCTION = Path(__file__).with_name("writer.md").read_text(encoding="utf-8")
 VERTICAL_RULES = Path(__file__).with_name("writer-vertical.md").read_text(encoding="utf-8")
 TIMED_RULES = Path(__file__).with_name("writer-timed.md").read_text(encoding="utf-8")
 DIALOGUE_RULES = Path(__file__).with_name("writer-dialogue.md").read_text(encoding="utf-8")
+AVATAR_RULES = Path(__file__).with_name("writer-dialogue-3d.md").read_text(encoding="utf-8")
 log = logging.getLogger("odie.video")
 
 
@@ -39,7 +40,7 @@ def timed_rules(seconds: float) -> str:
 
 
 def instruction_for(aspect: str, timed_seconds: float | None = None, kit: brand.Kit | None = None,
-                    dialogue: bool = False) -> str:
+                    dialogue: bool = False, avatars: bool = False) -> str:
     """The writer's instruction for the video's aspect, its timed segment and its brand kit: writer.md for a landscape
     video (the guide is written for its 1920 x 1080 stage); for a vertical one, writer.md and then writer-vertical.md
     (the 1080 x 1920 stage, the safe area, one idea a screen); a video with a timed segment (odie.video.timed) then
@@ -48,12 +49,16 @@ def instruction_for(aspect: str, timed_seconds: float | None = None, kit: brand.
     "landscape" -> INSTRUCTION; "vertical" -> INSTRUCTION + the vertical rules; ("vertical", timed_seconds=60) ->
     those + the 60-second segment's rules; with a kit -> those + the kit's. A dialogue video (odie.video.dialogue:
     the user's script, staged word for word) gets writer-dialogue.md after the vertical rules; any other video never
-    sees it."""
+    sees it. A dialogue video with a 3D character (`avatars`: a speaker's sheet names a model) gets
+    writer-dialogue-3d.md right after that: ("landscape", dialogue=True, avatars=True) -> INSTRUCTION + the dialogue
+    rules + the 3D rules; avatars without a dialogue changes nothing."""
     instruction = INSTRUCTION
     if aspect == "vertical":
         instruction = instruction.rstrip() + "\n\n" + VERTICAL_RULES
     if dialogue:
         instruction = instruction.rstrip() + "\n\n" + DIALOGUE_RULES
+        if avatars:
+            instruction = instruction.rstrip() + "\n\n" + AVATAR_RULES
     if timed_seconds:
         instruction = instruction.rstrip() + "\n\n" + timed_rules(timed_seconds)
     if kit is not None:
@@ -314,7 +319,7 @@ def unknown_name_problem(body: str, assets_script: str) -> str | None:
 
 async def checked_submission(narration, body: str, browser, assets_script: str = "",
                              size: tuple[int, int] = timeline.LANDSCAPE, timed_seconds: float | None = None,
-                             kit: brand.Kit | None = None, kit_vars=None, lines_for=None) -> Judged:
+                             kit: brand.Kit | None = None, kit_vars=None, lines_for=None, models=None) -> Judged:
     """Decides whether a video can be accepted: the page's first problem as words to fix, or None, then the sound
     cues' first problem apart from it (the tool refuses on cues only once; see cues_answer), with the cues the page
     placed. In this order: a page over 300 KB -> the limit; narration that isn't a list of strings ->
@@ -335,7 +340,9 @@ async def checked_submission(narration, body: str, browser, assets_script: str =
     (brand.reassign_problem) or words that are missing (brand.vars_problem), before anything is drawn, and is drawn
     with the kit in (brand.check: a scene painting over the kit's background, or moves that can't play, are refused
     too); its sounds join the cues' names. A kit that breaks while drawing is brand.KitProblem, up to the check. A
-    dialogue video's page is drawn with its lines (`lines_for`: the line timeline for the check's timings)."""
+    dialogue video's page is drawn with its lines (`lines_for`: the line timeline for the check's timings), and with
+    its speakers' 3D models when it has some (`models`, odie.video.avatars; a model the page can't parse is
+    cast.CastProblem, up to the check)."""
     problem = page_problem(body)
     if problem:
         return Judged(problem=problem)
@@ -364,9 +371,13 @@ async def checked_submission(narration, body: str, browser, assets_script: str =
         elif lines_for is None:  # any video but a dialogue one: checked exactly as before
             drawn = await video_page.check_with_cues(body, narration, browser, assets_script, size=size,
                                                      timed_seconds=timed_seconds)
-        else:
+        elif not models:  # a dialogue video drawn in code only: checked as before 3D characters
             drawn = await video_page.check_with_cues(body, narration, browser, assets_script, size=size,
                                                      timed_seconds=timed_seconds, lines_for=lines_for)
+        else:
+            drawn = await video_page.check_with_cues(body, narration, browser, assets_script, size=size,
+                                                     timed_seconds=timed_seconds, lines_for=lines_for,
+                                                     models=models)
     except BrowserTimeout as e:
         return Judged(problem=HANG + str(e))
     if drawn.problem:
@@ -434,16 +445,20 @@ def tools_for(desk: Desk, browser, assets_script: str = "", size: tuple[int, int
     that drew fine is answered from its cues (cues_answer: they refuse it at most once, then the ones that don't fit
     are dropped), which puts the cues and the timed segment's scenes to keep on the desk; a browser that fails is no
     refusal: the job ends with the browser's own words, and so does a brand kit that breaks (desk.kit: its
-    words). Accepting makes the Written video with those cues, that segment and the kit's words (the harness accepts
+    words), and a 3D model the page can't parse (desk.staging.models: the model's words, as it isn't the writer's
+    fault). Accepting makes the Written video with those cues, that segment and the kit's words (the harness accepts
     right after the check that passed), the title falling back to the topic."""
 
     async def check(fields: dict) -> str | None:
         body = text_or_empty(fields["page"])
         keep_page(desk.pages, body)
         lines_for = None
+        models = None
         if desk.staging is not None:  # a dialogue video: the script is the narration
             narration = desk.staging.narration
             lines_for = desk.staging.lines_for
+            if desk.staging.models:  # only a video with 3D characters draws its page with them
+                models = desk.staging.models
         else:
             narration = narration_as_given(fields["narration"])
         kit_vars = brand.vars_as_given(fields.get("brand"))
@@ -452,13 +467,15 @@ def tools_for(desk: Desk, browser, assets_script: str = "", size: tuple[int, int
         try:
             judged = await checked_submission(narration, body, browser, assets_script, size=size,
                                               timed_seconds=timed_seconds, kit=desk.kit, kit_vars=kit_vars,
-                                              lines_for=lines_for)
+                                              lines_for=lines_for, models=models)
         except BrowserError as e:
             words = str(e).strip()
             if not words:
                 words = BROWSER_FAILED
             raise harness.CantCheck(words) from e
         except brand.KitProblem as e:
+            raise harness.CantCheck(str(e)) from e
+        except cast.CastProblem as e:  # a model the page can't parse: the writer can't fix that
             raise harness.CantCheck(str(e)) from e
         if judged.problem:
             return judged.problem
@@ -502,7 +519,7 @@ async def write(topic: str, minutes: int, brief: str, folder: Path, turn, browse
     [tool] = tools_for(desk, browser, assets_script, size=size, timed_seconds=timed_seconds)
     if staging is not None:
         prompt = prompt_for_dialogue(topic, brief, staging.listing, listing)
-        instruction = instruction_for(aspect, timed_seconds, kit, dialogue=True)
+        instruction = instruction_for(aspect, timed_seconds, kit, dialogue=True, avatars=bool(staging.models))
         return await harness.write(desk, prompt, instruction, tool, DIALOGUE_LINES, turn)
     prompt = prompt_for(topic, minutes, brief, listing)
     return await harness.write(desk, prompt, instruction_for(aspect, timed_seconds, kit), tool, LINES, turn)

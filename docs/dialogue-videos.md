@@ -77,7 +77,7 @@ Notes for the writer (optional): who they are, how they move.
   character, six in a video, for those who speak in it.
 - Only the sheets of characters who speak in the script go to the writer; a description is used up to 1,500
   characters.
-- `asset` (a `.glb` model) is kept for later: 3D characters aren't drawn yet.
+- `asset: models/mira.vrm`: a 3D model of the character (see 3D characters).
 - Files without front matter (a README, notes) are skipped.
 
 After each video, a still of each speaker is saved as `refs/stills/<id>-<video>.jpg` in the cast folder (never over
@@ -86,7 +86,26 @@ a file that's there). To have later videos match it, add it to that character's 
 The look file is plain text: palette, light, lens, grain, period. A complete invented example (two sheets, a look and
 a script) is in `docs/examples/lighthouse/`.
 
+## 3D characters
+
+A character can appear as a 3D model instead of a drawing.
+
+- Make one in VRoid Studio (free, by pixiv) and export it as `.vrm`, or download one from VRoid Hub. Each model there
+  has its own terms: check that it allows use in videos.
+- Put the file in the cast folder (for example `models/`) and add `asset: models/mira.vrm` to Mira's sheet. It can be
+  `.vrm` or `.glb`, at most 40 MB (VRoid's export can shrink its textures).
+- A plain `.glb` works too if it has face shapes (blend shapes) for the mouth. It doesn't get the VRM extras
+  (expressions, swaying hair, arms posed down).
+- A character without a model is drawn as before, so a scene can mix both: Mira in 3D, Tobi drawn in code.
+- The mouth follows the loudness of the character's voice and guesses vowels from the words: it reads as talking in
+  sync, not as exact lip shapes. A VRM also blinks, breathes and sways its hair. A plain `.glb` turns its
+  head (a slow sway, a nod with the voice, a glance at the other speaker) only if a part of it has "head" in its
+  name, and blinks only if it has a blink shape; it doesn't breathe.
+- The look is the model's own: an anime model stays anime.
+
+The demo cast has no model.
+
 ## What it is not (yet)
 
-- Characters are drawn in code: simple, consistent shapes, not realistic faces or 3D models.
+- Characters are drawn in code: simple, consistent shapes, not realistic faces, unless their sheet gives a 3D model.
 - No timed segment or brand kit in a dialogue video.

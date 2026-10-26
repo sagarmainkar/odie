@@ -21,7 +21,7 @@ from odie.browser import find
 from odie.decks import photos
 from odie.making import chat, jobs
 from odie.making import sources as making_sources
-from odie.video import assets, brand, dialogue, kind, timed, timeline
+from odie.video import assets, avatars, brand, dialogue, kind, timed, timeline
 from odie.video import cast as cast_module
 
 NARRATING_SPEED = 10  # seconds of speech the voice narrates in a second
@@ -378,6 +378,7 @@ def dialogue_as_given(script_reference: str, voices, store, cast_reference: str 
         if without:
             raise ValueError(f"Every speaker but the narrator needs a sheet in {folder.name}; none for: "
                              f"{', '.join(without)}.")
+        avatars.models_for(characters, script.speakers())  # refuses a 3D model that can't be used
     speakers = set(script.speakers())
     from_sheets = {c.id: c.voice for c in characters if c.voice and c.id in speakers}  # who speaks in this script
     given = dialogue.voices_by_speaker(voices_as_given(voices))

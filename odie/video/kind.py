@@ -20,7 +20,8 @@ was told about the ones that couldn't be used), "narration" (one string per scen
 sound cues the page placed with Video.sounds, as odie.video.page.CheckResult gives them; [] when none). job.json never
 holds any of these. A dialogue video (odie.video.dialogue) also carries "dialogue": {"script" (the user's script as
 Script.as_data keeps it), "voices" (speaker -> voice id)}; it is spoken line by line (narrate_dialogue), its page gets
-the line timeline, and timeline.json is kept next to the MP4. Without "dialogue" nothing of it runs."""
+the line timeline, and timeline.json is kept next to the MP4. A speaker whose cast sheet names a 3D model is drawn as
+it (odie.video.avatars). Without "dialogue" nothing of it runs."""
 import json
 import logging
 from pathlib import Path
@@ -30,7 +31,7 @@ from odie.agent import turn as chat_turn
 from odie.agent.tools.files import hand_over
 from odie.browser.engine import BrowserError
 from odie.making import jobs
-from odie.video import assets, brand, dialogue, sounds, timed, timeline, writer
+from odie.video import assets, avatars, brand, dialogue, sounds, timed, timeline, writer
 from odie.video import cast as cast_module
 from odie.video.encode import EncodeError, ffmpeg, mux, probe, run, tail
 from odie.video.narrate import narrate, narrate_dialogue
@@ -150,7 +151,9 @@ async def write(job: jobs.Job, turn, browser) -> None:
                                      assets_script=assets_script, aspect=aspect, timed_seconds=timed_seconds, kit=kit)
     else:
         look = job.data["dialogue"].get("look", "")
-        staging = dialogue.staging(script, characters_of(job), look)
+        characters = characters_of(job)
+        models = avatars.models_for(characters, script.speakers())  # the 3D characters; [] for most videos
+        staging = dialogue.staging(script, characters, look, models)
         written = await writer.write(job.topic, job.minutes, job.brief, job.folder, turn, browser, listing=listing,
                                      assets_script=assets_script, aspect=aspect, staging=staging)
     job.title = jobs.title_after_writing(written.title, job)
@@ -337,6 +340,9 @@ async def make_video(job: jobs.Job, browser, transport) -> Path:
     size = timeline.size_of(aspect_of(job))
     style = job.data.get("style", "")  # a job queued before styles has none: Odie's usual voice
     script = script_of(job)
+    models = []
+    if script is not None:  # checked again, before any voice is spoken: a model may have changed since it was queued
+        models = avatars.models_for(characters_of(job), script.speakers())
     spoken_lines = []
     if script is None:
         wav, lengths, beats = await narrate(jobs.hooks["store"], narration, job.voice_name, transport=transport,
@@ -404,18 +410,23 @@ async def make_video(job: jobs.Job, browser, transport) -> Path:
         lines_script = dialogue.lines_script(lines)
         record = timeline_record(job, script, starts, lengths, lines)
         (folder / TIMELINE).write_text(json.dumps(record, indent=1, ensure_ascii=False), encoding="utf-8")
+    avatar_script = avatars.page_script(models)  # "" without 3D characters: the page as before
     page_html = assemble(body, timings, assets_script, credits_script, size=size, brand_script=brand_script,
-                         lines_script=lines_script)
+                         lines_script=lines_script, avatar_script=avatar_script)
     (folder / "page.html").write_text(page_html, encoding="utf-8")
 
     if script is None:
         segments = await render(browser, body, timings, folder, timeline.FPS, timeline.TABS,
                                 assets_script=assets_script, credits_script=credits_script, size=size,
                                 brand_script=brand_script)
-    else:
+    elif not models:  # a dialogue video drawn in code only: rendered as before 3D characters
         segments = await render(browser, body, timings, folder, timeline.FPS, timeline.TABS,
                                 assets_script=assets_script, credits_script=credits_script, size=size,
                                 brand_script=brand_script, lines_script=lines_script)
+    else:
+        segments = await render(browser, body, timings, folder, timeline.FPS, timeline.TABS,
+                                assets_script=assets_script, credits_script=credits_script, size=size,
+                                brand_script=brand_script, lines_script=lines_script, models=models)
     mp4 = folder / f"{job.slug}.mp4"
     await mux(segments, sound_wav, mp4)
 
@@ -459,8 +470,9 @@ async def make(job: jobs.Job, browser, transport) -> dict:
 
 
 # Errors whose words are written for the user: the voice isn't running, ffmpeg's complaint, the browser's, the
-# pictures over what a video can carry, a brand kit that is missing or broken.
-KNOWN_ERRORS = (voice.VoiceUnavailable, EncodeError, BrowserError, assets.AssetProblem, brand.KitProblem)
+# pictures over what a video can carry, a brand kit that is missing or broken, a cast's 3D model that can't be used.
+KNOWN_ERRORS = (voice.VoiceUnavailable, EncodeError, BrowserError, assets.AssetProblem, brand.KitProblem,
+                cast_module.CastProblem)
 KIND = jobs.Kind(word="video", folder=FOLDER, write=write, make=make, known_errors=KNOWN_ERRORS,
                  needs_writing=needs_writing, ready_text=ready_text)
 jobs.KINDS["video"] = KIND
