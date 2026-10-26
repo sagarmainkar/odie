@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.2.33 (2026-10-26)
+
+- A new voice: Phonon through Ollama. With `ollama pull phonon` (113 MB), Odie reads replies aloud through Ollama on this computer and nowhere else, and recommends it in setup and Settings. Its 37 English voices are grouped (American and British, female and male, and characters) with a line about each and a preview; "Another voice" tries a name you type against every Phonon model you have (French, German, Spanish and Portuguese voices need another model, e.g. `ollama pull phonon:fr`). Long replies are read in full.
+- Odie's own voice server (Kokoro) now runs only while Kokoro is the chosen voice: one process less with Phonon or OpenAI. Kokoro and OpenAI stay as choices.
+
 ## v0.2.32 (2026-10-26)
 
 - Five small fixes: the location ask above the composer lines up with it on a desktop; Settings → Location shows the place, then "seen · home", then its note in full width on a phone; Turn on there fetches a fix at once; a `.local` address passes Odie's Host check only when it is this Mac's own name or one you listed in `ODIE_HOSTS`, so a stranger's `.local` page on the same network can't reach Odie; Settings no longer goes blank when there is no voice engine at all.
