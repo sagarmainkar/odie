@@ -1,6 +1,6 @@
 /** Settings' Voice section: which engine to show, or the one line that stands in when there is none (the voice worker
  * off with ODIE_VOICE=off and no OpenAI key): the rest of Settings must render whatever /api/voice answers. */
-export type VoiceItem = { id: string; label: string; group?: string; note?: string };
+export type VoiceItem = { id: string; label: string; group?: string; note?: string; gender?: string | null; kept?: boolean };
 export type Engine = { id: string; label: string; note: string; local: boolean; available: boolean; voices: VoiceItem[] };
 export type VoiceInfo = { engine: string; voice: string; engines: Engine[]; models: { tts: string; realtime: string }; reminders_spoken?: boolean; local_voice?: boolean };
 export type VoiceSection = { picker: true; engine: Engine } | { picker: false; note: string };
@@ -59,4 +59,52 @@ export function engineLine(eng: Engine): EngineLine {
   if (eng.id === "phonon") return { pill: null, text: PULL_PHONON_TEXT };
   if (eng.local) return { pill: null, text: "The local voice service isn't running: odie restart starts it." };
   return { pill: null, text: "Add an OpenAI key in Providers to use these voices." };
+}
+
+/** A voice's preview address. Phonon's voice ids are names as Ollama spells them, with spaces, accents and brackets
+ *  ("Noémie (phonon:fr)"), so the id is encoded: "Captain Silas Blackwater" -> ".../Captain%20Silas%20Blackwater". */
+export function previewUrl(engine: string, voiceId: string): string {
+  return `/api/voice/preview/${encodeURIComponent(engine)}/${encodeURIComponent(voiceId)}`;
+}
+
+// "Another voice": a Phonon voice name the user types, which the server tries against the Phonon models Ollama has.
+export const NAME_LIMIT = 80;
+export type AnotherState = { kind: "idle" } | { kind: "trying" } | { kind: "kept"; voice: string } | { kind: "refused"; message: string };
+export type PhononAnswer = { engine: string; voice: string; voices: VoiceItem[] };
+
+/** Whether "Try it" may ask the server: a name with something in it, at most NAME_LIMIT characters, and no try
+ *  already under way. "Noémie" -> true; "   " -> false; 81 characters -> false; "Noémie" while trying -> false. */
+export function canTry(name: string, state: AnotherState): boolean {
+  const typed = name.trim();
+  if (!typed || typed.length > NAME_LIMIT) return false;
+  return state.kind !== "trying";
+}
+
+/** The line under the box: nothing before a try, "Trying it…" during one, where a kept voice went, or the server's
+ *  own words for a refusal (they say which model to pull). */
+export function anotherLine(state: AnotherState): string {
+  if (state.kind === "trying") return "Trying it…";
+  if (state.kind === "kept") return `Kept ${state.voice} under Your voices.`;
+  if (state.kind === "refused") return state.message;
+  return "";
+}
+
+/** Asks the server to try a typed name: its answer (the chosen voice and Phonon's list) when a model speaks it, else
+ *  the server's reason, or a plain line when the server couldn't be reached. */
+export async function tryAnotherVoice(name: string): Promise<{ ok: true; answer: PhononAnswer } | { ok: false; message: string }> {
+  try {
+    const r = await fetch("/api/voice/phonon/check", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name }) });
+    const body = await r.json();
+    if (r.ok) return { ok: true, answer: body as PhononAnswer };
+    return { ok: false, message: String(body?.detail || "That voice couldn't be tried.") };
+  } catch {
+    return { ok: false, message: "Odie didn't answer: try again." };
+  }
+}
+
+/** The picker after the server answered about Phonon's voices (a kept or removed voice): the chosen engine and voice,
+ *  and Phonon's new list; the other engines stay exactly as they were. */
+export function withPhononVoices(v: VoiceInfo, answer: PhononAnswer): VoiceInfo {
+  const engines = v.engines.map((e) => (e.id === "phonon" ? { ...e, voices: answer.voices } : e));
+  return { ...v, engine: answer.engine, voice: answer.voice, engines };
 }

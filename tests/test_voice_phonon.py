@@ -79,7 +79,8 @@ async def test_the_voices_come_from_ollama_and_are_kept_for_the_process():
     seen = []
     listed = await voice.phonon_voices(transport=ollama(voices=["zoey", "easton", "freya"], seen=seen))
     assert [v["id"] for v in listed] == ["zoey", "easton", "freya"]
-    assert listed[0] == {"id": "zoey", "label": "Zoey", "group": ""}
+    assert {k: listed[0][k] for k in ("id", "label", "group", "gender")} == {"id": "zoey", "label": "Zoey", "group": "American · Female",
+                                                                                "gender": "female"}
     assert seen[0].url.path == "/api/show" and json.loads(seen[0].content) == {"model": "phonon"}
     again = await voice.phonon_voices(transport=ollama(voices=["other"], seen=seen))
     assert again == listed and len(seen) == 1  # Settings opening again doesn't ask Ollama again
@@ -391,7 +392,7 @@ async def test_a_podcast_with_phonon_has_two_phonon_hosts(isolated_settings, tmp
     hosts = voice.podcast_voices(s)
     assert [h["id"] for h in hosts] == ["freya", "easton"]  # the chosen voice, and another of Phonon's
     voice.set_tts(s, "phonon", "easton")
-    assert [h["id"] for h in voice.podcast_voices(s)] == ["easton", "zoey"]
+    assert [h["id"] for h in voice.podcast_voices(s)] == ["zoey", "easton"]  # [a woman, a man], as the other engines
 
 
 async def test_narration_with_phonon_asks_one_phrase_at_a_time(isolated_settings, tmp_path, monkeypatch):
@@ -411,3 +412,165 @@ async def test_narration_with_phonon_asks_one_phrase_at_a_time(isolated_settings
     monkeypatch.setattr(narrate, "speak", speak)
     await narrate.speak_all(_store(tmp_path), ["One.", "Two.", "Three."], "phonon", "zoey", None)
     assert most == 1
+
+
+# --- Item 4: groups people can find their way in, and "Another voice" ---
+
+
+def test_a_voice_is_grouped_by_the_catalogue():
+    from odie import voice_phonon
+    assert voice_phonon.group_of("Zoey") == "American · Female"
+    assert voice_phonon.group_of("ZOEY") == "American · Female"  # Ollama matches names in any case; so does the catalogue
+    assert voice_phonon.group_of("Easton") == "American · Male"
+    assert voice_phonon.group_of("Maeve") == "British · Female" and voice_phonon.group_of("Alfie") == "British · Male"
+    assert voice_phonon.group_of("Captain Silas Blackwater") == "Characters"
+    assert voice_phonon.group_of("Someone New") == "Other"
+    assert len(voice_phonon.CATALOGUE) == 37
+
+
+def test_a_note_is_cut_at_a_word_to_seventy_characters():
+    from odie import voice_phonon
+    zoey = voice_phonon.short_note("Playful, upbeat and Gen Z energy voice with a standard American accent.")
+    assert zoey == "Playful, upbeat and Gen Z energy voice with a standard American…" and len(zoey) <= 70
+    assert voice_phonon.short_note("Settled and kind.") == "Settled and kind."
+    long = voice_phonon.short_note("Cheerful presence with real resonance under it, personable when the copy turns intimate.")
+    assert long.endswith("…") and len(long) <= 70 and not long[:-1].endswith((" ", ","))
+
+
+async def test_ollamas_voices_come_grouped_and_ordered():
+    listed = await voice.phonon_voices(transport=ollama(voices=[
+        "Someone New", "Alfie", "default", "Captain Silas Blackwater", "Easton", "Maeve", "zoey"]))
+    assert [(v["id"], v["group"]) for v in listed] == [
+        ("zoey", "American · Female"), ("Easton", "American · Male"), ("Maeve", "British · Female"),
+        ("Alfie", "British · Male"), ("Captain Silas Blackwater", "Characters"), ("Someone New", "Other")]  # "default" hidden
+    zoey = listed[0]
+    assert zoey["label"] == "Zoey" and zoey["gender"] == "female" and zoey["note"].startswith("Playful, upbeat")
+    assert listed[-1]["note"] == "" and listed[4]["gender"] is None
+
+
+def test_a_kept_voice_names_the_model_it_speaks_through():
+    assert voice.speaker_of("Noémie (phonon:fr)") == ("phonon:fr", "Noémie")
+    assert voice.speaker_of("Zoey") == ("phonon", "Zoey")
+    assert voice.speaker_of("Captain Silas Blackwater") == ("phonon", "Captain Silas Blackwater")
+    assert voice.kept_voice_id("Noémie", "phonon:fr") == "Noémie (phonon:fr)"
+    assert voice.kept_voice_id("Ziggy", "phonon") == "Ziggy"
+
+
+def test_a_typed_name_is_checked_before_asking_ollama():
+    assert voice.typed_name_problem("Noémie") is None
+    assert voice.typed_name_problem("  ") == "Type a voice name first."
+    assert voice.typed_name_problem("x" * 81) == "That name is too long: 80 characters at most."
+    assert voice.typed_name_problem("x" * 80) is None
+
+
+def fake_phonons(has: dict, seen: list):
+    """Ollama with phonon:latest and phonon:fr; `has` maps a model to the voice names it speaks (case-insensitive)."""
+    def speech(body):
+        seen.append((body["model"], body["voice"]))
+        if body["voice"].lower() in {n.lower() for n in has.get(body["model"], [])}:
+            return httpx.Response(200, content=ollama_wav(b"\x03\x00" * 10))
+        return httpx.Response(400, json={"error": {"message": f'voice "{body["voice"]}" not found; available voices: ...'}})
+    return ollama(voices=["zoey", "easton"], tags=("phonon:latest", "phonon:fr", "gemma4:e4b"), speech=speech)
+
+
+async def test_another_voice_is_found_in_the_first_model_that_has_it(isolated_settings, tmp_path):
+    s = _store(tmp_path)
+    seen = []
+    t = fake_phonons({"phonon": ["zoey", "easton"], "phonon:fr": ["Noémie"]}, seen)
+    await voice.phonon_voices(transport=t)
+    kept = await voice.check_phonon_voice(s, "Noémie", transport=t)
+    assert seen == [("phonon", "Noémie"), ("phonon:fr", "Noémie")]  # phonon first, then the other Phonon models (not :latest again)
+    assert kept["id"] == "Noémie (phonon:fr)" and frames_of(kept["audio"])[0] == 10
+    assert s.get_setting("voice")["phonon_extra"] == [{"name": "Noémie", "model": "phonon:fr"}]
+    assert voice.get_tts(s) == ("phonon", "Noémie (phonon:fr)")  # it becomes the chosen voice
+    mine = [v for v in voice.engine_voices("phonon", s) if v["group"] == "Your voices"]
+    assert mine == [{"id": "Noémie (phonon:fr)", "label": "Noémie", "group": "Your voices", "note": "through phonon:fr", "gender": None,
+                     "kept": True}]
+    seen.clear()
+    await voice.speak_wav(s, "Bonjour.", transport=t)
+    assert seen == [("phonon:fr", "Noémie")]  # spoken through its own model
+    voice.forget_phonon_voice(s, "Noémie (phonon:fr)")
+    assert voice.get_tts(s) == ("phonon", "zoey") and s.get_setting("voice")["phonon_extra"] == []  # removed: the default voice
+
+
+async def test_another_voice_no_model_has_is_said_with_the_pull_command(isolated_settings, tmp_path):
+    s = _store(tmp_path)
+    seen = []
+    t = fake_phonons({"phonon": ["zoey"]}, seen)
+    with pytest.raises(ValueError) as e:
+        await voice.check_phonon_voice(s, "Noémie", transport=t)
+    assert str(e.value) == ('No Phonon model here has a voice called "Noémie". French, German, Spanish and Portuguese voices need '
+                            "another Phonon model, for example: ollama pull phonon:fr")
+    assert seen == [("phonon", "Noémie"), ("phonon:fr", "Noémie")] and "phonon_extra" not in (s.get_setting("voice") or {})
+
+
+async def test_an_empty_or_long_name_is_refused_without_asking_ollama(isolated_settings, tmp_path):
+    s = _store(tmp_path)
+    seen = []
+    t = fake_phonons({"phonon": ["zoey"]}, seen)
+    for name in ("", "   ", "y" * 81):
+        with pytest.raises(ValueError):
+            await voice.check_phonon_voice(s, name, transport=t)
+    assert seen == []
+
+
+async def test_a_voice_phonon_itself_has_keeps_its_plain_name(isolated_settings, tmp_path):
+    s = _store(tmp_path)
+    seen = []
+    t = fake_phonons({"phonon": ["zoey", "Ziggy"]}, seen)
+    kept = await voice.check_phonon_voice(s, "Ziggy", transport=t)
+    assert kept["id"] == "Ziggy" and seen == [("phonon", "Ziggy")] and voice.get_tts(s)[1] == "Ziggy"
+
+
+async def test_a_podcast_pairs_a_woman_and_a_man_from_the_catalogue(isolated_settings, tmp_path):
+    s = _store(tmp_path)
+    await voice.phonon_voices(transport=ollama(voices=["zoey", "easton", "Maeve", "Alfie"]))
+    voice.set_tts(s, "phonon", "Alfie")
+    assert [h["id"] for h in voice.podcast_voices(s)] == ["zoey", "Alfie"]  # [a woman, a man]: the chosen man, Zoey with him
+    voice.set_tts(s, "phonon", "Maeve")
+    assert [h["id"] for h in voice.podcast_voices(s)] == ["Maeve", "easton"]
+
+
+async def test_the_routes_for_another_voice_and_previews_of_any_name(isolated_settings, tmp_path, monkeypatch):
+    from urllib.parse import quote
+
+    from odie.app.main import create_app
+    from tests.test_api import FakeRunner
+    s = _store(tmp_path)
+    seen = []
+    t = fake_phonons({"phonon": ["zoey", "Captain Silas Blackwater"], "phonon:fr": ["Noémie"]}, seen)
+    await voice.phonon_voices(transport=ollama(voices=["zoey", "Captain Silas Blackwater"]))
+    real_check = voice.check_phonon_voice
+    real_tts = voice.phonon_tts
+
+    async def check(store, name, transport=None):
+        return await real_check(store, name, transport=t)
+
+    async def tts(text, voice_id, transport=None):
+        return await real_tts(text, voice_id, transport=t)
+    monkeypatch.setattr(voice, "check_phonon_voice", check)
+    monkeypatch.setattr(voice, "phonon_tts", tts)
+    app = create_app(runner=FakeRunner(), store=s)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c, app.router.lifespan_context(app):
+        r = await c.get("/api/voice/preview/phonon/" + quote("Captain Silas Blackwater"))
+        assert r.status_code == 200 and r.headers["content-type"] == "audio/wav"
+        assert list((isolated_settings.data_dir / "voice").glob("preview-phonon-captain-silas-blackwater-*.wav"))
+        r = await c.post("/api/voice/phonon/check", json={"name": "Noémie"})
+        assert r.status_code == 200 and r.json()["voice"] == "Noémie (phonon:fr)" and r.json()["engine"] == "phonon"
+        assert any(v["id"] == "Noémie (phonon:fr)" for v in r.json()["voices"])
+        seen.clear()
+        r = await c.get("/api/voice/preview/phonon/" + quote("Noémie (phonon:fr)"))
+        assert r.status_code == 200 and seen == []  # the check's own audio is the preview: Ollama isn't asked again
+        r = await c.post("/api/voice/phonon/check", json={"name": "Nobody"})
+        assert r.status_code == 422 and "ollama pull phonon:fr" in r.json()["detail"]
+        assert (await c.post("/api/voice/phonon/check", json={"name": ""})).status_code == 422
+        r = await c.delete("/api/voice/phonon/voices/" + quote("Noémie (phonon:fr)"))
+        assert r.status_code == 200 and r.json()["voice"] == "zoey"
+        assert (await c.get("/api/voice/preview/phonon/" + quote("Noémie (phonon:fr)"))).status_code == 404  # gone
+
+
+async def test_the_model_reads_phonons_voices_under_the_same_headings():
+    await voice.phonon_voices(transport=ollama(voices=["zoey", "Alfie", "The Snow Queen"]))
+    text = voice.voices_text("phonon")
+    assert text.startswith("American · Female: Zoey (Playful, upbeat")
+    assert "; British · Male: Alfie (" in text and "; Characters: The Snow Queen (" in text
