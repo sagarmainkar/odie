@@ -400,6 +400,19 @@ def tool_error_as_result(tool, args, tool_context, error: Exception) -> dict:
     return {"error": f"{type(error).__name__}: {first_line}"[:300]}
 
 
+
+def previous_questions(history: list[dict]) -> list[str]:
+    """The last two things the user said, newest first, as lookups should read them: a form's answer as its line only
+    (without_form_answers), empty messages skipped.
+    [ask "Plan a trip", answer "Where: Hills" + its fence, "Thanks"] -> ["Thanks", "Where: Hills"]."""
+    from odie.blocks.answers import without_form_answers
+    said = []
+    for h in history:
+        if h["role"] != "user" or not h["text"]:
+            continue
+        said.append(without_form_answers(h["text"]))
+    return said[-2:][::-1]
+
 class OdieRunner:
     def __init__(self, store: Store):
         s = config.settings
@@ -462,8 +475,7 @@ class OdieRunner:
         if session_id not in self._recent:
             s = config.settings
             sess = await self.session_service.get_session(app_name=s.app_name, user_id=s.user_id, session_id=session_id)
-            texts = [h["text"] for h in events_to_history(sess.events if sess else []) if h["role"] == "user" and h["text"]]
-            self._recent[session_id] = texts[-2:][::-1]
+            self._recent[session_id] = previous_questions(events_to_history(sess.events if sess else []))
         return list(self._recent[session_id])
 
     async def _words_of(self, session_id: str, invocation_id: str) -> str:

@@ -40,7 +40,8 @@ export function canSend(form: FormBlock, values: FormValues, busy: boolean, sent
 }
 
 /** A field's answer as words: an option's label for its value, ticked boxes joined by ", ", a slider with its unit,
- *  text as typed; "" when blank. */
+ *  text as typed; "" when blank. Radio "3" with option {value: "3", label: "3 min"} → "3 min"; checkbox ["Music",
+ *  "Sea sounds"] → "Music, Sea sounds"; slider 40 with unit "%" → "40%"; text "  " → "". */
 function spoken(field: FormField, value: FormValue | undefined): string {
   if (!hasValue(value ?? null)) return "";
   if (field.kind === "slider") return formatWithUnit(value as number, field.unit);
@@ -56,6 +57,12 @@ function spoken(field: FormField, value: FormValue | undefined): string {
  *   Cast group (Narrator, The keeper), Length radio, empty notes
  *   → "Cast: Narrator → Fairy Godmother, The keeper → Old Mortlake · Length: 3 min"
  */
+/** A label and its answer: "Who: Me"; a label that is a question reads on with a space: "Where from? Pune". */
+function labelled(label: string, words: string): string {
+  if (label.trimEnd().endsWith("?")) return `${label} ${words}`;
+  return `${label}: ${words}`;
+}
+
 export function humanLine(form: FormBlock, values: FormValues): string {
   const parts: string[] = [];
   let i = 0;
@@ -63,7 +70,7 @@ export function humanLine(form: FormBlock, values: FormValues): string {
     const group = form.fields[i].group;
     if (!group) {
       const words = spoken(form.fields[i], values[form.fields[i].id]);
-      if (words) parts.push(`${form.fields[i].label}: ${words}`);
+      if (words) parts.push(labelled(form.fields[i].label, words));
       i += 1;
       continue;
     }
@@ -139,27 +146,30 @@ export function readSavedAnswer(saved: unknown, form: FormBlock): Answered | nul
   return { at: Number.isNaN(at) ? null : at, values: kept };
 }
 
-/** For each message, the form answers in the user's messages after it, by form id; for an id answered twice, the
- *  nearest answer after it, so a form asked again isn't marked with the first one's answer.
+/** For each message, the form answers in the user's messages after it, by form id, with when that message was sent
+ *  (its ts, in seconds; null when it has none); for an id answered twice, the nearest answer after it, so a form asked
+ *  again isn't marked with the first one's answer.
  *  [form, answer trip=Hills, form again, answer trip=Beach, done] → [{trip: Hills}, {trip: Beach}, {trip: Beach}, {}, {}] */
-export function answersAfterEach(messages: { role: string; text: string }[]): Record<string, FormValues>[] {
-  const out: Record<string, FormValues>[] = new Array(messages.length);
-  let after: Record<string, FormValues> = {};
+export function answersAfterEach(messages: { role: string; text: string; ts?: number }[]): Record<string, Answered>[] {
+  const out: Record<string, Answered>[] = new Array(messages.length);
+  let after: Record<string, Answered> = {};
   for (let i = messages.length - 1; i >= 0; i -= 1) {
     out[i] = after;
-    if (messages[i].role !== "user" || !messages[i].text.includes("odie-form-answer")) continue;
-    const here: Record<string, FormValues> = {};
-    for (const a of readFormAnswers(messages[i].text)) here[a.form] = a.values;
+    const message = messages[i];
+    if (message.role !== "user" || !message.text.includes("odie-form-answer")) continue;
+    const at = message.ts ? message.ts * 1000 : null;
+    const here: Record<string, Answered> = {};
+    for (const a of readFormAnswers(message.text)) here[a.form] = { at, values: a.values };
     after = { ...after, ...here };  // this message is nearer to the ones before it
   }
   return out;
 }
 
-/** Which answer a form shows: the one saved with its reply (it knows when it was sent), else one a later message
- *  carries (the save failed, or another device), else none: the form is live.
- *    saved and later → saved;  only later → {at: null, values: later};  neither → null */
-export function answeredState(saved: Answered | null, later: FormValues | undefined): Answered | null {
+/** Which answer a form shows: the one saved with its reply, else one a later message carries (the save failed, or
+ *  another device sent it), else none: the form is live.
+ *    saved and later → saved;  only later → later (with that message's time);  neither → null */
+export function answeredState(saved: Answered | null, later: Answered | undefined): Answered | null {
   if (saved) return saved;
-  if (later) return { at: null, values: later };
+  if (later) return later;
   return null;
 }

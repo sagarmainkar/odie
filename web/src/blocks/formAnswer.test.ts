@@ -24,6 +24,12 @@ const cast = form({
 });
 
 describe("a sent form", () => {
+  it("joins a label that is a question to its answer with a space, not a colon", () => {
+    const asked = form({ id: "q", fields: [{ id: "from", kind: "text", label: "Where are you starting from?", value: "Pune" },
+                                           { id: "who", kind: "radio", label: "Who", value: "Me", options: ["Me", "Us"] }] });
+    expect(humanLine(asked, startingValues(asked))).toBe("Where are you starting from? Pune · Who: Me");
+  });
+
   it("reads as one line in the bubble, groups together, in field order", () => {
     expect(humanLine(cast, startingValues(cast))).toBe(
       "Cast: Narrator → Fairy Godmother, The keeper → Old Mortlake, Mira → Maeve · Length: 3 min · Add: Sea sounds, Chime at the end · " +
@@ -96,19 +102,19 @@ describe("an answered form, found again", () => {
   it("finds, for each message, the answers in the user's messages after it (the nearest one for a repeated id)", () => {
     const answer = (where: string) => answerMessage(f, { where, spend: 10 });
     const msgs = [
-      { role: "odie", text: "a form" }, { role: "user", text: answer("Hills") },
+      { role: "odie", text: "a form" }, { role: "user", text: answer("Hills"), ts: 1_793_000_000 },
       { role: "odie", text: "the same form again" }, { role: "user", text: answer("Beach") }, { role: "odie", text: "done" }];
     const after = answersAfterEach(msgs);
-    expect(after[0]).toEqual({ trip: { where: "Hills", spend: 10 } });  // the first form: answered by the next message
-    expect(after[2]).toEqual({ trip: { where: "Beach", spend: 10 } });  // the second: by its own answer, not the first's
+    expect(after[0]).toEqual({ trip: { at: 1_793_000_000_000, values: { where: "Hills", spend: 10 } } });  // answered by the next message, at its time
+    expect(after[2]).toEqual({ trip: { at: null, values: { where: "Beach", spend: 10 } } });  // by its own answer; that message has no time
     expect(after[4]).toEqual({});
   });
 
   it("shows the saved answer first, else one found in a later message, else none", () => {
     const saved = { at: 1, values: { where: "Hills" } };
-    const later = { where: "Beach" };
+    const later = { at: 2, values: { where: "Beach" } };
     expect(answeredState(saved, later)).toEqual(saved);
-    expect(answeredState(null, later)).toEqual({ at: null, values: later });
+    expect(answeredState(null, later)).toEqual(later);
     expect(answeredState(null, undefined)).toBeNull();
   });
 });

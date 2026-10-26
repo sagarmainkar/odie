@@ -37,7 +37,7 @@ export function FormView({ form, values, sent, ready, onChange, onSend }: ViewPr
   const frame = inCard ? "my-2" : "glass glass-solid rounded-[20px] px-4 py-3 my-2";
   const answered = sent !== null;
   return (
-    <form className={`${frame} ${answered ? "opacity-60 grayscale" : ""}`} aria-disabled={answered}
+    <form className={`${frame} ${answered ? "opacity-60" : ""}`} aria-disabled={answered}
       onSubmit={(e) => { e.preventDefault(); onSend(); }}>
       {form.title && <div className="text-[15px] leading-[21px] font-bold"><InlineText text={form.title} /></div>}
       <fieldset disabled={answered} className="min-w-0 border-0 p-0 m-0">
@@ -62,6 +62,13 @@ function startsGroup(fields: FormField[], i: number): boolean {
   const group = fields[i].group;
   if (!group) return false;
   return fields[i - 1]?.group !== group;
+}
+
+/** The options a radio or checkbox field shows as chosen: the ticked list for checkboxes, the one value for a radio.
+ *  checkbox ["Music"] → ["Music"]; checkbox null → []; radio "3 min" → ["3 min"]; radio null → [""] (nothing matches). */
+function pickedOf(kind: FormField["kind"], value: FormValue | undefined): string[] {
+  if (kind === "checkbox") return Array.isArray(value) ? value : [];
+  return [String(value ?? "")];
 }
 
 function FieldView({ field, value, onChange }: { field: FormField; value: FormValue | undefined; onChange: (v: FormValue) => void }) {
@@ -95,7 +102,7 @@ function FieldView({ field, value, onChange }: { field: FormField; value: FormVa
       </label>
     );
   }
-  const picked = field.kind === "checkbox" ? (Array.isArray(value) ? value : []) : [String(value ?? "")];
+  const picked = pickedOf(field.kind, value);
   const isRadio = field.kind === "radio";
   const optionValues = field.options.map((o) => o.value);
   function tap(option: FormOption) {

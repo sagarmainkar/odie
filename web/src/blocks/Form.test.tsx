@@ -139,10 +139,10 @@ describe("the form after a reload", () => {
   });
 
   it("with nothing saved, takes an answer a later message carries, and draws it greyed", async () => {
-    const { host, nameBox } = await mountInReply({}, { trip: filled });
+    const { host, nameBox } = await mountInReply({}, { trip: { at: Date.parse("2026-10-26T10:12:00Z"), values: filled } });
     expect(host.querySelector("fieldset")!.disabled).toBe(true);
     expect(nameBox().value).toBe("Asha");
-    expect(host.textContent).toContain("✓ Sent");
+    expect(host.textContent).toMatch(/✓ Sent \d/);  // with the later message's time
   });
 
   it("with neither, is a live form; Send saves the answer with the reply", async () => {

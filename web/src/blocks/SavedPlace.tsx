@@ -8,7 +8,7 @@ import { loadReply, readTicks, saveSoon, ticksAfterLoad, toggleTick, type Reply 
 /** The chat reply being drawn: its session and key (both missing for a reply the server hasn't named), its text,
  *  whether it is still streaming in (a diagram waits for the whole reply), and the form answers the user's messages
  *  after it carry, by form id (a form whose saved answer is missing finds it there). */
-export type ReplyInfo = { sessionId?: string; messageKey?: string; text: string; streaming?: boolean; answers?: Record<string, FormValues> };
+export type ReplyInfo = { sessionId?: string; messageKey?: string; text: string; streaming?: boolean; answers?: Record<string, Answered> };
 export const ReplyPlace = createContext<ReplyInfo | null>(null);
 
 /** Where one fence's blocks save: its reply (null: don't save) and which fence of the reply it is, from 0. */
@@ -76,6 +76,8 @@ export function useAnsweredForm(form: FormBlock): [Answered | null, (values: For
   const { reply, fence } = useContext(FencePlace);
   const later = useContext(ReplyPlace)?.answers?.[form.id];
   const [saved, setSaved] = useState<Answered | null>(null);
+  const formNow = useRef(form);  // the newest form, read when its saved answer arrives
+  useEffect(() => { formNow.current = form; });  // runs before the load below, on every draw
   const blockPath = `${fence}/${form.path}`;
   const sessionId = reply?.sessionId;
   const messageKey = reply?.messageKey;
@@ -85,11 +87,11 @@ export function useAnsweredForm(form: FormBlock): [Answered | null, (values: For
     let live = true;
     loadReply({ sessionId, messageKey }).then((values) => {
       if (!live) return;
-      const found = readSavedAnswer(values[blockPath], form);
+      const found = readSavedAnswer(values[blockPath], formNow.current);
       if (found) setSaved((now) => now ?? found);  // a Send meanwhile is newer
     }).catch(() => { /* offline: a later message's answer, or the live form */ });
     return () => { live = false; };
-  }, [sessionId, messageKey, blockPath, form]);
+  }, [sessionId, messageKey, blockPath]);  // not `form`: a parent re-render makes a new object, not a new form
 
   function markSent(values: FormValues) {
     const at = Date.now();

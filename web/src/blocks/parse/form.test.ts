@@ -107,12 +107,13 @@ describe("form", () => {
     expect(r.dropped).toEqual([{ path: "0", why: "kept the first 12 fields of 15" }]);
     const options = Array.from({ length: 70 }, (_, i) => ({ value: `v${i}`, note: "n".repeat(100) }));
     const long = one({ type: "form", id: "f", fields: [
-      { id: "s", kind: "select", label: "L".repeat(90), options },
+      { id: "s", kind: "select", label: "L".repeat(130), options },
       { id: "t", kind: "text", label: "T", value: "w".repeat(700) },
     ] });
     const [select, text] = (long.blocks[0] as any).fields;
     expect(select.options.length).toBe(60);
-    expect(select.label.length).toBe(60);
+    expect(select.label.length).toBeLessThanOrEqual(100);
+    expect(select.label.endsWith("…")).toBe(true);
     expect(select.options[0].note.length).toBe(80);
     expect(text.value.length).toBe(500);
   });
@@ -137,5 +138,14 @@ describe("form", () => {
   it("reads required on any field", () => {
     const r = one({ type: "form", id: "f", fields: [{ id: "t", kind: "text", label: "Name", required: true }] });
     expect((r.blocks[0] as any).fields[0].required).toBe(true);
+  });
+
+  it("keeps a question-length label whole, and cuts a longer one at a word with …", () => {
+    const asked = "Anything to slip in? (her pet's name, a favourite toy, a little lesson)";
+    const tooLong = "What should the story be about, who is in it, where does it happen, and how should it end for her tonight?";
+    const r = one({ type: "form", id: "f", fields: [{ id: "a", kind: "text", label: asked }, { id: "b", kind: "text", label: tooLong }] });
+    const [a, b] = (r.blocks[0] as any).fields;
+    expect(a.label).toBe(asked);
+    expect(b.label).toBe("What should the story be about, who is in it, where does it happen, and how should it end for her…");
   });
 });
