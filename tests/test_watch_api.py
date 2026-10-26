@@ -74,3 +74,5 @@ async def test_needs_you_serves_the_cards_and_the_checks_footer(isolated_setting
             got = (await c.get("/api/needs_you")).json()
     assert [i["title"] for i in got["items"]] == ["Invoice due Friday", "Renew passport"]
     assert got["watch"]["line"] == "1 new email" and "checked_at" in got["watch"]
+    assert set(got) == {"items", "counts", "watch", "notes"}
+    assert sum(got["counts"].values()) == len(got["items"]) and set(got["counts"]) == set(report.PILES)
