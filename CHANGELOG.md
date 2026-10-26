@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.2.31 (2026-10-26)
+
+- Dialogue videos with 3D characters: give a character in your cast sheet `asset: models/<name>.vrm` (a VRM made free in VRoid Studio, or from VRoid Hub) and it appears as that 3D character, lip-synced to its own voice, blinking and moving; speakers without one are drawn as before, and videos without 3D characters are unchanged. See docs/dialogue-videos.md.
+- The reminder pop-up in the web and phone app offers Dismiss and Snooze (1 hour, 3 hours, tomorrow 9:00) instead of Act.
+- Needs you cards also say which pile they belong to (alerts, bills, events, personal, orders), since when, and whether they need your own choice, with counts per pile, for the Mac app's new glass buckets. The web app is unchanged.
+
 ## v0.2.30 (2026-10-25)
 
 - Where you are: with your permission, asked once per device, the web app and the Mac app tell Odie the place you're at when they open; Odie keeps the latest place with its time and learns your home from where you spend nights, and puts the place name (never coordinates) into what it sends to your chat model, so weather, nearby and travel questions work unasked. Settings → Location turns it off or forgets it. Turning a point into a name asks OpenStreetMap only when no recent point nearby is known.
