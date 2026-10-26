@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.2.32 (2026-10-26)
+
+- Five small fixes: the location ask above the composer lines up with it on a desktop; Settings → Location shows the place, then "seen · home", then its note in full width on a phone; Turn on there fetches a fix at once; a `.local` address passes Odie's Host check only when it is this Mac's own name or one you listed in `ODIE_HOSTS`, so a stranger's `.local` page on the same network can't reach Odie; Settings no longer goes blank when there is no voice engine at all.
+
 ## v0.2.31 (2026-10-26)
 
 - Dialogue videos with 3D characters: give a character in your cast sheet `asset: models/<name>.vrm` (a VRM made free in VRoid Studio, or from VRoid Hub) and it appears as that 3D character, lip-synced to its own voice, blinking and moving; speakers without one are drawn as before, and videos without 3D characters are unchanged. See docs/dialogue-videos.md.
