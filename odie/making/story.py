@@ -47,6 +47,7 @@ from odie.video.sounds import seconds_text
 log = logging.getLogger("odie.making.story")
 
 FOLDER = "stories"
+RECENT_STORIES = 5  # the writer is asked to prefer other beds and music than these last stories had
 SCRIPT_FILE = "script.json"  # the script as the writer sent it and the check accepted it
 TIMELINE_FILE = "timeline.json"  # the story laid out in time: every line and sound, with its gain
 LEVELS_FILE = "levels.json"  # what was measured on the finished file
@@ -1055,13 +1056,52 @@ async def mix_gap(beds: Path, spans: list[tuple[float, float]], speech_db: float
     return round(speech_db - beds_db, 1)
 
 
+def recent_scripts(stories: Path, count: int = RECENT_STORIES) -> list[Path]:
+    """Decides which stories count as the user's recent ones: the `count` newest script.json files in the stories
+    folder, newest first, by when each was written. A story still being written has none yet, so it never counts.
+    Seven stories written a day apart -> the five newest; no stories folder -> []."""
+    scripts = [path for path in stories.glob(f"*/{SCRIPT_FILE}") if path.is_file()]
+    scripts.sort(key=lambda path: path.stat().st_mtime, reverse=True)
+    return scripts[:count]
+
+
+def script_sounds(script) -> set[str]:
+    """The beds and music a script used, by id: a scene's "bed" and "music", as an object or as plain text (its id).
+    {"scenes": [{"bed": {"sound": "ambience/ocean-surf"}, "music": "jingles/borealis"}]} -> {"ambience/ocean-surf",
+    "jingles/borealis"}; anything that isn't a script -> set()."""
+    used = set()
+    if not isinstance(script, dict) or not isinstance(script.get("scenes"), list):
+        return used
+    for scene in script["scenes"]:
+        if not isinstance(scene, dict):
+            continue
+        for part in ("bed", "music"):
+            sound = story_writer.sound_given(scene.get(part))
+            if sound and isinstance(sound.get("sound"), str):
+                used.add(sound["sound"])
+    return used
+
+
+def recent_sounds(stories: Path) -> set[str]:
+    """The beds and music of the user's recent stories (recent_scripts), for the writer's listing to mark. A script
+    that can't be read counts for nothing."""
+    used = set()
+    for path in recent_scripts(stories):
+        try:
+            script = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        used |= script_sounds(script)
+    return used
+
+
 async def write(job: jobs.Job, turn, browser) -> None:
-    """The writing step: the story writer's focused turn with the sound listing from the user's library, then the
-    title and the scenes onto the job, and the accepted script into its script.json. A story never uses the
-    browser."""
+    """The writing step: the story writer's focused turn with the sound listing from the user's library (the beds and
+    music of the last stories marked, so the writer prefers others), then the title and the scenes onto the job, and
+    the accepted script into its script.json. A story never uses the browser."""
     request = job.data["request"]
     catalogue = await sound_library.catalogue()
-    listing = sound_library.writer_listing(catalogue)
+    listing = sound_library.writer_listing(catalogue, recent_sounds(job.folder.parent))
     written = await story_writer.write(request, catalogue, listing, turn)
     job.title = jobs.title_after_writing(written.title, job)
     job.data["scenes"] = written.scenes

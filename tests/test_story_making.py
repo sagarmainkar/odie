@@ -9,6 +9,7 @@ import json
 import logging
 import math
 import wave
+from pathlib import Path
 
 import httpx
 import pytest
@@ -462,3 +463,68 @@ async def test_the_job_writes_then_makes_and_posts_one_player(world, tmp_path, m
     assert door["role"] == "hit" and door["sound"] == "foley/door" and door["start"] == 0.0
     assert set(timeline["levels"]) == {"speech_db", "speech_peak_db", "master_gain_db", "limit_ceiling_db"}
     assert json.loads((folder / "job.json").read_text())["status"] == "done"
+
+
+# Used recently: the beds and music of the last stories, read from their script.json.
+
+def a_script(folder: Path, bed: str | None, music: str | None, age: int) -> Path:
+    """A finished story's folder with its script.json: one scene with this bed and music, `age` seconds old."""
+    import os
+    import time
+    folder.mkdir(parents=True)
+    scene = {"title": "Prelude", "lines": []}
+    if bed:
+        scene["bed"] = {"sound": bed, "level": "normal"}
+    if music:
+        scene["music"] = music  # plain text is its id, as the writer may send it
+    path = folder / story.SCRIPT_FILE
+    path.write_text(json.dumps({"title": folder.name, "scenes": [scene]}))
+    when = time.time() - age
+    os.utime(path, (when, when))
+    return path
+
+
+def test_the_recent_stories_are_the_newest_five_scripts(tmp_path):
+    stories = tmp_path / "stories"
+    for n in range(7):
+        a_script(stories / f"story-{n}", f"ambience/bed-{n}", f"jingles/music-{n}", age=100 * n)
+    (stories / "still-writing").mkdir()  # a story with no script yet counts for nothing
+    picked = story.recent_scripts(stories)
+    assert [p.parent.name for p in picked] == ["story-0", "story-1", "story-2", "story-3", "story-4"]
+    assert story.recent_scripts(tmp_path / "none") == []
+
+
+def test_the_recent_sounds_are_their_beds_and_music(tmp_path):
+    stories = tmp_path / "stories"
+    a_script(stories / "one", "ambience/ocean-surf", "jingles/borealis", age=10)
+    a_script(stories / "two", "ambience/night-camp", None, age=20)
+    broken = stories / "broken"
+    broken.mkdir()
+    (broken / story.SCRIPT_FILE).write_text("{not json")
+    assert story.recent_sounds(stories) == {"ambience/ocean-surf", "jingles/borealis", "ambience/night-camp"}
+
+
+async def test_the_writer_sees_the_recent_stories_sounds_marked(world, tmp_path, monkeypatch):
+    _store, catalogue = world
+    stories = workspace() / story.FOLDER
+    assert not str(stories).startswith(str(Path.home() / ".odie"))  # the isolated test workspace
+    a_script(stories / "last-week", "ambience/surf", None, age=60)
+
+    async def no_library(libraries=None, cache_file=None):
+        return catalogue
+    monkeypatch.setattr(story.sound_library, "catalogue", no_library)
+    seen = {}
+
+    async def fake_write(request, catalogue, listing, turn):
+        seen["listing"] = listing
+        return writer.Written(title="New", scenes=[], script={"title": "New", "scenes": []})
+    monkeypatch.setattr(story.story_writer, "write", fake_write)
+    folder = stories / "new"
+    folder.mkdir()
+    request = writer.Request(genre="mystery", premise="A ship.", cast=CAST, narrator="narrator", accent="British",
+                             minutes=2)
+    job = jobs.Job(kind="story", slug="new", title="A ship.", topic="A ship.", minutes=2, session_id="chat-1",
+                   folder=folder, data={"request": request, "sound_level": 25})
+    await story.write(job, turn=None, browser=None)
+    assert "ambience/ loops: surf 6 *" in seen["listing"]
+    assert story.sound_library.RECENT_LEGEND in seen["listing"]

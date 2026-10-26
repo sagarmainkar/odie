@@ -367,16 +367,26 @@ def music_words(entry: dict) -> str:
     return f"{name} {'/'.join(moods)}"
 
 
-def sound_words(entry: dict) -> str:
+def is_recent(entry: dict, recent: set[str]) -> bool:
+    """Decides whether the listing marks a sound as used in the user's recent stories: its id among their beds and
+    music. Borealis with {"jingles/borealis"} -> True; Dewdrops -> False."""
+    return entry["id"] in recent
+
+
+def sound_words(entry: dict, recent: set[str]) -> str:
     """One sound as its line lists it: a loop or a hit with its seconds ("ocean-surf 62"), music with its moods
-    (music_words), and the moods of a tagged loop or hit after its seconds ("low-hum 9 eerie/dark")."""
-    if entry["kind"] == "music":
-        return music_words(entry)
+    (music_words), the moods of a tagged loop or hit after its seconds ("low-hum 9 eerie/dark"), and RECENT_MARK after
+    one used in a recent story ("ocean-surf 62 *")."""
     _prefix, name = prefix_and_name(entry["id"])
-    words = f"{name} {listing_seconds(entry['seconds'])}"
-    moods = entry.get("moods") or []
-    if moods:
-        words += f" {'/'.join(moods)}"
+    if entry["kind"] == "music":
+        words = music_words(entry)
+    else:
+        words = f"{name} {listing_seconds(entry['seconds'])}"
+        moods = entry.get("moods") or []
+        if moods:
+            words += f" {'/'.join(moods)}"
+    if is_recent(entry, recent):
+        words += f" {RECENT_MARK}"
     return words
 
 
@@ -400,15 +410,15 @@ def kind_groups(entries: list[dict]) -> list[tuple[str, list[dict]]]:
     return groups
 
 
-def category_line(entries: list[dict]) -> str:
+def category_line(entries: list[dict], recent: set[str] = frozenset()) -> str:
     """One category in one line: its id prefix, then its loops and hits, each name with its seconds, and its music by
     style, each name with its moods (music has no seconds: it loops under a scene). "ambience/ loops: ocean-surf 62,
     night-camp 28; hits: thunder-clap 13"; "jingles/ music, piano: daydream calm/dreamy/peaceful; music, synth-pads:
-    borealis eerie/melancholy/dreamy"."""
+    borealis eerie/melancholy/dreamy". A sound in `recent` is marked (sound_words)."""
     prefix, _name = prefix_and_name(entries[0]["id"])
     groups = []
     for label, grouped in kind_groups(entries):
-        groups.append(f"{label}: {', '.join(sound_words(e) for e in grouped)}")
+        groups.append(f"{label}: {', '.join(sound_words(e, recent) for e in grouped)}")
     return f"{prefix} " + "; ".join(groups)
 
 
@@ -437,12 +447,15 @@ LISTING_INTRO = ("Sounds you can use, one category a line: its id prefix, then i
                  'sound\'s id is the prefix and the name: "ambience/" and "ocean-surf" -> "ambience/ocean-surf". Use '
                  "the ids exactly.")
 NO_MUSIC = "There is no music here (no iMovie on this Mac): don't add music beds."
+RECENT_MARK = "*"
+RECENT_LEGEND = f"{RECENT_MARK} used in your recent stories, prefer others"
 
 
-def writer_listing(entries: list[dict]) -> str:
+def writer_listing(entries: list[dict], recent: set[str] = frozenset()) -> str:
     """The sounds as the writer reads them, one line a category (category_line). The most useful categories come
     first and in full; once the next one in full wouldn't leave room under LISTING_TOKENS (at CHARS_PER_TOKEN), the
-    rest are summed up in a line each. Without music (the kit), it says so."""
+    rest are summed up in a line each. Without music (the kit), it says so. `recent` is the beds and music of the
+    user's last stories: each is marked, with RECENT_LEGEND to say what the mark means."""
     by_category: dict[str, list[dict]] = {}
     for e in entries:
         by_category.setdefault(e["category"], []).append(e)
@@ -450,12 +463,14 @@ def writer_listing(entries: list[dict]) -> str:
     head = [LISTING_INTRO]
     if not any(e["kind"] == "music" for e in entries):
         head.append(NO_MUSIC)
+    if any(is_recent(e, recent) for e in entries):
+        head.append(RECENT_LEGEND)
     budget = LISTING_TOKENS * CHARS_PER_TOKEN
     used = sum(len(line) + 1 for line in head)
     summaries = {c: summary_line(by_category[c]) for c in order}
     parts: list[str] = []
     for i, category in enumerate(order):
-        full = category_line(by_category[category])
+        full = category_line(by_category[category], recent)
         rest = sum(len(summaries[c]) + 1 for c in order[i + 1:])
         fits = used + len(full) + 1 + rest <= budget
         chosen = full if fits else summaries[category]

@@ -358,3 +358,27 @@ def test_music_words_are_the_moods_then_one_style_group():
     assert lib.music_words(borealis) == "borealis eerie/melancholy/dreamy"
     assert lib.style_of(borealis) == "synth-pads"
     assert lib.style_of({"id": "jingles/x", "kind": "music"}) == ""
+
+
+# Used recently: the beds and music of the user's last stories, marked for the writer.
+
+def test_the_listing_marks_sounds_used_in_recent_stories_with_a_legend(isolated_settings, imovie, tmp_path):
+    entries = run(lib.build(lib.find_libraries(imovie, tmp_path / "own")))
+    listing = lib.writer_listing(entries, {"ambience/ocean-surf", "theme-music/bulletin"})
+    lines = listing.splitlines()
+    assert lib.RECENT_LEGEND in lines  # "* used in your recent stories, prefer others"
+    assert next(line for line in lines if line.startswith("ambience/ ")) == (
+        "ambience/ loops: night-camp 9, ocean-surf 12 *")
+    assert next(line for line in lines if line.startswith("theme-music/ ")) == "theme-music/ music: bulletin *"
+
+
+def test_no_recent_stories_no_marks_and_no_legend(isolated_settings, imovie, tmp_path):
+    entries = run(lib.build(lib.find_libraries(imovie, tmp_path / "own")))
+    for recent in (set(), {"jingles/not-in-this-library"}):
+        listing = lib.writer_listing(entries, recent)
+        assert lib.RECENT_LEGEND not in listing and " *" not in listing
+
+
+def test_a_sound_is_marked_when_a_recent_story_used_it():
+    assert lib.is_recent({"id": "jingles/borealis"}, {"jingles/borealis"}) is True
+    assert lib.is_recent({"id": "jingles/dewdrops"}, {"jingles/borealis"}) is False
