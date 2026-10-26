@@ -28,8 +28,8 @@ user has already answered ("a 10-minute horror story about a lighthouse" skips s
    chosen voice engine offers.
    - **story:** three short pitches for that genre, each a one-line logline as a radio option with a note, plus a
      text field "your own idea";
-   - **accent:** a radio of the accents `story_voices()` gave (British or American on Phonon, Indian too on Kokoro and
-     OpenAI);
+   - **accent:** a radio of the accents `story_voices()` gave (American or British on Phonon, Indian too on Kokoro and
+     OpenAI), prefilled with **American** (its `default`): the user prefers it; British stays a choice;
    - **length:** a radio, 3 / 5 / 8 / 10 / 15 minutes.
 3. **Cast**, in one form. Call `story_voices(accent)` with the accent chosen: its `options` are the voices for that
    accent, each with its ▶ `preview`.
@@ -66,7 +66,7 @@ make_audio_story(
         {"id": "keeper", "name": "The keeper", "voice": "Old Mortlake", "gender": "male", "age": "old",
          "about": "the last keeper, gruff and alone"}],
   narrator="narrator",
-  accent="British",
+  accent="American",
   minutes=10,
   sound_level=25,
   brief="Slow and eerie; the ending stays open.",

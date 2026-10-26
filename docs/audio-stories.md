@@ -14,8 +14,8 @@ Odie runs a short, guided start with forms, and skips any step your message alre
    folk tales, or a bedtime story; or your own idea.
 2. **The story, the accent and the length**, in one form:
    - three short pitches for that genre, or your own idea;
-   - the accent (British or American on Phonon; Indian too on Kokoro and OpenAI), asked here because the voices on
-     offer depend on it;
+   - the accent, American unless you choose another (British on Phonon too; Indian as well on Kokoro and OpenAI),
+     asked here because the voices on offer depend on it;
    - the length: 3, 5, 8, 10 or 15 minutes.
 3. **The cast**, in one form:
    - who tells it: a character, in the first person, or an outside storyteller;

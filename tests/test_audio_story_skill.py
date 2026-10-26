@@ -97,7 +97,8 @@ def test_openai_takes_any_voice_and_adds_the_accent_in_the_story(store, monkeypa
 
 def test_no_accent_yet_lists_the_accents_and_a_wrong_one_is_said_plainly(store, monkeypatch):
     choose(store, "kokoro", monkeypatch)
-    assert asyncio.run(tools()["story_voices"].func()) == {"engine": "kokoro", "accents": ["American", "British", "Indian"]}
+    assert asyncio.run(tools()["story_voices"].func()) == {"engine": "kokoro", "accents": ["American", "British", "Indian"],
+                                                         "default": "American"}
     choose(store, "phonon", monkeypatch)
     monkeypatch.setattr(voice, "phonon_here", lambda: True)
     bad = asyncio.run(tools()["story_voices"].func(accent="Indian"))
@@ -368,3 +369,24 @@ def test_the_skill_casts_eerie_women_from_the_three_voices():
     text = (SKILL / "SKILL.md").read_text()
     assert "**The Snow Queen**, **Morwenna of the Deep** or the **Fairy Godmother**" in text
     assert '"gender"' in text  # every cast member carries one in the call
+
+
+# American first: the owner prefers it for stories; British stays on offer.
+
+def test_the_accent_question_starts_on_american(store, monkeypatch):
+    choose(store, "phonon", monkeypatch)
+    monkeypatch.setattr(voice, "phonon_here", lambda: True)
+    got = asyncio.run(tools()["story_voices"].func())
+    assert got["accents"] == ["American", "British"] and got["default"] == "American"
+
+
+async def test_no_accent_given_is_american(queued):
+    out = await make(accent="")
+    assert "result" in out
+    assert queued[0].data["request"].accent == "American"
+
+
+def test_the_skill_prefills_american():
+    text = (SKILL / "SKILL.md").read_text()
+    assert "prefilled with **American**" in text
+    assert 'accent="American"' in text and 'accent="British"' not in text

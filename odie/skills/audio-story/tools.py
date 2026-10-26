@@ -16,6 +16,7 @@ from odie.making import chat, jobs, sound_library, story, story_writer
 
 ACCENTS = {"phonon": ["American", "British"], "kokoro": ["American", "British", "Indian"],
            "openai": ["American", "British", "Indian"]}
+DEFAULT_ACCENT = "American"  # the owner prefers American English for stories; British stays on offer
 NOTE_LIMIT = 80  # a form option's note is cut at 80 characters
 WHO = {"female": "woman", "male": "man", "neutral": "neutral", "creature": "creature", "any": "voice"}
 CHARACTERS = "Characters"  # Phonon's group of character voices (a pirate captain, a witch, an old keeper)
@@ -163,7 +164,7 @@ def accent_word(given) -> str:
 async def story_voices(accent: str = "") -> dict:
     """The voices for an audio story's cast form, for the voice engine chosen in Settings.
     accent: "American", "British" or "Indian", as the user chose it with the story. Without one, it returns the
-    accents this engine offers, for that question.
+    accents this engine offers, for that question, and the one to prefill it with ("default": American).
     Returns {"engine", "accent", "options", "notes"}: options is the voices for that accent (and, on Phonon, its
     character voices: a pirate captain, a witch, an old keeper), each {value, label, note, gender, preview}. Paste
     options exactly as given as the options of every voice select in the cast form, previews and all; use a `value` as
@@ -175,7 +176,7 @@ async def story_voices(accent: str = "") -> dict:
         await voice.phonon_voices()  # Phonon's voices are known only once Ollama has been asked
     picked = accent_word(accent)
     if not picked:
-        return {"engine": engine, "accents": accents_for(engine)}
+        return {"engine": engine, "accents": accents_for(engine), "default": DEFAULT_ACCENT}
     problem = accent_problem(engine, picked)
     if problem:
         return {"error": problem}
@@ -364,8 +365,8 @@ def brief_record(request: story_writer.Request, sound_level: int, brief: str) ->
     return f"{chosen}\n\nCast:\n{cast_text}\n\nBrief:\n{brief}"
 
 
-async def make_audio_story(title: str, genre: str, premise: str, cast: list[dict], narrator: str, accent: str,
-                           minutes: int = 5, sound_level: int = 25, brief: str = "",
+async def make_audio_story(title: str, genre: str, premise: str, cast: list[dict], narrator: str,
+                           accent: str = DEFAULT_ACCENT, minutes: int = 5, sound_level: int = 25, brief: str = "",
                            tool_context: ToolContext | None = None) -> dict:
     """Make the audio story the user chose in the guided start: a narrator, character voices, ambience, effects and
     music, posted to this chat as one file. Call it once, after the cast form. A separate writer writes the script and
@@ -378,7 +379,7 @@ async def make_audio_story(title: str, genre: str, premise: str, cast: list[dict
     matters ("old", "a girl"), about one line on who they are.
     narrator: the id of who tells it: "narrator" for an outside storyteller (then in the cast as id "narrator"), or a
     character's id to tell it in the first person.
-    accent: as chosen ("British"). minutes: 2 to 15 (the user's length, else 5). sound_level: 10 to 40, how loud the
+    accent: as chosen ("American", unless the user chose British or Indian). minutes: 2 to 15 (the user's length, else 5). sound_level: 10 to 40, how loud the
     ambience is when no one speaks; it drops lower under the voices (the slider's value, else 25). brief: anything else the user asked for (tone, an
     ending, who it's for).
     It returns at once. {"error": …}: fix exactly that and call again. {"result": …}: reply in one or two lines as it
@@ -411,6 +412,8 @@ async def make_audio_story(title: str, genre: str, premise: str, cast: list[dict
 
     engine, _read_aloud = voice.get_tts(store)
     picked_accent = accent_word(accent)
+    if not picked_accent:
+        picked_accent = DEFAULT_ACCENT
     problem = accent_problem(engine, picked_accent)
     if problem:
         return {"error": problem}
