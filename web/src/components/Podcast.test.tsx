@@ -37,7 +37,7 @@ describe("the story player", () => {
     expect(castMarks(story, ["Narrator", "Nell", "The keeper", "Captain Silas Blackwater"])).toEqual(["Na", "Ne", "Ke", "CS"]);
     expect(castMarks(story, ["Nell", "Nelson"])).toEqual(["Ne", "N2"]);  // still the same: a number tells them apart
     expect(castMarks(pod, ["Host A", "Host B"])).toEqual(["A", "B"]);  // a podcast keeps its one letter
-    const html = renderToStaticMarkup(<Podcast m={{ ...story, hosts: [{ name: "Narrator" }, { name: "Nell" }] }} />);
+    const html = renderToStaticMarkup(<Podcast m={{ ...story, hosts: [{ name: "Narrator", group: "male" }, { name: "Nell", group: "female" }] }} />);
     expect(html).toContain(">Na</span>");
     expect(html).toContain(">Ne</span>");
   });
