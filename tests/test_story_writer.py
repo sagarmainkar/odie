@@ -221,9 +221,10 @@ class Turn:
         return out
 
 
-async def write(turn, minutes=2):
+async def write(turn, minutes=2, engine=""):
     request = writer.Request(genre="mystery", premise="A keeper hears a ship that isn't there.", cast=CAST,
-                             narrator="narrator", accent="British", minutes=minutes, brief="Slow and eerie.")
+                             narrator="narrator", accent="British", minutes=minutes, brief="Slow and eerie.",
+                             engine=engine)
     return await writer.write(request, CATALOGUE, "ambience/ocean-surf · 30s · loop", turn)
 
 
@@ -314,3 +315,26 @@ def test_the_level_words_are_forgiving_about_spelling():
     script["scenes"][1]["bed"]["level"] = "Up-front"
     assert problems(script) == []
     assert writer.parse_script(script).scenes[1].bed.level == "up front"
+
+
+def test_each_engine_has_its_own_pace():
+    """Phonon's voices read their lines at 166–246 words a minute (measured, its median about 208); an engine not
+    measured keeps a storyteller's 145."""
+    assert writer.words_per_minute("phonon") == 200
+    assert writer.words_per_minute("kokoro") == writer.DEFAULT_WORDS_PER_MINUTE == 145
+    assert writer.words_per_minute("") == 145
+
+
+async def test_a_phonon_story_is_written_and_checked_at_phonons_pace():
+    """The same 29-word lines are 8.7 s each at 200 words a minute: the two-minute script comes out at 1:27, too
+    short; the prompt asks for 400 words."""
+    async def script(turn):
+        await turn.submit(good_script())
+        await turn.submit(good_script())
+
+    turn = Turn(script)
+    written = await write(turn, engine="phonon")
+    assert "2 minutes, about 400 spoken words (200 a minute;" in turn.prompt
+    assert turn.said[0]["error"].startswith("The story is too short: about 1:27 for 2 minutes")
+    assert "about 200 words a minute" in turn.said[0]["error"]
+    assert written.note.startswith("The story came out at about 1:27 for 2 minutes")

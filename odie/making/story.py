@@ -1014,7 +1014,9 @@ async def make(job: jobs.Job, browser, transport) -> dict:
                         job.data["catalogue"], job.folder, transport=transport)
     levels = {"sound_level": sound_level, "promised_gap_db": -slider_db(sound_level), "measured_gap_db": made.gap_db,
               "gap_measured_on": made.gap_measured_on, "loudness_lufs": made.loudness_lufs,
-              "true_peak_db": made.true_peak_db, "sounds_left_out": made.skipped, "note": job.data.get("note", "")}
+              "true_peak_db": made.true_peak_db, "asked_seconds": request.minutes * 60,
+              "made_seconds": round(made.timeline.get("length", 0.0), 1), "sounds_left_out": made.skipped,
+              "note": job.data.get("note", "")}
     (job.folder / LEVELS_FILE).write_text(json.dumps(levels, indent=1), encoding="utf-8")
     (job.folder / TIMELINE_FILE).write_text(json.dumps(made.timeline, indent=1, ensure_ascii=False), encoding="utf-8")
     return made.media

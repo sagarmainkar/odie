@@ -433,6 +433,7 @@ async def test_the_job_writes_then_makes_and_posts_one_player(world, tmp_path, m
     assert len(posted) == 1 and posted[0]["format"] == "story"
     levels = json.loads((folder / "levels.json").read_text())
     assert levels["sound_level"] == 25 and levels["promised_gap_db"] == 12.0 and "measured_gap_db" in levels
+    assert levels["asked_seconds"] == 120 and levels["made_seconds"] > 0  # how the pace came out, to tune it by
     assert json.loads((folder / "script.json").read_text()) == script  # the accepted script, as videos keep theirs
     timeline = json.loads((folder / "timeline.json").read_text())
     assert timeline["length"] > 0 and len(timeline["speech"]) == 9

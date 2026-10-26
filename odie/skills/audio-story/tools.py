@@ -272,7 +272,7 @@ async def make_audio_story(title: str, genre: str, premise: str, cast: list[dict
     if not name:
         name = premise[:80]
     request = story_writer.Request(genre=genre, premise=premise, cast=members, narrator=narrator_id,
-                                   accent=picked_accent, minutes=minutes, brief=brief)
+                                   accent=picked_accent, minutes=minutes, brief=brief, engine=engine)
     folder = chat.free_folder(workspace() / story.FOLDER, chat.slug_of(name, WORD))
     folder.mkdir(parents=True)
     job = jobs.Job(kind="story", slug=folder.name, title=name, topic=name, minutes=minutes,

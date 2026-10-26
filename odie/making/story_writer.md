@@ -49,8 +49,9 @@ exactly; on a list with no music, give no music).
 
 ## Length
 
-About 145 spoken words make a minute; the pauses, leads and transitions add to it. The whole story should come out
-within 10% of the asked length. Size it by scenes and lines, never by counting words.
+The message says how many spoken words make a minute in these voices; the pauses, leads and transitions add to
+it. The whole story should come out within 10% of the asked length. Size it by scenes and lines, never by counting
+words.
 
 ## The script
 

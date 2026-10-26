@@ -26,7 +26,12 @@ INSTRUCTION = Path(__file__).with_name("story_writer.md").read_text(encoding="ut
 
 # How a script's lines become time. The making step (odie.making.story) lays the story out with the same numbers, so
 # the length checked here is the length made.
-WORDS_PER_MINUTE = 145  # a storyteller's pace: 140–150 words a minute
+# How fast each engine's voices read a line, in words a minute (the pauses come on top). Phonon's, measured on real
+# lines: 166 (Fairy Godmother) to 246 (Easton), its median about 208; set a little under, as character voices
+# narrate slower. Kokoro and OpenAI aren't measured yet (no Kokoro server on the Mac this was tuned on): they keep a
+# storyteller's 145, the pace the brief asked for.
+PACE = {"phonon": 200}
+DEFAULT_WORDS_PER_MINUTE = 145
 LENGTH_SPREAD = 0.10  # a story within 10% of its minutes is the right length
 LINE_GAP = 0.4  # seconds after a line that gives no pause_after
 MAX_PAUSE = 4.0  # the longest pause_after, in seconds
@@ -118,8 +123,8 @@ class Written:
 @dataclass
 class Request:
     """What the chat asked for (make_audio_story): the genre, the story's idea, the cast [{id, name, voice, about}],
-    who narrates (NARRATOR_ID for an outside storyteller, else a character's id), the accent, the minutes, and the
-    brief."""
+    who narrates (NARRATOR_ID for an outside storyteller, else a character's id), the accent, the minutes, the
+    brief, and the voice engine (its pace sizes the story)."""
     genre: str
     premise: str
     cast: list[dict]
@@ -127,6 +132,7 @@ class Request:
     accent: str
     minutes: int
     brief: str = ""
+    engine: str = ""
 
 
 # Small readers.
@@ -466,44 +472,50 @@ def parse_script(script: dict) -> Story:
 
 # The length.
 
-def line_seconds(line) -> float:
-    """The time a line takes in the story: a spoken line, its words at 145 a minute plus its pause (29 words -> 12 s
-    + 0.4); a cue, its lead."""
+def words_per_minute(engine: str) -> int:
+    """How fast an engine's voices read (PACE), else a storyteller's DEFAULT_WORDS_PER_MINUTE: "phonon" -> 200;
+    "kokoro" -> 145; "" -> 145."""
+    return PACE.get(engine, DEFAULT_WORDS_PER_MINUTE)
+
+
+def line_seconds(line, pace: int = DEFAULT_WORDS_PER_MINUTE) -> float:
+    """The time a line takes in the story: a spoken line, its words at `pace` a minute plus its pause (29 words at
+    145 -> 12 s + 0.4; at 200 -> 8.7 s + 0.4); a cue, its lead."""
     if isinstance(line, Speech):
-        return len(line.text.split()) * 60 / WORDS_PER_MINUTE + line.pause_after
+        return len(line.text.split()) * 60 / pace + line.pause_after
     return line.lead
 
 
-def estimated_seconds(story: Story) -> float:
-    """How long the story plays: every line's time and every transition's."""
+def estimated_seconds(story: Story, pace: int = DEFAULT_WORDS_PER_MINUTE) -> float:
+    """How long the story plays at `pace` words a minute: every line's time and every transition's."""
     total = 0.0
     for scene in story.scenes:
-        total += sum(line_seconds(line) for line in scene.lines)
+        total += sum(line_seconds(line, pace) for line in scene.lines)
         if scene.transition is not None:
             total += scene.transition.seconds
     return total
 
 
-def length_problem(story: Story, minutes: int) -> str | None:
-    """Decides whether the story is about as long as asked, within 10%: 2 minutes -> 1:48 to 2:12 fine. 117 s -> None;
-    67.5 s -> "The story is too short: about 1:08 for 2 minutes; anything from 1:48 to 2:12 is fine (…). Add a beat or
-    a line of dialogue to a scene."; 179 s -> "… too long … Cut a beat or shorten the lines."."""
+def length_problem(story: Story, minutes: int, pace: int = DEFAULT_WORDS_PER_MINUTE) -> str | None:
+    """Decides whether the story is about as long as asked at `pace` words a minute, within 10%: 2 minutes -> 1:48 to
+    2:12 fine. 117 s -> None; 67.5 s -> "The story is too short: about 1:08 for 2 minutes; anything from 1:48 to 2:12
+    is fine (…). Add a beat or a line of dialogue to a scene."; 179 s -> "… too long … Cut a beat or shorten the
+    lines."."""
     target = minutes * 60
     lowest = target * (1 - LENGTH_SPREAD)
     highest = target * (1 + LENGTH_SPREAD)
-    seconds = estimated_seconds(story)
+    seconds = estimated_seconds(story, pace)
     if lowest <= seconds <= highest:
         return None
     said = (f"about {clock(seconds)} for {minutes} {minutes_word(minutes)}; anything from {clock(lowest)} to "
-            f"{clock(highest)} is fine (about {WORDS_PER_MINUTE} words a minute, plus the pauses, leads and "
-            f"transitions).")
+            f"{clock(highest)} is fine (about {pace} words a minute, plus the pauses, leads and transitions).")
     if seconds < lowest:
         return f"The story is too short: {said} Add a beat or a line of dialogue to a scene."
     return f"The story is too long: {said} Cut a beat or shorten the lines."
 
 
 def check_script(script, catalogue: list[dict], cast: list[dict], minutes: int,
-                 narrator: str = NARRATOR_ID) -> list[str]:
+                 narrator: str = NARRATOR_ID, pace: int = DEFAULT_WORDS_PER_MINUTE) -> list[str]:
     """Decides whether Odie can render the script, as the problems to fix (empty: it can): every speaker in the cast,
     every sound in the library, known levels, at most one bed and one music bed in a scene, pauses and leads within
     limits, the prelude opening on sound and then the narrator; and once all that holds, the length. The lighthouse
@@ -513,7 +525,7 @@ def check_script(script, catalogue: list[dict], cast: list[dict], minutes: int,
     found = script_problems(script, catalogue, cast, narrator)
     if found:
         return found
-    problem = length_problem(parse_script(script), minutes)
+    problem = length_problem(parse_script(script), minutes, pace)
     if problem:
         return [problem]
     return []
@@ -526,7 +538,7 @@ class LengthOnce:
     refused: bool = False
     note: str = ""
 
-    def problem_to_send(self, problem: str | None, story: Story, minutes: int) -> str | None:
+    def problem_to_send(self, problem: str | None, story: Story, minutes: int, pace: int) -> str | None:
         """Decides whether a length problem goes back to the writer: none -> None; the first -> the problem (the
         writer fixes it); any after that -> None, the script is accepted, and the note says how long it came out:
         "The story came out at about 1:08 for 2 minutes (asked once to fix its length).". """
@@ -535,7 +547,7 @@ class LengthOnce:
         if not self.refused:
             self.refused = True
             return problem
-        self.note = (f"The story came out at about {clock(estimated_seconds(story))} for {minutes} "
+        self.note = (f"The story came out at about {clock(estimated_seconds(story, pace))} for {minutes} "
                      f"{minutes_word(minutes)} (asked once to fix its length).")
         return None
 
@@ -564,16 +576,18 @@ def narrator_line(narrator: str) -> str:
 
 def prompt_for(request: Request, listing: str) -> str:
     """The writer's whole message: the genre, the story, the cast and narrator, the accent, the length in minutes and
-    words (2 minutes -> about 290 spoken words), the chat's brief, and the sound list."""
+    words at the engine's pace (2 minutes -> about 290 spoken words; on Phonon about 400), the chat's brief, and the
+    sound list."""
     brief = request.brief.strip()
     if not brief:
         brief = "(none)"
-    words = request.minutes * WORDS_PER_MINUTE
+    pace = words_per_minute(request.engine)
+    words = request.minutes * pace
     return (f"Genre: {request.genre}\n"
             f"The story: {request.premise}\n"
             f"Accent: {request.accent} (the voices carry it; write the dialogue to suit)\n"
             f"Length: {request.minutes} {minutes_word(request.minutes)}, about {words} spoken words ("
-            f"{WORDS_PER_MINUTE} a minute; the pauses, leads and transitions add to it).\n\n"
+            f"{pace} a minute; the pauses, leads and transitions add to it).\n\n"
             f"Cast (speaker ids):\n{cast_lines(request.cast)}\n"
             f"{narrator_line(request.narrator)}\n\n"
             f"Brief from the chat:\n{brief}\n\n"
@@ -593,7 +607,8 @@ def tools_for(desk: harness.Desk, request: Request, catalogue: list[dict]) -> li
         if found:
             return " ".join(found) + " " + FIX_ALL
         story = parse_script(json.loads(unfenced(text)))
-        return length.problem_to_send(length_problem(story, request.minutes), story, request.minutes)
+        pace = words_per_minute(request.engine)
+        return length.problem_to_send(length_problem(story, request.minutes, pace), story, request.minutes, pace)
 
     def accept(fields: dict) -> Written:
         script = json.loads(unfenced(text_or_empty(fields["script"])))
