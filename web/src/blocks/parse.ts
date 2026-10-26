@@ -11,6 +11,7 @@ import { readCalculator, type CalculatorBlock } from "./parse/calculator";
 import { readChart, type ChartBlock } from "./parse/chart";
 import { readChecklist, type ChecklistBlock } from "./parse/checklist";
 import { readFlip, type FlipBlock } from "./parse/flip";
+import { readForm, type FormBlock } from "./parse/form";
 import { readHeatmap, type HeatmapBlock } from "./parse/heatmap";
 import { CONTAINER_KINDS, readContainer, type ContainerBlock } from "./parse/containers";
 import { Trail, type Diagnostic } from "./parse/fields";
@@ -35,11 +36,12 @@ export type { ListItem } from "./parse/list";
 export type { Highlight } from "./parse/table";
 export type { ChecklistItem } from "./parse/checklist";
 export type { CalcInput, CalcOutput } from "./parse/calculator";
+export type { FormField, FormOption } from "./parse/form";
 export type { Diagnostic } from "./parse/fields";
 
 export type Block =
   | ChartBlock | KpisBlock | ActionsBlock | SourceBlock | TilesBlock | ProgressBlock | StreakBlock | TimelineBlock | FlipBlock | HeatmapBlock
-  | CalloutBlock | TableBlock | ListBlock | ChecklistBlock | CalculatorBlock
+  | CalloutBlock | TableBlock | ListBlock | ChecklistBlock | CalculatorBlock | FormBlock
   | HeadingBlock | TextBlock | BadgeBlock | ButtonBlock | LinkBlock | ImageBlock | StatBlock | BarBlock | DividerBlock
   | ContainerBlock;
 
@@ -50,7 +52,7 @@ const READERS: Record<string, (raw: any, here: Trail) => Block | null> = {
   progress: readProgress, streak: readStreak, timeline: readTimeline, flip: readFlip, heatmap: readHeatmap,
   callout: readCallout, table: readTable, list: readList, checklist: readChecklist,
   ranked: readRankedList, "ranked list": readRankedList, ranking: readRankedList,
-  calculator: readCalculator,
+  calculator: readCalculator, form: readForm,
   heading: readHeading, text: readText, badge: readBadge, button: readButton, link: readLink, image: readImage,
   stat: readStat, bar: readBar, divider: readDivider,
 };

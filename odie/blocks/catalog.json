@@ -150,6 +150,15 @@
         "outputs": [{"label": "Monthly EMI", "formula": "emi(p, r, n)", "unit": "₹"}, {"label": "Total interest", "formula": "emi(p, r, n) * n * 12 - p", "unit": "₹"}]}
     },
     {
+      "kind": "form",
+      "for": "A small form the user fills in and sends: dropdowns, radio buttons, checkboxes, text and sliders, prefilled with your best guess.",
+      "use_when": "You need two or more answers from the user at once: you're unsure what they mean, you're brainstorming options with them, or you're gathering choices before making something (video, podcast, research). Prefill every field with your best suggestion. Not for a single yes/no or one obvious next step: use actions. The user's answer comes back as a message with an odie-form-answer block: read values by field id.",
+      "fields": "id, title. fields ≤12: {id, kind, label, value, group, required}. select, radio: options [text or {value, label, note}]. checkbox: options, value a list. slider: min, max, step, unit. text: multiline.",
+      "example": {"type": "form", "id": "trip", "title": "Weekend", "fields": [{"id": "where", "kind": "select", "label": "Where", "value": "Hills", "options": ["Hills", "Beach"]},
+                                                                       {"id": "pace", "kind": "radio", "label": "Pace", "value": "Easy", "options": ["Easy", "Packed"]},
+                                                                       {"id": "spend", "kind": "slider", "label": "Budget", "min": 5, "max": 30, "value": 12, "unit": "k"}]}
+    },
+    {
       "kind": "callout",
       "for": "A tinted box with an icon: a warning, a tip or the one-line takeaway.",
       "use_when": "A safety or money warning, a practical tip, the verdict after a comparison. One per reply.",

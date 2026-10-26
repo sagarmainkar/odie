@@ -68,6 +68,7 @@ def visuals_prompt() -> str:
     """The catalogue as it sits in the system prompt, on every request (2026-10-12): a heading, one line on when to
     draw, then catalog_text(). It used to be the visuals skill, loaded mid-turn (by the model, or preloaded for
     questions that looked drawable), which changed what the model had already read and broke every provider's prompt
-    cache; in the system prompt it's read once and then comes from the cache. About 3,300 tokens."""
+    cache; in the system prompt it's read once and then comes from the cache. About 4,000 tokens (26 Oct
+    2026, with the form); tests/test_blocks_catalog.py holds it to that."""
     return (f"{VISUALS_HEADING}\nUse a block only when it reads better than prose, with a sentence or two of text. Write "
             "the JSON exactly as shown. Use only real facts (from tools or the user).\n\n" + catalog_text())

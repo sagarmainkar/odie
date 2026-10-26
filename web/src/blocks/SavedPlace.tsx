@@ -1,11 +1,14 @@
 // Where a drawn fence lives, so its blocks know where to save what the user does to them (a checklist's ticks).
 // Chat provides the reply; each fence in it adds which fence it is. The gallery provides nothing: ticks stay local.
 import { createContext, useContext, useEffect, useRef, useState } from "react";
+import { answeredState, readSavedAnswer, type Answered, type FormValues } from "./formAnswer";
+import type { FormBlock } from "./parse/form";
 import { loadReply, readTicks, saveSoon, ticksAfterLoad, toggleTick, type Reply } from "./savedState";
 
-/** The chat reply being drawn: its session and key (both missing for a reply the server hasn't named), its text, and
- *  whether it is still streaming in (a diagram waits for the whole reply). */
-export type ReplyInfo = { sessionId?: string; messageKey?: string; text: string; streaming?: boolean };
+/** The chat reply being drawn: its session and key (both missing for a reply the server hasn't named), its text,
+ *  whether it is still streaming in (a diagram waits for the whole reply), and the form answers the user's messages
+ *  after it carry, by form id (a form whose saved answer is missing finds it there). */
+export type ReplyInfo = { sessionId?: string; messageKey?: string; text: string; streaming?: boolean; answers?: Record<string, Answered> };
 export const ReplyPlace = createContext<ReplyInfo | null>(null);
 
 /** Where one fence's blocks save: its reply (null: don't save) and which fence of the reply it is, from 0. */
@@ -61,4 +64,39 @@ export function useSavedTicks(path: string, starting: number[], count: number): 
     if (sessionId && messageKey) saveSoon({ sessionId, messageKey }, blockPath, next);
   }
   return [ticks, tap];
+}
+
+/**
+ * A form's answer, saved with its reply. Returns the answer to show (null: the form is live) and what Send does to
+ * keep it. On drawing, the answer saved with the reply wins; without one, an answer a later message carries (the save
+ * failed, or another device sent it) is shown instead (answeredState). Sending saves {sent_at, values} at once: never
+ * the options, which the reply itself holds.
+ */
+export function useAnsweredForm(form: FormBlock): [Answered | null, (values: FormValues) => void] {
+  const { reply, fence } = useContext(FencePlace);
+  const later = useContext(ReplyPlace)?.answers?.[form.id];
+  const [saved, setSaved] = useState<Answered | null>(null);
+  const formNow = useRef(form);  // the newest form, read when its saved answer arrives
+  useEffect(() => { formNow.current = form; });  // runs before the load below, on every draw
+  const blockPath = `${fence}/${form.path}`;
+  const sessionId = reply?.sessionId;
+  const messageKey = reply?.messageKey;
+
+  useEffect(() => {
+    if (!sessionId || !messageKey) return;
+    let live = true;
+    loadReply({ sessionId, messageKey }).then((values) => {
+      if (!live) return;
+      const found = readSavedAnswer(values[blockPath], formNow.current);
+      if (found) setSaved((now) => now ?? found);  // a Send meanwhile is newer
+    }).catch(() => { /* offline: a later message's answer, or the live form */ });
+    return () => { live = false; };
+  }, [sessionId, messageKey, blockPath]);  // not `form`: a parent re-render makes a new object, not a new form
+
+  function markSent(values: FormValues) {
+    const at = Date.now();
+    setSaved({ at, values });
+    if (sessionId && messageKey) saveSoon({ sessionId, messageKey }, blockPath, { sent_at: new Date(at).toISOString(), values }, 0);
+  }
+  return [answeredState(saved, later), markSent];
 }

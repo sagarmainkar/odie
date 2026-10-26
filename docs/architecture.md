@@ -40,6 +40,25 @@ flowchart LR
 | Setup | `odie/setup/` | The first-run conversation: the brain check (`brain_check.py`), names, notes, search, voice, apps, phone. |
 | Command | `odie/cli.py` | `odie serve | start | stop | status | pair | logs | update | doctor | uninstall`. |
 
+## Forms in a reply
+
+When the model needs two or more answers at once (it isn't sure what the user means, it is brainstorming options
+with them, or it is gathering choices before making a video, a podcast or a report), it writes a `form` block in its
+```` ```odie-blocks ```` fence instead of asking in prose. A form holds up to 12 fields of five kinds: **select**
+(a dropdown), **radio**, **checkbox** (several may be ticked), **text** and **slider**, each with an `id`, a label
+and the model's best guess already filled in; fields can share a `group` heading, and an option can carry a short
+note and a ▶ preview of one of Odie's voices. Often the user just presses Send.
+
+Send posts an ordinary user message with two parts: a line people read ("Where: Hills · Pace: Easy · Budget: 12 k"),
+which is all the bubble shows, and an ```` ```odie-form-answer ```` fence holding every value **by field id**, which
+is what the model reads. The form then turns grey with the choices still showing and "✓ Sent 15:42"; that answered
+state is saved with the reply (the same block-state store a checklist's ticks use), so it survives a reload and shows
+the same on the phone. If the save was lost, the form finds its answer in the later message instead. Server-side
+lookups (notes, add-ons, memory) and thread titles use only the line, never the fence (`odie/blocks/answers.py`).
+
+Forms work in the web app and on the phone. The Mac app will catch up separately; until then it shows the raw
+answer fence in your own bubbles.
+
 ## A turn, end to end
 
 1. The phone posts a message; the runner adds a short context note (time, what's open) and, when the question

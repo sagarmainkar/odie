@@ -207,7 +207,8 @@ class Store:
                      (key, json.dumps(value, default=str)))
 
     # block state: what the user did to a block in a chat reply (a checklist's ticks), by reply and place in the reply
-    BLOCK_VALUE_MAX = 4000      # characters of JSON for one block's value (a 40-item checklist's ticks need ~120)
+    BLOCK_VALUE_MAX = 16000     # characters of JSON for one block's value: a 40-item checklist's ticks need ~120, a sent
+                                # 12-field form with long text answers ~7,000 (raised from 4,000, 26 Oct 2026)
     BLOCK_PATHS_PER_REPLY = 50  # blocks with a saved value in one reply
 
     def block_state(self, session_id: str, message_key: str) -> dict[str, Any]:

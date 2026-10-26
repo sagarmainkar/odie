@@ -400,6 +400,19 @@ def tool_error_as_result(tool, args, tool_context, error: Exception) -> dict:
     return {"error": f"{type(error).__name__}: {first_line}"[:300]}
 
 
+
+def previous_questions(history: list[dict]) -> list[str]:
+    """The last two things the user said, newest first, as lookups should read them: a form's answer as its line only
+    (without_form_answers), empty messages skipped.
+    [ask "Plan a trip", answer "Where: Hills" + its fence, "Thanks"] -> ["Thanks", "Where: Hills"]."""
+    from odie.blocks.answers import without_form_answers
+    said = []
+    for h in history:
+        if h["role"] != "user" or not h["text"]:
+            continue
+        said.append(without_form_answers(h["text"]))
+    return said[-2:][::-1]
+
 class OdieRunner:
     def __init__(self, store: Store):
         s = config.settings
@@ -462,8 +475,7 @@ class OdieRunner:
         if session_id not in self._recent:
             s = config.settings
             sess = await self.session_service.get_session(app_name=s.app_name, user_id=s.user_id, session_id=session_id)
-            texts = [h["text"] for h in events_to_history(sess.events if sess else []) if h["role"] == "user" and h["text"]]
-            self._recent[session_id] = texts[-2:][::-1]
+            self._recent[session_id] = previous_questions(events_to_history(sess.events if sess else []))
         return list(self._recent[session_id])
 
     async def _words_of(self, session_id: str, invocation_id: str) -> str:
@@ -644,7 +656,9 @@ class OdieRunner:
         was_private = False
         try:
             session_id = await self._ensure_session(session_id)
-            trailer = self._prepare_prompt(session_id, text) + await self._visual_nudge(session_id, text)
+            from odie.blocks.answers import without_form_answers
+            words = without_form_answers(text)  # a form's answer: lookups use its line, not the fence the model reads
+            trailer = self._prepare_prompt(session_id, words) + await self._visual_nudge(session_id, text)
             parts: list[types.Part] = []
             markers = ""
             for iid in images or []:
@@ -657,12 +671,12 @@ class OdieRunner:
             if config.settings.prefetch:
                 from odie.agent import prefetch
                 previous = await self._recent_questions(session_id)
-                blocks = await prefetch.gather(text, previous)
-                if prefetch.should_search(text):
+                blocks = await prefetch.gather(words, previous)
+                if prefetch.should_search(words):
                     kinds = [o.split(":")[0].strip("[") for o, _ in prefetch.block_marks() if o in blocks]
                     self.store.audit("agent", "prefetch", result_summary=f"chars={len(blocks)} blocks={','.join(kinds) or 'none'}",
                                      session_id=session_id)
-            self._remember_question(session_id, text)
+            self._remember_question(session_id, words)
             from odie.agent import turn as turn_words
             turn_token = turn_words.USER_TEXT.set(text)  # the user's own words, for tools that act only when asked
             from odie.signin import guard as signin_guard  # the signed-in sites this chat has read (signed-in browsing)

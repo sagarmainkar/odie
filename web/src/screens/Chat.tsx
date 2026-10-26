@@ -1,6 +1,6 @@
 import { AnimatePresence, motion } from "framer-motion";
 import { badge } from "../watch";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { useLive } from "../live";
 import { has, useCaps, userCountry } from "../capabilities";
@@ -28,6 +28,7 @@ import { Blocks } from "../blocks/Blocks";
 import { BlocksFence } from "../blocks/BlocksFence";
 import { ReplyPlace } from "../blocks/SavedPlace";
 import { ChatActions } from "../blocks/ChatActions";
+import { answersAfterEach } from "../blocks/formAnswer";
 import { LocationAsk } from "../components/LocationAsk";
 import { MarkdownSpan } from "../blocks/InlineText";
 import { remarkInline } from "../blocks/inlineSyntax";
@@ -561,6 +562,7 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
   if (listening) micPlaceholder = "Listening… tap the mic to finish";
   if (transcribing) micPlaceholder = "Writing it down…";
   const lastOdie = [...msgs].reverse().find((m) => m.role === "odie");
+  const laterAnswers = useMemo(() => answersAfterEach(msgs), [msgs]);  // a form finds its answer in a later message
 
   return (
     <div className="flex h-full">
@@ -676,7 +678,7 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
                           const shown = plainMath(tidyStrayBlocks(liftOneLineFences(splitConnect(m.text).text)));
                           return (
                             <PrivateReply.Provider value={!!m.private}>
-                              <ReplyPlace.Provider value={{ sessionId: m.sid, messageKey: m.key, text: shown, streaming }}>
+                              <ReplyPlace.Provider value={{ sessionId: m.sid, messageKey: m.key, text: shown, streaming, answers: laterAnswers[i] }}>
                                 {/* @container: blocks in the reply size their grids to the bubble (wideColumns.ts), not the window. */}
                                 <div data-bubble={m.id} className={`glass rounded-[8px_26px_26px_26px] px-4 py-3.5 md @container ${streaming ? "is-streaming" : ""}`}><ReactMarkdown remarkPlugins={[remarkGfm, remarkInline]} components={mdComponents}>{shown}</ReactMarkdown></div>
                               </ReplyPlace.Provider>

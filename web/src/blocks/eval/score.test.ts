@@ -89,3 +89,37 @@ describe("summarise", () => {
     expect(summarise([pass, fail])).toEqual({ pass: 1, partial: 0, fail: 1, total: 2, dropped: 0 });
   });
 });
+
+describe("scoreReply, for a form", () => {
+  const wantsForm = { expect: [["form"]] };
+  const good = { type: "form", id: "trip", title: "Weekend", fields: [
+    { id: "where", kind: "select", label: "Where", value: "Hills", options: ["Hills", "Beach"] },
+    { id: "spend", kind: "slider", label: "Budget", min: 5, max: 30, value: 12, unit: "k" }] };
+
+  it("passes a good form as a form", () => {
+    const s = scoreReply("A few choices first.\n" + fence([good]), wantsForm);
+    expect(s.verdict).toBe("pass");
+    expect(s.kinds).toEqual(["form"]);
+    expect(s.dropped).toEqual([]);
+  });
+
+  it("is a partial when the form is drawn but the reader dropped a slider whose min isn't below its max, and a repeated id", () => {
+    const broken = { ...good, fields: [...good.fields,
+      { id: "pace", kind: "slider", label: "Pace", min: 10, max: 10 },
+      { id: "where", kind: "radio", label: "Where again", options: ["Hills"] }] };
+    const s = scoreReply(fence([broken]), wantsForm);
+    expect(s.verdict).toBe("partial");
+    expect(s.kinds).toEqual(["form"]);
+    expect(s.dropped).toEqual([
+      { path: "f1:0.fields.2", why: "slider needs min below max" },
+      { path: "f1:0.fields.3", why: 'field id "where" is used twice' },
+    ]);
+  });
+
+  it("fails a form with no fields: nothing is drawn, and the reader says why", () => {
+    const s = scoreReply(fence([{ type: "form", id: "trip", title: "Weekend" }]), wantsForm);
+    expect(s.verdict).toBe("fail");
+    expect(s.kinds).toEqual([]);
+    expect(s.dropped).toEqual([{ path: "f1:0", why: "form needs fields" }]);
+  });
+});
