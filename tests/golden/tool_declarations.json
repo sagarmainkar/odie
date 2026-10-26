@@ -897,6 +897,21 @@
     }
   },
   {
+    "description": "The voices for an audio story's cast form, for the voice engine chosen in Settings. Call it before the cast\nform; put the options straight into its selects.\naccent: \"American\", \"British\" or \"Indian\" (what the user chose). Without one, it returns the accents this engine\noffers, for the accent question.\nReturns {\"engine\", \"accent\", \"voices\": form options for that accent, \"characters\": Phonon's character voices (a\npirate captain, a witch, an old keeper; [] on other engines)}. Each option is {value, label, note, preview}: use\n`value` as the voice in make_audio_story. {\"error\": …}: choose as it says.",
+    "name": "story_voices",
+    "parameters_json_schema": {
+      "properties": {
+        "accent": {
+          "default": "",
+          "title": "Accent",
+          "type": "string"
+        }
+      },
+      "title": "story_voicesParams",
+      "type": "object"
+    }
+  },
+  {
     "description": "Add an open thread to the user's ledger. kind: todo, reminder, followup, waiting. due / next_check: ISO datetime like 2026-10-01T11:00 (today's date from the context; naive times are the user's timezone). A reminder fires in the chat at `due`. source_ref: a message, thread or event id if there is one.",
     "name": "task_add",
     "parameters_json_schema": {
