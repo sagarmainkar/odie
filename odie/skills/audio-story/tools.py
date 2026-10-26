@@ -242,16 +242,17 @@ def sound_level_problem(level) -> str | None:
 
 
 def checked_voices(store, engine: str, cast: list[dict]) -> list[dict] | str:
-    """Each member's voice checked in the engine chosen in Settings, by id or label, and kept as its id; the problem
-    in words for the first that isn't there: "The keeper's voice: 'marin' isn't one of Kokoro's voices… Call
-    story_voices for the voices to choose from."."""
+    """Each member's voice checked in the engine chosen in Settings, by id or label, and kept as its id, with how fast
+    that voice reads (Phonon's character voices are slower); the problem in words for the first that isn't there:
+    "The keeper's voice: 'marin' isn't one of Kokoro's voices… Call story_voices for the voices to choose from."."""
     checked = []
     for member in cast:
         try:
             chosen = voice.voice_in_chosen_engine(store, member["voice"])
         except ValueError as e:
             return f"{member['name']}'s voice: {e} {VOICES_FROM}"
-        checked.append({**member, "voice": chosen["id"]})
+        pace = story_writer.words_per_minute(engine, chosen.get("group", ""))
+        checked.append({**member, "voice": chosen["id"], "pace": pace})
     return checked
 
 

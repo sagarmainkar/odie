@@ -179,8 +179,8 @@ def test_the_length_is_checked_within_ten_percent():
     assert writer.length_problem(writer.parse_script(good_script()), 2) is None
     short = good_script()
     short["scenes"][1]["lines"] = short["scenes"][1]["lines"][:1]  # 3 + 49.6 + 2.5 + 12.4 = 67.5 s
-    too_short = ("The story is too short: about 1:08 for 2 minutes; anything from 1:48 to 2:12 is fine (about 145 "
-                 "words a minute, plus the pauses, leads and transitions). Add a beat or a line of dialogue to a scene.")
+    too_short = ("The story is too short: about 1:08 for 2 minutes; anything from 1:48 to 2:12 is fine (at these "
+                 "voices' pace, plus the pauses, leads and transitions). Add a beat or a line of dialogue to a scene.")
     assert problems(short) == [too_short]
     long = good_script()
     long["scenes"][1]["lines"] = long["scenes"][1]["lines"] * 2  # 117.1 + 62 = 179.1 s
@@ -317,24 +317,39 @@ def test_the_level_words_are_forgiving_about_spelling():
     assert writer.parse_script(script).scenes[1].bed.level == "up front"
 
 
-def test_each_engine_has_its_own_pace():
-    """Phonon read a real 3-minute story at 180 words a minute (the narrator 188, a character voice 160); an engine
-    not measured keeps a storyteller's 145."""
-    assert writer.words_per_minute("phonon") == 180
+def test_each_voice_reads_at_its_own_pace():
+    """Phonon read a real story at 185 words a minute in its British and American voices and at about 140 in its
+    character voices (Old Mortlake 139, The Thing Under the Stairs 136); an engine not measured keeps a storyteller's
+    145."""
+    assert writer.words_per_minute("phonon") == 185
+    assert writer.words_per_minute("phonon", "Characters") == 145
     assert writer.words_per_minute("kokoro") == writer.DEFAULT_WORDS_PER_MINUTE == 145
     assert writer.words_per_minute("") == 145
 
 
-async def test_a_phonon_story_is_written_and_checked_at_phonons_pace():
-    """The same 29-word lines are 9.7 s each at 180 words a minute: the two-minute script comes out at 1:36, too
-    short; the prompt asks for 360 words."""
+def test_a_story_is_sized_by_each_speakers_pace():
+    """The same script: the narrator's 3 lines at 185 words a minute (9.4 s each) and the keeper's 6 at 145 (12 s):
+    3 + 3 × 9.8 + 6 × 12.4 + 2.5 = 109.3 s, within 1:48–2:12 for 2 minutes."""
+    paces = {"narrator": 185, "keeper": 145}
+    story = writer.parse_script(good_script())
+    assert writer.estimated_seconds(story, paces) == pytest.approx(109.3, abs=0.1)
+    assert writer.check_script(good_script(), CATALOGUE, CAST, 2, paces=paces) == []
+    assert writer.speaker_paces(writer.Request(genre="x", premise="y", cast=[{**CAST[0], "pace": 185}, CAST[1]],
+                                               narrator="narrator", accent="British", minutes=2, engine="phonon")) == {
+        "narrator": 185, "keeper": 185}  # a member without its own pace reads at the engine's
+
+
+async def test_a_phonon_story_is_written_and_checked_at_its_voices_pace():
+    """At 185 words a minute for both speakers the two-minute script comes out at 1:34, too short; the prompt asks
+    for 370 words and says how fast each speaker reads."""
     async def script(turn):
         await turn.submit(good_script())
         await turn.submit(good_script())
 
     turn = Turn(script)
     written = await write(turn, engine="phonon")
-    assert "2 minutes, about 360 spoken words (180 a minute;" in turn.prompt
-    assert turn.said[0]["error"].startswith("The story is too short: about 1:36 for 2 minutes")
-    assert "about 180 words a minute" in turn.said[0]["error"]
-    assert written.note.startswith("The story came out at about 1:36 for 2 minutes")
+    assert "2 minutes, about 370 spoken words" in turn.prompt
+    assert "- keeper: The keeper (the old lighthouse keeper); reads about 185 words a minute" in turn.prompt
+    assert turn.said[0]["error"].startswith("The story is too short: about 1:34 for 2 minutes")
+    assert "at these voices' pace" in turn.said[0]["error"]
+    assert written.note.startswith("The story came out at about 1:34 for 2 minutes")

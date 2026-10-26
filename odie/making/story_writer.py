@@ -26,11 +26,13 @@ INSTRUCTION = Path(__file__).with_name("story_writer.md").read_text(encoding="ut
 
 # How a script's lines become time. The making step (odie.making.story) lays the story out with the same numbers, so
 # the length checked here is the length made.
-# How fast each engine's voices read a line, in words a minute (the pauses come on top). Phonon's, measured on a real
-# 3-minute story: 180 overall (the narrator 188, a character voice 160); short plain sentences read faster (166 to
-# 246 by voice), story lines with their commas and turns slower. Kokoro and OpenAI aren't measured yet (no Kokoro
-# server on the Mac this was tuned on): they keep a storyteller's 145, the pace the brief asked for.
-PACE = {"phonon": 180}
+# How fast each engine's voices read a story's lines, in words a minute (the pauses come on top). Phonon's, measured
+# on two real 3-minute stories: its British and American voices 170–194 (Hugh 188 and 194, Edwin 183 and 170), its
+# character voices much slower (Old Mortlake 139, The Thing Under the Stairs 136, Morwenna of the Deep 160). Kokoro and
+# OpenAI aren't measured yet (no Kokoro server on the Mac this was tuned on): they keep a storyteller's 145, the pace
+# the brief asked for.
+PACE = {"phonon": 185}
+GROUP_PACE = {("phonon", "Characters"): 145}
 DEFAULT_WORDS_PER_MINUTE = 145
 LENGTH_SPREAD = 0.10  # a story within 10% of its minutes is the right length
 LINE_GAP = 0.4  # seconds after a line that gives no pause_after
@@ -475,50 +477,74 @@ def parse_script(script: dict) -> Story:
 
 # The length.
 
-def words_per_minute(engine: str) -> int:
-    """How fast an engine's voices read (PACE), else a storyteller's DEFAULT_WORDS_PER_MINUTE: "phonon" -> 180;
-    "kokoro" -> 145; "" -> 145."""
+def words_per_minute(engine: str, group: str = "") -> int:
+    """How fast a voice reads: its group's pace on that engine (GROUP_PACE), else the engine's (PACE), else a
+    storyteller's DEFAULT_WORDS_PER_MINUTE. ("phonon", "British · Male") -> 185; ("phonon", "Characters") -> 145;
+    ("kokoro", "female") -> 145."""
+    by_group = GROUP_PACE.get((engine, group))
+    if by_group is not None:
+        return by_group
     return PACE.get(engine, DEFAULT_WORDS_PER_MINUTE)
 
 
-def line_seconds(line, pace: int = DEFAULT_WORDS_PER_MINUTE) -> float:
-    """The time a line takes in the story: a spoken line, its words at `pace` a minute plus its pause (29 words at
-    145 -> 12 s + 0.4; at 180 -> 9.7 s + 0.4); a cue, its lead."""
+def speaker_paces(request: Request) -> dict[str, int]:
+    """Each speaker's pace, by cast id: the pace make_audio_story gave the member for its voice, else the engine's.
+    Hugh (185) narrating, Old Mortlake (145) as the keeper -> {"narrator": 185, "keeper": 145}."""
+    paces = {}
+    for member in request.cast:
+        pace = member.get("pace")
+        if not pace:
+            pace = words_per_minute(request.engine)
+        paces[member["id"]] = int(pace)
+    return paces
+
+
+def pace_of(paces: dict[str, int] | None, speaker: str) -> int:
+    """A speaker's pace from `paces`, a storyteller's when it isn't there: ({"keeper": 145}, "keeper") -> 145; (None,
+    "keeper") -> 145."""
+    if not paces:
+        return DEFAULT_WORDS_PER_MINUTE
+    return paces.get(speaker, DEFAULT_WORDS_PER_MINUTE)
+
+
+def line_seconds(line, paces: dict[str, int] | None = None) -> float:
+    """The time a line takes in the story: a spoken line, its words at its speaker's pace plus its pause (29 words at
+    145 -> 12 s + 0.4; at 185 -> 9.4 s + 0.4); a cue, its lead."""
     if isinstance(line, Speech):
-        return len(line.text.split()) * 60 / pace + line.pause_after
+        return len(line.text.split()) * 60 / pace_of(paces, line.speaker) + line.pause_after
     return line.lead
 
 
-def estimated_seconds(story: Story, pace: int = DEFAULT_WORDS_PER_MINUTE) -> float:
-    """How long the story plays at `pace` words a minute: every line's time and every transition's."""
+def estimated_seconds(story: Story, paces: dict[str, int] | None = None) -> float:
+    """How long the story plays, each speaker at their pace: every line's time and every transition's."""
     total = 0.0
     for scene in story.scenes:
-        total += sum(line_seconds(line, pace) for line in scene.lines)
+        total += sum(line_seconds(line, paces) for line in scene.lines)
         if scene.transition is not None:
             total += scene.transition.seconds
     return total
 
 
-def length_problem(story: Story, minutes: int, pace: int = DEFAULT_WORDS_PER_MINUTE) -> str | None:
-    """Decides whether the story is about as long as asked at `pace` words a minute, within 10%: 2 minutes -> 1:48 to
-    2:12 fine. 117 s -> None; 67.5 s -> "The story is too short: about 1:08 for 2 minutes; anything from 1:48 to 2:12
+def length_problem(story: Story, minutes: int, paces: dict[str, int] | None = None) -> str | None:
+    """Decides whether the story is about as long as asked, each speaker at their pace, within 10%: 2 minutes -> 1:48
+    to 2:12 fine. 117 s -> None; 67.5 s -> "The story is too short: about 1:08 for 2 minutes; anything from 1:48 to 2:12
     is fine (…). Add a beat or a line of dialogue to a scene."; 179 s -> "… too long … Cut a beat or shorten the
     lines."."""
     target = minutes * 60
     lowest = target * (1 - LENGTH_SPREAD)
     highest = target * (1 + LENGTH_SPREAD)
-    seconds = estimated_seconds(story, pace)
+    seconds = estimated_seconds(story, paces)
     if lowest <= seconds <= highest:
         return None
     said = (f"about {clock(seconds)} for {minutes} {minutes_word(minutes)}; anything from {clock(lowest)} to "
-            f"{clock(highest)} is fine (about {pace} words a minute, plus the pauses, leads and transitions).")
+            f"{clock(highest)} is fine (at these voices' pace, plus the pauses, leads and transitions).")
     if seconds < lowest:
         return f"The story is too short: {said} Add a beat or a line of dialogue to a scene."
     return f"The story is too long: {said} Cut a beat or shorten the lines."
 
 
 def check_script(script, catalogue: list[dict], cast: list[dict], minutes: int,
-                 narrator: str = NARRATOR_ID, pace: int = DEFAULT_WORDS_PER_MINUTE) -> list[str]:
+                 narrator: str = NARRATOR_ID, paces: dict[str, int] | None = None) -> list[str]:
     """Decides whether Odie can render the script, as the problems to fix (empty: it can): every speaker in the cast,
     every sound in the library, known levels, at most one bed and one music bed in a scene, pauses and leads within
     limits, the prelude opening on sound and then the narrator; and once all that holds, the length. The lighthouse
@@ -528,7 +554,7 @@ def check_script(script, catalogue: list[dict], cast: list[dict], minutes: int,
     found = script_problems(script, catalogue, cast, narrator)
     if found:
         return found
-    problem = length_problem(parse_script(script), minutes, pace)
+    problem = length_problem(parse_script(script), minutes, paces)
     if problem:
         return [problem]
     return []
@@ -541,7 +567,8 @@ class LengthOnce:
     refused: bool = False
     note: str = ""
 
-    def problem_to_send(self, problem: str | None, story: Story, minutes: int, pace: int) -> str | None:
+    def problem_to_send(self, problem: str | None, story: Story, minutes: int,
+                        paces: dict[str, int] | None) -> str | None:
         """Decides whether a length problem goes back to the writer: none -> None; the first -> the problem (the
         writer fixes it); any after that -> None, the script is accepted, and the note says how long it came out:
         "The story came out at about 1:08 for 2 minutes (asked once to fix its length).". """
@@ -550,23 +577,35 @@ class LengthOnce:
         if not self.refused:
             self.refused = True
             return problem
-        self.note = (f"The story came out at about {clock(estimated_seconds(story, pace))} for {minutes} "
+        self.note = (f"The story came out at about {clock(estimated_seconds(story, paces))} for {minutes} "
                      f"{minutes_word(minutes)} (asked once to fix its length).")
         return None
 
 
 # The writer's turn.
 
-def cast_lines(cast: list[dict]) -> str:
-    """The cast as the writer reads it: "- keeper: The keeper (the old lighthouse keeper)"."""
+def cast_lines(cast: list[dict], paces: dict[str, int]) -> str:
+    """The cast as the writer reads it, with how fast each reads: "- keeper: The keeper (the old lighthouse keeper);
+    reads about 145 words a minute"."""
     lines = []
     for member in cast:
         about = text_or_empty(member.get("about")).strip()
         line = f"- {member['id']}: {member.get('name', member['id'])}"
         if about:
             line += f" ({about})"
+        line += f"; reads about {pace_of(paces, member['id'])} words a minute"
         lines.append(line)
     return "\n".join(lines)
+
+
+def story_pace(paces: dict[str, int], narrator: str) -> float:
+    """The pace the whole story is sized by: the narrator, who speaks about half of it, and the others' average for
+    the rest. Narrator 185, two characters at 145 and 185 -> (185 + 165) / 2 = 175; the narrator alone -> 185."""
+    narrator_pace = pace_of(paces, narrator)
+    others = [pace for speaker, pace in paces.items() if speaker != narrator]
+    if not others:
+        return narrator_pace
+    return (narrator_pace + sum(others) / len(others)) / 2
 
 
 def narrator_line(narrator: str) -> str:
@@ -579,19 +618,19 @@ def narrator_line(narrator: str) -> str:
 
 def prompt_for(request: Request, listing: str) -> str:
     """The writer's whole message: the genre, the story, the cast and narrator, the accent, the length in minutes and
-    words at the engine's pace (2 minutes -> about 290 spoken words; on Phonon about 360), the chat's brief, and the
-    sound list."""
+    words at the voices' pace (story_pace; 2 minutes -> about 290 spoken words; on Phonon's accent voices about 370),
+    the chat's brief, and the sound list."""
     brief = request.brief.strip()
     if not brief:
         brief = "(none)"
-    pace = words_per_minute(request.engine)
-    words = request.minutes * pace
+    paces = speaker_paces(request)
+    words = round(request.minutes * story_pace(paces, request.narrator))
     return (f"Genre: {request.genre}\n"
             f"The story: {request.premise}\n"
             f"Accent: {request.accent} (the voices carry it; write the dialogue to suit)\n"
-            f"Length: {request.minutes} {minutes_word(request.minutes)}, about {words} spoken words ("
-            f"{pace} a minute; the pauses, leads and transitions add to it).\n\n"
-            f"Cast (speaker ids):\n{cast_lines(request.cast)}\n"
+            f"Length: {request.minutes} {minutes_word(request.minutes)}, about {words} spoken words (at the voices' "
+            f"pace below; the pauses, leads and transitions add to it).\n\n"
+            f"Cast (speaker ids):\n{cast_lines(request.cast, paces)}\n"
             f"{narrator_line(request.narrator)}\n\n"
             f"Brief from the chat:\n{brief}\n\n"
             f"Sounds (use these ids exactly):\n{listing}\n\n"
@@ -610,8 +649,8 @@ def tools_for(desk: harness.Desk, request: Request, catalogue: list[dict]) -> li
         if found:
             return " ".join(found) + " " + FIX_ALL
         story = parse_script(json.loads(unfenced(text)))
-        pace = words_per_minute(request.engine)
-        return length.problem_to_send(length_problem(story, request.minutes, pace), story, request.minutes, pace)
+        paces = speaker_paces(request)
+        return length.problem_to_send(length_problem(story, request.minutes, paces), story, request.minutes, paces)
 
     def accept(fields: dict) -> Written:
         script = json.loads(unfenced(text_or_empty(fields["script"])))

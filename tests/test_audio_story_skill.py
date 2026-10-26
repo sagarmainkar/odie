@@ -160,8 +160,8 @@ async def test_a_good_story_is_queued_with_its_cast_and_level(queued):
     assert job.folder == workspace() / story.FOLDER / "the-lighthouse-at-rook-point" and job.folder.is_dir()
     request = job.data["request"]
     assert request == story_writer.Request(genre="mystery", premise="A keeper hears a ship that isn't there.",
-                                           cast=CAST, narrator="narrator", accent="British", minutes=5,
-                                           brief="Slow and eerie.", engine="kokoro")
+                                           cast=[{**member, "pace": 145} for member in CAST], narrator="narrator",
+                                           accent="British", minutes=5, brief="Slow and eerie.", engine="kokoro")
     assert job.data["sound_level"] == 25
     assert "The keeper" in job.brief and "bm_george" in job.brief  # brief.md keeps what was asked
 
