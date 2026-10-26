@@ -52,11 +52,14 @@ def test_phonon_voices_for_an_accent_with_characters_and_previews(store, monkeyp
     asyncio.run(voice.phonon_voices(transport=phonon_listing(["Zoey", "Easton", "Maeve", "Alfie", "Captain Silas Blackwater", "Old Mortlake"])))
     asyncio.run(voice.phonon_available(transport=phonon_listing([])))
     got = asyncio.run(tools()["story_voices"].func(accent="British"))
+    assert set(got) == {"engine", "accent", "options"}  # one list, pasted as it is into every voice select
     assert got["engine"] == "phonon" and got["accent"] == "British"
-    assert [o["value"] for o in got["voices"]] == ["Maeve", "Alfie"]
-    assert got["voices"][0]["note"].startswith("woman · ") and got["voices"][1]["note"].startswith("man · ")
-    assert all(len(o["note"]) <= 80 for o in got["voices"] + got["characters"])
-    captain = next(o for o in got["characters"] if o["value"] == "Captain Silas Blackwater")
+    options = got["options"]
+    assert [o["value"] for o in options] == ["Maeve", "Alfie", "Captain Silas Blackwater", "Old Mortlake"]
+    assert options[0]["note"].startswith("woman · ") and options[1]["note"].startswith("man · ")
+    assert options[2]["note"].startswith("character voice")  # the Characters come after the accent's voices
+    assert all(len(o["note"]) <= 80 for o in options) and all(o["preview"] for o in options)
+    captain = options[2]
     assert captain["preview"] == "/api/voice/preview/phonon/Captain%20Silas%20Blackwater"  # spaces encoded for the ▶
     assert captain["label"] == "Captain Silas Blackwater"
 
@@ -72,23 +75,22 @@ def test_the_phonon_list_is_asked_of_ollama_first(store, monkeypatch):
     monkeypatch.setattr(voice, "phonon_voices", fake_voices)
     monkeypatch.setattr(voice, "phonon_here", lambda: True)
     got = asyncio.run(tools()["story_voices"].func(accent="American"))
-    assert asked and [o["value"] for o in got["voices"]] == ["Zoey"]
+    assert asked and [o["value"] for o in got["options"]] == ["Zoey"]
 
 
 def test_kokoro_has_indian_voices_and_no_characters(store, monkeypatch):
     choose(store, "kokoro", monkeypatch)
     got = asyncio.run(tools()["story_voices"].func(accent="Indian"))
-    assert got["engine"] == "kokoro" and [o["value"] for o in got["voices"]] == ["hf_alpha", "hf_beta", "hm_omega", "hm_psi"]
-    assert got["characters"] == []
-    assert got["voices"][0] == {"value": "hf_alpha", "label": "Alpha", "note": "woman", "preview": "/api/voice/preview/kokoro/hf_alpha"}
+    assert got["engine"] == "kokoro" and [o["value"] for o in got["options"]] == ["hf_alpha", "hf_beta", "hm_omega", "hm_psi"]
+    assert got["options"][0] == {"value": "hf_alpha", "label": "Alpha", "note": "woman", "preview": "/api/voice/preview/kokoro/hf_alpha"}
 
 
 def test_openai_takes_any_voice_and_adds_the_accent_in_the_story(store, monkeypatch):
     choose(store, "openai", monkeypatch)
     got = asyncio.run(tools()["story_voices"].func(accent="Indian"))
-    assert got["engine"] == "openai" and got["characters"] == []
-    assert {o["value"] for o in got["voices"]} == {v["id"] for v in voice.VOICES}
-    marin = next(o for o in got["voices"] if o["value"] == "marin")
+    assert got["engine"] == "openai"
+    assert {o["value"] for o in got["options"]} == {v["id"] for v in voice.VOICES}
+    marin = next(o for o in got["options"] if o["value"] == "marin")
     assert marin["note"] == "woman · accent added in the story" and marin["preview"] == "/api/voice/preview/openai/marin"
 
 
@@ -201,6 +203,17 @@ async def test_cast_ids_are_made_plain_and_kept_unique(queued):
     assert [m["id"] for m in queued[0].data["request"].cast] == ["narrator", "the-keeper"]
     twice = [CAST[0], {**CAST[1], "id": "narrator"}]
     assert (await make(cast=twice))["error"] == 'Two cast members have the id "narrator": give each their own.'
+
+
+def test_the_skill_asks_the_accent_before_the_cast_and_pastes_the_voice_options():
+    """The voices come for one accent, so the accent is asked with the story, before story_voices(accent) and the cast
+    form; the cast form's selects take story_voices' options as they are, previews and all."""
+    text = (SKILL / "SKILL.md").read_text()
+    story_step = text.index("2. **The story")
+    cast_step = text.index("3. **Cast")
+    assert story_step < text.index("**accent:**", story_step) < cast_step  # asked in step 2
+    assert cast_step < text.index("story_voices(accent)")
+    assert "exactly as `story_voices` gives them" in text and "`preview`" in text
 
 
 def test_the_skill_offers_make_audio_story_and_never_speak():

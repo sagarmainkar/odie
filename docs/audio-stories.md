@@ -12,13 +12,15 @@ Odie runs a short, guided start with forms, and skips any step your message alre
 
 1. **The genre:** horror, mystery, thriller, adventure, fantasy, sci-fi, romance, comedy, a true story, myths and
    folk tales, or a bedtime story; or your own idea.
-2. **The story:** three short pitches for that genre, or your own idea.
-3. **The cast and shape**, in one form:
-   - the accent first (British or American on Phonon; Indian too on Kokoro and OpenAI);
+2. **The story, the accent and the length**, in one form:
+   - three short pitches for that genre, or your own idea;
+   - the accent (British or American on Phonon; Indian too on Kokoro and OpenAI), asked here because the voices on
+     offer depend on it;
+   - the length: 3, 5, 8, 10 or 15 minutes.
+3. **The cast**, in one form:
    - who tells it: a character, in the first person, or an outside storyteller;
    - a voice for each character, suggested and yours to change, each with a ▶ to hear it (on Phonon, the character
      voices too: a pirate captain, a witch, an old keeper);
-   - the length: 3, 5, 8, 10 or 15 minutes;
    - how loud the sound sits under the voices: 10 to 40 %, at 25 %.
 
 Then it's made in the background. A writer writes the script and chooses the sounds like an art director; Odie's

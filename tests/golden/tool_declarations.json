@@ -958,7 +958,7 @@
     }
   },
   {
-    "description": "The voices for an audio story's cast form, for the voice engine chosen in Settings. Call it before the cast\nform; put the options straight into its selects.\naccent: \"American\", \"British\" or \"Indian\" (what the user chose). Without one, it returns the accents this engine\noffers, for the accent question.\nReturns {\"engine\", \"accent\", \"voices\": form options for that accent, \"characters\": Phonon's character voices (a\npirate captain, a witch, an old keeper; [] on other engines)}. Each option is {value, label, note, preview}: use\n`value` as the voice in make_audio_story. {\"error\": …}: choose as it says.",
+    "description": "The voices for an audio story's cast form, for the voice engine chosen in Settings.\naccent: \"American\", \"British\" or \"Indian\", as the user chose it with the story. Without one, it returns the\naccents this engine offers, for that question.\nReturns {\"engine\", \"accent\", \"options\"}: options is the voices for that accent (and, on Phonon, its character\nvoices: a pirate captain, a witch, an old keeper), each {value, label, note, preview}. Paste options exactly as\ngiven as the options of every voice select in the cast form, previews and all; use a `value` as the voice in\nmake_audio_story. {\"error\": …}: choose as it says.",
     "name": "story_voices",
     "parameters_json_schema": {
       "properties": {

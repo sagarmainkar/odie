@@ -1,6 +1,7 @@
 """The audio-story skill's tools. story_voices gives the chat model the voices for the story's cast form, already shaped
 as form options (value, label, note, and a ▶ preview), for the engine chosen in Settings and the accent the user picked,
-so the model never builds forty options by hand or guesses a voice id. make_audio_story checks the story the user chose
+so the model never builds forty options by hand or guesses a voice id. (Should it still rewrite them, the web fills
+in the ▶ of any option that names a voice: web/src/blocks/voicePreviews.ts.) make_audio_story checks the story the user chose
 within the chat turn and puts it in Odie's background queue (odie.making.jobs, kind "story" from odie.making.story):
 the writer writes the script and chooses the sound, and Odie's code speaks, mixes and posts one file. Plain trusted code
 of a built-in skill: no shell, no approval card."""
@@ -19,6 +20,7 @@ ACCENTS = {"phonon": ["American", "British"], "kokoro": ["American", "British", 
 NOTE_LIMIT = 80  # a form option's note is cut at 80 characters
 WHO = {"female": "woman", "male": "man", "neutral": "neutral"}
 CHARACTERS = "Characters"  # Phonon's group of character voices (a pirate captain, a witch, an old keeper)
+CHARACTER_NOTE = "character voice"
 OPENAI_ACCENT = "accent added in the story"  # OpenAI voices have no fixed accent: the story asks for it in words
 
 
@@ -40,19 +42,27 @@ def option(engine: str, voice_id: str, label: str, note: str) -> dict:
     return {"value": voice_id, "label": label, "note": note[:NOTE_LIMIT], "preview": preview_path(engine, voice_id)}
 
 
-def phonon_options(voices: list[dict], accent: str) -> tuple[list[dict], list[dict]]:
+def noted(*parts: str) -> str:
+    """A note from its parts, the empty ones left out: ("woman", "warm and low") -> "woman · warm and low";
+    ("man", "") -> "man"."""
+    return " · ".join(part for part in parts if part)
+
+
+def phonon_options(voices: list[dict], accent: str) -> list[dict]:
     """Phonon's voices for one accent ("British · Female", "British · Male"), each noted with who it is and how it
-    sounds, and its Characters group on its own, for the roles a character voice lifts."""
+    sounds, then its Characters group, noted as character voices, for the roles a character voice lifts."""
     accent_voices = []
     characters = []
     for v in voices:
         group = v.get("group", "")
+        note = v.get("note", "")
         if group.startswith(f"{accent} · "):
-            who = WHO.get(v.get("gender") or "", "voice")
-            accent_voices.append(option("phonon", v["id"], v["label"], f"{who} · {v.get('note', '')}".rstrip(" ·")))
+            gender = v.get("gender") or ""
+            who = WHO.get(gender, "voice")
+            accent_voices.append(option("phonon", v["id"], v["label"], noted(who, note)))
         elif group == CHARACTERS:
-            characters.append(option("phonon", v["id"], v["label"], v.get("note", "")))
-    return accent_voices, characters
+            characters.append(option("phonon", v["id"], v["label"], noted(CHARACTER_NOTE, note)))
+    return accent_voices + characters
 
 
 def kokoro_options(accent: str) -> list[dict]:
@@ -76,32 +86,37 @@ def accent_problem(engine: str, accent: str) -> str | None:
     return f"{label}'s voices here are {listed}: choose one of those."
 
 
+def accent_word(given) -> str:
+    """The accent as the user chose it, in its usual spelling: " british" -> "British"; None -> ""."""
+    text = chat.text_or_empty(given)
+    return text.strip().capitalize()
+
+
 async def story_voices(accent: str = "") -> dict:
-    """The voices for an audio story's cast form, for the voice engine chosen in Settings. Call it before the cast
-    form; put the options straight into its selects.
-    accent: "American", "British" or "Indian" (what the user chose). Without one, it returns the accents this engine
-    offers, for the accent question.
-    Returns {"engine", "accent", "voices": form options for that accent, "characters": Phonon's character voices (a
-    pirate captain, a witch, an old keeper; [] on other engines)}. Each option is {value, label, note, preview}: use
-    `value` as the voice in make_audio_story. {"error": …}: choose as it says."""
+    """The voices for an audio story's cast form, for the voice engine chosen in Settings.
+    accent: "American", "British" or "Indian", as the user chose it with the story. Without one, it returns the
+    accents this engine offers, for that question.
+    Returns {"engine", "accent", "options"}: options is the voices for that accent (and, on Phonon, its character
+    voices: a pirate captain, a witch, an old keeper), each {value, label, note, preview}. Paste options exactly as
+    given as the options of every voice select in the cast form, previews and all; use a `value` as the voice in
+    make_audio_story. {"error": …}: choose as it says."""
     store = jobs.hooks["store"]
     engine, _chosen = voice.get_tts(store)
     if engine == "phonon":
         await voice.phonon_voices()  # Phonon's voices are known only once Ollama has been asked
-    picked = (accent or "").strip().capitalize()
+    picked = accent_word(accent)
     if not picked:
         return {"engine": engine, "accents": accents_for(engine)}
     problem = accent_problem(engine, picked)
     if problem:
         return {"error": problem}
-    characters: list[dict] = []
     if engine == "phonon":
-        voices, characters = phonon_options(voice.engine_voices("phonon"), picked)
+        options = phonon_options(voice.engine_voices("phonon"), picked)
     elif engine == "kokoro":
-        voices = kokoro_options(picked)
+        options = kokoro_options(picked)
     else:
-        voices = openai_options()
-    return {"engine": engine, "accent": picked, "voices": voices, "characters": characters}
+        options = openai_options()
+    return {"engine": engine, "accent": picked, "options": options}
 
 
 MIN_MINUTES = 2
@@ -255,7 +270,7 @@ async def make_audio_story(title: str, genre: str, premise: str, cast: list[dict
         return {"error": problem}
 
     engine, _read_aloud = voice.get_tts(store)
-    picked_accent = chat.text_or_empty(accent).strip().capitalize()
+    picked_accent = accent_word(accent)
     problem = accent_problem(engine, picked_accent)
     if problem:
         return {"error": problem}
