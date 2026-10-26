@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.2.34 (2026-10-26)
+
+- Forms in chat: when Odie needs several answers from you (it is unsure what you mean, it is brainstorming with you, or it is gathering choices before making something), it can ask with a small form in its reply: dropdowns, radio buttons, checkboxes, text boxes and sliders, filled in with its best guesses. Press Send and Odie gets each answer by name; the form stays greyed with your choices, and your message shows them in one line. Works in the web app and on the phone; the Mac app catches up later.
+
 ## v0.2.33 (2026-10-26)
 
 - A new voice: Phonon through Ollama. With `ollama pull phonon` (113 MB), Odie reads replies aloud through Ollama on this computer and nowhere else, and recommends it in setup and Settings. Its 37 English voices are grouped (American and British, female and male, and characters) with a line about each and a preview; "Another voice" tries a name you type against every Phonon model you have (French, German, Spanish and Portuguese voices need another model, e.g. `ollama pull phonon:fr`). Long replies are read in full.
