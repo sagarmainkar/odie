@@ -644,7 +644,9 @@ class OdieRunner:
         was_private = False
         try:
             session_id = await self._ensure_session(session_id)
-            trailer = self._prepare_prompt(session_id, text) + await self._visual_nudge(session_id, text)
+            from odie.blocks.answers import without_form_answers
+            words = without_form_answers(text)  # a form's answer: lookups use its line, not the fence the model reads
+            trailer = self._prepare_prompt(session_id, words) + await self._visual_nudge(session_id, text)
             parts: list[types.Part] = []
             markers = ""
             for iid in images or []:
@@ -657,12 +659,12 @@ class OdieRunner:
             if config.settings.prefetch:
                 from odie.agent import prefetch
                 previous = await self._recent_questions(session_id)
-                blocks = await prefetch.gather(text, previous)
-                if prefetch.should_search(text):
+                blocks = await prefetch.gather(words, previous)
+                if prefetch.should_search(words):
                     kinds = [o.split(":")[0].strip("[") for o, _ in prefetch.block_marks() if o in blocks]
                     self.store.audit("agent", "prefetch", result_summary=f"chars={len(blocks)} blocks={','.join(kinds) or 'none'}",
                                      session_id=session_id)
-            self._remember_question(session_id, text)
+            self._remember_question(session_id, words)
             from odie.agent import turn as turn_words
             turn_token = turn_words.USER_TEXT.set(text)  # the user's own words, for tools that act only when asked
             from odie.signin import guard as signin_guard  # the signed-in sites this chat has read (signed-in browsing)

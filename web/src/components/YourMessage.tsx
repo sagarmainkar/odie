@@ -1,8 +1,11 @@
+import { withoutFormAnswers } from "../blocks/formAnswer";
 import { CopyButton } from "./CopyButton";
 
 /** A message you sent: its photos, its words in your bubble, and under the bubble the same copy button Odie's replies
- * have (a tick for "Copied"). The text is what you typed: the server strips what Odie appended before it comes back. */
-export function YourMessage({ text, images }: { text: string; images?: string[] }) {
+ * have (a tick for "Copied"). The text is what you typed: the server strips what Odie appended before it comes back.
+ * A form's answer shows as its line only: the odie-form-answer block after it is for the model. */
+export function YourMessage({ text: sent, images }: { text: string; images?: string[] }) {
+  const text = withoutFormAnswers(sent);
   const hasPhotos = !!images && images.length > 0;
   return (
     <div className="ml-auto max-w-[80%] w-fit flex flex-col items-end gap-0.5">

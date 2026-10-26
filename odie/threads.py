@@ -43,8 +43,11 @@ def _text(event_data: str) -> tuple[str, str]:
 
 
 def _clean(text: str) -> str:
+    """A message as a title or a search snippet shows it: without what Odie appended, its image markers, or a form
+    answer's fence (odie.blocks.answers), on one line."""
     from odie.app.runner import split_images, strip_trailer
-    return " ".join(split_images(strip_trailer(text))[0].split())
+    from odie.blocks.answers import without_form_answers
+    return " ".join(without_form_answers(split_images(strip_trailer(text))[0]).split())
 
 
 def list_threads(store: Store, q: str | None = None) -> list[dict]:
