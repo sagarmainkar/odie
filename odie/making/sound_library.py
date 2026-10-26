@@ -55,7 +55,10 @@ OVERRIDES: dict[tuple[str, str], str] = {
     ("Work - Home", "telephone number change"): "hit",  # a recorded message
 }
 
-LISTING_TOKENS = 4000  # the writer's listing stays under this many tokens (4 characters a token)
+LISTING_TOKENS = 4000  # the writer's listing stays under this many tokens…
+CHARS_PER_TOKEN = 2.5  # …counted cautiously: ids full of hyphens are about 2.8 characters a token (tiktoken)
+KIND_ORDER = ("loop", "hit", "music")  # how a category's line lists its sounds
+KIND_LABELS = {"loop": "loops", "hit": "hits", "music": "music"}
 # The categories the writer reads first, most useful for a story's atmosphere first; a category not named here (the
 # user's own folders) comes before all of them.
 CATEGORY_ORDER = ["Ambience", "Textures", "Animals", "Foley", "People", "Transportation", "Machines", "Stingers",
@@ -245,12 +248,34 @@ async def catalogue(libraries: list[Library] | None = None, cache_file: Path | N
     return entries
 
 
-def seconds_text(seconds: float) -> str:
-    """A length as the listing shows it: 12.03 -> "12s"; 6.0 -> "6s"; 0.8 -> "0.8s"."""
-    if seconds >= 10:
-        return f"{round(seconds)}s"
-    shown = f"{seconds:.1f}".removesuffix(".0")
-    return f"{shown}s"
+def listing_seconds(seconds: float) -> str:
+    """A length as the listing shows it, in whole seconds and never 0: 62.5 -> "62"; 9.6 -> "10"; 0.3 -> "1"."""
+    return str(max(1, round(seconds)))
+
+
+def prefix_and_name(sound_id: str) -> tuple[str, str]:
+    """A sound id split where the listing splits it: "ambience/ocean-surf" -> ("ambience/", "ocean-surf")."""
+    prefix, _slash, name = sound_id.partition("/")
+    return f"{prefix}/", name
+
+
+def category_line(entries: list[dict]) -> str:
+    """One category in one line: its id prefix, then its loops, hits and music, each name with its seconds (music
+    has none: it loops under a scene). "ambience/ loops: ocean-surf 62, night-camp 28; hits: thunder-clap 13"."""
+    prefix, _name = prefix_and_name(entries[0]["id"])
+    groups = []
+    for kind in KIND_ORDER:
+        names = []
+        for e in entries:
+            if e["kind"] != kind:
+                continue
+            _prefix, name = prefix_and_name(e["id"])
+            if kind != "music":
+                name = f"{name} {listing_seconds(e['seconds'])}"
+            names.append(name)
+        if names:
+            groups.append(f"{KIND_LABELS[kind]}: {', '.join(names)}")
+    return f"{prefix} " + "; ".join(groups)
 
 
 def category_rank(category: str) -> int:
@@ -261,36 +286,41 @@ def category_rank(category: str) -> int:
     return -1
 
 
-def summary_line(category: str, entries: list[dict]) -> str:
-    """A category too big to list in full, in one line with three ids to show the shape: "Effects: 95 sounds (40 loops,
-    55 hits), not listed in full; for example effects/a, effects/b, effects/c." """
+def summary_line(entries: list[dict]) -> str:
+    """A category too big to list in full, in one line with three ids to show the shape: "effects/ 95 sounds (64
+    hits, 31 loops), not listed in full; for example effects/alarm, effects/bark, effects/owl." """
+    prefix, _name = prefix_and_name(entries[0]["id"])
     counts: dict[str, int] = {}
     for e in entries:
         counts[e["kind"]] = counts.get(e["kind"], 0) + 1
-    kinds = ", ".join(f"{n} {kind}s" for kind, n in sorted(counts.items()))
+    kinds = ", ".join(f"{n} {KIND_LABELS[kind]}" for kind, n in sorted(counts.items()))
     examples = ", ".join(e["id"] for e in entries[:3])
-    return f"{category}: {len(entries)} sounds ({kinds}), not listed in full; for example {examples}."
+    return f"{prefix} {len(entries)} sounds ({kinds}), not listed in full; for example {examples}."
+
+
+LISTING_INTRO = ("Sounds you can use, one category a line: its id prefix, then its loops (beds that run under a scene), "
+                 "hits (played once) and music, each with its seconds. A sound's id is the prefix and the name: "
+                 '"ambience/" and "ocean-surf" -> "ambience/ocean-surf". Use the ids exactly.')
+NO_MUSIC = "There is no music here (no iMovie on this Mac): don't add music beds."
 
 
 def writer_listing(entries: list[dict]) -> str:
-    """The sounds as the writer reads them, grouped by category, one short line each ("ambience/ocean-surf · 60s ·
-    loop"). The most useful categories come first and in full; once the next one in full wouldn't leave room under
-    LISTING_TOKENS, the rest are summed up in a line each. Without music (the kit), it says so."""
+    """The sounds as the writer reads them, one line a category (category_line). The most useful categories come
+    first and in full; once the next one in full wouldn't leave room under LISTING_TOKENS (at CHARS_PER_TOKEN), the
+    rest are summed up in a line each. Without music (the kit), it says so."""
     by_category: dict[str, list[dict]] = {}
     for e in entries:
         by_category.setdefault(e["category"], []).append(e)
     order = sorted(by_category, key=category_rank)
-    intro = ("Sounds you can use, by category: id · seconds · loop (a bed under a scene), hit (once) or music. Use the ids "
-             "exactly as written.")
-    head = [intro]
+    head = [LISTING_INTRO]
     if not any(e["kind"] == "music" for e in entries):
-        head.append("There is no music here (no iMovie on this Mac): don't add music beds.")
-    budget = LISTING_TOKENS * 4
+        head.append(NO_MUSIC)
+    budget = LISTING_TOKENS * CHARS_PER_TOKEN
     used = sum(len(line) + 1 for line in head)
-    summaries = {c: summary_line(c, by_category[c]) for c in order}
+    summaries = {c: summary_line(by_category[c]) for c in order}
     parts: list[str] = []
     for i, category in enumerate(order):
-        full = "\n".join([f"{category}:"] + [f"{e['id']} · {seconds_text(e['seconds'])} · {e['kind']}" for e in by_category[category]])
+        full = category_line(by_category[category])
         rest = sum(len(summaries[c]) + 1 for c in order[i + 1:])
         fits = used + len(full) + 1 + rest <= budget
         chosen = full if fits else summaries[category]

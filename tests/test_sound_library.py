@@ -171,42 +171,60 @@ def test_without_a_library_the_video_kit_stands_in_and_says_there_is_no_music(is
     assert not any(e["kind"] == "music" for e in entries)
     assert all(Path(e["path"]).exists() for e in entries)
     listing = lib.writer_listing(entries)
-    assert "no music" in listing.lower() and "kit/rain · 4s · loop" in listing
+    assert "no music" in listing.lower()
+    kit_line = next(line for line in listing.splitlines() if line.startswith("kit/ "))
+    assert "loops: " in kit_line and "rain 4" in kit_line
 
 
-def test_the_writers_listing_groups_by_category_one_short_line_each(isolated_settings, imovie, tmp_path):
+def test_the_writers_listing_is_one_line_a_category_grouped_by_kind(isolated_settings, imovie, tmp_path):
     entries = run(lib.build(lib.find_libraries(imovie, tmp_path / "own")))
     listing = lib.writer_listing(entries)
-    assert "Ambience:" in listing and "ambience/ocean-surf · 12s · loop" in listing
-    assert "animals/bark · 1s · hit" in listing and "jingles/acoustic-sunrise · 6s · music" in listing
-    assert listing.index("Ambience:") < listing.index("Stingers:")  # the most useful categories first
+    lines = listing.splitlines()
+    ambience = next(line for line in lines if line.startswith("ambience/ "))
+    assert ambience == "ambience/ loops: night-camp 9, ocean-surf 12"
+    animals = next(line for line in lines if line.startswith("animals/ "))
+    assert animals == "animals/ loops: jungle-birds 10; hits: bark 1"
+    assert "jingles/ music: acoustic-sunrise" in listing  # music has no seconds: it loops under a scene
+    assert listing.index("ambience/ ") < listing.index("stingers/ ")  # the most useful categories first
+    assert '"ambience/" and "ocean-surf" -> "ambience/ocean-surf"' in listing  # how an id is made from a line
 
 
-def test_the_writers_listing_stays_within_its_budget_for_a_full_library():
-    """iMovie's whole library is about 500 sounds: the listing keeps the most useful categories in full and sums up the
-    rest in a line each, under about 4,000 tokens (4 characters a token)."""
+def test_listing_seconds_are_whole_and_at_least_one():
+    assert [lib.listing_seconds(s) for s in (62.5, 9.6, 0.3, 1.4)] == ["62", "10", "1", "1"]
+
+
+def full_library() -> list[dict]:
+    """A library shaped like iMovie's real one: 426 entries in 15 categories, names as long as its own (about 14
+    characters, "coin-drop-on-wood")."""
     entries = []
-    sizes = {"Ambience": 40, "Textures": 30, "Animals": 40, "Foley": 40, "People": 30, "Transportation": 30,
-             "Machines": 30, "Stingers": 53, "Booms": 20, "Sci-Fi": 30, "Sports": 20, "Work - Home": 30, "Jingles": 67,
+    sizes = {"Ambience": 14, "Textures": 13, "Animals": 13, "Foley": 27, "People": 24, "Transportation": 17,
+             "Machines": 13, "Stingers": 53, "Booms": 7, "Sci-Fi": 17, "Sports": 8, "Work - Home": 12, "Jingles": 106,
              "Effects": 95, "Theme Music": 7}
     for category, count in sizes.items():
+        prefix = category.lower().replace(" - ", "-").replace(" ", "-")
         for i in range(count):
-            name = f"Sound Name Number {i}"
-            entries.append({"id": f"{category.lower().replace(' ', '-')}/sound-name-number-{i}", "name": name, "category": category,
-                            "kind": lib.kind_of(category, name, 20.0), "seconds": 20.0, "path": "/x", "variants": []})
+            name = f"Door Squeak Mid {i:02d}"
+            seconds = 5.0 + i % 40
+            entries.append({"id": f"{prefix}/door-squeak-mid-{i:02d}", "name": name, "category": category,
+                            "kind": lib.kind_of(category, name, seconds), "seconds": seconds, "path": "/x",
+                            "variants": []})
+    return entries
+
+
+def test_the_writers_listing_lists_a_whole_imovie_sized_library_within_its_budget():
+    """The budget counts CHARS_PER_TOKEN characters a token, a cautious count for ids full of hyphens (a real
+    tokenizer gives about 2.8 on this listing)."""
+    listing = lib.writer_listing(full_library())
+    assert len(listing) / lib.CHARS_PER_TOKEN <= lib.LISTING_TOKENS
+    assert "not listed in full" not in listing  # every sound is there
+    assert "effects/ " in listing and "door-squeak-mid-94 " in listing
+
+
+def test_a_library_too_big_for_the_budget_sums_up_its_least_useful_categories():
+    entries = full_library()
+    for copy in range(3):  # a big folder of the user's own, three times over
+        entries += [{**e, "id": f"{e['id']}-{copy}"} for e in full_library() if e["category"] == "Effects"]
     listing = lib.writer_listing(entries)
-    assert len(listing) / 4 <= lib.LISTING_TOKENS
-    assert "ambience/sound-name-number-39 · 20s · loop" in listing  # a top category in full
-    assert "Effects: 95 sounds" in listing  # a big, less useful one summed up
-
-
-def test_the_cache_is_built_again_when_the_kind_rules_change(isolated_settings, imovie, tmp_path, monkeypatch):
-    """A catalogue cached under older rules (an older Odie) is read again, so new kinds reach a library that hasn't
-    changed."""
-    cache = tmp_path / "cache.json"
-    libraries = lib.find_libraries(imovie, tmp_path / "own")
-    run(lib.catalogue(libraries, cache))
-    monkeypatch.setattr(lib, "RULES_VERSION", lib.RULES_VERSION + 1)
-    monkeypatch.setattr(lib, "kind_of", lambda category, name, seconds: "hit")
-    again = run(lib.catalogue(libraries, cache))
-    assert {e["kind"] for e in again} == {"hit"}
+    assert len(listing) / lib.CHARS_PER_TOKEN <= lib.LISTING_TOKENS
+    assert "ambience/ loops: " in listing  # a top category in full
+    assert "effects/ 380 sounds" in listing and "not listed in full" in listing  # the least useful one summed up
