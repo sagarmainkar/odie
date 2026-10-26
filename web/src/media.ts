@@ -13,6 +13,7 @@ export type Media = {
   state?: "done" | "code" | "failed" | "captcha" | "vault"; auto?: boolean;  // a "your turn" card: where the sign-in stands
   label?: string;  // a link: its button (a UPI app link's "Pay in your UPI app")
   tracker_id?: number; page?: string;  // a "check this page signed in?" card (odie/trackers/signed_in.py)
+  format?: "story";  // a podcast that is an audio story (odie/making/story.py): its hosts are the cast
 };
 
 export const mediaUrl = (m: Pick<Media, "id">) => `/api/media/${m.id}`;
@@ -54,6 +55,43 @@ export function hostInitial(name: string): string {
 /** The two hosts' colours: solid tokens (a gradient is dropped from rings and text). */
 export const HOST_TONES = ["var(--t-brand)", "var(--t-host-b)"];
 export const HOST_TEXT = ["var(--t-brand-text)", "var(--t-host-b-text)"];
+
+/** An audio story's speakers' colours: the podcast's two, then six more, cycling after eight. */
+export const CAST_TONES = [...HOST_TONES, ...[3, 4, 5, 6, 7, 8].map((n) => `var(--t-cast-${n})`)];
+export const CAST_TEXT = [...HOST_TEXT, ...[3, 4, 5, 6, 7, 8].map((n) => `var(--t-cast-${n}-text)`)];
+
+/** Whether a podcast player is an audio story: { format: "story" } → true; a podcast → false. */
+export function isStory(m: Media): boolean {
+  return m.format === "story";
+}
+
+/** The colour of the speaker at index `i`: a story's cycle through eight (index 8 → the first again); a podcast's
+ * through its two hosts (index 2 → the first). */
+export function toneAt(m: Media, i: number): string {
+  if (isStory(m)) return CAST_TONES[i % CAST_TONES.length];
+  return HOST_TONES[i % HOST_TONES.length];
+}
+
+/** The same, for a speaker's name in the transcript. */
+export function textToneAt(m: Media, i: number): string {
+  if (isStory(m)) return CAST_TEXT[i % CAST_TEXT.length];
+  return HOST_TEXT[i % HOST_TEXT.length];
+}
+
+/** The player's words: a story → "Audio story", "Play story"; a podcast → "Podcast", "Play podcast". */
+export function playerWords(m: Media): { label: string; play: string; pause: string; position: string } {
+  if (isStory(m)) return { label: "Audio story", play: "Play story", pause: "Pause story", position: "Story position" };
+  return { label: "Podcast", play: "Play podcast", pause: "Pause podcast", position: "Podcast position" };
+}
+
+/** Who is in it, under the title: a story's cast with their voices ("Narrator · Heart, The keeper · Michael"); a
+ * podcast's two hosts ("Host A and Host B"). */
+export function castLine(m: Media): string {
+  const hosts = m.hosts ?? [];
+  if (!isStory(m)) return hosts.map((h) => h.name).join(" and ");
+  const named = hosts.map((h) => (h.voice ? `${h.name} · ${h.voice}` : h.name));
+  return named.join(", ");
+}
 
 /** The messages with `m` on the reply being written (`at`; else the last reply), unless it's already there. A reminder
  * can arrive while a reply is written, so Chat names the reply. */

@@ -40,7 +40,8 @@ UNKNOWN_ERROR = "something went wrong (see Odie's log)"
 # what a video's job.json said for making before the queue was shared.
 INTERRUPTED_STATUSES = ("queued", "writing", "making", "running")
 # The modules of Odie's own kinds: each puts its Kind in KINDS when imported (load_kinds).
-BUILT_IN_KINDS = ("odie.video.kind", "odie.making.podcast", "odie.making.deck", "odie.making.research")
+BUILT_IN_KINDS = ("odie.video.kind", "odie.making.podcast", "odie.making.deck", "odie.making.research",
+                  "odie.making.story")
 
 
 @dataclass
