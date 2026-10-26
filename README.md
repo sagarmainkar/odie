@@ -46,7 +46,9 @@ Odie is inspired by Muse, but it isn't a copy.
 - **It answers with interfaces, not just text.** The model writes short descriptions of visual blocks and the app
   draws them live: tables, lists, checklists, charts (line, bar, area, stacked, combo, pie, donut), heat maps, KPIs,
   progress, streaks, timelines, flash cards, calculators with sliders, Mermaid diagrams, SVG drawings and animations.
-  Every block opens full screen and pinch-zooms. This is generative UI: the layout is made for each answer.
+  Every block opens full screen and pinch-zooms. This is generative UI: the layout is made for each answer. When it
+  needs several answers from you at once, it draws a small form (dropdowns, radio buttons, checkboxes, text, sliders),
+  filled in with its best guesses: press Send and it reads your choices field by field.
 - **It knows your own things, on your Mac.** Point it at an Obsidian vault (or any folder of Markdown notes) and your
   Photos library. One search finds notes, photos and videos together **by meaning**, with a local embedding model
   (EmbeddingGemma 2) on your Mac's GPU: "the trip where we saw snow" finds the note and the pictures.
