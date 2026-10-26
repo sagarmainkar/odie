@@ -86,6 +86,12 @@ def find_libraries(root: Path = LIBRARY_ROOT, own: Path | None = None) -> list[L
     return [library for library in candidates if library.folder.is_dir()]
 
 
+def has_imovie(libraries: list[Library]) -> bool:
+    """Decides whether iMovie's sounds are among the libraries found: any of its folders -> True; only the user's own
+    sounds folder, or nothing -> False (the story falls back to Odie's kit, with no music)."""
+    return any(library.name != OWN_CATEGORY for library in libraries)
+
+
 def kind_of(category: str, name: str, seconds: float) -> str:
     """How a sound can be used: "loop" (a bed that runs under a scene), "hit" (played once) or "music". The small
     OVERRIDES table first, then the category (Jingles and Theme Music are music, Ambience and Textures beds, Stingers,

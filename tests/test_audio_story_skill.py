@@ -109,3 +109,112 @@ def test_the_skill_loads_and_answers_to_audio_story_requests(store):
     text = (SKILL / "SKILL.md").read_text()
     assert "never use `speak`" in text.lower() and "make_audio_story" in text and "story_voices" in text
     assert "shell" in text  # never stitched together in the shell
+
+
+# make_audio_story: what it refuses, and the job it queues.
+
+@pytest.fixture
+def queued(store, monkeypatch, tmp_path):
+    """jobs.submit replaced by a recorder; Kokoro chosen in Settings; no iMovie (its folder is a temp one, never
+    /Applications)."""
+    from odie.making import jobs, sound_library
+    choose(store, "kokoro", monkeypatch)
+    monkeypatch.setattr(sound_library, "LIBRARY_ROOT", tmp_path / "no-imovie")
+    submitted = []
+
+    def record(job):
+        submitted.append(job)
+        return len(submitted)
+
+    monkeypatch.setattr(jobs, "submit", record)
+    return submitted
+
+
+CAST = [{"id": "narrator", "name": "Narrator", "voice": "bf_emma", "about": "an outside storyteller"},
+        {"id": "keeper", "name": "The keeper", "voice": "bm_george", "about": "the old lighthouse keeper"}]
+
+
+async def make(**changes) -> dict:
+    from types import SimpleNamespace
+
+    from google.adk.tools import FunctionTool
+    args = {"title": "The Lighthouse at Rook Point", "genre": "mystery",
+            "premise": "A keeper hears a ship that isn't there.", "cast": CAST, "narrator": "narrator",
+            "accent": "British", "minutes": 5, "sound_level": 25, "brief": "Slow and eerie."}
+    args.update(changes)
+    chat = SimpleNamespace(session=SimpleNamespace(id="chat-7"))
+    func = tools()["make_audio_story"].func
+    return await FunctionTool(func).run_async(args=args, tool_context=chat)
+
+
+async def test_a_good_story_is_queued_with_its_cast_and_level(queued):
+    from odie.agent.tools.files import workspace
+    from odie.making import story, story_writer
+    out = await make()
+    assert out["result"].startswith("Making it now: about ")
+    [job] = queued
+    assert job.kind == "story" and job.title == "The Lighthouse at Rook Point" and job.minutes == 5
+    assert job.session_id == "chat-7"
+    assert job.folder == workspace() / story.FOLDER / "the-lighthouse-at-rook-point" and job.folder.is_dir()
+    request = job.data["request"]
+    assert request == story_writer.Request(genre="mystery", premise="A keeper hears a ship that isn't there.",
+                                           cast=CAST, narrator="narrator", accent="British", minutes=5,
+                                           brief="Slow and eerie.")
+    assert job.data["sound_level"] == 25
+    assert "The keeper" in job.brief and "bm_george" in job.brief  # brief.md keeps what was asked
+
+
+async def test_a_voice_of_another_engine_is_refused_with_where_to_look(queued):
+    cast = [CAST[0], {**CAST[1], "voice": "marin"}]
+    out = await make(cast=cast)
+    assert out["error"].startswith("The keeper's voice: 'marin' isn't one of")
+    assert "story_voices" in out["error"]
+    assert queued == []
+
+
+async def test_too_many_characters_the_length_and_the_sound_level_are_refused(queued):
+    crowd = [{"id": f"c{n}", "name": f"Person {n}", "voice": "bf_emma"} for n in range(8)]
+    out = await make(cast=[CAST[0], *crowd])
+    assert out["error"] == ("A story has at most 8 speakers, the narrator included; this cast has 9. Let minor "
+                            "characters share a voice, or leave them to the narrator.")
+    assert (await make(minutes=1))["error"].startswith("minutes is the story's length in whole minutes, from 2 to 15")
+    assert "not 20" in (await make(minutes=20))["error"]
+    assert (await make(sound_level=50))["error"] == (
+        "sound_level is how loud the sound sits under the voices, from 10 to 40 (25 unless the user chose), not 50.")
+    assert queued == []
+
+
+async def test_the_narrator_must_be_in_the_cast_and_the_accent_offered(queued):
+    assert (await make(narrator="captain"))["error"] == (
+        'narrator is the cast id of who tells the story ("narrator" for an outside storyteller, in the cast too); '
+        '"captain" isn\'t in the cast: narrator, keeper.')
+    phonon_only = await make(accent="Irish")
+    assert phonon_only["error"].startswith("Kokoro's voices here are American, British or Indian")
+    assert (await make(premise="  "))["error"].startswith("premise is the story's idea")
+    assert queued == []
+
+
+async def test_cast_ids_are_made_plain_and_kept_unique(queued):
+    cast = [{"name": "Narrator", "voice": "bf_emma"}, {"id": "The Keeper", "name": "The keeper", "voice": "bm_george"}]
+    out = await make(cast=cast, narrator="narrator")
+    assert "result" in out
+    assert [m["id"] for m in queued[0].data["request"].cast] == ["narrator", "the-keeper"]
+    twice = [CAST[0], {**CAST[1], "id": "narrator"}]
+    assert (await make(cast=twice))["error"] == 'Two cast members have the id "narrator": give each their own.'
+
+
+def test_the_skill_offers_make_audio_story_and_never_speak():
+    text = (SKILL / "SKILL.md").read_text()
+    assert "adk_additional_tools: [story_voices, make_audio_story]" in text
+
+
+async def test_without_imovie_the_reply_says_once_where_richer_sound_comes_from(queued, monkeypatch, tmp_path):
+    from odie.making import sound_library
+    without = await make()
+    assert without["result"].endswith("For richer sound, install iMovie (free in the App Store); Odie uses its sound "
+                                      "library.\"")
+    imovie = tmp_path / "Resources"
+    (imovie / sound_library.ILIFE_EFFECTS_FOLDER).mkdir(parents=True)
+    monkeypatch.setattr(sound_library, "LIBRARY_ROOT", imovie)
+    with_imovie = await make(title="Another")
+    assert "iMovie" not in with_imovie["result"]
