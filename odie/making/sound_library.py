@@ -6,7 +6,10 @@ uploads them anywhere; a finished story is the user's own file, and sharing it i
 
 Without iMovie or a sounds folder, the video kit's own synthesized sounds (odie/video/kit/sounds, CC0) stand in, and
 there is no music. The catalogue is built the first time a story needs it (never at Odie's start) and cached as JSON
-in Odie's data folder, built again when a library's files change."""
+in Odie's data folder, built again when a library's files change.
+
+Music carries mood and style words (music_moods.json, next to this file), so a writer that can't hear can choose it by
+feel; a moods.json in the user's sounds folder wins over them (with_moods)."""
 from __future__ import annotations
 
 import asyncio
@@ -34,6 +37,14 @@ CACHE_FILE = "sound-library.json"
 RULES_VERSION = 2  # raised when kind_of or build changes, so a cached catalogue is built again with the new rules
 PROBES_AT_ONCE = 8  # ffmpeg reads of durations run side by side, at most this many
 
+# Mood words for music. A model that listens (LAION CLAP) put three mood words and two style words on each of iMovie's
+# 113 tracks: it scored three 10-second windows of a track against 26 mood and 16 style phrases, and ranked each word
+# against its own average over the whole library, so a track gets the words it fits better than the other tracks do.
+# They are our own words (no audio), keyed by the track's folder and file ("Jingles/Borealis.caf"), the same on every
+# Mac. A moods.json in the user's sounds folder, in the same shape, wins over them, and can tag the user's own sounds.
+SHIPPED_MOODS = Path(__file__).with_name("music_moods.json")
+OWN_MOODS_FILE = "moods.json"
+
 MUSIC_CATEGORIES = {"Jingles", "Theme Music"}
 LOOP_CATEGORIES = {"Ambience"}  # beds, unless the name says it plays once (a thunder clap)
 HIT_CATEGORIES = {"Stingers", "Booms"}  # played once, however long
@@ -56,8 +67,8 @@ OVERRIDES: dict[tuple[str, str], str] = {
 }
 
 LISTING_TOKENS = 4000  # the writer's listing stays under this many tokens…
-CHARS_PER_TOKEN = 2.5  # …counted cautiously: ids full of hyphens are about 2.8 characters a token (tiktoken)
-KIND_ORDER = ("loop", "hit", "music")  # how a category's line lists its sounds
+CHARS_PER_TOKEN = 2.85  # …counted at the rate of its ids, full of hyphens: the real listing with music's mood words is
+# 10,774 characters and 3,640 tokens (tiktoken cl100k), 2.96 a token; its ids alone are about 2.85
 KIND_LABELS = {"loop": "loops", "hit": "hits", "music": "music"}
 # The categories the writer reads first, most useful for a story's atmosphere first; a category not named here (the
 # user's own folders) comes before all of them.
@@ -225,9 +236,87 @@ def kit_catalogue() -> list[dict]:
     return entries
 
 
+def words_list(given) -> bool:
+    """Whether a tag file's value is a list of words: ["eerie", "dark"] -> True; [] -> True; "eerie" -> False."""
+    return isinstance(given, list) and all(isinstance(word, str) for word in given)
+
+
+def read_tags(path: Path) -> dict[str, dict]:
+    """The tags in a moods file, {"<folder>/<file>" or "<file>": {"moods": [...], "styles": [...]}}. A missing or broken
+    file -> {} (a log line for a broken one); an entry whose moods aren't a list of words is left out; styles are
+    optional; any other key (the shipped file's "_about") is skipped. {"_about": "…", "Jingles/Borealis.caf":
+    {"moods": ["eerie"]}} -> {"Jingles/Borealis.caf": {"moods": ["eerie"], "styles": []}}."""
+    try:
+        given = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}
+    except (OSError, ValueError):
+        log.info("sound library: %s can't be read as tags; left out", path)
+        return {}
+    if not isinstance(given, dict):
+        return {}
+    tags = {}
+    for key, value in given.items():
+        if not isinstance(value, dict) or not words_list(value.get("moods")):
+            continue
+        styles = value.get("styles", [])
+        if not words_list(styles):
+            styles = []
+        tags[key] = {"moods": list(value["moods"]), "styles": list(styles)}
+    return tags
+
+
+def track_keys(entry: dict) -> list[str]:
+    """The keys a sound's tags can be under, for each of its files (a jingle's every cut): its folder and file, then
+    the file alone. "…/Jingles/Borealis Long.caf" with a Short cut -> ["Jingles/Borealis Long.caf", "Borealis Long.caf",
+    "Jingles/Borealis Short.caf", "Borealis Short.caf"]."""
+    files = [entry["path"]] + [variant["path"] for variant in entry.get("variants", [])]
+    keys = []
+    for file in files:
+        path = Path(file)
+        for key in (f"{path.parent.name}/{path.name}", path.name):
+            if key not in keys:
+                keys.append(key)
+    return keys
+
+
+def tags_for(entry: dict, tags: dict[str, dict]) -> dict | None:
+    """Decides which tags in one moods file are a sound's: the first of its track_keys the file has, else None.
+    Borealis (Long and Short cuts) with {"Borealis Short.caf": …} -> those tags; with only "Jingles/Other.caf" ->
+    None."""
+    for key in track_keys(entry):
+        if key in tags:
+            return tags[key]
+    return None
+
+
+def mood_files() -> list[Path]:
+    """The moods files, the one that wins last: Odie's own words for iMovie's music, then the user's moods.json."""
+    return [SHIPPED_MOODS, own_sounds_folder() / OWN_MOODS_FILE]
+
+
+def with_moods(entries: list[dict], files: list[Path]) -> list[dict]:
+    """The catalogue with each tagged sound's "moods" and "styles" added, from the moods files; a sound in more than one
+    takes the last file's (the user's own tags win over the shipped ones, track by track). An untagged sound is left as
+    it is. Borealis, shipped as eerie and the user's as calm -> calm."""
+    every_file = [read_tags(file) for file in files]
+    tagged = []
+    for entry in entries:
+        found = None
+        for tags in reversed(every_file):
+            found = tags_for(entry, tags)
+            if found:
+                break
+        if found:
+            entry = {**entry, "moods": found["moods"], "styles": found["styles"]}
+        tagged.append(entry)
+    return tagged
+
+
 async def catalogue(libraries: list[Library] | None = None, cache_file: Path | None = None) -> list[dict]:
-    """The sounds a story can use. Read from the cache while the libraries hold the same files; built (and cached)
-    again when they change. No library, or nothing readable in them -> the video kit's sounds."""
+    """The sounds a story can use, music with its mood words (with_moods, read each time so a change to the user's
+    moods.json counts at once). Read from the cache while the libraries hold the same files; built (and cached) again
+    when they change. No library, or nothing readable in them -> the video kit's sounds."""
     from odie import config
     found = find_libraries() if libraries is None else libraries
     if not found:
@@ -239,13 +328,13 @@ async def catalogue(libraries: list[Library] | None = None, cache_file: Path | N
     except (OSError, ValueError):
         cached = {}
     if cached.get("signature") == now and cached.get("entries"):
-        return cached["entries"]
+        return with_moods(cached["entries"], mood_files())
     entries = await build(found)
     if not entries:
         return kit_catalogue()
     cache.parent.mkdir(parents=True, exist_ok=True)
     cache.write_text(json.dumps({"signature": now, "entries": entries}))
-    return entries
+    return with_moods(entries, mood_files())
 
 
 def listing_seconds(seconds: float) -> str:
@@ -259,22 +348,67 @@ def prefix_and_name(sound_id: str) -> tuple[str, str]:
     return f"{prefix}/", name
 
 
+def style_of(entry: dict) -> str:
+    """A sound's first style word, the one its music is grouped under in the listing, written as one word: ["synth
+    pads", "ambient drone"] -> "synth-pads"; no styles -> ""."""
+    styles = entry.get("styles") or []
+    if not styles:
+        return ""
+    return styles[0].replace(" ", "-")
+
+
+def music_words(entry: dict) -> str:
+    """A piece of music as the listing gives it: its name and its moods. Borealis, eerie, melancholy and dreamy ->
+    "borealis eerie/melancholy/dreamy"; untagged -> "borealis"."""
+    _prefix, name = prefix_and_name(entry["id"])
+    moods = entry.get("moods") or []
+    if not moods:
+        return name
+    return f"{name} {'/'.join(moods)}"
+
+
+def sound_words(entry: dict) -> str:
+    """One sound as its line lists it: a loop or a hit with its seconds ("ocean-surf 62"), music with its moods
+    (music_words), and the moods of a tagged loop or hit after its seconds ("low-hum 9 eerie/dark")."""
+    if entry["kind"] == "music":
+        return music_words(entry)
+    _prefix, name = prefix_and_name(entry["id"])
+    words = f"{name} {listing_seconds(entry['seconds'])}"
+    moods = entry.get("moods") or []
+    if moods:
+        words += f" {'/'.join(moods)}"
+    return words
+
+
+def kind_groups(entries: list[dict]) -> list[tuple[str, list[dict]]]:
+    """A category's sounds in the groups its line lists, each with its label: the loops, the hits, then the music, by
+    style: untagged music as "music", tagged music under "music, <style>", the styles in order of their names.
+    [ocean-surf (loop), borealis (synth pads), daydream (piano)] -> [("loops", [ocean-surf]), ("music, piano",
+    [daydream]), ("music, synth-pads", [borealis])]."""
+    groups = []
+    for kind in ("loop", "hit"):
+        of_kind = [e for e in entries if e["kind"] == kind]
+        if of_kind:
+            groups.append((KIND_LABELS[kind], of_kind))
+    music = [e for e in entries if e["kind"] == "music"]
+    styles = sorted({style_of(e) for e in music})
+    for style in styles:
+        label = KIND_LABELS["music"]
+        if style:
+            label = f"{label}, {style}"
+        groups.append((label, [e for e in music if style_of(e) == style]))
+    return groups
+
+
 def category_line(entries: list[dict]) -> str:
-    """One category in one line: its id prefix, then its loops, hits and music, each name with its seconds (music
-    has none: it loops under a scene). "ambience/ loops: ocean-surf 62, night-camp 28; hits: thunder-clap 13"."""
+    """One category in one line: its id prefix, then its loops and hits, each name with its seconds, and its music by
+    style, each name with its moods (music has no seconds: it loops under a scene). "ambience/ loops: ocean-surf 62,
+    night-camp 28; hits: thunder-clap 13"; "jingles/ music, piano: daydream calm/dreamy/peaceful; music, synth-pads:
+    borealis eerie/melancholy/dreamy"."""
     prefix, _name = prefix_and_name(entries[0]["id"])
     groups = []
-    for kind in KIND_ORDER:
-        names = []
-        for e in entries:
-            if e["kind"] != kind:
-                continue
-            _prefix, name = prefix_and_name(e["id"])
-            if kind != "music":
-                name = f"{name} {listing_seconds(e['seconds'])}"
-            names.append(name)
-        if names:
-            groups.append(f"{KIND_LABELS[kind]}: {', '.join(names)}")
+    for label, grouped in kind_groups(entries):
+        groups.append(f"{label}: {', '.join(sound_words(e) for e in grouped)}")
     return f"{prefix} " + "; ".join(groups)
 
 
@@ -298,9 +432,10 @@ def summary_line(entries: list[dict]) -> str:
     return f"{prefix} {len(entries)} sounds ({kinds}), not listed in full; for example {examples}."
 
 
-LISTING_INTRO = ("Sounds you can use, one category a line: its id prefix, then its loops (beds that run under a scene), "
-                 "hits (played once) and music, each with its seconds. A sound's id is the prefix and the name: "
-                 '"ambience/" and "ocean-surf" -> "ambience/ocean-surf". Use the ids exactly.')
+LISTING_INTRO = ("Sounds you can use, one category a line: its id prefix, then its loops (beds that run under a scene) "
+                 "and hits (played once), each with its seconds, then its music by style, each with its moods. A "
+                 'sound\'s id is the prefix and the name: "ambience/" and "ocean-surf" -> "ambience/ocean-surf". Use '
+                 "the ids exactly.")
 NO_MUSIC = "There is no music here (no iMovie on this Mac): don't add music beds."
 
 

@@ -41,6 +41,13 @@ From your Mac, never from Odie:
   with no music. Odie says once: "For richer sound, install iMovie (free in the App Store); Odie uses its sound
   library."
 
+**Music by mood.** The writer can't hear, so each of iMovie's music tracks comes with three mood words and a
+style ("borealis: eerie, melancholy, dreamy; synth pads"), put on it once by a model that listens (LAION CLAP) and
+shipped with Odie as words only (`odie/making/music_moods.json`). The writer chooses each scene's music by those
+words, or none where the silence and the place are stronger. To tag your own music, or to change a word on iMovie's,
+add a `moods.json` in your sounds folder, in the same shape, keyed by the file's folder and name (or the name alone):
+`{"My band/Night Drive.m4a": {"moods": ["dreamy", "warm"], "styles": ["synth pads"]}}`. Your words win.
+
 **Licence.** Odie uses these sounds where they are, on your own Mac. It never copies them into its repo and never
 uploads them anywhere. The finished story is your file; sharing it is your choice (the player keeps its Share
 button).

@@ -203,21 +203,33 @@ def full_library() -> list[dict]:
     for category, count in sizes.items():
         prefix = category.lower().replace(" - ", "-").replace(" ", "-")
         for i in range(count):
-            name = f"Door Squeak Mid {i:02d}"
+            name = f"Door Squeak {i:02d}"
             seconds = 5.0 + i % 40
-            entries.append({"id": f"{prefix}/door-squeak-mid-{i:02d}", "name": name, "category": category,
-                            "kind": lib.kind_of(category, name, seconds), "seconds": seconds, "path": "/x",
-                            "variants": []})
+            entry = {"id": f"{prefix}/door-squeak-{i:02d}", "name": name, "category": category,
+                     "kind": lib.kind_of(category, name, seconds), "seconds": seconds, "path": "/x", "variants": []}
+            if entry["kind"] == "music":  # every track tagged, as the shipped words tag iMovie's
+                entry["moods"] = MOODS[i % len(MOODS):][:3] or MOODS[:3]
+                entry["styles"] = [STYLES[i % len(STYLES)], STYLES[(i + 1) % len(STYLES)]]
+            entries.append(entry)
     return entries
 
 
+# Words as long as the shipped ones: CLAP's 26 moods and 16 styles.
+MOODS = ["eerie", "spooky", "tense", "suspenseful", "dark", "sad", "melancholy", "solemn", "calm", "peaceful", "dreamy",
+         "mysterious", "romantic", "warm", "happy", "cheerful", "playful", "upbeat", "energetic", "triumphant", "epic",
+         "heroic", "adventurous", "funny", "relaxed", "nostalgic"]
+STYLES = ["piano", "strings", "orchestra", "acoustic guitar", "electric guitar", "synth pads", "electronic beat", "jazz",
+          "blues", "rock", "folk", "lounge", "hip hop", "ambient drone", "brass", "drums"]
+
+
 def test_the_writers_listing_lists_a_whole_imovie_sized_library_within_its_budget():
-    """The budget counts CHARS_PER_TOKEN characters a token, a cautious count for ids full of hyphens (a real
-    tokenizer gives about 2.8 on this listing)."""
+    """The budget counts CHARS_PER_TOKEN characters a token, a little cautious: a real tokenizer gives about 2.95 on
+    the real listing, its music with its mood words."""
     listing = lib.writer_listing(full_library())
     assert len(listing) / lib.CHARS_PER_TOKEN <= lib.LISTING_TOKENS
     assert "not listed in full" not in listing  # every sound is there
-    assert "effects/ " in listing and "door-squeak-mid-94 " in listing
+    assert "music, piano: " in listing  # the music with its moods
+    assert "effects/ " in listing and "door-squeak-94 " in listing
 
 
 def test_a_library_too_big_for_the_budget_sums_up_its_least_useful_categories():
@@ -228,3 +240,121 @@ def test_a_library_too_big_for_the_budget_sums_up_its_least_useful_categories():
     assert len(listing) / lib.CHARS_PER_TOKEN <= lib.LISTING_TOKENS
     assert "ambience/ loops: " in listing  # a top category in full
     assert "effects/ 380 sounds" in listing and "not listed in full" in listing  # the least useful one summed up
+
+
+# Mood words for music: tags a listening model put on iMovie's tracks, shipped with Odie, and the user's own.
+
+def tags_file(path: Path, tags: dict) -> Path:
+    """A moods file in the shipped shape: {"<folder>/<file>": {"moods": [...], "styles": [...]}}."""
+    import json
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"_about": "test tags", **tags}))
+    return path
+
+
+def test_music_takes_its_mood_words_by_the_file_it_comes_from(isolated_settings, imovie, tmp_path):
+    entries = run(lib.build(lib.find_libraries(imovie, tmp_path / "own")))
+    shipped = tags_file(tmp_path / "shipped.json", {
+        "Jingles/Acoustic Sunrise Long.wav": {"moods": ["solemn", "dreamy", "relaxed"], "styles": ["acoustic guitar"]},
+        "iMovie Theme Music/Bulletin.wav": {"moods": ["epic", "dark", "tense"], "styles": ["orchestra", "drums"]},
+    })
+    tagged = {e["id"]: e for e in lib.with_moods(entries, [shipped])}
+    assert tagged["jingles/acoustic-sunrise"]["moods"] == ["solemn", "dreamy", "relaxed"]
+    assert tagged["jingles/acoustic-sunrise"]["styles"] == ["acoustic guitar"]
+    assert tagged["theme-music/bulletin"]["moods"] == ["epic", "dark", "tense"]
+    assert "moods" not in tagged["ambience/ocean-surf"]  # no tags for it: nothing added
+
+
+def test_a_jingle_and_a_theme_of_one_name_keep_their_own_words(tmp_path):
+    """iMovie has a jingle "Travel" and a theme "TRAVEL": keyed by name, one overwrote the other."""
+    jingle = {"id": "jingles/travel", "kind": "music", "path": "/R/iLife Sound Effects/Jingles/Travel.caf",
+              "variants": []}
+    theme = {"id": "theme-music/travel", "kind": "music", "path": "/R/iMovie Theme Music/TRAVEL.m4a", "variants": []}
+    shipped = tags_file(tmp_path / "shipped.json", {
+        "Jingles/Travel.caf": {"moods": ["funny"], "styles": ["brass"]},
+        "iMovie Theme Music/TRAVEL.m4a": {"moods": ["happy"], "styles": ["electric guitar"]},
+    })
+    tagged = {e["id"]: e for e in lib.with_moods([jingle, theme], [shipped])}
+    assert tagged["jingles/travel"]["moods"] == ["funny"] and tagged["theme-music/travel"]["moods"] == ["happy"]
+
+
+def test_a_tag_on_any_cut_of_a_jingle_finds_it():
+    entry = {"path": "/R/Jingles/Borealis Long.caf",
+             "variants": [{"path": "/R/Jingles/Borealis Long.caf"}, {"path": "/R/Jingles/Borealis Short.caf"}]}
+    assert lib.track_keys(entry) == ["Jingles/Borealis Long.caf", "Borealis Long.caf", "Jingles/Borealis Short.caf",
+                                     "Borealis Short.caf"]
+    assert lib.tags_for(entry, {"Borealis Short.caf": {"moods": ["eerie"], "styles": []}}) == {"moods": ["eerie"],
+                                                                                              "styles": []}
+    assert lib.tags_for(entry, {"Jingles/Other.caf": {"moods": ["calm"], "styles": []}}) is None
+
+
+def test_the_users_own_tags_win_and_tag_their_own_sounds(isolated_settings, imovie, tmp_path):
+    own = tmp_path / "own"
+    tone(own / "Drones" / "Low Hum.wav", 9.0)
+    entries = run(lib.build(lib.find_libraries(imovie, own)))
+    shipped = tags_file(tmp_path / "shipped.json", {
+        "Jingles/Acoustic Sunrise Long.wav": {"moods": ["solemn", "dreamy", "relaxed"], "styles": ["acoustic guitar"]},
+    })
+    theirs = tags_file(own / lib.OWN_MOODS_FILE, {
+        "Acoustic Sunrise Long.wav": {"moods": ["warm", "happy"], "styles": ["folk"]},  # a bare file name works too
+        "Drones/Low Hum.wav": {"moods": ["eerie", "dark"], "styles": ["ambient drone"]},
+    })
+    tagged = {e["id"]: e for e in lib.with_moods(entries, [shipped, theirs])}
+    assert tagged["jingles/acoustic-sunrise"]["moods"] == ["warm", "happy"]  # theirs, not the shipped words
+    assert tagged["drones/low-hum"]["moods"] == ["eerie", "dark"]
+
+
+def test_a_broken_or_missing_moods_file_is_no_tags(tmp_path):
+    broken = tmp_path / "moods.json"
+    broken.write_text("{not json")
+    assert lib.read_tags(broken) == {}
+    assert lib.read_tags(tmp_path / "none.json") == {}
+    odd = tags_file(tmp_path / "odd.json", {"A.caf": {"moods": "eerie"}, "B.caf": {"moods": ["calm"]}})
+    assert lib.read_tags(odd) == {"B.caf": {"moods": ["calm"], "styles": []}}  # moods must be a list; styles optional
+
+
+def test_the_catalogue_carries_the_shipped_words_and_the_users(isolated_settings, imovie, tmp_path, monkeypatch):
+    shipped = tags_file(tmp_path / "shipped.json", {
+        "Jingles/Acoustic Sunrise Long.wav": {"moods": ["solemn"], "styles": ["acoustic guitar"]},
+    })
+    monkeypatch.setattr(lib, "SHIPPED_MOODS", shipped)
+    own = lib.own_sounds_folder()
+    assert not str(own).startswith(str(Path.home() / ".odie"))  # the isolated test home
+    libraries = lib.find_libraries(imovie, own)
+    first = {e["id"]: e for e in run(lib.catalogue(libraries, tmp_path / "cache.json"))}
+    assert first["jingles/acoustic-sunrise"]["moods"] == ["solemn"]
+    tags_file(own / lib.OWN_MOODS_FILE, {"Acoustic Sunrise Long.wav": {"moods": ["warm"], "styles": []}})
+    again = {e["id"]: e for e in run(lib.catalogue(libraries, tmp_path / "cache.json"))}
+    assert again["jingles/acoustic-sunrise"]["moods"] == ["warm"]  # read each time: a change is seen at once
+
+
+def test_the_shipped_words_cover_every_imovie_track_by_its_file():
+    import json
+    shipped = json.loads(lib.SHIPPED_MOODS.read_text())
+    tracks = {key: tags for key, tags in shipped.items() if key != "_about"}
+    assert len(tracks) == 113  # 106 jingles and 7 themes
+    assert "Jingles/Travel.caf" in tracks and "iMovie Theme Music/TRAVEL.m4a" in tracks  # both, no longer one
+    assert all(len(t["moods"]) == 3 and len(t["styles"]) == 2 for t in tracks.values())
+    assert "CLAP" in shipped["_about"] and "moods.json" in shipped["_about"]
+
+
+def test_the_listing_gives_music_its_mood_words_grouped_by_style(isolated_settings, imovie, tmp_path):
+    entries = run(lib.build(lib.find_libraries(imovie, tmp_path / "own")))
+    shipped = tags_file(tmp_path / "shipped.json", {
+        "Jingles/Acoustic Sunrise Long.wav": {"moods": ["solemn", "dreamy", "relaxed"],
+                                               "styles": ["acoustic guitar", "electric guitar"]},
+    })
+    listing = lib.writer_listing(lib.with_moods(entries, [shipped]))
+    jingles = next(line for line in listing.splitlines() if line.startswith("jingles/ "))
+    assert jingles == "jingles/ music, acoustic-guitar: acoustic-sunrise solemn/dreamy/relaxed"
+    themes = next(line for line in listing.splitlines() if line.startswith("theme-music/ "))
+    assert themes == "theme-music/ music: bulletin"  # untagged music: its name alone
+    assert "moods" in listing.splitlines()[0]  # the intro says how to read them
+
+
+def test_music_words_are_the_moods_then_one_style_group():
+    borealis = {"id": "jingles/borealis", "kind": "music", "moods": ["eerie", "melancholy", "dreamy"],
+                "styles": ["synth pads", "ambient drone"]}
+    assert lib.music_words(borealis) == "borealis eerie/melancholy/dreamy"
+    assert lib.style_of(borealis) == "synth-pads"
+    assert lib.style_of({"id": "jingles/x", "kind": "music"}) == ""

@@ -40,6 +40,9 @@ exactly; on a list with no music, give no music).
 - **Beds** (`bed`): one ambience under the whole scene, looped: always a sound the list marks `loop`. **Music**
   (`music`): at most one music bed, under the ambience: always a sound marked `music`. Never more than
   one bed and one music bed at a time: a scene gives `bed` one sound and `music` one sound at most.
+- **Music** is listed by style, each piece with its mood words (`borealis eerie/melancholy/dreamy`): choose each
+  scene's music by its mood words against the scene's feeling. Music is optional: leave it out where
+  silence and the bed are stronger.
 - **Cues** in the lines (`{"sound": …}`): a sound played once where it stands, a `hit`; a `loop` works too and plays
   its first 8 seconds (gulls crying as the prelude opens). Never music. The next line starts `lead` seconds after it
   (0 to 8; 0 plays it under what follows). A sound right after a spoken line: `sound_after`. A `stinger` is a hit

@@ -353,3 +353,9 @@ async def test_a_phonon_story_is_written_and_checked_at_its_voices_pace():
     assert turn.said[0]["error"].startswith("The story is too short: about 1:34 for 2 minutes")
     assert "at these voices' pace" in turn.said[0]["error"]
     assert written.note.startswith("The story came out at about 1:34 for 2 minutes")
+
+
+def test_the_writer_is_told_to_choose_music_by_its_mood_words():
+    text = writer.INSTRUCTION
+    assert "mood words" in text and "feeling" in text
+    assert "silence and the bed" in text  # music is optional where they are stronger
