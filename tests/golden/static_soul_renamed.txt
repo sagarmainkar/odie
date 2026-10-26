@@ -114,6 +114,12 @@ Use when: EMI, loan, SIP and pay-off-early questions; budget split, tip, fuel co
 Fields: title (optional). inputs: [{id, label, min, max, step, value, unit}], up to 6. outputs: [{label, formula, unit}], up to 6. formula: numbers, input ids, + - * / ^ ( ) < > ==, min, max, round(x, digits), abs, if(cond, a, b), emi(principal, rate_pct, years), sip(monthly, rate_pct, years), pct(part, whole), prepay_years and prepay_interest(principal, rate_pct, years, yearly_extra): EMI plus a yearly lump sum. unit: ₹, % or a word.
 Example: {"type": "calculator", "title": "Home loan", "inputs": [{"id": "p", "label": "Loan", "min": 1000000, "max": 10000000, "step": 100000, "value": 4000000, "unit": "₹"}, {"id": "r", "label": "Rate", "min": 6, "max": 12, "step": 0.1, "value": 8.5, "unit": "%"}, {"id": "n", "label": "Years", "min": 5, "max": 30, "step": 1, "value": 20, "unit": "years"}], "outputs": [{"label": "Monthly EMI", "formula": "emi(p, r, n)", "unit": "₹"}, {"label": "Total interest", "formula": "emi(p, r, n) * n * 12 - p", "unit": "₹"}]}
 
+### form
+For: A small form the user fills in and sends: dropdowns, radio buttons, checkboxes, text and sliders, prefilled with your best guess.
+Use when: You need two or more answers from the user at once: you're unsure what they mean, you're brainstorming options with them, or you're gathering choices before making something (video, podcast, research). Prefill every field with your best suggestion. Not for a single yes/no or one obvious next step: use actions. The user's answer comes back as a message with an odie-form-answer block: read values by field id.
+Fields: id, title. fields ≤12: {id, kind, label, value, group, required}. select, radio: options [text or {value, label, note}]. checkbox: options, value a list. slider: min, max, step, unit. text: multiline.
+Example: {"type": "form", "id": "trip", "title": "Weekend", "fields": [{"id": "where", "kind": "select", "label": "Where", "value": "Hills", "options": ["Hills", "Beach"]}, {"id": "pace", "kind": "radio", "label": "Pace", "value": "Easy", "options": ["Easy", "Packed"]}, {"id": "spend", "kind": "slider", "label": "Budget", "min": 5, "max": 30, "value": 12, "unit": "k"}]}
+
 ### callout
 For: A tinted box with an icon: a warning, a tip or the one-line takeaway.
 Use when: A safety or money warning, a practical tip, the verdict after a comparison. One per reply.

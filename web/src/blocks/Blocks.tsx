@@ -81,6 +81,7 @@ const DRAW: Drawers = {
   list: (b) => <List {...b} />,
   checklist: (b) => <Checklist {...b} />,
   calculator: (b) => <Calculator {...b} />,
+  form: () => null,  // read from the fence now; drawn by Form.tsx in the next change
   heading: (b) => <Heading text={b.text} />,
   text: (b) => <Text text={b.text} />,
   badge: (b) => <Badge text={b.text} tone={b.tone} />,

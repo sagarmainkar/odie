@@ -6,7 +6,7 @@ def test_catalog_lists_every_kind_once_with_an_example():
     c = load_catalog()
     names = [b["kind"] for b in c["blocks"]]
     assert len(names) == len(set(names))
-    assert {"chart", "kpis", "actions", "source", "tiles", "progress", "streak", "flip", "heatmap", "timeline", "images"} <= kinds()
+    assert {"chart", "kpis", "actions", "source", "tiles", "progress", "streak", "flip", "heatmap", "timeline", "images", "form"} <= kinds()
     assert {"table", "list", "checklist", "calculator", "callout", "row", "section", "grid", "heading", "text", "badge", "button", "link", "image",
             "stat", "bar", "divider"} <= kinds()
     for b in c["blocks"]:
@@ -26,10 +26,32 @@ def test_catalog_text_is_readable_for_a_model():
 
 def test_the_catalogue_stays_within_its_token_budget():
     """The spec allowed the visuals skill about 3,200 tokens; ~4 chars a token. Raised to 3,300 with the calculator,
-    and to 3,600 with flip and heatmap (13 Oct 2026), and to 3,750 with the svg drawing (14 Oct 2026). Since 12 Oct 2026
-    it's in the system prompt on every request (read once, then from the provider's cache)."""
+    and to 3,600 with flip and heatmap (13 Oct 2026), to 3,750 with the svg drawing (14 Oct 2026), and to 4,000 with the
+    form (26 Oct 2026; the owner's call: the system prompt is cached by the providers, so the extra cost is small).
+    Since 12 Oct 2026 it's in the system prompt on every request (read once, then from the provider's cache)."""
     from odie.blocks import visuals_prompt
-    assert len(visuals_prompt()) / 4 <= 3750
+    assert len(visuals_prompt()) / 4 <= 4000
+
+
+def test_the_form_tells_the_model_when_to_use_it_and_how_answers_come_back():
+    form = next(b for b in load_catalog()["blocks"] if b["kind"] == "form")
+    assert form.get("group", "block") == "block"
+    assert form["for"] == ("A small form the user fills in and sends: dropdowns, radio buttons, checkboxes, text and sliders, "
+                           "prefilled with your best guess.")
+    assert form["use_when"].startswith("You need two or more answers from the user at once")
+    assert "Prefill every field with your best suggestion." in form["use_when"] and "use actions" in form["use_when"]
+    assert "odie-form-answer block: read values by field id" in form["use_when"]
+    assert {f["kind"] for f in form["example"]["fields"]} <= {"select", "radio", "checkbox", "text", "slider"}
+    assert len(form["example"]["fields"]) == 3  # short, to save tokens
+
+
+def test_the_form_entry_stays_short():
+    """The form's entry as the prompt carries it. The brief aimed at about 220 tokens; its own wording for `for` and
+    `use_when` is about 140 of them, so with the field list and a three-field example it measures about 290 (26 Oct
+    2026). The whole catalogue still fits its 4,000 budget, so no other entry needed trimming."""
+    from odie.blocks import _entry_text
+    form = next(b for b in load_catalog()["blocks"] if b["kind"] == "form")
+    assert len("\n".join(_entry_text(form))) / 4 <= 300
 
 
 async def test_catalog_route(client):
