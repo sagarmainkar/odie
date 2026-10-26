@@ -15,10 +15,12 @@ from __future__ import annotations
 
 import ipaddress
 import os
+import socket
 from urllib.parse import urlsplit
 
 LOOPBACK = frozenset({"localhost", "127.0.0.1", "::1"})
-OWN_SUFFIXES = (".localhost", ".local", ".ts.net")  # names no public DNS can point at this computer: mDNS and Tailscale
+OWN_SUFFIXES = (".localhost", ".ts.net")  # names no public DNS can point at this computer: the browser's own, and Tailscale
+# .local names are mDNS: any device on the LAN can answer for one, so only this computer's own (own_bonjour_name) counts.
 UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 REFUSED_HOST = {"detail": "This address isn't one Odie answers to. Open Odie at its own address, or add this name to "
                           "ODIE_HOSTS in ~/.odie/.env (comma-separated) and restart Odie."}
@@ -61,21 +63,36 @@ def own_names() -> set[str]:
     return names
 
 
+def own_bonjour_name() -> str:
+    """This computer's own mDNS (Bonjour) name: the hostname without its domain, lower-case, plus .local.
+    "Studio-Mini.lan" -> "studio-mini.local"; "studio-mini" -> "studio-mini.local"; no hostname -> ""."""
+    short = socket.gethostname().split(".")[0].strip().lower()
+    if not short:
+        return ""
+    return f"{short}.local"
+
+
 def is_own_name(name: str) -> bool:
-    """Whether a bare name (never an address) is one of Odie's own: loopback, a .localhost/.local/.ts.net name, or one in
-    own_names. "mac.ts.net" -> True; "localhost" -> True; "rebind.attacker.test" -> False; "203.0.113.5" -> False
-    (an address is not a name: see host_allowed)."""
+    """Whether a bare name (never an address) is one of Odie's own: loopback, a .localhost or .ts.net name, this
+    computer's own .local name (own_bonjour_name: another device on the LAN can answer for any other .local name), or
+    one in own_names (the phone address, ODIE_HOSTS). "mac.ts.net" -> True; "localhost" -> True; "studio-mini.local" on
+    the computer named studio-mini -> True; "odie.local" listed in ODIE_HOSTS -> True; "evil.local" there -> False;
+    "rebind.attacker.test" -> False; "203.0.113.5" -> False (an address is not a name: see host_allowed)."""
     if not name or is_ip(name):
         return False
     if name in LOOPBACK or name.endswith(OWN_SUFFIXES):
         return True
-    return name in own_names()
+    is_this_computers_bonjour_name = name.endswith(".local") and name == own_bonjour_name()
+    if is_this_computers_bonjour_name:
+        return True
+    return name in own_names()  # a .local name the user listed in ODIE_HOSTS passes here, as the 421 page says it will
 
 
 def host_allowed(host_header: str) -> bool:
     """Whether the name a request gives in Host is one Odie answers to. An IP address is always fine: a rebinding
     attack needs a *name* the attacker controls, and a browser never confuses an IP with another site. Loopback names,
-    names under .localhost, .local (mDNS) and .ts.net (Tailscale), and Odie's own names (own_names) are fine too.
+    names under .localhost and .ts.net (Tailscale), this computer's own .local name, and Odie's own names (own_names)
+    are fine too.
     Examples: "127.0.0.1:8000" -> True; "192.168.1.5:8000" -> True; "localhost:8000" -> True; "mac.ts.net" -> True;
     "rebind.attacker.test" -> False; "" (no Host at all) -> False."""
     name = hostname_of(host_header)

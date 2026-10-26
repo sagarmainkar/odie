@@ -1,10 +1,12 @@
 /** Where the user is: the server keeps a place name (never coordinates in what reaches the model), and the web app sends a
  * fix on open, after one ask. These are the pure decisions; LocationAsk and Settings' LocationRow render them. */
+import { postJSON } from "./api";
+
 export type LocationInfo = { on: boolean | null; place: string; seen: string; home: string; home_set_by_user: boolean };
-export type LocationRow = { sub: string; state: "ok" | "off" | "none" };
+export type LocationRow = { sub: string; meta: string; state: "ok" | "off" | "none" };
 
 export const ASK_TEXT = "Share where you are, for better answers? Odie uses the place name, not coordinates, in what it sends to your chat model.";
-export const NOTE_TEXT = "The place name goes to your chat model with each message. Turning a point into a name may ask OpenStreetMap when nothing nearby is known.";
+export const NOTE_TEXT = "Your model gets the place name; a point may reach OpenStreetMap if none nearby is known.";
 
 /** Whether the one-line ask shows: only while nobody has answered it (`on` is null) and this browser can give a position.
  *  never asked, geolocation available -> true; never asked, a desktop without it -> false; "Not now" earlier -> false;
@@ -47,20 +49,21 @@ export function seenText(iso: string, now: Date): string {
   return `${DAYS[atThere.getUTCDay()]} ${atThere.getUTCDate()} ${MONTHS[atThere.getUTCMonth()]} ${hhmm}`;
 }
 
-/** Settings' Location row, in words:
- *    on, a place known  -> "Northvale, Westshire · seen 14:12 · home Northvale"
- *    on, nothing yet    -> "Waiting for the first fix"
- *    off                -> "Off"
- *    never asked        -> "Not asked yet" */
+/** Settings' Location row, in words. The place has the sub line to itself (a long name truncates there and hides
+ *  nothing else); seen and home go on the shorter meta line under it.
+ *    on, a place known  -> sub "City of Northvale, Westshire", meta "seen 14:12 · home Northvale"
+ *    on, nothing yet    -> sub "Waiting for the first fix", meta ""
+ *    off                -> sub "Off"
+ *    never asked        -> sub "Not asked yet" */
 export function locationRow(info: LocationInfo, now: Date): LocationRow {
-  if (info.on === null) return { sub: "Not asked yet", state: "none" };
-  if (info.on === false) return { sub: "Off", state: "off" };
-  if (!info.place) return { sub: "Waiting for the first fix", state: "ok" };
-  const parts = [info.place];
+  if (info.on === null) return { sub: "Not asked yet", meta: "", state: "none" };
+  if (info.on === false) return { sub: "Off", meta: "", state: "off" };
+  if (!info.place) return { sub: "Waiting for the first fix", meta: "", state: "ok" };
+  const details = [];
   const seen = seenText(info.seen, now);
-  if (seen) parts.push(`seen ${seen}`);
-  if (info.home) parts.push(`home ${info.home}`);
-  return { sub: parts.join(" · "), state: "ok" };
+  if (seen) details.push(`seen ${seen}`);
+  if (info.home) details.push(`home ${info.home}`);
+  return { sub: info.place, meta: details.join(" · "), state: "ok" };
 }
 
 /** Whether this browser can give a position at all (a desktop browser may not). */
@@ -98,4 +101,20 @@ export function localIso(d: Date): string {
   const offset = -d.getTimezoneOffset();
   const sign = offset >= 0 ? "+" : "-";
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}${sign}${pad(Math.trunc(offset / 60))}:${pad(offset % 60)}`;
+}
+
+
+/** What Settings does once Turn on has been answered: the server said on -> ask the browser for a fix right now (no
+ * reload needed); off, never asked, or no answer at all (the PUT failed) -> nothing, the row keeps what it showed. */
+export function afterTurnOn(info: LocationInfo | null): "fix" | "nothing" {
+  if (info && info.on === true) return "fix";
+  return "nothing";
+}
+
+/** This browser's position, sent to the server once; null when the browser can't or won't give one, or the server
+ * doesn't answer (the server keeps the last place, so silence is fine). Shared by the ask card and Settings' Turn on. */
+export async function sendPosition(): Promise<LocationInfo | null> {
+  const got = await currentPosition();
+  if (got === "denied" || got === null) return null;
+  try { return await postJSON<LocationInfo>("/api/location", got); } catch { return null; }
 }

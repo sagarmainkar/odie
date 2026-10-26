@@ -1,14 +1,12 @@
 import { useEffect, useState } from "react";
 import { getJSON, postJSON, putJSON } from "../api";
-import { ASK_TEXT, afterAllow, currentPosition, geolocationSupported, shouldAsk, shouldRefresh, type LocationInfo } from "../location";
+import { ASK_TEXT, afterAllow, currentPosition, geolocationSupported, sendPosition, shouldAsk, shouldRefresh, type LocationInfo } from "../location";
 import { Tile } from "./Tile";
 
-/** Sends this browser's position to the server, once; a browser that can't or won't is silent (the server keeps the last place). */
-async function sendPosition(): Promise<LocationInfo | null> {
-  const got = await currentPosition();
-  if (got === "denied" || got === null) return null;
-  try { return await postJSON<LocationInfo>("/api/location", got); } catch { return null; }
-}
+// The card sits where the composer sits: mx-3 at phone width, and on a desktop the composer's centred column
+// (styles.css gives .chat-aside the same margins as .chat-composer), so it never spans wider than the composer.
+export const ASK_CARD_CLASS = "chat-aside glass rounded-[22px] mx-3 mb-2 px-3.5 py-3 flex items-start gap-3 rise";
+
 
 /** Under the composer: the one ask for where the user is, shown until answered; afterwards a silent refresh on each open. */
 export function LocationAsk() {
@@ -40,7 +38,7 @@ export function LocationAsk() {
     finally { setBusy(false); }
   }
   return (
-    <div className="glass rounded-[22px] mx-3 mb-2 px-3.5 py-3 flex items-start gap-3 rise">
+    <div className={ASK_CARD_CLASS}>
       <Tile icon="pin" color="green" small />
       <div className="flex-1 min-w-0">
         <div className="text-[13px] leading-[18px] text-muted">{ASK_TEXT}</div>

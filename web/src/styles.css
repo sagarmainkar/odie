@@ -315,11 +315,12 @@ input, button, textarea { font-family: inherit; }
 
 /* Desktop chat (1024px and up, layout.ts): the header, the conversation and the composer share one centred reading
    column, 784px of text at most, so tables and timelines have room and lines stay readable. The scrolling area itself
-   stays full width (the wheel works anywhere beside it); only its padding grows. Below 1024px these do nothing. */
+   stays full width (the wheel works anywhere beside it); only its padding grows. Below 1024px these do nothing.
+   .chat-aside is for a card that sits just above the composer (the location ask): the same bounds as the composer. */
 @media (min-width: 1024px) {
   .chat-col { padding-left: max(18px, calc((100% - 784px) / 2)); padding-right: max(18px, calc((100% - 784px) / 2)); }
   .chat-col-edge { margin-left: max(18px, calc((100% - 784px) / 2)); margin-right: max(18px, calc((100% - 784px) / 2)); }
-  .chat-composer { margin-left: max(12px, calc((100% - 796px) / 2)); margin-right: max(12px, calc((100% - 796px) / 2)); }
+  .chat-composer, .chat-aside { margin-left: max(12px, calc((100% - 796px) / 2)); margin-right: max(12px, calc((100% - 796px) / 2)); }
 }
 
 /* Flash cards (blocks/Flip.tsx): the front turns over to the back. With reduced motion there's no turn: the back
