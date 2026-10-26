@@ -359,3 +359,14 @@ def test_the_writer_is_told_to_choose_music_by_its_mood_words():
     text = writer.INSTRUCTION
     assert "mood words" in text and "feeling" in text
     assert "silence and the bed" in text  # music is optional where they are stronger
+
+
+def test_the_writer_sees_each_speakers_gender_and_age():
+    cast = [{"id": "narrator", "name": "Narrator", "voice": "Hadley", "gender": "any"},
+            {"id": "ghost", "name": "The ghost", "voice": "Morwenna of the Deep", "about": "a drowned girl",
+             "gender": "female", "age": "a girl"}]
+    lines = writer.cast_lines(cast, {"narrator": 185, "ghost": 145})
+    assert lines.splitlines() == [
+        "- narrator: Narrator; no gender (it or they); reads about 185 words a minute",
+        "- ghost: The ghost (a drowned girl); female (she), a girl; reads about 145 words a minute"]
+    assert "pronouns" in writer.INSTRUCTION

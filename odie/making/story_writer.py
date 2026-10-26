@@ -584,15 +584,32 @@ class LengthOnce:
 
 # The writer's turn.
 
+# A speaker's gender as the writer reads it, so the narration's pronouns match the voice.
+GENDER_LINES = {"female": "female (she)", "male": "male (he)", "any": "no gender (it or they)"}
+
+
+def who_line(member: dict) -> str:
+    """A speaker's gender and age as the writer reads them: female, "a girl" -> "female (she), a girl"; any -> "no
+    gender (it or they)"; no gender given -> ""."""
+    words = GENDER_LINES.get(member.get("gender", ""), "")
+    age = text_or_empty(member.get("age")).strip()
+    if words and age:
+        words += f", {age}"
+    return words
+
+
 def cast_lines(cast: list[dict], paces: dict[str, int]) -> str:
-    """The cast as the writer reads it, with how fast each reads: "- keeper: The keeper (the old lighthouse keeper);
-    reads about 145 words a minute"."""
+    """The cast as the writer reads it, with each speaker's gender and how fast each reads: "- ghost: The ghost (a
+    drowned girl); female (she), a girl; reads about 145 words a minute"."""
     lines = []
     for member in cast:
         about = text_or_empty(member.get("about")).strip()
         line = f"- {member['id']}: {member.get('name', member['id'])}"
         if about:
             line += f" ({about})"
+        who = who_line(member)
+        if who:
+            line += f"; {who}"
         line += f"; reads about {pace_of(paces, member['id'])} words a minute"
         lines.append(line)
     return "\n".join(lines)

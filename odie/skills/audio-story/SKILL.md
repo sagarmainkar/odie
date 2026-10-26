@@ -37,7 +37,9 @@ user has already answered ("a 10-minute horror story about a lighthouse" skips s
    - **each character:** a voice select prefilled with your suggestion. Its options are `options`
      **exactly as `story_voices` gives them**, the same list in every voice select: never shorten it, rewrite it or
      drop a `preview`. Phonon's character voices (a pirate captain, a witch, an old keeper) are in it, for the roles
-     they lift;
+     they lift. Suggest a voice of the character's gender (each option's `gender`): a "she" on a woman's voice, a
+     "he" on a man's; a creature's voice (no gender) plays only a creature. For an eerie woman (a ghost, a witch, a
+     sinister woman), suggest **The Snow Queen**, **Morwenna of the Deep** or the **Fairy Godmother**;
    - **sound level:** a slider from 10 to 40 %, at 25 %: how loud the place is when no one speaks (under the voices
      it drops lower by itself). Label it "Sound between the lines".
    At most 12 fields: for a big cast, cast the main characters and let minor ones share a voice.
@@ -59,8 +61,10 @@ make_audio_story(
   title="The Lighthouse at Rook Point",
   genre="mystery",
   premise="An old keeper hears a ship's bell on a night no ship is out.",
-  cast=[{"id": "narrator", "name": "Narrator", "voice": "Fairy Godmother", "about": "an outside storyteller"},
-        {"id": "keeper", "name": "The keeper", "voice": "Old Mortlake", "about": "the last keeper, gruff and alone"}],
+  cast=[{"id": "narrator", "name": "Narrator", "voice": "Fairy Godmother", "gender": "any",
+         "about": "an outside storyteller"},
+        {"id": "keeper", "name": "The keeper", "voice": "Old Mortlake", "gender": "male", "age": "old",
+         "about": "the last keeper, gruff and alone"}],
   narrator="narrator",
   accent="British",
   minutes=10,
@@ -69,7 +73,9 @@ make_audio_story(
 )
 ```
 
-- `cast`: the narrator and each character with the voice chosen in the form (a `value` from `story_voices`).
+- `cast`: the narrator and each character with the voice chosen in the form (a `value` from `story_voices`), and
+  their `"gender"`: `"female"` (she), `"male"` (he) or `"any"` (a creature, a thing, an outside storyteller), plus an
+  `"age"` word when it matters ("a girl", "old"). A woman on a man's voice, or a man on a woman's, is refused.
 - `narrator`: `"narrator"` for an outside storyteller (in the cast as id `narrator`), or a character's id to tell it
   in the first person.
 - `minutes` 2 to 15; `sound_level` 10 to 40 (the slider's value).

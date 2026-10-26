@@ -52,12 +52,12 @@ def test_phonon_voices_for_an_accent_with_characters_and_previews(store, monkeyp
     asyncio.run(voice.phonon_voices(transport=phonon_listing(["Zoey", "Easton", "Maeve", "Alfie", "Captain Silas Blackwater", "Old Mortlake"])))
     asyncio.run(voice.phonon_available(transport=phonon_listing([])))
     got = asyncio.run(tools()["story_voices"].func(accent="British"))
-    assert set(got) == {"engine", "accent", "options"}  # one list, pasted as it is into every voice select
+    assert set(got) == {"engine", "accent", "options", "notes"}  # one list, pasted as it is into every voice select
     assert got["engine"] == "phonon" and got["accent"] == "British"
     options = got["options"]
     assert [o["value"] for o in options] == ["Maeve", "Alfie", "Captain Silas Blackwater", "Old Mortlake"]
     assert options[0]["note"].startswith("woman · ") and options[1]["note"].startswith("man · ")
-    assert options[2]["note"].startswith("character voice")  # the Characters come after the accent's voices
+    assert options[2]["note"].startswith("man · character voice")  # the Characters come after the accent's voices
     assert all(len(o["note"]) <= 80 for o in options) and all(o["preview"] for o in options)
     captain = options[2]
     assert captain["preview"] == "/api/voice/preview/phonon/Captain%20Silas%20Blackwater"  # spaces encoded for the ▶
@@ -82,7 +82,8 @@ def test_kokoro_has_indian_voices_and_no_characters(store, monkeypatch):
     choose(store, "kokoro", monkeypatch)
     got = asyncio.run(tools()["story_voices"].func(accent="Indian"))
     assert got["engine"] == "kokoro" and [o["value"] for o in got["options"]] == ["hf_alpha", "hf_beta", "hm_omega", "hm_psi"]
-    assert got["options"][0] == {"value": "hf_alpha", "label": "Alpha", "note": "woman", "preview": "/api/voice/preview/kokoro/hf_alpha"}
+    assert got["options"][0] == {"value": "hf_alpha", "label": "Alpha", "note": "woman", "gender": "female",
+                                 "preview": "/api/voice/preview/kokoro/hf_alpha"}
 
 
 def test_openai_takes_any_voice_and_adds_the_accent_in_the_story(store, monkeypatch):
@@ -132,8 +133,9 @@ def queued(store, monkeypatch, tmp_path):
     return submitted
 
 
-CAST = [{"id": "narrator", "name": "Narrator", "voice": "bf_emma", "about": "an outside storyteller"},
-        {"id": "keeper", "name": "The keeper", "voice": "bm_george", "about": "the old lighthouse keeper"}]
+CAST = [{"id": "narrator", "name": "Narrator", "voice": "bf_emma", "about": "an outside storyteller", "gender": "any"},
+        {"id": "keeper", "name": "The keeper", "voice": "bm_george", "about": "the old lighthouse keeper",
+         "gender": "male"}]
 
 
 async def make(**changes) -> dict:
@@ -160,7 +162,8 @@ async def test_a_good_story_is_queued_with_its_cast_and_level(queued):
     assert job.folder == workspace() / story.FOLDER / "the-lighthouse-at-rook-point" and job.folder.is_dir()
     request = job.data["request"]
     assert request == story_writer.Request(genre="mystery", premise="A keeper hears a ship that isn't there.",
-                                           cast=[{**member, "pace": 145} for member in CAST], narrator="narrator",
+                                           cast=[{**member, "age": "", "pace": 145} for member in CAST],
+                                           narrator="narrator",
                                            accent="British", minutes=5, brief="Slow and eerie.", engine="kokoro")
     assert job.data["sound_level"] == 25
     assert "The keeper" in job.brief and "bm_george" in job.brief  # brief.md keeps what was asked
@@ -175,7 +178,7 @@ async def test_a_voice_of_another_engine_is_refused_with_where_to_look(queued):
 
 
 async def test_too_many_characters_the_length_and_the_sound_level_are_refused(queued):
-    crowd = [{"id": f"c{n}", "name": f"Person {n}", "voice": "bf_emma"} for n in range(8)]
+    crowd = [{"id": f"c{n}", "name": f"Person {n}", "voice": "bf_emma", "gender": "female"} for n in range(8)]
     out = await make(cast=[CAST[0], *crowd])
     assert out["error"] == ("A story has at most 8 speakers, the narrator included; this cast has 9. Let minor "
                             "characters share a voice, or leave them to the narrator.")
@@ -197,7 +200,8 @@ async def test_the_narrator_must_be_in_the_cast_and_the_accent_offered(queued):
 
 
 async def test_cast_ids_are_made_plain_and_kept_unique(queued):
-    cast = [{"name": "Narrator", "voice": "bf_emma"}, {"id": "The Keeper", "name": "The keeper", "voice": "bm_george"}]
+    cast = [{"name": "Narrator", "voice": "bf_emma", "gender": "any"},
+            {"id": "The Keeper", "name": "The keeper", "voice": "bm_george", "gender": "male"}]
     out = await make(cast=cast, narrator="narrator")
     assert "result" in out
     assert [m["id"] for m in queued[0].data["request"].cast] == ["narrator", "the-keeper"]
@@ -260,3 +264,107 @@ async def test_with_only_your_own_sounds_the_reply_names_your_folder(queued):
     (folder / "Rain").mkdir(parents=True)
     out = await make()
     assert "the user's own sounds folder" in out["result"] and "sound kit" not in out["result"]
+
+
+# Casting by gender: a "she" is never cast on a man's voice, or on a creature's.
+
+def test_phonon_voices_say_who_they_can_play(store, monkeypatch):
+    choose(store, "phonon", monkeypatch)
+    asyncio.run(voice.phonon_voices(transport=phonon_listing(
+        ["Harper", "Miles", "The Snow Queen", "The Thing Under the Stairs", "Fennick the Young Elf"])))
+    monkeypatch.setattr(voice, "phonon_here", lambda: True)
+    got = asyncio.run(tools()["story_voices"].func(accent="American"))
+    genders = {o["value"]: o["gender"] for o in got["options"]}
+    assert genders == {"Harper": "female", "Miles": "male", "The Snow Queen": "female",
+                       "The Thing Under the Stairs": "creature", "Fennick the Young Elf": "male"}
+    queen = next(o for o in got["options"] if o["value"] == "The Snow Queen")
+    assert queen["note"].startswith("woman · character voice · ") and len(queen["note"]) <= 80
+    thing = next(o for o in got["options"] if o["value"] == "The Thing Under the Stairs")
+    assert thing["note"].startswith("creature · character voice")
+    for name in ("The Snow Queen", "Morwenna of the Deep", "Fairy Godmother"):
+        assert name in got["notes"]  # the owner's rule for eerie women
+    assert "ghost" in got["notes"] and "gender" in got["notes"]
+
+
+def test_every_phonon_character_voice_has_a_gender():
+    from odie import voice_phonon
+    genders = tools()["story_voices"].func.__globals__["CHARACTER_GENDERS"]
+    characters = {v["name"] for v in voice_phonon.CATALOGUE if v["locale"] == "characters"}
+    assert set(genders) == characters
+    assert {name for name, gender in genders.items() if gender == "female"} == {
+        "The Snow Queen", "Morwenna of the Deep", "Fairy Godmother"}
+    assert genders["Fennick the Young Elf"] == "male" and genders["The Thing Under the Stairs"] == "creature"
+
+
+def test_a_voice_plays_a_character_of_its_gender():
+    problem = tools()["make_audio_story"].func.__globals__["casting_problem"]
+    ghost = {"name": "The ghost girl", "gender": "female"}
+    captain = {"name": "The captain", "gender": "male"}
+    dragon = {"name": "The dragon", "gender": "any"}
+    assert problem(ghost, "Morwenna of the Deep", "female") is None
+    assert problem(captain, "Miles", "male") is None
+    assert problem(dragon, "Vyrmathrax the Ancient", "creature") is None  # a creature voice plays a creature
+    assert problem(dragon, "Miles", "male") is None  # "any" can be anyone
+    assert problem(ghost, "Alloy", "any") is None  # a voice with no gender to go by can play anyone
+    she_on_him = problem(ghost, "Miles", "male")
+    assert she_on_him == "The ghost girl is female, but Miles is a man's voice: choose a woman's voice."
+    he_on_her = problem(captain, "Harper", "female")
+    assert he_on_her == "The captain is male, but Harper is a woman's voice: choose a man's voice."
+    she_on_it = problem(ghost, "The Thing Under the Stairs", "creature")
+    assert she_on_it == ("The ghost girl is female, but The Thing Under the Stairs is a creature's voice, with no "
+                         "gender: choose a woman's voice.")
+
+
+def test_gender_words_are_read_kindly():
+    word = tools()["make_audio_story"].func.__globals__["gender_word"]
+    assert [word(w) for w in ("female", " She", "woman", "girl")] == ["female"] * 4
+    assert [word(w) for w in ("male", "he", "Man", "boy")] == ["male"] * 4
+    assert [word(w) for w in ("any", "creature", "it", "none")] == ["any"] * 4
+    assert word("") == "" and word(None) == "" and word("tall") == ""
+
+
+async def test_a_cast_member_without_a_gender_is_asked_for_one(queued):
+    cast = [CAST[0], {k: v for k, v in CAST[1].items() if k != "gender"}]
+    out = await make(cast=cast)
+    assert out["error"] == ('The keeper needs a gender: "female" (she), "male" (he) or "any" (a creature, a thing, '
+                            "or a storyteller who is no one in the story).")
+    assert queued == []
+
+
+async def test_a_woman_on_a_mans_voice_is_refused_in_words(queued):
+    cast = [CAST[0], {**CAST[1], "name": "The keeper's widow", "gender": "female"}]
+    out = await make(cast=cast)
+    assert out["error"] == "The keeper's widow is female, but George is a man's voice: choose a woman's voice."
+    assert queued == []
+
+
+async def test_the_cast_keeps_its_gender_and_age(queued):
+    cast = [CAST[0], {**CAST[1], "gender": "He", "age": "old"}]
+    out = await make(cast=cast)
+    assert "result" in out
+    keeper = queued[0].data["request"].cast[1]
+    assert keeper["gender"] == "male" and keeper["age"] == "old"
+
+
+async def test_phonon_a_ghost_girl_on_the_thing_under_the_stairs_is_refused(store, monkeypatch, tmp_path):
+    from odie.making import jobs, sound_library
+    choose(store, "phonon", monkeypatch)
+    await voice.phonon_voices(transport=phonon_listing(["Hadley", "The Thing Under the Stairs", "Morwenna of the Deep"]))
+    monkeypatch.setattr(voice, "phonon_here", lambda: True)
+    monkeypatch.setattr(sound_library, "LIBRARY_ROOT", tmp_path / "no-imovie")
+    monkeypatch.setattr(jobs, "submit", lambda job: 1)
+    narrator = {"id": "narrator", "name": "Narrator", "voice": "Hadley", "gender": "any"}
+    ghost = {"id": "ghost", "name": "The ghost", "voice": "The Thing Under the Stairs", "gender": "female",
+             "about": "a drowned girl"}
+    out = await make(cast=[narrator, ghost], accent="American")
+    assert out["error"].startswith("The ghost is female, but The Thing Under the Stairs is a creature's voice")
+    assert "For an eerie woman (a ghost, a witch, a sinister woman), choose The Snow Queen, Morwenna of the Deep or " \
+           "Fairy Godmother." in out["error"]  # on Phonon, the owner's three voices for her
+    out = await make(cast=[narrator, {**ghost, "voice": "Morwenna of the Deep"}], accent="American")
+    assert "result" in out
+
+
+def test_the_skill_casts_eerie_women_from_the_three_voices():
+    text = (SKILL / "SKILL.md").read_text()
+    assert "**The Snow Queen**, **Morwenna of the Deep** or the **Fairy Godmother**" in text
+    assert '"gender"' in text  # every cast member carries one in the call

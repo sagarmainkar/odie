@@ -20,7 +20,9 @@ Odie runs a short, guided start with forms, and skips any step your message alre
 3. **The cast**, in one form:
    - who tells it: a character, in the first person, or an outside storyteller;
    - a voice for each character, suggested and yours to change, each with a ▶ to hear it (on Phonon, the character
-     voices too: a pirate captain, a witch, an old keeper);
+     voices too: a pirate captain, a witch, an old keeper). Each character is cast on a voice of their gender, so a
+     "she" is never heard in a man's voice or a creature's growl; an eerie woman (a ghost, a witch) is The Snow Queen,
+     Morwenna of the Deep or the Fairy Godmother;
    - how loud the sound is between the lines: 10 to 40 %, at 25 % (under the voices it drops lower).
 
 Then it's made in the background. A writer writes the script and chooses the sounds like an art director; Odie's

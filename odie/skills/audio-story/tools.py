@@ -17,10 +17,35 @@ from odie.making import chat, jobs, sound_library, story, story_writer
 ACCENTS = {"phonon": ["American", "British"], "kokoro": ["American", "British", "Indian"],
            "openai": ["American", "British", "Indian"]}
 NOTE_LIMIT = 80  # a form option's note is cut at 80 characters
-WHO = {"female": "woman", "male": "man", "neutral": "neutral"}
+WHO = {"female": "woman", "male": "man", "neutral": "neutral", "creature": "creature", "any": "voice"}
 CHARACTERS = "Characters"  # Phonon's group of character voices (a pirate captain, a witch, an old keeper)
 CHARACTER_NOTE = "character voice"
 OPENAI_ACCENT = "accent added in the story"  # OpenAI voices have no fixed accent: the story asks for it in words
+
+# Who each of Phonon's character voices can play: its catalogue gives them no gender, so they are here, from how each
+# sounds and its description. A creature (a demon, a dragon, the thing under the stairs) has none: it plays a creature
+# or a thing, never a "she" or a "he".
+CHARACTER_GENDERS = {
+    "Captain Silas Blackwater": "male", "Morwenna of the Deep": "female", "Old Mortlake": "male",
+    "Azgorath": "creature", "Fennick the Young Elf": "male", "The Thing Under the Stairs": "creature",
+    "Vyrmathrax the Ancient": "creature", "Grub the Ogre": "male", "Master Aldric": "male",
+    "The Snow Queen": "female", "Sir Bramwell": "male", "Fairy Godmother": "female",
+}
+# A cast member's gender as the model may write it, made one of "female", "male" or "any" (a creature, a thing, or a
+# storyteller who is no one in the story).
+GENDER_WORDS = {"female": "female", "she": "female", "her": "female", "woman": "female", "girl": "female",
+                "male": "male", "he": "male", "him": "male", "man": "male", "boy": "male",
+                "any": "any", "creature": "any", "thing": "any", "it": "any", "they": "any", "none": "any",
+                "neutral": "any"}
+VOICE_IS = {"female": "a woman's voice", "male": "a man's voice", "creature": "a creature's voice, with no gender"}
+CHOOSE = {"female": "a woman's voice", "male": "a man's voice"}
+# The owner's rule, from listening, for a ghost, a witch or a sinister woman: one of Phonon's three women's character
+# voices (a deep creature's growl for a girl's ghost was the story that showed it).
+CASTING_NOTE = ("Each option's gender is who its voice can play. Give every cast member a gender in make_audio_story: "
+                '"female" (she) on a woman\'s voice, "male" (he) on a man\'s, "any" (a creature, a thing, or an outside '
+                "storyteller) on any voice; a creature's voice plays only a creature.")
+EERIE_NOTE = ("For an eerie woman (a ghost, a witch, a sinister woman), choose The Snow Queen, Morwenna of the Deep or "
+              "Fairy Godmother.")
 
 
 def accents_for(engine: str) -> list[str]:
@@ -36,9 +61,36 @@ def preview_path(engine: str, voice_id: str) -> str:
     return f"/api/voice/preview/{engine}/{quote(voice_id, safe='')}"
 
 
-def option(engine: str, voice_id: str, label: str, note: str) -> dict:
-    """One voice as a form option, its note cut to the form's 80 characters."""
-    return {"value": voice_id, "label": label, "note": note[:NOTE_LIMIT], "preview": preview_path(engine, voice_id)}
+def option(engine: str, voice_id: str, label: str, note: str, gender: str) -> dict:
+    """One voice as a form option, its note cut to the form's 80 characters, with who it can play (voice_gender; the
+    form shows no gender, so it is for the model's casting)."""
+    return {"value": voice_id, "label": label, "note": note[:NOTE_LIMIT], "gender": gender,
+            "preview": preview_path(engine, voice_id)}
+
+
+def character_gender(voice_id: str) -> str:
+    """A Phonon character voice's gender from CHARACTER_GENDERS, by its name in any case: "the snow queen" -> "female";
+    "Azgorath" -> "creature"; a voice not in the table (one the user found themselves) -> "any"."""
+    for name, gender in CHARACTER_GENDERS.items():
+        if name.lower() == voice_id.strip().lower():
+            return gender
+    return "any"
+
+
+def voice_gender(engine: str, chosen: dict) -> str:
+    """Decides who a voice can play: "female", "male", "creature" (a character voice with no gender), or "any" (a voice
+    with nothing to go by: OpenAI's neutral Alloy, a Phonon voice the user found themselves). ("phonon", Harper) ->
+    "female"; ("phonon", The Thing Under the Stairs) -> "creature"; ("phonon", Fennick the Young Elf) -> "male";
+    ("kokoro", George) -> "male"; ("openai", Alloy) -> "any"."""
+    if engine == "phonon":
+        gender = chosen.get("gender")
+        if gender in ("female", "male"):
+            return gender
+        return character_gender(chosen["id"])
+    group = chosen.get("group", "")
+    if group in ("female", "male"):
+        return group
+    return "any"
 
 
 def noted(*parts: str) -> str:
@@ -49,29 +101,32 @@ def noted(*parts: str) -> str:
 
 def phonon_options(voices: list[dict], accent: str) -> list[dict]:
     """Phonon's voices for one accent ("British · Female", "British · Male"), each noted with who it is and how it
-    sounds, then its Characters group, noted as character voices, for the roles a character voice lifts."""
+    sounds, then its Characters group, noted as character voices, for the roles a character voice lifts; each with who
+    it can play (voice_gender): "woman · character voice · A regal, cold-hearted queen of ice."."""
     accent_voices = []
     characters = []
     for v in voices:
         group = v.get("group", "")
         note = v.get("note", "")
+        gender = voice_gender("phonon", v)
+        who = WHO[gender]
         if group.startswith(f"{accent} · "):
-            gender = v.get("gender") or ""
-            who = WHO.get(gender, "voice")
-            accent_voices.append(option("phonon", v["id"], v["label"], noted(who, note)))
+            accent_voices.append(option("phonon", v["id"], v["label"], noted(who, note), gender))
         elif group == CHARACTERS:
-            characters.append(option("phonon", v["id"], v["label"], noted(CHARACTER_NOTE, note)))
+            characters.append(option("phonon", v["id"], v["label"], noted(who, CHARACTER_NOTE, note), gender))
     return accent_voices + characters
 
 
 def kokoro_options(accent: str) -> list[dict]:
     """Kokoro's voices with this accent, noted woman or man: "Indian" -> Alpha, Beta (women), Omega, Psi (men)."""
-    return [option("kokoro", v["id"], v["label"], WHO[v["group"]]) for v in voice.KOKORO_VOICES if v["note"] == accent]
+    return [option("kokoro", v["id"], v["label"], WHO[v["group"]], voice_gender("kokoro", v))
+            for v in voice.KOKORO_VOICES if v["note"] == accent]
 
 
 def openai_options() -> list[dict]:
     """Every OpenAI voice: they have no fixed accent, so the story asks for it, and a ▶ plays it without one."""
-    return [option("openai", v["id"], v["label"], f"{WHO[v['group']]} · {OPENAI_ACCENT}") for v in voice.VOICES]
+    return [option("openai", v["id"], v["label"], f"{WHO[v['group']]} · {OPENAI_ACCENT}", voice_gender("openai", v))
+            for v in voice.VOICES]
 
 
 def accent_problem(engine: str, accent: str) -> str | None:
@@ -109,10 +164,11 @@ async def story_voices(accent: str = "") -> dict:
     """The voices for an audio story's cast form, for the voice engine chosen in Settings.
     accent: "American", "British" or "Indian", as the user chose it with the story. Without one, it returns the
     accents this engine offers, for that question.
-    Returns {"engine", "accent", "options"}: options is the voices for that accent (and, on Phonon, its character
-    voices: a pirate captain, a witch, an old keeper), each {value, label, note, preview}. Paste options exactly as
-    given as the options of every voice select in the cast form, previews and all; use a `value` as the voice in
-    make_audio_story. {"error": …}: choose as it says."""
+    Returns {"engine", "accent", "options", "notes"}: options is the voices for that accent (and, on Phonon, its
+    character voices: a pirate captain, a witch, an old keeper), each {value, label, note, gender, preview}. Paste
+    options exactly as given as the options of every voice select in the cast form, previews and all; use a `value` as
+    the voice in make_audio_story. Cast each character on a voice of their gender, as notes says. {"error": …}: choose
+    as it says."""
     store = jobs.hooks["store"]
     engine, _chosen = voice.get_tts(store)
     if engine == "phonon":
@@ -129,7 +185,10 @@ async def story_voices(accent: str = "") -> dict:
         options = kokoro_options(picked)
     else:
         options = openai_options()
-    return {"engine": engine, "accent": picked, "options": options}
+    notes = CASTING_NOTE
+    if engine == "phonon":
+        notes = f"{notes} {EERIE_NOTE}"
+    return {"engine": engine, "accent": picked, "options": options, "notes": notes}
 
 
 MIN_MINUTES = 2
@@ -148,8 +207,10 @@ DOING = "writing the script and choosing the sound, then speaking every line and
 
 NO_GENRE = "genre is the story's genre, as the user chose it (horror, mystery, a bedtime story…)."
 NO_PREMISE = "premise is the story's idea: the pitch the user chose, or their own idea, in a sentence or two."
-NO_CAST = ('cast is a list of {id, name, voice, about}: the narrator and each character, with a voice from '
-           "story_voices.")
+NO_CAST = ('cast is a list of {id, name, voice, gender, age, about}: the narrator and each character, with a voice '
+           "from story_voices.")
+NO_GENDER = ('{name} needs a gender: "female" (she), "male" (he) or "any" (a creature, a thing, or a storyteller who is '
+             "no one in the story).")
 VOICES_FROM = "Call story_voices for the voices to choose from."
 RICHER_SOUND = '"For richer sound, install iMovie (free in the App Store); Odie uses its sound library."'
 NO_SOUNDS = ("There is no iMovie on this Mac, so the story uses Odie's own small sound kit, with no music. Tell the "
@@ -192,10 +253,32 @@ def library_note(libraries: list[sound_library.Library]) -> str:
     return NO_SOUNDS
 
 
+def gender_word(given) -> str:
+    """A cast member's gender as one of "female", "male" or "any", forgiving the word: "female", " She", "woman",
+    "girl" -> "female"; "he", "boy" -> "male"; "creature", "it" -> "any"; "", None or "tall" -> "" (asked for)."""
+    word = chat.text_or_empty(given).strip().lower()
+    return GENDER_WORDS.get(word, "")
+
+
+def casting_problem(member: dict, voice_label: str, gender_of_voice: str) -> str | None:
+    """Decides whether a voice can play a cast member, by gender: a member of any gender, or a voice with nothing to
+    go by ("any"), always fits; otherwise the voice is the member's gender. The ghost girl (female) on Morwenna of
+    the Deep -> None; a dragon (any) on Vyrmathrax the Ancient (creature) -> None; the ghost girl on Miles -> "The ghost
+    girl is female, but Miles is a man's voice: choose a woman's voice."; on The Thing Under the Stairs -> "… is a
+    creature's voice, with no gender: …"; the captain (male) on Harper -> "… Harper is a woman's voice: choose a man's
+    voice."."""
+    wanted = member["gender"]
+    if wanted == "any" or gender_of_voice == "any" or wanted == gender_of_voice:
+        return None
+    return (f"{member['name']} is {wanted}, but {voice_label} is {VOICE_IS[gender_of_voice]}: choose "
+            f"{CHOOSE[wanted]}.")
+
+
 def plain_cast(cast) -> list[dict] | str:
-    """The cast as the model sent it, made plain: each member {id, name, voice, about}, the id a plain word made from
-    the id or the name ("The Keeper" -> "the-keeper"). The problem in words instead when it can't be: not a list, a
-    member without a name or a voice, too many speakers, or two with one id."""
+    """The cast as the model sent it, made plain: each member {id, name, voice, about, gender, age}, the id a plain
+    word made from the id or the name ("The Keeper" -> "the-keeper"), the gender one of female, male or any
+    (gender_word), the age a word if given ("old", "a girl"). The problem in words instead when it can't be: not a
+    list, a member without a name, a voice or a gender, too many speakers, or two with one id."""
     if not isinstance(cast, list) or not cast:
         return NO_CAST
     if len(cast) > MAX_SPEAKERS:
@@ -215,8 +298,13 @@ def plain_cast(cast) -> list[dict] | str:
         member_id = chat.slug_of(id_or_name, "speaker")
         if any(member["id"] == member_id for member in members):
             return f'Two cast members have the id "{member_id}": give each their own.'
+        gender = gender_word(given.get("gender"))
+        if not gender:
+            return NO_GENDER.format(name=name)
         about = chat.text_or_empty(given.get("about")).strip()
-        members.append({"id": member_id, "name": name, "voice": chosen_voice, "about": about})
+        age = chat.text_or_empty(given.get("age")).strip()
+        members.append({"id": member_id, "name": name, "voice": chosen_voice, "about": about, "gender": gender,
+                        "age": age})
     return members
 
 
@@ -244,13 +332,19 @@ def sound_level_problem(level) -> str | None:
 def checked_voices(store, engine: str, cast: list[dict]) -> list[dict] | str:
     """Each member's voice checked in the engine chosen in Settings, by id or label, and kept as its id, with how fast
     that voice reads (Phonon's character voices are slower); the problem in words for the first that isn't there:
-    "The keeper's voice: 'marin' isn't one of Kokoro's voices… Call story_voices for the voices to choose from."."""
+    "The keeper's voice: 'marin' isn't one of Kokoro's voices… Call story_voices for the voices to choose from.", or
+    that can't play the member (casting_problem), with the owner's three voices for a woman on Phonon (EERIE_NOTE)."""
     checked = []
     for member in cast:
         try:
             chosen = voice.voice_in_chosen_engine(store, member["voice"])
         except ValueError as e:
             return f"{member['name']}'s voice: {e} {VOICES_FROM}"
+        problem = casting_problem(member, chosen["label"], voice_gender(engine, chosen))
+        if problem and engine == "phonon" and member["gender"] == "female":
+            problem = f"{problem} {EERIE_NOTE}"
+        if problem:
+            return problem
         pace = story_writer.words_per_minute(engine, chosen.get("group", ""))
         checked.append({**member, "voice": chosen["id"], "pace": pace})
     return checked
@@ -278,8 +372,10 @@ async def make_audio_story(title: str, genre: str, premise: str, cast: list[dict
     chooses the sound in the background; it sees only what you pass here.
     title: the story's title (short). genre: as the user chose it ("horror"). premise: the pitch or idea they chose,
     a sentence or two.
-    cast: [{id, name, voice, about}] for the narrator and each character: id a short plain word ("keeper"), name as
-    the listener knows them ("The keeper"), voice a value from story_voices, about one line on who they are.
+    cast: [{id, name, voice, gender, age, about}] for the narrator and each character: id a short plain word
+    ("keeper"), name as the listener knows them ("The keeper"), voice a value from story_voices of their gender,
+    gender "female" (she), "male" (he) or "any" (a creature, a thing, an outside storyteller), age a word if it
+    matters ("old", "a girl"), about one line on who they are.
     narrator: the id of who tells it: "narrator" for an outside storyteller (then in the cast as id "narrator"), or a
     character's id to tell it in the first person.
     accent: as chosen ("British"). minutes: 2 to 15 (the user's length, else 5). sound_level: 10 to 40, how loud the

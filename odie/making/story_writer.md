@@ -25,6 +25,8 @@ Nobody reads your replies, so don't ask questions; decide.
   shock or a turn), or a `silence` of 0.5 to 3 seconds (for dread, or a beat before something changes).
 - **The narrator:** an outside storyteller tells the tale; a narrator in the story speaks in the first person, as that
   character. The narrator's lines carry the scene changes; the characters speak for themselves.
+- **Gender:** the cast gives each speaker's gender, the voice they are heard in, and the narration's pronouns match
+  it: she, he, or it for a creature.
 - **Dialogue:** short lines, the way people talk. No stage directions in the text ("(whispers)"): put the feeling
   in the words, and the action in the sound. Plain speech only: no markdown, no emojis; numbers as people say them.
 
