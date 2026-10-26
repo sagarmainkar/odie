@@ -14,10 +14,10 @@ EVIL = "https://rebind.attacker.test"
 
 def test_hosts_odie_answers_to(monkeypatch):
     monkeypatch.setenv("ODIE_PUBLIC_URL", "https://mac.ts.net")
-    monkeypatch.setenv("ODIE_HOSTS", "odie.lan,t,testserver")
+    monkeypatch.setenv("ODIE_HOSTS", "odie.lan,odie.local,t,testserver")
     monkeypatch.setattr(origin, "own_bonjour_name", lambda: "thismac.local")  # this computer's own mDNS name
     for host in ("127.0.0.1:8000", "192.168.1.5:8000", "[::1]:8000", "localhost:8000", "LOCALHOST", "mac.ts.net",
-                 "thismac.local", "ThisMac.local:8000", "odie.lan", "t", "testserver", "x.ts.net", "a.localhost"):
+                 "thismac.local", "ThisMac.local:8000", "odie.local", "odie.lan", "t", "testserver", "x.ts.net", "a.localhost"):
         assert origin.host_allowed(host), host
     for host in ("rebind.attacker.test", "rebind.attacker.test:8000", "127.0.0.1.attacker.test", "", "localhost.evil.test",
                  "other.local", "evil.local", "evil.local:8000"):  # another device's mDNS name is another device's page

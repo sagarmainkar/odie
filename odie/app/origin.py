@@ -75,16 +75,17 @@ def own_bonjour_name() -> str:
 def is_own_name(name: str) -> bool:
     """Whether a bare name (never an address) is one of Odie's own: loopback, a .localhost or .ts.net name, this
     computer's own .local name (own_bonjour_name: another device on the LAN can answer for any other .local name), or
-    one in own_names. "mac.ts.net" -> True; "localhost" -> True; "studio-mini.local" on the computer named studio-mini
-    -> True; "evil.local" there -> False; "rebind.attacker.test" -> False; "203.0.113.5" -> False (an address is not a
-    name: see host_allowed)."""
+    one in own_names (the phone address, ODIE_HOSTS). "mac.ts.net" -> True; "localhost" -> True; "studio-mini.local" on
+    the computer named studio-mini -> True; "odie.local" listed in ODIE_HOSTS -> True; "evil.local" there -> False;
+    "rebind.attacker.test" -> False; "203.0.113.5" -> False (an address is not a name: see host_allowed)."""
     if not name or is_ip(name):
         return False
     if name in LOOPBACK or name.endswith(OWN_SUFFIXES):
         return True
-    if name.endswith(".local"):
-        return name == own_bonjour_name()
-    return name in own_names()
+    is_this_computers_bonjour_name = name.endswith(".local") and name == own_bonjour_name()
+    if is_this_computers_bonjour_name:
+        return True
+    return name in own_names()  # a .local name the user listed in ODIE_HOSTS passes here, as the 421 page says it will
 
 
 def host_allowed(host_header: str) -> bool:
