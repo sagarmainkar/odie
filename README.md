@@ -121,8 +121,13 @@ calendar by itself. When mail or an event comes through both the Mac and an MCP 
 
 ### Voice
 
-Read-aloud and podcasts use Kokoro, a voice that runs on the Mac. OpenAI voices, dictation and live talk are options
-with an OpenAI key.
+Read-aloud and podcasts run on the Mac. The recommended voice is **Phonon through Ollama** (`ollama pull phonon`, 113
+MB): quick, private, and one process less, since Odie's own voice server then doesn't run. With Phonon the text goes
+to Ollama on this computer and nowhere else (to that computer, if `OLLAMA_BASE_URL` names another). **Kokoro** remains
+Odie's own voice server, and **OpenAI** the cloud option, which also brings dictation and live talk with an OpenAI
+key. Settings → Voice groups Phonon's voices (American and British, female and male, characters); "Another voice"
+tries any name you type, and French, German, Spanish and Portuguese voices need another Phonon model, for example
+`ollama pull phonon:fr`.
 
 ## The ideal setup
 
@@ -207,7 +212,7 @@ a button for each choice:
 3. **Search by meaning:** Odie's EmbeddingGemma 2, another embedding model, or words only.
 4. **Photos:** allow your Photos library, or skip.
 5. **Web search:** a key, or the free fallback.
-6. **Voice:** Kokoro on the Mac, or OpenAI's voices.
+6. **Voice:** Phonon through Ollama, Kokoro on the Mac, or OpenAI's voices.
 7. **Apps:** connect mail, calendar and more.
 8. **Phone:** Tailscale, then a QR code to pair your phone.
 
@@ -256,8 +261,8 @@ More in [SECURITY.md](SECURITY.md), including how to report a problem privately.
 ## Privacy
 
 Odie is built to be private, but not limited to it. It can run everything on your Mac: the chat model (LM Studio or
-Ollama), search by meaning (EmbeddingGemma 2) and voice (Kokoro, built in). Or you can choose cloud models and cloud
-embeddings for any part of it. **Web search is never local**: the search words go to the search provider.
+Ollama), search by meaning (EmbeddingGemma 2) and voice (Phonon through Ollama, or Kokoro, built in). Or you can choose
+cloud models and cloud embeddings for any part of it. **Web search is never local**: the search words go to the search provider.
 
 | | Stays on your Mac | Goes out |
 |---|---|---|
@@ -265,6 +270,7 @@ embeddings for any part of it. **Web search is never local**: the search words g
 | Chat model in the cloud (OpenAI, Claude, Gemini, OpenRouter, Ollama cloud) | your files | each chat turn, with what Odie read for it, to that company |
 | Search by meaning with EmbeddingGemma 2 | notes, photos, videos, their vectors | nothing |
 | Search by meaning with a cloud embedding model | | the text of your notes, to make their vectors |
+| Voices: Phonon through Ollama | speech made here, by Ollama | nothing |
 | Voices: Kokoro (built in) | speech made here | nothing |
 | Voices: OpenAI (optional) | | the text being read, or your voice when dictating |
 | Web search (Tavily, Brave, Ollama, or the free fallback) | | the search words |
@@ -295,7 +301,8 @@ hiccups.
 | Search by meaning (EmbeddingGemma 2) | ✓ on the GPU | not Odie's own (PyTorch has no Intel Mac builds); OpenAI or Ollama embeddings with a key | on the CPU only, slower |
 | Background service and the `odie` command | ✓ | ✓ | not yet (it uses macOS launchd) |
 | Photos and videos | ✓ | by people, place, date and Photos' own words; by meaning only with a cloud embedder | no (it reads Apple Photos) |
-| Local voices (Kokoro) | ✓ | no (it runs on Apple's MLX); cloud voices with a key | not yet (it runs on Apple's MLX) |
+| Local voices: Phonon through Ollama | ✓ | ✓ | ✓ with Ollama |
+| Local voices: Kokoro | ✓ | no (it runs on Apple's MLX); Phonon or cloud voices instead | not yet (it runs on Apple's MLX) |
 | Signed-in browsing | ✓ | ✓ | not yet (it keeps logins in the macOS Keychain) |
 | Apple Mail, Calendar and Reminders | ✓ | ✓ | no (it uses the Mac apps' own scripting); a Gmail or Calendar MCP server instead |
 
