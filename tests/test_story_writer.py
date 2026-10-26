@@ -240,6 +240,7 @@ async def test_a_good_script_is_accepted_and_parsed_for_the_making():
                                            sound_after="foley/door-creak")
     assert first.transition == writer.Transition("crossfade", 2.5, None)
     assert written.scenes[1].music is None
+    assert written.script == good_script()  # the script as accepted, for the job's script.json
 
 
 async def test_an_unrenderable_script_is_refused_with_its_problems_then_fixed():

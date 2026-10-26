@@ -58,5 +58,6 @@ The mix is code, not the model's choice:
 - Effects play once, set against the loudest word: "low" about 10 dB under it, "normal" 4 dB under, "up front"
   about level with it. They never land on a line's first word.
 - The story is mastered to about −16 LUFS, like podcasts, by one gain (so the gap stays as mixed) and a limiter
-  that keeps its true peak under −1.5 dBTP, as AAC in .m4a. The job's folder (`workspace/stories/<title>/levels.json`)
-  keeps the gap, the loudness and the true peak, measured on the finished file.
+  that keeps its true peak under −1.5 dBTP, as AAC in .m4a. The job's folder (`workspace/stories/<title>/`) keeps
+  the script as written (`script.json`), every line and sound in time with its gain (`timeline.json`), and the gap,
+  the loudness and the true peak measured on the finished file (`levels.json`).

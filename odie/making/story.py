@@ -14,7 +14,8 @@ step is plain code, the same every time:
 5. save one file, AAC in .m4a, as the chat's story player. Nothing else is posted.
 
 Importing this module registers the kind as "story", with its jobs under <workspace>/stories/<slug>/ (job.json,
-brief.md and levels.json; the audio is kept with Odie's media, like every player in the chat).
+brief.md, script.json, timeline.json and levels.json; the audio is kept with Odie's media, like every player in the
+chat).
 
 job.data carries "request" (story_writer.Request) and "sound_level" (10–40) from the chat, and "scenes" and
 "catalogue" from the writing step to the making step."""
@@ -45,6 +46,9 @@ from odie.video.sounds import seconds_text
 log = logging.getLogger("odie.making.story")
 
 FOLDER = "stories"
+SCRIPT_FILE = "script.json"  # the script as the writer sent it and the check accepted it
+TIMELINE_FILE = "timeline.json"  # the story laid out in time: every line and sound, with its gain
+LEVELS_FILE = "levels.json"  # what was measured on the finished file
 
 # The format every story is mastered to: the voices are 24 kHz mono, so they are upsampled.
 RATE = 48000
@@ -155,24 +159,27 @@ class Source:
 
 @dataclass
 class MixPlan:
-    """The mix as ffmpeg takes it: the sound inputs (after the speech and the envelope), the filter graph, and
-    whether there are beds (an envelope input, and a beds-only output for measuring the gap)."""
+    """The mix as ffmpeg takes it: the sound inputs (after the speech and the envelope), the filter graph, whether
+    there are beds (an envelope input, and a beds-only output for measuring the gap), and each sound with the gain it
+    plays at (for the job's timeline.json)."""
     inputs: list[str]
     graph: str
     has_beds: bool
+    gains: list[tuple[Placed, float]] = field(default_factory=list)
 
 
 @dataclass
 class Made:
     """A finished story: the player's media; the gap (dB the speech sits above the beds; None without beds) and
     where it was measured ("the encoded file", or "the mix" when the beds never play alone); the encoded file's
-    loudness and true peak; and the sounds left out."""
+    loudness and true peak; the sounds left out; and the story laid out in time with its levels (timeline_of)."""
     media: dict
     gap_db: float | None
     loudness_lufs: float | None
     true_peak_db: float | None = None
     gap_measured_on: str = ""
     skipped: list[str] = field(default_factory=list)
+    timeline: dict = field(default_factory=dict)
 
 
 # 1. Speaking.
@@ -429,6 +436,7 @@ def mix_plan(laid: Laid, sources: dict[str, Source], loops: dict[str, Source], s
         k = 2
     story_labels = "[speech]"
     bed_labels = ""
+    gains = []
     for n, placed in enumerate(beds):
         source = loops[placed.sound]
         if placed.role == "music":
@@ -436,6 +444,7 @@ def mix_plan(laid: Laid, sources: dict[str, Source], loops: dict[str, Source], s
         else:
             under = bed_under_db(placed.level, slider)
         gain = matched_db(speech_db, source) + under + rise
+        gains.append((placed, gain))
         parts.append(bed_filter(k, placed, source, gain, bed_limit(speech_peak_db), f"e{n}", f"b{n}"))
         inputs += ["-stream_loop", "-1", "-i", source.path]
         story_labels += f"[mb{n}]"
@@ -443,7 +452,9 @@ def mix_plan(laid: Laid, sources: dict[str, Source], loops: dict[str, Source], s
         k += 1
     for n, placed in enumerate(hits):
         source = sources[placed.sound]
-        parts.append(hit_filter(k, placed, source, hit_db(placed.level, source, speech_peak_db), f"h{n}"))
+        gain = hit_db(placed.level, source, speech_peak_db)
+        gains.append((placed, gain))
+        parts.append(hit_filter(k, placed, source, gain, f"h{n}"))
         inputs += ["-i", source.path]
         story_labels += f"[h{n}]"
         k += 1
@@ -451,7 +462,7 @@ def mix_plan(laid: Laid, sources: dict[str, Source], loops: dict[str, Source], s
     parts.append(f"{story_labels}amix=inputs={story_count}:normalize=0:duration=longest[story]")
     if has_beds:
         parts.append(f"{bed_labels}amix=inputs={len(beds)}:normalize=0:duration=longest[beds]")
-    return MixPlan(inputs=inputs, graph=";".join(parts), has_beds=has_beds)
+    return MixPlan(inputs=inputs, graph=";".join(parts), has_beds=has_beds, gains=gains)
 
 
 def ducked_spans(speech_spans: list[tuple[float, float]]) -> list[tuple[float, float]]:
@@ -883,6 +894,20 @@ def transcript_and_hosts(laid: Laid, cast: list[dict], voices: dict[str, dict]) 
     return transcript, hosts
 
 
+def timeline_of(laid: Laid, plan: MixPlan, speech_db: float, speech_peak_db: float, mastered: Mastered) -> dict:
+    """What the job's timeline.json keeps, so a story can be checked or remixed elsewhere: its length, every line
+    (who, what, when, how long), every sound (its role, id, level word, start, length, fades and the gain it plays
+    at, in dB, beds before the rise is taken off under the lines) and the levels the mix and master used."""
+    speech = [{"speaker": line.speaker, "text": line.text, "start": line.start, "seconds": round(line.seconds, 3)}
+              for line in laid.speech]
+    sounds = []
+    for placed, gain in plan.gains:
+        sounds.append({**dataclasses.asdict(placed), "gain_db": round(gain, 2)})
+    levels = {"speech_db": round(speech_db, 2), "speech_peak_db": round(speech_peak_db, 2),
+              "master_gain_db": round(mastered.gain_db, 2), "limit_ceiling_db": mastered.ceiling_db}
+    return {"length": laid.length, "speech": speech, "sounds": sounds, "levels": levels}
+
+
 async def render(store: Store, title: str, scenes: list[story_writer.Scene], cast: list[dict], accent: str,
                  sound_level: float, catalogue: list[dict], workdir: Path,
                  transport: httpx.AsyncBaseTransport | None = None) -> Made:
@@ -936,6 +961,7 @@ async def render(store: Store, title: str, scenes: list[story_writer.Scene], cas
             gap = await mix_gap(beds, spans, speech_db)  # the beds never play alone: the gap as mixed
             measured_on = "the mix"
 
+        timeline = timeline_of(laid, plan, speech_db, speech_peak_db, mastered)
         transcript, hosts = transcript_and_hosts(laid, cast, voices)
         meta = {**media.wav_info(mastered.peaks.read_bytes()), "format": "story", "hosts": hosts,
                 "transcript": transcript}
@@ -951,7 +977,7 @@ async def render(store: Store, title: str, scenes: list[story_writer.Scene], cas
              "dBTP (gain %.1f dB, limited at %.1f)", title, gap, measured_on, -slider_db(sound_level), lufs, true_peak,
              mastered.gain_db, mastered.ceiling_db)
     return Made(media=saved, gap_db=gap, loudness_lufs=lufs, true_peak_db=true_peak, gap_measured_on=measured_on,
-                skipped=skipped)
+                skipped=skipped, timeline=timeline)
 
 
 async def mix_gap(beds: Path, spans: list[tuple[float, float]], speech_db: float) -> float | None:
@@ -964,7 +990,8 @@ async def mix_gap(beds: Path, spans: list[tuple[float, float]], speech_db: float
 
 async def write(job: jobs.Job, turn, browser) -> None:
     """The writing step: the story writer's focused turn with the sound listing from the user's library, then the
-    title and the scenes onto the job. A story never uses the browser."""
+    title and the scenes onto the job, and the accepted script into its script.json. A story never uses the
+    browser."""
     request = job.data["request"]
     catalogue = await sound_library.catalogue()
     listing = sound_library.writer_listing(catalogue)
@@ -973,13 +1000,14 @@ async def write(job: jobs.Job, turn, browser) -> None:
     job.data["scenes"] = written.scenes
     job.data["catalogue"] = catalogue
     job.data["note"] = written.note
+    (job.folder / SCRIPT_FILE).write_text(json.dumps(written.script, indent=1, ensure_ascii=False), encoding="utf-8")
     if written.note:
         log.info("audio story %s: %s", job.slug, written.note)
 
 
 async def make(job: jobs.Job, browser, transport) -> dict:
-    """The making step: the story rendered to one file; its levels kept in the job's levels.json. Returns the story
-    player's media for the message."""
+    """The making step: the story rendered to one file; its timeline kept in the job's timeline.json and what was
+    measured in its levels.json. Returns the story player's media for the message."""
     request = job.data["request"]
     sound_level = job.data.get("sound_level", DEFAULT_SOUND_LEVEL)
     made = await render(jobs.hooks["store"], job.title, job.data["scenes"], request.cast, request.accent, sound_level,
@@ -987,7 +1015,8 @@ async def make(job: jobs.Job, browser, transport) -> dict:
     levels = {"sound_level": sound_level, "promised_gap_db": -slider_db(sound_level), "measured_gap_db": made.gap_db,
               "gap_measured_on": made.gap_measured_on, "loudness_lufs": made.loudness_lufs,
               "true_peak_db": made.true_peak_db, "sounds_left_out": made.skipped, "note": job.data.get("note", "")}
-    (job.folder / "levels.json").write_text(json.dumps(levels, indent=1), encoding="utf-8")
+    (job.folder / LEVELS_FILE).write_text(json.dumps(levels, indent=1), encoding="utf-8")
+    (job.folder / TIMELINE_FILE).write_text(json.dumps(made.timeline, indent=1, ensure_ascii=False), encoding="utf-8")
     return made.media
 
 

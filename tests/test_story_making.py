@@ -433,4 +433,13 @@ async def test_the_job_writes_then_makes_and_posts_one_player(world, tmp_path, m
     assert len(posted) == 1 and posted[0]["format"] == "story"
     levels = json.loads((folder / "levels.json").read_text())
     assert levels["sound_level"] == 25 and levels["promised_gap_db"] == 12.0 and "measured_gap_db" in levels
+    assert json.loads((folder / "script.json").read_text()) == script  # the accepted script, as videos keep theirs
+    timeline = json.loads((folder / "timeline.json").read_text())
+    assert timeline["length"] > 0 and len(timeline["speech"]) == 9
+    assert timeline["speech"][0] == {"speaker": "narrator", "text": " ".join(["tide"] * 29) + ".", "start": 2.0,
+                                     "seconds": pytest.approx(1.0, abs=0.05)}
+    bed, door = timeline["sounds"]
+    assert bed["role"] == "bed" and bed["sound"] == "ambience/surf" and "gain_db" in bed and "fade_in" in bed
+    assert door["role"] == "hit" and door["sound"] == "foley/door" and door["start"] == 0.0
+    assert set(timeline["levels"]) == {"speech_db", "speech_peak_db", "master_gain_db", "limit_ceiling_db"}
     assert json.loads((folder / "job.json").read_text())["status"] == "done"

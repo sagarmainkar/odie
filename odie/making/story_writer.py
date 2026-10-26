@@ -107,10 +107,12 @@ class Story:
 
 @dataclass
 class Written:
-    """The accepted story: its title, its scenes, and a note for the job when its length was let through."""
+    """The accepted story: its title, its scenes, a note for the job when its length was let through, and the
+    script as the writer sent it (kept in the job's script.json)."""
     title: str
     scenes: list[Scene]
     note: str = ""
+    script: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -594,9 +596,10 @@ def tools_for(desk: harness.Desk, request: Request, catalogue: list[dict]) -> li
         return length.problem_to_send(length_problem(story, request.minutes), story, request.minutes)
 
     def accept(fields: dict) -> Written:
-        story = parse_script(json.loads(unfenced(text_or_empty(fields["script"]))))
+        script = json.loads(unfenced(text_or_empty(fields["script"])))
+        story = parse_script(script)
         title = harness.title_given(story.title, desk.topic)
-        return Written(title=title, scenes=story.scenes, note=length.note)
+        return Written(title=title, scenes=story.scenes, note=length.note, script=script)
 
     return [harness.submit_tool(desk, "submit_story", SUBMIT_DOC, SUBMIT_FIELDS, check, accept)]
 
