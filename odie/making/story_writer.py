@@ -26,11 +26,11 @@ INSTRUCTION = Path(__file__).with_name("story_writer.md").read_text(encoding="ut
 
 # How a script's lines become time. The making step (odie.making.story) lays the story out with the same numbers, so
 # the length checked here is the length made.
-# How fast each engine's voices read a line, in words a minute (the pauses come on top). Phonon's, measured on real
-# lines: 166 (Fairy Godmother) to 246 (Easton), its median about 208; set a little under, as character voices
-# narrate slower. Kokoro and OpenAI aren't measured yet (no Kokoro server on the Mac this was tuned on): they keep a
-# storyteller's 145, the pace the brief asked for.
-PACE = {"phonon": 200}
+# How fast each engine's voices read a line, in words a minute (the pauses come on top). Phonon's, measured on a real
+# 3-minute story: 180 overall (the narrator 188, a character voice 160); short plain sentences read faster (166 to
+# 246 by voice), story lines with their commas and turns slower. Kokoro and OpenAI aren't measured yet (no Kokoro
+# server on the Mac this was tuned on): they keep a storyteller's 145, the pace the brief asked for.
+PACE = {"phonon": 180}
 DEFAULT_WORDS_PER_MINUTE = 145
 LENGTH_SPREAD = 0.10  # a story within 10% of its minutes is the right length
 LINE_GAP = 0.4  # seconds after a line that gives no pause_after
@@ -476,14 +476,14 @@ def parse_script(script: dict) -> Story:
 # The length.
 
 def words_per_minute(engine: str) -> int:
-    """How fast an engine's voices read (PACE), else a storyteller's DEFAULT_WORDS_PER_MINUTE: "phonon" -> 200;
+    """How fast an engine's voices read (PACE), else a storyteller's DEFAULT_WORDS_PER_MINUTE: "phonon" -> 180;
     "kokoro" -> 145; "" -> 145."""
     return PACE.get(engine, DEFAULT_WORDS_PER_MINUTE)
 
 
 def line_seconds(line, pace: int = DEFAULT_WORDS_PER_MINUTE) -> float:
     """The time a line takes in the story: a spoken line, its words at `pace` a minute plus its pause (29 words at
-    145 -> 12 s + 0.4; at 200 -> 8.7 s + 0.4); a cue, its lead."""
+    145 -> 12 s + 0.4; at 180 -> 9.7 s + 0.4); a cue, its lead."""
     if isinstance(line, Speech):
         return len(line.text.split()) * 60 / pace + line.pause_after
     return line.lead
@@ -579,7 +579,7 @@ def narrator_line(narrator: str) -> str:
 
 def prompt_for(request: Request, listing: str) -> str:
     """The writer's whole message: the genre, the story, the cast and narrator, the accent, the length in minutes and
-    words at the engine's pace (2 minutes -> about 290 spoken words; on Phonon about 400), the chat's brief, and the
+    words at the engine's pace (2 minutes -> about 290 spoken words; on Phonon about 360), the chat's brief, and the
     sound list."""
     brief = request.brief.strip()
     if not brief:

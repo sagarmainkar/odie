@@ -318,23 +318,23 @@ def test_the_level_words_are_forgiving_about_spelling():
 
 
 def test_each_engine_has_its_own_pace():
-    """Phonon's voices read their lines at 166–246 words a minute (measured, its median about 208); an engine not
-    measured keeps a storyteller's 145."""
-    assert writer.words_per_minute("phonon") == 200
+    """Phonon read a real 3-minute story at 180 words a minute (the narrator 188, a character voice 160); an engine
+    not measured keeps a storyteller's 145."""
+    assert writer.words_per_minute("phonon") == 180
     assert writer.words_per_minute("kokoro") == writer.DEFAULT_WORDS_PER_MINUTE == 145
     assert writer.words_per_minute("") == 145
 
 
 async def test_a_phonon_story_is_written_and_checked_at_phonons_pace():
-    """The same 29-word lines are 8.7 s each at 200 words a minute: the two-minute script comes out at 1:27, too
-    short; the prompt asks for 400 words."""
+    """The same 29-word lines are 9.7 s each at 180 words a minute: the two-minute script comes out at 1:36, too
+    short; the prompt asks for 360 words."""
     async def script(turn):
         await turn.submit(good_script())
         await turn.submit(good_script())
 
     turn = Turn(script)
     written = await write(turn, engine="phonon")
-    assert "2 minutes, about 400 spoken words (200 a minute;" in turn.prompt
-    assert turn.said[0]["error"].startswith("The story is too short: about 1:27 for 2 minutes")
-    assert "about 200 words a minute" in turn.said[0]["error"]
-    assert written.note.startswith("The story came out at about 1:27 for 2 minutes")
+    assert "2 minutes, about 360 spoken words (180 a minute;" in turn.prompt
+    assert turn.said[0]["error"].startswith("The story is too short: about 1:36 for 2 minutes")
+    assert "about 180 words a minute" in turn.said[0]["error"]
+    assert written.note.startswith("The story came out at about 1:36 for 2 minutes")
