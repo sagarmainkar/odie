@@ -56,6 +56,9 @@ QUESTIONS = [
     Question("laptops", "MacBook Air M5 or Dell XPS 13 for a student who codes? Compare them and tell me which to get.",
              [["table"], ["callout"]], nice=["section"], about="2 laptops (table + callout)"),
     Question("passport", "What are the steps to renew an Indian passport?", [["checklist"]], about="passport steps (checklist)"),
+    # Two that need several answers before the model can help: a form, prefilled with its best guesses (26 Oct 2026).
+    Question("weekend-trip", "Help me plan a weekend trip; ask me what you need to know first.", [["form"]], about="weekend trip (form)"),
+    Question("story-video", "I want a short story video for my niece: ask me the choices.", [["form"]], about="story video (form)"),
     Question("capital", "What's the capital of Australia?", [], about="plain: capital"),
     Question("thanks", "Thanks, that's all for now!", [], about="plain: thanks"),
     Question("recursion", "Explain recursion in two lines.", [], about="plain: recursion"),

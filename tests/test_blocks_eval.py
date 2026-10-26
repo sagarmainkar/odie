@@ -43,8 +43,15 @@ def test_file_stem():
 
 def test_questions_are_unique_with_three_plain_ones():
     ids = [q.id for q in be.QUESTIONS]
-    assert len(ids) == len(set(ids)) == 12
+    assert len(ids) == len(set(ids)) == 14
     assert [q.id for q in be.QUESTIONS if not q.expect] == ["capital", "thanks", "recursion"]
+
+
+def test_two_questions_ask_for_a_form():
+    """The model should answer these with a form: it needs several answers at once before it can help."""
+    forms = [q for q in be.QUESTIONS if q.expect == [["form"]]]
+    assert [q.id for q in forms] == ["weekend-trip", "story-video"]
+    assert "ask me what you need to know first" in forms[0].ask and "ask me the choices" in forms[1].ask
 
 
 def test_cell_for():
