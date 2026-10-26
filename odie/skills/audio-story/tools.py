@@ -237,7 +237,7 @@ def sound_level_problem(level) -> str | None:
     is_whole = isinstance(level, int) and not isinstance(level, bool)
     if is_whole and story.LOWEST_SOUND_LEVEL <= level <= story.HIGHEST_SOUND_LEVEL:
         return None
-    return (f"sound_level is how loud the sound sits under the voices, from {story.LOWEST_SOUND_LEVEL} to "
+    return (f"sound_level is how loud the ambience is when no one speaks, from {story.LOWEST_SOUND_LEVEL} to "
             f"{story.HIGHEST_SOUND_LEVEL} ({story.DEFAULT_SOUND_LEVEL} unless the user chose), not {level}.")
 
 
@@ -282,7 +282,7 @@ async def make_audio_story(title: str, genre: str, premise: str, cast: list[dict
     narrator: the id of who tells it: "narrator" for an outside storyteller (then in the cast as id "narrator"), or a
     character's id to tell it in the first person.
     accent: as chosen ("British"). minutes: 2 to 15 (the user's length, else 5). sound_level: 10 to 40, how loud the
-    sound sits under the voices (the slider's value, else 25). brief: anything else the user asked for (tone, an
+    ambience is when no one speaks; it drops lower under the voices (the slider's value, else 25). brief: anything else the user asked for (tone, an
     ending, who it's for).
     It returns at once. {"error": …}: fix exactly that and call again. {"result": …}: reply in one or two lines as it
     says."""

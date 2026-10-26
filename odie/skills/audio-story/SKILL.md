@@ -38,7 +38,8 @@ user has already answered ("a 10-minute horror story about a lighthouse" skips s
      **exactly as `story_voices` gives them**, the same list in every voice select: never shorten it, rewrite it or
      drop a `preview`. Phonon's character voices (a pirate captain, a witch, an old keeper) are in it, for the roles
      they lift;
-   - **sound level:** a slider from 10 to 40 %, at 25 %.
+   - **sound level:** a slider from 10 to 40 %, at 25 %: how loud the place is when no one speaks (under the voices
+     it drops lower by itself). Label it "Sound between the lines".
    At most 12 fields: for a big cast, cast the main characters and let minor ones share a voice.
 4. Then call `make_audio_story` once (below), and say in one or two lines that it's being made.
 

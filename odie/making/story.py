@@ -7,10 +7,11 @@ step is plain code, the same every time:
    the hits, and the transitions;
 3. mix it with one ffmpeg graph (mix_plan): every bed and music file cut to its steady part and made a loop unit
    that repeats with a crossfade, never a hole, at its seam (seamless_loop), matched to the speech's loudness, then set
-   to the slider's level below it, ducked under speech by one smooth envelope (envelope), the hits at fixed peaks;
+   to the slider's level below it for the gaps, and ducked UNDER_SPEECH_DUCK_DB further while someone speaks by one
+   smooth envelope (envelope); the hits set against the speech's peak, a low one ducked too;
 4. master it: 48 kHz stereo, one gain to about -16 LUFS and a true-peak limiter at -2 dBTP, encoded as AAC; then
-   measure the encoded file: its loudness, its true peak, and how far the speech sits above the beds (the gap the
-   slider promises), kept in the job's levels.json;
+   measure the encoded file: its loudness, its true peak, and how far the beds sit below the speech in the gaps and
+   while someone speaks, kept in the job's levels.json;
 5. save one file, AAC in .m4a, as the chat's story player. Nothing else is posted.
 
 Importing this module registers the kind as "story", with its jobs under <workspace>/stories/<slug>/ (job.json,
@@ -53,7 +54,8 @@ LEVELS_FILE = "levels.json"  # what was measured on the finished file
 # The format every story is mastered to: the voices are 24 kHz mono, so they are upsampled.
 RATE = 48000
 
-# The sound level slider, in percent, and the dB below the speech it puts the ambience at: 25 % -> 12 dB below.
+# The sound level slider, in percent, and the dB below the speech it puts the ambience at when no one speaks (the
+# prelude, the pauses, the transitions): 25 % -> 12 dB below.
 # Between these points the dB is a straight line; outside them it holds at the ends. The range stops at 40 %: beds
 # louder than 8 dB under the speech drown it.
 SLIDER_POINTS = ((10, -20.0), (25, -12.0), (40, -8.0))
@@ -63,8 +65,12 @@ DEFAULT_SOUND_LEVEL = 25
 
 BED_LEVEL_DB = {"low": -3.0, "normal": 0.0, "up front": 2.0}  # the writer's word for a bed, on top of the slider
 MUSIC_BELOW_AMBIENCE_DB = 4.0  # a music bed sits this far under the ambience
-RISE_DB = 6.0  # beds rise by up to this much between lines and in the prelude…
-CEILING_DB = -4.0  # …but never above this, against the speech
+# Under speech the beds drop this much further below their gap level. The owner, listening to real stories on his
+# phone: "when no one is speaking 25% is good, but when someone speaks 10% is good" (25 % -> 12 dB under the speech
+# in the gaps, about 20 under it while someone speaks).
+UNDER_SPEECH_DUCK_DB = 8.0
+CEILING_DB = -4.0  # a bed is never closer than this to the speech, even in the gaps
+DUCKED_HITS = {"low"}  # hits at these words drop under speech like the beds: a low owl stays under the voice
 MATCH_LIMIT_DB = 30.0  # the most a file is raised or lowered to match the speech (a near-silent file isn't blown up)
 # A bed's peaks are held this far under the speech's loudest word: a sparse bed matched by its average (a campfire's
 # crackle, quiet between pops) would otherwise peak far over full scale. Its loudness, and so the gap, stays as matched.
@@ -73,8 +79,9 @@ LOWEST_LIMIT = 0.0625  # alimiter's lowest limit (-24 dBFS)
 
 ENVELOPE_RATE = 1000  # values a second in the duck envelope (it is upsampled in the mix)
 DUCK_PAD = 0.15  # the beds are fully down this long before a line's first word and after its last
-DUCK_RAMP = 0.4  # seconds the beds take to go down or come back up: slow enough never to pump
-MIN_RISE_GAP = 1.5  # a gap between lines shorter than this (after the pads) keeps the beds down
+DUCK_RAMP = 0.4  # seconds the beds take to go down before a line
+DUCK_RELEASE = 0.9  # …and to come back up after it: slower, so the place returns gently
+MIN_RISE_GAP = 1.2  # a gap between two lines shorter than this keeps the beds down, so they never pump
 
 LOOP_CROSSFADE = 1.0  # each time a bed or music repeats, its end crossfades into its start over this long
 QUIET_DB = 3.0  # a bed's start or end this far under its usual level is its own fade, cut before it loops
@@ -160,24 +167,28 @@ class Source:
 @dataclass
 class MixPlan:
     """The mix as ffmpeg takes it: the sound inputs (after the speech and the envelope), the filter graph, whether
-    there are beds (an envelope input, and a beds-only output for measuring the gap), and each sound with the gain it
-    plays at (for the job's timeline.json)."""
+    there are beds (a beds-only output for measuring the gap), each sound with the gain it plays at (for the job's
+    timeline.json), and whether the duck envelope is an input."""
     inputs: list[str]
     graph: str
     has_beds: bool
     gains: list[tuple[Placed, float]] = field(default_factory=list)
+    has_envelope: bool = False  # input 1 is the duck envelope: there are beds, or a hit ducked under speech
 
 
 @dataclass
 class Made:
-    """A finished story: the player's media; the gap (dB the speech sits above the beds; None without beds) and
-    where it was measured ("the encoded file", or "the mix" when the beds never play alone); the encoded file's
-    loudness and true peak; the sounds left out; and the story laid out in time with its levels (timeline_of)."""
+    """A finished story: the player's media; how far below the speech the beds sit while someone speaks and in the
+    gaps (dB; None without beds) and where that was measured ("the encoded file", or "the mix" when the beds never
+    play alone, which gives only the first); the encoded file's loudness and true peak; the sounds left out; and the
+    story laid out in time with its levels (timeline_of)."""
     media: dict
-    gap_db: float | None
+    bed_under_speech_db: float | None
+    bed_in_gaps_db: float | None
     loudness_lufs: float | None
     true_peak_db: float | None = None
     gap_measured_on: str = ""
+    gaps_seconds: float = 0.0  # the seconds of gaps bed_in_gaps_db was measured over
     skipped: list[str] = field(default_factory=list)
     timeline: dict = field(default_factory=dict)
 
@@ -334,23 +345,24 @@ def slider_db(percent: float) -> float:
     return SLIDER_POINTS[-1][1]
 
 
-def rise_db(under_db: float) -> float:
-    """Decides how far the beds rise between lines, from where they sit under the speech: RISE_DB, but never above
-    CEILING_DB. -12 -> 6 (up to -6); -8 -> 4 (up to -4); -2 -> 0."""
-    return max(0.0, min(RISE_DB, CEILING_DB - under_db))
+def bed_gap_db(level: str, slider: float) -> float:
+    """Where a bed sits below the speech when no one speaks: the slider's dB plus the writer's word for it, never
+    closer than CEILING_DB. ("normal", -12) -> -12; ("low", -12) -> -15; ("up front", -8) -> -6; ("up front", -5) ->
+    -4."""
+    gap = slider + BED_LEVEL_DB.get(level, 0.0)
+    return min(gap, CEILING_DB)
 
 
-def bed_under_db(level: str, slider: float) -> float:
-    """Where a bed sits under the speech: the slider's dB plus the writer's word for it, held so its rise between
-    lines stops at CEILING_DB. ("normal", -12) -> -12; ("low", -12) -> -15; ("up front", -8) -> -8 (-6 would rise to
-    -2)."""
-    under = slider + BED_LEVEL_DB.get(level, 0.0)
-    return min(under, CEILING_DB - rise_db(slider))
+def bed_under_speech_db(level: str, slider: float) -> float:
+    """Where a bed sits below the speech while someone speaks: its gap level less UNDER_SPEECH_DUCK_DB. ("normal",
+    -12) -> -20."""
+    return bed_gap_db(level, slider) - UNDER_SPEECH_DUCK_DB
 
 
-def music_under_db(level: str, slider: float) -> float:
-    """A music bed sits MUSIC_BELOW_AMBIENCE_DB under where a bed with the same word would: ("normal", -12) -> -16."""
-    return bed_under_db(level, slider) - MUSIC_BELOW_AMBIENCE_DB
+def music_gap_db(level: str, slider: float) -> float:
+    """A music bed sits MUSIC_BELOW_AMBIENCE_DB under where a bed with the same word would, in the gaps and (ducked
+    the same) under speech: ("normal", -12) -> -16."""
+    return bed_gap_db(level, slider) - MUSIC_BELOW_AMBIENCE_DB
 
 
 def matched_db(speech_db: float, source: Source) -> float:
@@ -404,35 +416,47 @@ def bed_filter(k: int, placed: Placed, source: Source, gain: float, limit: float
             f"asplit=2[m{out}][q{out}]")
 
 
-def hit_filter(k: int, placed: Placed, source: Source, gain: float, out: str) -> str:
+def hit_filter(k: int, placed: Placed, source: Source, gain: float, out: str, envelope_label: str = "") -> str:
     """One hit, input k: played once (at most HIT_MAX_SECONDS, a longer one faded out), set to its gain and delayed
-    to its start."""
+    to its start; with an envelope label (a ducked hit, DUCKED_HITS), multiplied by the duck envelope too."""
     fade = ""
     if source.seconds > HIT_MAX_SECONDS:
         fade = f"afade=t=out:st={seconds_text(HIT_MAX_SECONDS - HIT_FADE)}:d={seconds_text(HIT_FADE)},"
-    return (f"[{k}:a]{to_story_format(source.channels)},atrim=duration={seconds_text(HIT_MAX_SECONDS)},"
-            f"asetpts=PTS-STARTPTS,{fade}volume={db_text(gain)},adelay={round(placed.start * 1000)}:all=1[{out}]")
+    played = (f"[{k}:a]{to_story_format(source.channels)},atrim=duration={seconds_text(HIT_MAX_SECONDS)},"
+              f"asetpts=PTS-STARTPTS,{fade}volume={db_text(gain)},adelay={round(placed.start * 1000)}:all=1")
+    if not envelope_label:
+        return f"{played}[{out}]"
+    return f"{played}[pre{out}];[pre{out}][{envelope_label}]amultiply[{out}]"
+
+
+def is_ducked_hit(placed: Placed) -> bool:
+    """Decides whether a hit drops under speech like the beds: a "low" one does, so it stays under the voice it runs
+    on under (an owl still calling as the next line starts); "normal" and "up front" ones play as set. A low owl ->
+    True; an up-front door slam -> False."""
+    return placed.role == "hit" and placed.level in DUCKED_HITS
 
 
 def mix_plan(laid: Laid, sources: dict[str, Source], loops: dict[str, Source], speech_db: float,
              sound_level: float, speech_peak_db: float) -> MixPlan:
     """The one ffmpeg graph for the whole story. Input 0 is the speech track; input 1 the duck envelope (when there
     are beds); then each sound. Beds and music play from their loop units (`loops`, read round and round), matched to
-    the speech (matched_db), set to the slider's level under it and raised by the rise (the envelope takes them back
-    down under speech); hits play from `sources`, set by their peak against the speech's (hit_db).
+    the speech (matched_db) and set to their level in the gaps (bed_gap_db), the envelope taking them down under
+    speech; hits play from `sources`, set by their peak against the speech's (hit_db), a low one ducked
+    under speech too (is_ducked_hit).
     The outputs: [story], the speech with everything under it, and [beds], the beds alone, for the measured gap."""
     slider = slider_db(sound_level)
-    rise = rise_db(slider)
     beds = [p for p in laid.sounds if p.role != "hit"]
     hits = [p for p in laid.sounds if p.role == "hit"]
+    ducked_hits = [p for p in hits if is_ducked_hit(p)]
     has_beds = bool(beds)
+    ducked_count = len(beds) + len(ducked_hits)  # everything the envelope takes down under speech
 
     parts = [f"[0:a]{to_story_format(1)}[speech]"]
     inputs: list[str] = []
     k = 1
-    if has_beds:
-        labels = "".join(f"[e{n}]" for n in range(len(beds)))
-        parts.append(f"[1:a]{to_story_format(1)},asplit={len(beds)}{labels}")
+    if ducked_count:
+        labels = "".join(f"[e{n}]" for n in range(ducked_count))
+        parts.append(f"[1:a]{to_story_format(1)},asplit={ducked_count}{labels}")
         k = 2
     story_labels = "[speech]"
     bed_labels = ""
@@ -440,21 +464,26 @@ def mix_plan(laid: Laid, sources: dict[str, Source], loops: dict[str, Source], s
     for n, placed in enumerate(beds):
         source = loops[placed.sound]
         if placed.role == "music":
-            under = music_under_db(placed.level, slider)
+            in_gaps = music_gap_db(placed.level, slider)
         else:
-            under = bed_under_db(placed.level, slider)
-        gain = matched_db(speech_db, source) + under + rise
+            in_gaps = bed_gap_db(placed.level, slider)
+        gain = matched_db(speech_db, source) + in_gaps
         gains.append((placed, gain))
         parts.append(bed_filter(k, placed, source, gain, bed_limit(speech_peak_db), f"e{n}", f"b{n}"))
         inputs += ["-stream_loop", "-1", "-i", source.path]
         story_labels += f"[mb{n}]"
         bed_labels += f"[qb{n}]"
         k += 1
+    next_envelope = len(beds)
     for n, placed in enumerate(hits):
         source = sources[placed.sound]
         gain = hit_db(placed.level, source, speech_peak_db)
         gains.append((placed, gain))
-        parts.append(hit_filter(k, placed, source, gain, f"h{n}"))
+        envelope_label = ""
+        if is_ducked_hit(placed):
+            envelope_label = f"e{next_envelope}"
+            next_envelope += 1
+        parts.append(hit_filter(k, placed, source, gain, f"h{n}", envelope_label))
         inputs += ["-i", source.path]
         story_labels += f"[h{n}]"
         k += 1
@@ -462,43 +491,52 @@ def mix_plan(laid: Laid, sources: dict[str, Source], loops: dict[str, Source], s
     parts.append(f"{story_labels}amix=inputs={story_count}:normalize=0:duration=longest[story]")
     if has_beds:
         parts.append(f"{bed_labels}amix=inputs={len(beds)}:normalize=0:duration=longest[beds]")
-    return MixPlan(inputs=inputs, graph=";".join(parts), has_beds=has_beds, gains=gains)
+    return MixPlan(inputs=inputs, graph=";".join(parts), has_beds=has_beds, gains=gains,
+                   has_envelope=ducked_count > 0)
 
 
 def ducked_spans(speech_spans: list[tuple[float, float]]) -> list[tuple[float, float]]:
-    """Where the beds are fully down: each line padded by DUCK_PAD, with spans closer than MIN_RISE_GAP joined (a
-    short gap stays down, so the beds never pump). Lines at 2–3 and 3.5–4.5 -> one span, 1.85–4.65."""
+    """Where the beds are fully down: lines closer than MIN_RISE_GAP joined (a short gap stays down, so the beds never
+    pump), then padded by DUCK_PAD. Lines at 2–3 and 4.1–5 (a 1.1 s gap) -> one span, 1.85–5.15; 2–3 and 4.3–5 ->
+    two."""
     joined: list[list[float]] = []
     for start, end in sorted(speech_spans):
-        padded_start = start - DUCK_PAD
-        padded_end = end + DUCK_PAD
-        if joined and padded_start - joined[-1][1] < MIN_RISE_GAP:
-            joined[-1][1] = max(joined[-1][1], padded_end)
+        if joined and start - joined[-1][1] < MIN_RISE_GAP:
+            joined[-1][1] = max(joined[-1][1], end)
         else:
-            joined.append([padded_start, padded_end])
-    return [(start, end) for start, end in joined]
+            joined.append([start, end])
+    return [(start - DUCK_PAD, end + DUCK_PAD) for start, end in joined]
 
 
-def envelope(speech_spans: list[tuple[float, float]], length: float, rise: float) -> array:
-    """The duck envelope, ENVELOPE_RATE values a second over the whole story: 1.0 where the beds are up (between
-    lines and in the prelude), 10^(-rise/20) where they are down (ducked_spans), and a straight line in dB over
-    DUCK_RAMP between the two. Lines at 2–3 and 8–9 with a rise of 6: 0.5 s -> 1.0; 2.5 s -> 0.5 (-6 dB); 5.0 s ->
-    1.0."""
+def envelope(speech_spans: list[tuple[float, float]], length: float, duck_db: float) -> array:
+    """The duck envelope, ENVELOPE_RATE values a second over the whole story: 1.0 where the beds are at their gap
+    level (the prelude, the pauses), 10^(-duck_db/20) where they are down under speech (ducked_spans), and a straight
+    line in dB between the two: over DUCK_RAMP going down before a line, over DUCK_RELEASE coming back after it. Lines
+    at 2–3 and 8–9, ducked 8 dB: 0.5 s -> 1.0; 2.5 s -> 0.4 (-8 dB); 3.6 s -> rising; 4.5 s -> 1.0."""
     count = round(length * ENVELOPE_RATE)
     values = array("f", [1.0]) * count
-    down = 10 ** (-rise / 20)
-    ramp_samples = round(DUCK_RAMP * ENVELOPE_RATE)
+    down = 10 ** (-duck_db / 20)
     for start, end in ducked_spans(speech_spans):
         first = max(0, round(start * ENVELOPE_RATE))
         last = min(count, round(end * ENVELOPE_RATE) + 1)
         for i in range(first, last):
             values[i] = down
-        for step in range(1, ramp_samples):
-            gain = 10 ** (-rise * (1 - step / ramp_samples) / 20)
-            for i in (first - step, last - 1 + step):
-                if 0 <= i < count and gain < values[i]:
-                    values[i] = gain
+        ramp_down(values, first, round(DUCK_RAMP * ENVELOPE_RATE), duck_db, -1)
+        ramp_down(values, last - 1, round(DUCK_RELEASE * ENVELOPE_RATE), duck_db, 1)
     return values
+
+
+def ramp_down(values: array, edge: int, steps: int, duck_db: float, direction: int) -> None:
+    """The ramp beside a ducked span, `steps` values long, going away from its `edge` in `direction` (-1 before the
+    span, 1 after): from duck_db down at the edge to the gap level at the far end, never raising a value another span
+    already took lower."""
+    for step in range(1, steps):
+        i = edge + direction * step
+        if not 0 <= i < len(values):
+            continue
+        gain = 10 ** (-duck_db * (1 - step / steps) / 20)
+        if gain < values[i]:
+            values[i] = gain
 
 
 def envelope_bytes(values: array) -> bytes:
@@ -815,16 +853,16 @@ def without(spans: list[tuple[float, float]], cuts: list[tuple[float, float]]) -
 def beds_alone_spans(laid: Laid, hit_seconds: dict[str, float]) -> list[tuple[float, float]]:
     """Decides where the finished story has its beds alone and fully up, to measure them there: inside a bed's (or a
     music bed's) steady part, past its fade-in and before its fade-out (so never in a crossfade); outside every
-    ducked span and its DUCK_RAMP; away from every hit while it plays (hit_seconds by id, else HIT_MAX_SECONDS); at
+    ducked span and its ramps (DUCK_RAMP before, DUCK_RELEASE after); away from every hit while it plays (hit_seconds by id, else HIT_MAX_SECONDS); at
     least MIN_ALONE long. A bed 0–16 s (fades 1.5 and 3) under lines at 6–8 and 12–13, a 0.8 s door at 0 ->
-    [(1.5, 5.45), (8.55, 11.45)]."""
+    [(1.5, 5.45), (9.05, 11.45)]."""
     steady = []
     for placed in laid.sounds:
         if placed.role != "hit":
             steady.append((placed.start + placed.fade_in, placed.start + placed.seconds - placed.fade_out))
     cuts = []
     for start, end in ducked_spans([(line.start, line.start + line.seconds) for line in laid.speech]):
-        cuts.append((start - DUCK_RAMP, end + DUCK_RAMP))
+        cuts.append((start - DUCK_RAMP, end + DUCK_RELEASE))
     for placed in laid.sounds:
         if placed.role == "hit":
             seconds = min(hit_seconds.get(placed.sound, HIT_MAX_SECONDS), HIT_MAX_SECONDS)
@@ -855,12 +893,23 @@ def speech_alone_db(with_beds_db: float, beds_db: float) -> float | None:
     return 10 * math.log10(speech_power)
 
 
-async def gap_in_file(path: Path, beds: Path, laid: Laid, hit_seconds: dict[str, float]) -> float | None:
-    """How far the speech sits above the beds in the finished file `path`. Where the beds play alone, fully up
-    (beds_alone_spans), the file holds the beds alone; the mix's beds-only output (`beds`) says how much quieter they
-    are under the lines than there (the rise, and the bed's own ups and downs between those moments). So the beds'
-    level under the speech in the file is their level alone in the file less that difference; the speech is measured
-    in the file where it speaks, the beds' power taken out. None when the beds never play alone."""
+@dataclass(frozen=True)
+class BedLevels:
+    """How far below the speech the beds sit in the finished file, in dB: while someone speaks, and in the gaps
+    (None when the beds never play alone); and how many seconds of gaps that was measured over (a few seconds of a
+    restless ambience, surf between swells, can read a few dB off its average)."""
+    under_speech_db: float | None
+    in_gaps_db: float | None
+    gaps_seconds: float = 0.0
+
+
+async def levels_in_file(path: Path, beds: Path, laid: Laid, hit_seconds: dict[str, float]) -> BedLevels | None:
+    """How far the speech sits above the beds in the finished file `path`, in both states. Where the beds play alone,
+    at their gap level (beds_alone_spans), the file holds the beds alone: that is the gap level, against the speech.
+    The mix's beds-only output (`beds`) says how much quieter they are under the lines than there (the ducking, and
+    the bed's own ups and downs between those moments), so the beds' level under the speech in the file is their
+    level alone in the file less that difference. The speech is measured in the file where it speaks, the beds'
+    power taken out. None when the beds never play alone."""
     alone = beds_alone_spans(laid, hit_seconds)
     spoken = [(line.start, line.start + line.seconds) for line in laid.speech]
     if not alone or not spoken:
@@ -874,7 +923,9 @@ async def gap_in_file(path: Path, beds: Path, laid: Laid, hit_seconds: dict[str,
     speech = speech_alone_db(file_spoken, beds_under)
     if speech is None:
         return None
-    return round(speech - beds_under, 1)
+    gaps_seconds = round(sum(end - start for start, end in alone), 1)
+    return BedLevels(under_speech_db=round(speech - beds_under, 1), in_gaps_db=round(speech - file_alone, 1),
+                     gaps_seconds=gaps_seconds)
 
 
 # 5. The whole making step.
@@ -908,7 +959,8 @@ def transcript_and_hosts(laid: Laid, cast: list[dict], voices: dict[str, dict]) 
 def timeline_of(laid: Laid, plan: MixPlan, speech_db: float, speech_peak_db: float, mastered: Mastered) -> dict:
     """What the job's timeline.json keeps, so a story can be checked or remixed elsewhere: its length, every line
     (who, what, when, how long), every sound (its role, id, level word, start, length, fades and the gain it plays
-    at, in dB, beds before the rise is taken off under the lines) and the levels the mix and master used."""
+    at, in dB: a bed's at its gap level, the envelope taking it UNDER_SPEECH_DUCK_DB lower under the lines) and the
+    levels the mix and master used."""
     speech = [{"speaker": line.speaker, "text": line.text, "start": line.start, "seconds": round(line.seconds, 3)}
               for line in laid.speech]
     sounds = []
@@ -947,10 +999,9 @@ async def render(store: Store, title: str, scenes: list[story_writer.Scene], cas
         plan = mix_plan(laid, sources, loops, speech_db, sound_level, speech_peak_db)
 
         command = [encode.ffmpeg(), "-y", "-loglevel", "error", "-i", str(speech)]
-        rise = rise_db(slider_db(sound_level))
-        if plan.has_beds:
+        if plan.has_envelope:
             envelope_file = folder / "envelope.f32"
-            envelope_file.write_bytes(envelope_bytes(envelope(spans, laid.length, rise)))
+            envelope_file.write_bytes(envelope_bytes(envelope(spans, laid.length, UNDER_SPEECH_DUCK_DB)))
             command += ["-f", "f32le", "-ar", str(ENVELOPE_RATE), "-ac", "1", "-i", str(envelope_file)]
         mix = folder / "mix.wav"
         beds = folder / "beds.wav"
@@ -962,15 +1013,16 @@ async def render(store: Store, title: str, scenes: list[story_writer.Scene], cas
         await run_ffmpeg(command)
 
         mastered = await master(mix, folder)
-        gap = None
+        bed_levels = BedLevels(under_speech_db=None, in_gaps_db=None)
         measured_on = ""
         if plan.has_beds:
             hit_seconds = {sound: source.seconds for sound, source in sources.items() if source.seconds > 0}
-            gap = await gap_in_file(mastered.encoded, beds, laid, hit_seconds)
+            in_file = await levels_in_file(mastered.encoded, beds, laid, hit_seconds)
             measured_on = "the encoded file"
-        if plan.has_beds and gap is None:
-            gap = await mix_gap(beds, spans, speech_db)  # the beds never play alone: the gap as mixed
-            measured_on = "the mix"
+            if in_file is None:  # the beds never play alone: the gap under speech as mixed
+                in_file = BedLevels(under_speech_db=await mix_gap(beds, spans, speech_db), in_gaps_db=None)
+                measured_on = "the mix"
+            bed_levels = in_file
 
         timeline = timeline_of(laid, plan, speech_db, speech_peak_db, mastered)
         transcript, hosts = transcript_and_hosts(laid, cast, voices)
@@ -984,11 +1036,15 @@ async def render(store: Store, title: str, scenes: list[story_writer.Scene], cas
     if loudness is not None:
         lufs = loudness.lufs
         true_peak = loudness.true_peak_db
-    log.info("audio story %r: speech %s dB above the beds on %s (the slider promises %.1f); %s LUFS, true peak %s "
-             "dBTP (gain %.1f dB, limited at %.1f)", title, gap, measured_on, -slider_db(sound_level), lufs, true_peak,
-             mastered.gain_db, mastered.ceiling_db)
-    return Made(media=saved, gap_db=gap, loudness_lufs=lufs, true_peak_db=true_peak, gap_measured_on=measured_on,
-                skipped=skipped, timeline=timeline)
+    in_gaps = -slider_db(sound_level)
+    log.info("audio story %r on %s: the beds %s dB under the speech while it speaks (promised %.1f), %s dB in the "
+             "gaps (promised %.1f); %s LUFS, true peak %s dBTP (gain %.1f dB, limited at %.1f)", title, measured_on,
+             bed_levels.under_speech_db, in_gaps + UNDER_SPEECH_DUCK_DB, bed_levels.in_gaps_db, in_gaps, lufs,
+             true_peak, mastered.gain_db, mastered.ceiling_db)
+    return Made(media=saved, bed_under_speech_db=bed_levels.under_speech_db, bed_in_gaps_db=bed_levels.in_gaps_db,
+                loudness_lufs=lufs, true_peak_db=true_peak, gap_measured_on=measured_on,
+                gaps_seconds=bed_levels.gaps_seconds, skipped=skipped,
+                timeline=timeline)
 
 
 async def mix_gap(beds: Path, spans: list[tuple[float, float]], speech_db: float) -> float | None:
@@ -1023,8 +1079,11 @@ async def make(job: jobs.Job, browser, transport) -> dict:
     sound_level = job.data.get("sound_level", DEFAULT_SOUND_LEVEL)
     made = await render(jobs.hooks["store"], job.title, job.data["scenes"], request.cast, request.accent, sound_level,
                         job.data["catalogue"], job.folder, transport=transport)
-    levels = {"sound_level": sound_level, "promised_gap_db": -slider_db(sound_level), "measured_gap_db": made.gap_db,
-              "gap_measured_on": made.gap_measured_on, "loudness_lufs": made.loudness_lufs,
+    in_gaps = -slider_db(sound_level)
+    levels = {"sound_level": sound_level, "promised_in_gaps_db": in_gaps,
+              "promised_under_speech_db": in_gaps + UNDER_SPEECH_DUCK_DB, "measured_in_gaps_db": made.bed_in_gaps_db,
+              "measured_under_speech_db": made.bed_under_speech_db, "gap_measured_on": made.gap_measured_on,
+              "gaps_measured_seconds": made.gaps_seconds, "loudness_lufs": made.loudness_lufs,
               "true_peak_db": made.true_peak_db, "asked_seconds": request.minutes * 60,
               "made_seconds": round(made.timeline.get("length", 0.0), 1), "sounds_left_out": made.skipped,
               "note": job.data.get("note", "")}

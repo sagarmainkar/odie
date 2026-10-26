@@ -104,27 +104,39 @@ def test_the_slider_maps_to_decibels_below_the_speech():
     assert story.slider_db(5) == -20.0 and story.slider_db(55) == -8.0  # held to 10–40
 
 
-def test_beds_rise_between_lines_but_never_above_minus_four():
-    assert story.rise_db(-12.0) == 6.0
-    assert story.rise_db(-8.0) == 4.0
-    assert story.bed_under_db("normal", -12.0) == -12.0
-    assert story.bed_under_db("up front", -8.0) == -8.0  # -6 would rise to -2: held so the rise stops at -4
-    assert story.bed_under_db("low", -12.0) == -15.0
-    assert story.music_under_db("normal", -12.0) == -16.0
+def test_beds_sit_at_the_slider_in_the_gaps_and_eight_db_lower_under_speech():
+    """The owner, listening on his phone: "when no one is speaking 25% is good, but when someone speaks 10% is
+    good". The slider sets the gaps; under speech the bed drops UNDER_SPEECH_DUCK_DB more (25 % -> -12, then -20)."""
+    assert story.UNDER_SPEECH_DUCK_DB == 8.0
+    assert story.bed_gap_db("normal", -12.0) == -12.0
+    assert story.bed_gap_db("low", -12.0) == -15.0
+    assert story.bed_gap_db("up front", -8.0) == -6.0
+    assert story.bed_gap_db("up front", -5.0) == -4.0  # never closer than CEILING_DB to the speech
+    assert story.bed_under_speech_db("normal", -12.0) == -20.0
+    assert story.music_gap_db("normal", -12.0) == -16.0  # music: 4 dB under the ambience, in the gaps…
+    assert story.music_gap_db("normal", -12.0) - story.UNDER_SPEECH_DUCK_DB == -24.0  # …and under speech
 
 
-def test_the_envelope_ducks_under_speech_and_rises_in_long_gaps_only():
+def test_the_envelope_ducks_under_speech_comes_back_slowly_and_stays_down_in_short_gaps():
     rate = story.ENVELOPE_RATE
-    env = story.envelope([(2.0, 3.0), (3.5, 4.5), (8.0, 9.0)], 10.0, 6.0)
+    env = story.envelope([(2.0, 3.0), (4.1, 4.5), (8.0, 9.0)], 10.0, story.UNDER_SPEECH_DUCK_DB)
     assert len(env) == 10 * rate
-    down = 10 ** (-6 / 20)
-    assert env[int(0.5 * rate)] == pytest.approx(1.0)  # the prelude, before anyone speaks: raised
-    assert env[int(2.5 * rate)] == pytest.approx(down)  # under speech
-    assert env[int(3.25 * rate)] == pytest.approx(down)  # a 0.5 s gap: stays down, no pumping
-    assert env[int(6.25 * rate)] == pytest.approx(1.0)  # a 3.5 s gap: up
-    ramp = [env[int(t * rate)] for t in (4.65, 4.85, 5.05, 5.25)]
-    assert ramp == sorted(ramp) and down < ramp[1] < 1.0  # it rises smoothly, over DUCK_RAMP
+    down = 10 ** (-8 / 20)
+    assert env[int(0.5 * rate)] == pytest.approx(1.0)  # the prelude, before anyone speaks: the gap level
+    assert env[int(2.5 * rate)] == pytest.approx(down)  # under speech: 8 dB down
+    assert env[int(3.5 * rate)] == pytest.approx(down)  # a 1.1 s gap between lines: stays down, no pumping
+    assert env[int(1.95 * rate)] == pytest.approx(down)  # fully down DUCK_PAD before the first word…
+    assert down < env[int(1.7 * rate)] < 1.0  # …ramping over DUCK_RAMP before that
+    assert env[int(1.4 * rate)] == pytest.approx(1.0)
+    up = [env[int(t * rate)] for t in (4.7, 5.0, 5.3, 5.5)]
+    assert up == sorted(up) and down < up[0] and up[-1] < 1.0  # back up slowly, over DUCK_RELEASE (0.9 s)…
+    assert env[int(5.6 * rate)] == pytest.approx(1.0)  # …and up by 4.65 + 0.9
     assert env[int(7.9 * rate)] == pytest.approx(down)  # down again before the next line's first word
+
+
+def test_lines_closer_than_a_breath_share_one_ducked_span():
+    assert story.ducked_spans([(2.0, 3.0), (4.1, 5.0)]) == [(pytest.approx(1.85), pytest.approx(5.15))]  # 1.1 s gap
+    assert len(story.ducked_spans([(2.0, 3.0), (4.3, 5.0)])) == 2  # a 1.3 s gap: the bed comes up
 
 
 def test_the_mix_graph_has_its_pieces():
@@ -133,12 +145,13 @@ def test_the_mix_graph_has_its_pieces():
     loops = {sound: dataclasses.replace(source, path=f"/loops/{sound}.wav") for sound, source in sources.items()}
     plan = story.mix_plan(laid, sources, loops, speech_db=-20.0, sound_level=25, speech_peak_db=-3.0)
     graph = plan.graph
-    assert graph.count("amultiply") == 3  # the three beds, each under the duck envelope
+    assert graph.count("amultiply") == 4  # the three beds and the low hit (the gulls), each under the duck envelope
     assert "afade=t=in:d=1.5" in graph and "afade=t=in:d=2.5" in graph
     assert "adelay=7300:all=1" in graph  # the second bed comes in under the crossfade
-    # a bed matched to the speech (-20 - -30 = +10), at 25 % (-12), raised by 6 between lines: +4 dB
-    assert "volume=4.00dB" in graph
-    assert "volume=0.00dB" in graph  # the music, 4 dB below
+    # a bed matched to the speech (-20 - -30 = +10), at 25 % in the gaps (-12): -2 dB (the envelope takes it 8 lower
+    # under speech)
+    assert "volume=-2.00dB" in graph
+    assert "volume=-6.00dB" in graph  # the music, 4 dB below
     # a hit at "low" peaks 10 dB under the speech's peak: -3 - 10 - -6 = -7
     assert "volume=-7.00dB" in graph
     # every bed's peaks are held 3 dB under the speech's: -3 - 3 = -6 dBFS (a campfire's crackle can't jump out)
@@ -239,8 +252,9 @@ def test_where_only_the_beds_play_fully_up():
                 story.Placed("hit", "foley/door", "normal", 0.0)],
         length=16.0)
     spans = story.beds_alone_spans(laid, {"foley/door": 0.8})
-    # up from 1.5 (the fade-in) to 6.0 - 0.55; then 8.0 + 0.55 to 12.0 - 0.55; after 13.55 the fade-out from 13.0
-    assert spans == [(pytest.approx(1.5), pytest.approx(5.45)), (pytest.approx(8.55), pytest.approx(11.45))]
+    # up from 1.5 (the fade-in) to 6.0 - 0.15 - 0.4; then 8.0 + 0.15 + 0.9 to 12.0 - 0.55; after 13.15 + 0.9 the
+    # fade-out from 13.0
+    assert spans == [(pytest.approx(1.5), pytest.approx(5.45)), (pytest.approx(9.05), pytest.approx(11.45))]
 
 
 def test_the_speech_alone_is_the_speech_with_its_bed_less_the_bed():
@@ -330,8 +344,10 @@ async def test_the_encoded_file_keeps_the_gap_the_slider_promises(world, tmp_pat
     store, catalogue = world
     made = await story.render(store, "Gap", roomy_story(), CAST, "British", level, catalogue, tmp_path / f"job{level}",
                               transport=voices([]))
-    promised = -story.slider_db(level)
-    assert made.gap_db == pytest.approx(promised, abs=2.0)
+    in_gaps = -story.slider_db(level)  # 10 % -> 20 dB under the speech; 25 % -> 12; 40 % -> 8
+    under_speech = in_gaps + story.UNDER_SPEECH_DUCK_DB  # 28, 20, 16
+    assert made.bed_in_gaps_db == pytest.approx(in_gaps, abs=2.0)
+    assert made.bed_under_speech_db == pytest.approx(under_speech, abs=2.0)
     assert made.gap_measured_on == "the encoded file"
     assert made.loudness_lufs == pytest.approx(story.TARGET_LUFS, abs=1.0)
     assert made.true_peak_db <= story.MOST_TRUE_PEAK
@@ -432,7 +448,9 @@ async def test_the_job_writes_then_makes_and_posts_one_player(world, tmp_path, m
     assert text == "The audio story about Rook Point is ready."
     assert len(posted) == 1 and posted[0]["format"] == "story"
     levels = json.loads((folder / "levels.json").read_text())
-    assert levels["sound_level"] == 25 and levels["promised_gap_db"] == 12.0 and "measured_gap_db" in levels
+    assert levels["sound_level"] == 25
+    assert levels["promised_in_gaps_db"] == 12.0 and levels["promised_under_speech_db"] == 20.0
+    assert "measured_in_gaps_db" in levels and "measured_under_speech_db" in levels and "gaps_measured_seconds" in levels
     assert levels["asked_seconds"] == 120 and levels["made_seconds"] > 0  # how the pace came out, to tune it by
     assert json.loads((folder / "script.json").read_text()) == script  # the accepted script, as videos keep theirs
     timeline = json.loads((folder / "timeline.json").read_text())

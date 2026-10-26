@@ -182,7 +182,7 @@ async def test_too_many_characters_the_length_and_the_sound_level_are_refused(qu
     assert (await make(minutes=1))["error"].startswith("minutes is the story's length in whole minutes, from 2 to 15")
     assert "not 20" in (await make(minutes=20))["error"]
     assert (await make(sound_level=50))["error"] == (
-        "sound_level is how loud the sound sits under the voices, from 10 to 40 (25 unless the user chose), not 50.")
+        "sound_level is how loud the ambience is when no one speaks, from 10 to 40 (25 unless the user chose), not 50.")
     assert queued == []
 
 

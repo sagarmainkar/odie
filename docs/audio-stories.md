@@ -21,7 +21,7 @@ Odie runs a short, guided start with forms, and skips any step your message alre
    - who tells it: a character, in the first person, or an outside storyteller;
    - a voice for each character, suggested and yours to change, each with a ▶ to hear it (on Phonon, the character
      voices too: a pirate captain, a witch, an old keeper);
-   - how loud the sound sits under the voices: 10 to 40 %, at 25 %.
+   - how loud the sound is between the lines: 10 to 40 %, at 25 % (under the voices it drops lower).
 
 Then it's made in the background. A writer writes the script and chooses the sounds like an art director; Odie's
 code speaks every line, mixes the sound and masters the file, the same way every time.
@@ -51,14 +51,17 @@ The mix is code, not the model's choice:
 
 - Every ambience and music file is first matched to the loudness of the voices, so a loud jingle and a quiet room
   tone land in the same place.
-- The sound level then sets the ambience under the voices: **25 % is about 12 dB under the speech**, roughly a
-  quarter of its loudness; 10 % is 20 dB under, 40 % is 8 dB under. Music sits 4 dB under the ambience.
-- Between lines and in the opening, the ambience rises by up to 6 dB, never closer than 4 dB to the speech, and
-  dips back smoothly under the next line.
+- The sound level sets the ambience **when no one speaks** (the opening, the pauses, the transitions): **25 % is
+  about 12 dB under the speech**; 10 % is 20 dB under, 40 % is 8 dB under.
+- **While someone speaks** it drops 8 dB further: at 25 %, about 20 dB under the speech, roughly 10 %. ("When no
+  one is speaking 25 % is good, but when someone speaks 10 % is good.") It goes down over 0.4 s before a line and
+  comes back over 0.9 s after it; a pause under 1.2 s stays down, so it never pumps.
+- Music sits 4 dB under the ambience, in both.
 - Ambience and music loop without a gap: each file's own fade-in and fade-out are cut, and every repeat crossfades
   into the next.
-- Effects play once, set against the loudest word: "low" about 10 dB under it, "normal" 4 dB under, "up front"
-  about level with it. They never land on a line's first word.
+- Effects play once, set against the loudest word: "low" about 10 dB under it (and 8 dB lower again while
+  someone speaks, like the ambience), "normal" 4 dB under, "up front" about level with it. They never land on a
+  line's first word.
 - The story is mastered to about −16 LUFS, like podcasts, by one gain (so the gap stays as mixed) and a limiter
   that keeps its true peak under −1.5 dBTP, as AAC in .m4a. The job's folder (`workspace/stories/<title>/`) keeps
   the script as written (`script.json`), every line and sound in time with its gain (`timeline.json`), and the gap,
