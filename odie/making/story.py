@@ -5,8 +5,9 @@ step is plain code, the same every time:
 1. speak every line in its speaker's voice (grouped by voice, the quiet before and after each line trimmed);
 2. lay the story out in time (lay_out): scene by scene, the lines with their pauses, each scene's bed and music,
    the hits, and the transitions;
-3. mix it with one ffmpeg graph (mix_plan): every bed and music file matched to the speech's loudness, then set to
-   the slider's level below it, ducked under speech by one smooth envelope (envelope), the hits at fixed peaks;
+3. mix it with one ffmpeg graph (mix_plan): every bed and music file cut to its steady part and made a loop unit
+   that repeats with a crossfade, never a hole, at its seam (seamless_loop), matched to the speech's loudness, then set
+   to the slider's level below it, ducked under speech by one smooth envelope (envelope), the hits at fixed peaks;
 4. master it: 48 kHz stereo, loudnorm to about -16 LUFS with a true peak near -1.5 dBTP, then measure how far the
    speech sits above the beds (the gap the slider promises) and keep it in the job's levels.json;
 5. save one file, AAC in .m4a, as the chat's story player. Nothing else is posted.
@@ -22,6 +23,7 @@ import json
 import logging
 import math
 import re
+import statistics
 import sys
 import tempfile
 import wave
@@ -65,6 +67,13 @@ DUCK_PAD = 0.15  # the beds are fully down this long before a line's first word 
 DUCK_RAMP = 0.4  # seconds the beds take to go down or come back up: slow enough never to pump
 MIN_RISE_GAP = 1.5  # a gap between lines shorter than this (after the pads) keeps the beds down
 
+LOOP_CROSSFADE = 1.0  # each time a bed or music repeats, its end crossfades into its start over this long
+QUIET_DB = 3.0  # a bed's start or end this far under its usual level is its own fade, cut before it loops
+# (6 dB left Night Camp's seam 2.3 dB down; 3 dB, 0.9 dB, as its own ups and downs are)
+STEADY_RUN = 5  # windows in a row at the usual level that mark where a bed is steady (half a second)
+LEVEL_WINDOW = 0.1  # seconds a window when reading a sound's level over time
+MOST_TRIMMED = 0.25  # the most of a bed's length cut from either end
+
 BED_FADE_IN = 1.5  # a scene's bed and music fade in over this long
 BED_FADE_OUT = 1.5  # …and out over this long at a stinger or a silence (a crossfade takes its own seconds)
 STORY_TAIL = 3.0  # after the last line, the beds play on this long, fading out
@@ -83,6 +92,7 @@ AAC_BITRATE = "160k"
 PEAKS_RATE = 4000  # the waveform is drawn from a small mono copy
 
 MEAN = re.compile(r"mean_volume: (-?[\d.]+) dB")
+WINDOW_RMS = re.compile(r"lavfi\.astats\.Overall\.RMS_level=(\S+)")
 MAX = re.compile(r"max_volume: (-?[\d.]+) dB")
 CHANNELS = re.compile(r"Audio: [^\n]*?, \d+ Hz, ([^,\n]+)")
 
@@ -368,10 +378,12 @@ def hit_filter(k: int, placed: Placed, source: Source, gain: float, out: str) ->
             f"asetpts=PTS-STARTPTS,{fade}volume={db_text(gain)},adelay={round(placed.start * 1000)}:all=1[{out}]")
 
 
-def mix_plan(laid: Laid, sources: dict[str, Source], speech_db: float, sound_level: float) -> MixPlan:
+def mix_plan(laid: Laid, sources: dict[str, Source], loops: dict[str, Source], speech_db: float,
+             sound_level: float) -> MixPlan:
     """The one ffmpeg graph for the whole story. Input 0 is the speech track; input 1 the duck envelope (when there
-    are beds); then each sound. Beds and music are matched to the speech (matched_db), set to the slider's level
-    under it and raised by the rise (the envelope takes them back down under speech); hits are set by their peak.
+    are beds); then each sound. Beds and music play from their loop units (`loops`, read round and round), matched to
+    the speech (matched_db), set to the slider's level under it and raised by the rise (the envelope takes them back
+    down under speech); hits play from `sources`, set by their peak.
     The outputs: [story], the speech with everything under it, and [beds], the beds alone, for the measured gap."""
     slider = slider_db(sound_level)
     rise = rise_db(slider)
@@ -389,7 +401,7 @@ def mix_plan(laid: Laid, sources: dict[str, Source], speech_db: float, sound_lev
     story_labels = "[speech]"
     bed_labels = ""
     for n, placed in enumerate(beds):
-        source = sources[placed.sound]
+        source = loops[placed.sound]
         if placed.role == "music":
             under = music_under_db(placed.level, slider)
         else:
@@ -513,6 +525,91 @@ async def measure_db(path: Path, spans: list[tuple[float, float]]) -> float | No
                "-af", f"asetnsamples=n={MEASURE_FRAME}:p=0,aselect='{select}',volumedetect", "-f", "null", "-"]
     _code, stderr = await encode.run(command)
     return number_after(MEAN, stderr.decode("utf-8", errors="replace"))
+
+
+# Beds that loop without a hole at the seam.
+
+async def window_levels(path: Path) -> list[float]:
+    """A sound's level over time, in dBFS, one value every LEVEL_WINDOW seconds (silence as -120): a steady tone ->
+    the same value throughout; iMovie's Ocean Surf -> about -96 at the start, rising to about -22 by 1.7 s."""
+    samples = round(RATE * LEVEL_WINDOW)
+    command = [encode.ffmpeg(), "-hide_banner", "-nostats", "-i", str(path), "-af",
+               f"aresample={RATE},asetnsamples=n={samples}:p=0,astats=metadata=1:reset=1,"
+               f"ametadata=print:key=lavfi.astats.Overall.RMS_level", "-f", "null", "-"]
+    _code, stderr = await encode.run(command)
+    levels = []
+    for value in WINDOW_RMS.findall(stderr.decode("utf-8", errors="replace")):
+        try:
+            level = float(value)
+        except ValueError:
+            level = -120.0
+        if not math.isfinite(level):
+            level = -120.0
+        levels.append(level)
+    return levels
+
+
+def body_span(levels: list[float]) -> tuple[float, float]:
+    """Decides where a bed is steady, in seconds: from the first STEADY_RUN windows in a row above its usual level
+    (the median) less QUIET_DB, to the last such run; the fade-in before and the fade-out after are cut, but never more
+    than MOST_TRIMMED of the length at either end. Ocean Surf's 100 ms levels, fading in over 1.3 s and out over 0.9 s
+    of 10.7 -> (1.7, 9.9); a steady 5 s -> (0.0, 5.0); a 10 s file quiet for its first 4 s -> (2.5, 10.0)."""
+    length = len(levels) * LEVEL_WINDOW
+    if not levels:
+        return 0.0, 0.0
+    usual = statistics.median(levels)
+    steady = [level > usual - QUIET_DB for level in levels]
+    runs = [i for i in range(len(levels) - STEADY_RUN + 1) if all(steady[i:i + STEADY_RUN])]
+    if not runs:
+        return 0.0, length
+    head = runs[0] * LEVEL_WINDOW
+    tail = (runs[-1] + STEADY_RUN) * LEVEL_WINDOW
+    most = length * MOST_TRIMMED
+    return round(min(head, most), 3), round(max(tail, length - most), 3)
+
+
+def can_crossfade(head: float, tail: float) -> bool:
+    """Decides whether a bed's steady part is long enough to loop with a crossfade: at least three crossfades long,
+    so the crossfade is a small part of each repeat. (1.7, 9.9) -> True; (0.1, 1.9) -> False (it loops as it is)."""
+    return tail - head >= 3 * LOOP_CROSSFADE
+
+
+def loop_unit_graph(channels: int, head: float, tail: float) -> str:
+    """The ffmpeg graph that makes a bed's loop unit from its steady part (head to tail): the part less its first
+    LOOP_CROSSFADE seconds (input 0), with its end crossfaded, at equal power, into those first seconds (input 1, the
+    same file again: one input split in two starves acrossfade). The unit ends where it starts, so played round and
+    round it has no seam: a steady part of 1.7–9.9 s -> a unit of 7.2 s."""
+    opening_end = seconds_text(head + LOOP_CROSSFADE)
+    story_format = to_story_format(channels)
+    return (f"[0:a]{story_format},atrim=start={opening_end}:end={seconds_text(tail)},asetpts=PTS-STARTPTS[rest];"
+            f"[1:a]{story_format},atrim=start={seconds_text(head)}:end={opening_end},asetpts=PTS-STARTPTS[opening];"
+            f"[rest][opening]acrossfade=d={seconds_text(LOOP_CROSSFADE)}:c1=qsin:c2=qsin[unit]")
+
+
+async def seamless_loop(source: Source, folder: Path) -> Source:
+    """A bed or music file as a loop unit that repeats with no dip at the seam (loop_unit_graph), written in `folder`
+    as 48 kHz stereo and measured again; the file as it is when its steady part is too short to crossfade."""
+    head, tail = body_span(await window_levels(Path(source.path)))
+    if not can_crossfade(head, tail):
+        return source
+    unit = folder / f"loop-{Path(source.path).stem}-{len(list(folder.glob('loop-*')))}.wav"
+    await run_ffmpeg([encode.ffmpeg(), "-y", "-loglevel", "error", "-i", source.path, "-i", source.path,
+                      "-filter_complex", loop_unit_graph(source.channels, head, tail), "-map", "[unit]",
+                      "-c:a", "pcm_f32le", str(unit)])
+    measured = await measure_source(unit, tail - head - LOOP_CROSSFADE)
+    if measured is None:
+        return source
+    return measured
+
+
+async def seamless_loops(sounds: list[Placed], sources: dict[str, Source], folder: Path) -> dict[str, Source]:
+    """Every bed and music the story plays, as its loop unit (seamless_loop), by id; made once a sound."""
+    loops: dict[str, Source] = {}
+    for placed in sounds:
+        if placed.role == "hit" or placed.sound in loops:
+            continue
+        loops[placed.sound] = await seamless_loop(sources[placed.sound], folder)
+    return loops
 
 
 def source_path(entry: dict, role: str) -> str:
@@ -652,7 +749,8 @@ async def render(store: Store, title: str, scenes: list[story_writer.Scene], cas
         speech_db = await measure_db(speech, spans)
         if speech_db is None:
             speech_db = -20.0
-        plan = mix_plan(laid, sources, speech_db, sound_level)
+        loops = await seamless_loops(laid.sounds, sources, folder)
+        plan = mix_plan(laid, sources, loops, speech_db, sound_level)
 
         command = [encode.ffmpeg(), "-y", "-loglevel", "error", "-i", str(speech)]
         if plan.has_beds:

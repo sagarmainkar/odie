@@ -3,6 +3,7 @@ scene with the sound, mixed under the speech at the slider's level, mastered to 
 file in the story player. Nothing else is posted.
 
 The voice is a MockTransport (a tone a line); the sounds are a fake library of tiny generated WAVs in tmp_path."""
+import dataclasses
 import io
 import json
 import logging
@@ -129,7 +130,8 @@ def test_the_envelope_ducks_under_speech_and_rises_in_long_gaps_only():
 def test_the_mix_graph_has_its_pieces():
     laid = story.lay_out(two_scenes(writer.Transition("crossfade", 2.5)), [2.0, 1.5, 3.0])
     sources = {s.sound: story.Source(path=f"/sounds/{s.sound}.wav", mean_db=-30.0, max_db=-6.0) for s in laid.sounds}
-    plan = story.mix_plan(laid, sources, speech_db=-20.0, sound_level=25)
+    loops = {sound: dataclasses.replace(source, path=f"/loops/{sound}.wav") for sound, source in sources.items()}
+    plan = story.mix_plan(laid, sources, loops, speech_db=-20.0, sound_level=25)
     graph = plan.graph
     assert graph.count("amultiply") == 3  # the three beds, each under the duck envelope
     assert "afade=t=in:d=1.5" in graph and "afade=t=in:d=2.5" in graph
@@ -140,8 +142,72 @@ def test_the_mix_graph_has_its_pieces():
     # a hit at "low" peaks at 0.3 of full scale: 20·log10(0.3) - -6 = -4.46
     assert "volume=-4.46dB" in graph
     assert graph.count("amix=") == 2  # the story, and the beds alone (for the measured gap)
-    loops = [i for i, arg in enumerate(plan.inputs) if arg == "-stream_loop"]
-    assert len(loops) == 3
+    looped = [plan.inputs[i + 3] for i, arg in enumerate(plan.inputs) if arg == "-stream_loop"]
+    assert looped == ["/loops/ambience/surf.wav", "/loops/jingles/theme.wav", "/loops/ambience/wind.wav"]  # the units
+    assert "/sounds/foley/door.wav" in plan.inputs  # a hit plays from its own file
+
+
+# Beds that loop without a hole at the seam.
+
+def test_a_beds_steady_part_starts_after_its_fade_in_and_ends_before_its_fade_out():
+    """iMovie's Ocean Surf fades in over its first 1.3 s and out over its last 0.9 s (100 ms levels against its
+    usual level): the loop is cut from where it is steady."""
+    levels = [-74, -63, -53, -42, -32, -24, -17, -13, -12, -12, -13, -12, -10, -8, -5, -4, -3, -1] + [0] * 80 \
+        + [-1, -6, -9, -12, -13, -15, -16, -17, -20]
+    head, tail = story.body_span([level - 22 for level in levels])
+    assert head == pytest.approx(1.7)  # the first of five steady windows in a row, within 3 dB
+    assert tail == pytest.approx(9.9)  # 1.0 s from the end of 10.7
+    assert story.body_span([-20.0] * 50) == (0.0, pytest.approx(5.0))  # steady throughout: nothing to cut
+
+
+def test_a_beds_trim_never_takes_more_than_a_quarter_of_either_end():
+    levels = [-60.0] * 40 + [-20.0] * 20 + [-60.0] * 40  # mostly quiet: the median is the quiet
+    assert story.body_span(levels) == (0.0, pytest.approx(10.0))
+    fading = [-60.0] * 40 + [-20.0] * 60
+    head, tail = story.body_span(fading)
+    assert head == pytest.approx(2.5) and tail == pytest.approx(10.0)  # held at a quarter of 10 s
+
+
+def noise_bed(path, seconds=8.0, fade_in=1.3, fade_out=0.9):
+    """Pink noise with fades at both ends, as iMovie's ambiences have: a stand-in for surf or rain."""
+    encode_cmd = [encode.ffmpeg(), "-v", "error", "-y", "-f", "lavfi", "-i",
+                  f"anoisesrc=d={seconds}:c=pink:a=0.3:r=48000:s=7",
+                  "-af", f"afade=t=in:d={fade_in},afade=t=out:st={seconds - fade_out}:d={fade_out}", str(path)]
+    import subprocess
+    subprocess.run(encode_cmd, check=True)
+    return path
+
+
+def smoothed(levels, n=5):
+    """Levels averaged over n windows (in power), as the ear hears a dip of half a second."""
+    powers = [10 ** (level / 10) for level in levels]
+    return [10 * math.log10(sum(powers[i:i + n]) / n) for i in range(len(powers) - n + 1)]
+
+
+async def test_a_bed_loops_without_a_dip_at_its_seam(tmp_path):
+    import statistics
+    import subprocess
+    bed = noise_bed(tmp_path / "surf.wav")
+    source = await story.measure_source(bed, 8.0)
+    unit = await story.seamless_loop(source, tmp_path)
+    assert unit.path != source.path and unit.channels == 2
+    # the fades are straight lines in amplitude, within 3 dB of the usual level from 71 % of the way: about 1.0 s in
+    # and 0.6 s before the end; the unit is that steady part less the crossfade
+    assert unit.seconds == pytest.approx(8.0 - 1.0 - 0.6 - story.LOOP_CROSSFADE, abs=0.3)
+    looped = tmp_path / "looped.wav"
+    subprocess.run([encode.ffmpeg(), "-v", "error", "-y", "-stream_loop", "-1", "-i", unit.path,
+                    "-t", str(unit.seconds * 3), str(looped)], check=True)
+    levels = smoothed(await story.window_levels(looped))
+    usual = statistics.median(levels)
+    for seam in (unit.seconds, unit.seconds * 2):
+        near = levels[int((seam - 1.0) / story.LEVEL_WINDOW): int((seam + 1.0) / story.LEVEL_WINDOW)]
+        assert min(near) > usual - 2.0  # the file as it is dips more than 10 dB here
+
+
+async def test_a_bed_too_short_to_crossfade_loops_as_it_is(tmp_path):
+    bed = noise_bed(tmp_path / "short.wav", seconds=2.0, fade_in=0.1, fade_out=0.1)
+    source = await story.measure_source(bed, 2.0)
+    assert await story.seamless_loop(source, tmp_path) == source
 
 
 # A whole story, rendered.
