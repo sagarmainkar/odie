@@ -660,7 +660,9 @@ async def measure_peak(path: Path) -> float | None:
 
 
 def source_path(entry: dict, role: str) -> str:
-    """The file a sound plays from: for a bed or music, its longest cut (a jingle's Long), else the file itself."""
+    """Decides which file a sound plays from: a bed or music plays its longest cut, so it loops as seldom as it can; a
+    hit, or a sound with no cuts, plays its own file. A jingle with Long (79 s), Medium (30 s) and Short cuts as music
+    -> the Long file; the same jingle as a hit -> its entry's path; Ocean Surf (no cuts) as a bed -> its own file."""
     variants = entry.get("variants") or []
     if role == "hit" or not variants:
         return entry["path"]
@@ -877,6 +879,16 @@ async def gap_in_file(path: Path, beds: Path, laid: Laid, hit_seconds: dict[str,
 
 # 5. The whole making step.
 
+def voice_group(chosen: dict) -> str:
+    """The group the player shows for a voice: its gender when the engine gives one, else its group. Phonon's "Hugh"
+    (gender male, group "British · Male") -> "male"; Phonon's "Old Mortlake" (no gender, group "Characters") ->
+    "Characters"; Kokoro's "Heart" (group female) -> "female"."""
+    gender = chosen.get("gender")
+    if gender:
+        return gender
+    return chosen.get("group", "")
+
+
 def transcript_and_hosts(laid: Laid, cast: list[dict], voices: dict[str, dict]) -> tuple[list[dict], list[dict]]:
     """The player's transcript [{host, text, start}] (host: the speaker's display name) and its hosts, the cast as
     they first speak [{name, voice, group}]."""
@@ -889,8 +901,7 @@ def transcript_and_hosts(laid: Laid, cast: list[dict], voices: dict[str, dict]) 
         if line.speaker not in seen:
             seen.add(line.speaker)
             chosen = voices[line.speaker]
-            group = chosen.get("gender") or chosen.get("group", "")
-            hosts.append({"name": names[line.speaker], "voice": chosen["label"], "group": group})
+            hosts.append({"name": names[line.speaker], "voice": chosen["label"], "group": voice_group(chosen)})
     return transcript, hosts
 
 

@@ -279,7 +279,10 @@ def line_problem(line: dict, kinds: dict[str, str], speakers: list[str], opening
             return once_problem(sound_after, kinds, "a sound in the lines")
         return None
     if "sound" in line:
-        problem = once_problem(line["sound"], kinds, "a sound in the lines") or level_problem(line)
+        problem = once_problem(line["sound"], kinds, "a sound in the lines")
+        if problem:
+            return problem
+        problem = level_problem(line)
         if problem:
             return problem
         lowest, highest = 0.0, MAX_LEAD

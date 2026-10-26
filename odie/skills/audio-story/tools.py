@@ -5,7 +5,6 @@ in the ▶ of any option that names a voice: web/src/blocks/voicePreviews.ts.) m
 within the chat turn and puts it in Odie's background queue (odie.making.jobs, kind "story" from odie.making.story):
 the writer writes the script and chooses the sound, and Odie's code speaks, mixes and posts one file. Plain trusted code
 of a built-in skill: no shell, no approval card."""
-import math
 from urllib.parse import quote
 
 from google.adk.tools import FunctionTool, ToolContext
@@ -81,9 +80,23 @@ def accent_problem(engine: str, accent: str) -> str | None:
     offered = accents_for(engine)
     if accent in offered:
         return None
-    label = voice.ENGINES.get(engine, {}).get("label", engine).split(" (")[0]
-    listed = " or ".join(offered) if len(offered) == 2 else ", ".join(offered[:-1]) + " or " + offered[-1]
-    return f"{label}'s voices here are {listed}: choose one of those."
+    return f"{engine_name(engine)}'s voices here are {spoken_list(offered)}: choose one of those."
+
+
+def engine_name(engine: str) -> str:
+    """An engine's name as a sentence says it, without the note in brackets: "phonon" ("Phonon (Ollama)") ->
+    "Phonon"; "kokoro" -> "Kokoro"; an engine Odie doesn't list -> its id."""
+    engine_info = voice.ENGINES.get(engine, {})
+    full_label = engine_info.get("label", engine)
+    return full_label.split(" (")[0]
+
+
+def spoken_list(items: list[str]) -> str:
+    """Items as a sentence lists them: ["American"] -> "American"; ["American", "British"] -> "American or British";
+    ["American", "British", "Indian"] -> "American, British or Indian"."""
+    if len(items) <= 1:
+        return "".join(items)
+    return f"{', '.join(items[:-1])} or {items[-1]}"
 
 
 def accent_word(given) -> str:
@@ -124,9 +137,13 @@ MAX_MINUTES = 15
 DEFAULT_MINUTES = 5
 MAX_SPEAKERS = 8  # the player gives up to eight speakers a tone of their own
 WORD = "story"
-WRITING_MINUTES = (2, 4)  # the writer's turn: a script with its sound takes a few minutes
-MIXING_MINUTES = 1  # the mix and the master
-LOCAL_SPEED = 10  # minutes of speech a local voice speaks in a minute
+# The wait told to the user, from real stories on Phonon: the writer took 39–49 s for a 3-minute script, and speaking,
+# mixing and mastering a minute of story took a few seconds.
+WRITING_SECONDS = 30  # the writer's turn…
+WRITING_SECONDS_PER_MINUTE = 5  # …and a little more for each minute of story
+LOCAL_SECONDS_PER_MINUTE = 6  # a local voice speaks, and Odie mixes and masters, a minute of story in about this long
+OPENAI_SECONDS_PER_MINUTE = 66  # OpenAI speaks about as fast as the story plays, then the mix
+ABOUT_A_MINUTE = 90  # a wait up to this many seconds is "about a minute"
 DOING = "writing the script and choosing the sound, then speaking every line and mixing it"
 
 NO_GENRE = "genre is the story's genre, as the user chose it (horror, mystery, a bedtime story…)."
@@ -134,19 +151,45 @@ NO_PREMISE = "premise is the story's idea: the pitch the user chose, or their ow
 NO_CAST = ('cast is a list of {id, name, voice, about}: the narrator and each character, with a voice from '
            "story_voices.")
 VOICES_FROM = "Call story_voices for the voices to choose from."
-NO_IMOVIE = ('There is no iMovie on this Mac, so the story uses Odie\'s own small sound kit, with no music. Tell the '
-             'user once: "For richer sound, install iMovie (free in the App Store); Odie uses its sound library."')
+RICHER_SOUND = '"For richer sound, install iMovie (free in the App Store); Odie uses its sound library."'
+NO_SOUNDS = ("There is no iMovie on this Mac, so the story uses Odie's own small sound kit, with no music. Tell the "
+             f"user once: {RICHER_SOUND}")
+OWN_SOUNDS_ONLY = ("There is no iMovie on this Mac, so the story uses the sounds in the user's own sounds folder. Tell "
+                   f"the user once: {RICHER_SOUND}")
 
 
-def minutes_to_make(minutes: int, engine: str) -> tuple[int, int]:
-    """The estimate told to the user, as (low, high) whole minutes: the writing (2 to 4), the speaking (a local voice
-    speaks ten minutes of story in one; OpenAI about as fast as it plays) and the mix (1). 10 minutes on Kokoro -> (4,
-    6); on OpenAI -> (13, 15)."""
-    speaking = minutes
-    if engine != "openai":
-        speaking = math.ceil(minutes / LOCAL_SPEED)
-    low_writing, high_writing = WRITING_MINUTES
-    return low_writing + speaking + MIXING_MINUTES, high_writing + speaking + MIXING_MINUTES
+def seconds_to_make(minutes: int, engine: str) -> int:
+    """About how long a story takes, in seconds: the writing (WRITING_SECONDS and a little a minute), then speaking,
+    mixing and mastering (a few seconds a minute on a local voice; about real time on OpenAI). 3 minutes on Phonon ->
+    63; 15 on Phonon -> 195; 10 on OpenAI -> 740."""
+    writing = WRITING_SECONDS + WRITING_SECONDS_PER_MINUTE * minutes
+    making = LOCAL_SECONDS_PER_MINUTE * minutes
+    if engine == "openai":
+        making = OPENAI_SECONDS_PER_MINUTE * minutes
+    return writing + making
+
+
+def wait_words(minutes: int, engine: str) -> str:
+    """The wait as the user is told it (seconds_to_make): up to ABOUT_A_MINUTE -> "about a minute"; longer -> the
+    whole minutes around it. 3 minutes on Phonon -> "about a minute"; 15 -> "about 3–4 minutes"; 10 on OpenAI ->
+    "about 12–13 minutes"."""
+    seconds = seconds_to_make(minutes, engine)
+    if seconds <= ABOUT_A_MINUTE:
+        return "about a minute"
+    low = seconds // 60
+    return f"about {low}–{low + 1} minutes"
+
+
+def library_note(libraries: list[sound_library.Library]) -> str:
+    """Decides what the reply adds about where the sound comes from: iMovie's library found -> nothing; only the
+    user's own sounds folder -> that it is used, and the iMovie line to say once; nothing at all -> Odie's small kit,
+    no music, and the iMovie line. [iLife Sound Effects, Your sounds] -> ""; [Your sounds] -> OWN_SOUNDS_ONLY; [] ->
+    NO_SOUNDS."""
+    if sound_library.has_imovie(libraries):
+        return ""
+    if libraries:
+        return OWN_SOUNDS_ONLY
+    return NO_SOUNDS
 
 
 def plain_cast(cast) -> list[dict] | str:
@@ -294,11 +337,10 @@ async def make_audio_story(title: str, genre: str, premise: str, cast: list[dict
                    brief=brief_record(request, sound_level, brief), session_id=session_id_of(tool_context),
                    folder=folder, data={"request": request, "sound_level": sound_level})
     place = jobs.submit(job)
-    low, high = minutes_to_make(minutes, engine)
-    result = chat.reply(place, low, high, DOING)
-    libraries = sound_library.find_libraries(sound_library.LIBRARY_ROOT)
-    if not sound_library.has_imovie(libraries):
-        result = f"{result} {NO_IMOVIE}"
+    result = chat.reply_in_words(place, wait_words(minutes, engine), DOING)
+    note = library_note(sound_library.find_libraries(sound_library.LIBRARY_ROOT))
+    if note:
+        result = f"{result} {note}"
     return {"result": result}
 
 

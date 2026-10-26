@@ -52,6 +52,36 @@ export function hostInitial(name: string): string {
   return (words[words.length - 1] ?? "").slice(0, 1).toUpperCase();
 }
 
+const LEADING_ARTICLES = new Set(["the", "a", "an"]);
+
+/** A story speaker's two-letter mark: the initials of the first two words, a leading "The" left out, or the first two
+ *  letters of a one-word name. "Captain Silas Blackwater" → "CS"; "The keeper" → "Ke"; "Narrator" → "Na". */
+function twoLetters(name: string): string {
+  let kept = name.trim().split(/\s+/).filter(Boolean);
+  const startsWithArticle = kept.length > 1 && LEADING_ARTICLES.has(kept[0].toLowerCase());
+  if (startsWithArticle) kept = kept.slice(1);
+  if (kept.length >= 2) return (kept[0][0] + kept[1][0]).toUpperCase();
+  const word = kept[0] ?? "";
+  return word.slice(0, 1).toUpperCase() + word.slice(1, 2).toLowerCase();
+}
+
+/**
+ * Decides the mark on each speaker's avatar. A podcast keeps hostInitial's one letter ("Host A" → "A"). An audio
+ * story's cast is bigger and often shares a first letter, so each gets two (twoLetters), and a mark already taken
+ * becomes its first letter and a number. ["Narrator", "Nell", "The keeper"] → ["Na", "Ne", "Ke"]; ["Nell", "Nelson"]
+ * → ["Ne", "N2"].
+ */
+export function castMarks(m: Media, names: string[]): string[] {
+  if (!isStory(m)) return names.map(hostInitial);
+  const marks: string[] = [];
+  names.forEach((name, i) => {
+    let mark = twoLetters(name);
+    if (marks.includes(mark)) mark = `${mark.slice(0, 1)}${i + 1}`;
+    marks.push(mark);
+  });
+  return marks;
+}
+
 /** The two hosts' colours: solid tokens (a gradient is dropped from rings and text). */
 export const HOST_TONES = ["var(--t-brand)", "var(--t-host-b)"];
 export const HOST_TEXT = ["var(--t-brand-text)", "var(--t-host-b-text)"];
@@ -59,6 +89,13 @@ export const HOST_TEXT = ["var(--t-brand-text)", "var(--t-host-b-text)"];
 /** An audio story's speakers' colours: the podcast's two, then six more, cycling after eight. */
 export const CAST_TONES = [...HOST_TONES, ...[3, 4, 5, 6, 7, 8].map((n) => `var(--t-cast-${n})`)];
 export const CAST_TEXT = [...HOST_TEXT, ...[3, 4, 5, 6, 7, 8].map((n) => `var(--t-cast-${n}-text)`)];
+
+/** How the line under the title is drawn: a story's cast wraps, so every voice is shown; a podcast's two hosts stay on
+ *  one line. */
+export function castLineLook(m: Media): string {
+  if (isStory(m)) return "leading-4 mt-0.5";
+  return "truncate";
+}
 
 /** Whether a podcast player is an audio story: { format: "story" } → true; a podcast → false. */
 export function isStory(m: Media): boolean {

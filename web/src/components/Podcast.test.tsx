@@ -2,7 +2,7 @@
 import { readFileSync } from "node:fs";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { CAST_TEXT, CAST_TONES, HOST_TONES, castLine, isStory, playerWords, textToneAt, toneAt, type Media } from "../media";
+import { CAST_TEXT, CAST_TONES, HOST_TONES, castLine, castMarks, isStory, playerWords, textToneAt, toneAt, type Media } from "../media";
 import { Podcast } from "./Podcast";
 
 const pod: Media = {
@@ -31,6 +31,23 @@ describe("the story player", () => {
     expect(castLine(story)).toBe(names.map((name, i) => `${name} · Voice ${i + 1}`).join(", "));
     const html = renderToStaticMarkup(<Podcast m={story} />);
     expect(html).toContain("Narrator · Voice 1, The keeper · Voice 2");
+  });
+
+  it("marks each speaker so two names with one first letter still differ", () => {
+    expect(castMarks(story, ["Narrator", "Nell", "The keeper", "Captain Silas Blackwater"])).toEqual(["Na", "Ne", "Ke", "CS"]);
+    expect(castMarks(story, ["Nell", "Nelson"])).toEqual(["Ne", "N2"]);  // still the same: a number tells them apart
+    expect(castMarks(pod, ["Host A", "Host B"])).toEqual(["A", "B"]);  // a podcast keeps its one letter
+    const html = renderToStaticMarkup(<Podcast m={{ ...story, hosts: [{ name: "Narrator" }, { name: "Nell" }] }} />);
+    expect(html).toContain(">Na</span>");
+    expect(html).toContain(">Ne</span>");
+  });
+
+  it("shows the whole cast under the title, wrapping rather than cut", () => {
+    const html = renderToStaticMarkup(<Podcast m={story} />);
+    const line = html.match(/<div class="([^"]*)">Narrator · Voice 1/);
+    expect(line).not.toBeNull();
+    expect(line![1]).not.toContain("truncate");
+    expect(renderToStaticMarkup(<Podcast m={pod} />)).toMatch(/class="[^"]*truncate[^"]*">Host A and Host B/);
   });
 
   it("gives up to eight speakers their own tone, then cycles", () => {

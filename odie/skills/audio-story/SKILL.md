@@ -17,7 +17,8 @@ gets one finished file and nothing in between.
 
 ## The guided start
 
-Each step is **one form**, prefilled with your best guess (the user can always just type instead). Skip a step the
+Each step is **one form**, prefilled with your best guess (the user can always just type instead). Plain words
+throughout, never an emoji, in the forms and in the lines around them. Skip a step the
 user has already answered ("a 10-minute horror story about a lighthouse" skips step 1 and the pitches).
 
 1. **Genre:** a radio of about 11 options, each with a one-line note: horror, mystery, thriller, adventure, fantasy,

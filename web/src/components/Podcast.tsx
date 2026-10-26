@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { castLine, clock, hostInitial, playerWords, speakingAt, textToneAt, toneAt, turnAt, type Media } from "../media";
+import { castLine, castLineLook, castMarks, clock, playerWords, speakingAt, textToneAt, toneAt, turnAt, type Media } from "../media";
 import { PlayPause, usePlayer } from "./VoiceMemo";
 import { ShareFile } from "./ShareButton";
 
@@ -18,6 +18,7 @@ export function Podcast({ m }: { m: Media }) {
   const pct = p.duration ? Math.min(100, (p.time / p.duration) * 100) : 0;
   const words = playerWords(m);
   const tone = (name: string) => textToneAt(m, Math.max(0, hosts.findIndex((h) => h.name === name)));
+  const marks = castMarks(m, hosts.map((h) => h.name));
   return (
     <div className="glass rounded-[26px] p-4 w-full max-w-[420px] flex flex-col gap-3" data-media={m.kind} data-ready={p.ready ? "1" : "0"}>
       <div className="flex items-center gap-3">
@@ -27,14 +28,14 @@ export function Podcast({ m }: { m: Media }) {
               className="w-11 h-11 rounded-full grid place-items-center text-[16px] font-bold text-white transition-transform duration-200"
               style={{ background: toneAt(m, i), zIndex: who === i ? 2 : 1, transform: who === i ? "scale(1.08)" : "none",
                 boxShadow: who === i ? `0 0 0 3px var(--t-surface), 0 0 0 5px ${toneAt(m, i)}` : "0 0 0 2px var(--t-surface)" }}>
-              {hostInitial(h.name)}
+              {marks[i]}
             </span>
           ))}
         </div>
         <div className="flex-1 min-w-0">
           <div className="text-[11px] uppercase tracking-[0.08em] font-bold text-muted">{words.label}</div>
           <div className="text-[15.5px] font-semibold leading-5 truncate">{m.title}</div>
-          <div className="text-[12.5px] text-muted truncate">{who >= 0 ? `${hosts[who].name} is speaking` : castLine(m)}</div>
+          <div className={`text-[12.5px] text-muted ${castLineLook(m)}`}>{who >= 0 ? `${hosts[who].name} is speaking` : castLine(m)}</div>
         </div>
         <ShareFile file={m} />
       </div>

@@ -153,7 +153,7 @@ async def test_a_good_story_is_queued_with_its_cast_and_level(queued):
     from odie.agent.tools.files import workspace
     from odie.making import story, story_writer
     out = await make()
-    assert out["result"].startswith("Making it now: about ")
+    assert out["result"].startswith("Making it now: about a minute (")  # 5 minutes on a local voice
     [job] = queued
     assert job.kind == "story" and job.title == "The Lighthouse at Rook Point" and job.minutes == 5
     assert job.session_id == "chat-7"
@@ -231,3 +231,32 @@ async def test_without_imovie_the_reply_says_once_where_richer_sound_comes_from(
     monkeypatch.setattr(sound_library, "LIBRARY_ROOT", imovie)
     with_imovie = await make(title="Another")
     assert "iMovie" not in with_imovie["result"]
+
+
+def test_the_wait_told_is_about_what_real_stories_take():
+    """Real 3-minute stories took 39–49 s to write and seconds to speak and mix on Phonon."""
+    wait = tools()["make_audio_story"].func.__globals__["wait_words"]
+    assert wait(3, "phonon") == "about a minute"
+    assert wait(15, "phonon") == "about 3–4 minutes"
+    assert wait(10, "openai") == "about 12–13 minutes"  # OpenAI speaks about as fast as the story plays
+
+
+def test_the_note_on_sounds_says_where_they_come_from(tmp_path):
+    from odie.making import sound_library
+    note = tools()["make_audio_story"].func.__globals__["library_note"]
+    own = sound_library.Library(sound_library.OWN_CATEGORY, tmp_path, sound_library.OWN_CATEGORY)
+    imovie = sound_library.Library(sound_library.ILIFE_EFFECTS_FOLDER, tmp_path, "Effects")
+    assert "Odie's own small sound kit, with no music" in note([])
+    only_own = note([own])
+    assert "the user's own sounds folder" in only_own and "kit" not in only_own
+    assert "install iMovie" in only_own
+    assert note([imovie, own]) == ""
+
+
+async def test_with_only_your_own_sounds_the_reply_names_your_folder(queued):
+    from odie.making import sound_library
+    folder = sound_library.own_sounds_folder()
+    assert not str(folder).startswith(str(Path.home() / ".odie"))  # the isolated test home, never the real one
+    (folder / "Rain").mkdir(parents=True)
+    out = await make()
+    assert "the user's own sounds folder" in out["result"] and "sound kit" not in out["result"]
