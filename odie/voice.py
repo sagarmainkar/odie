@@ -214,6 +214,25 @@ def set_tts(store: Store, engine: str | None = None, voice: str | None = None) -
     return get_tts(store)
 
 
+def worker_wanted(store: Store) -> bool:
+    """Whether read-aloud uses Odie's own voice server (odie.voice_worker), so it should run: the engine read-aloud
+    speaks with is one that server speaks (OWN_SERVER). Kokoro chosen -> True; Phonon chosen -> False; OpenAI with its
+    key -> False."""
+    engine, _ = get_tts(store)
+    return engine in OWN_SERVER
+
+
+async def settle_worker(store: Store) -> None:
+    """After the read-aloud engine changes: Odie's own voice server is stopped when read-aloud no longer uses it, so the
+    process goes away. When it does use it, nothing happens now: the next speech starts it (local_tts asks the worker
+    to be up first). Called by the async callers of set_tts, which is synchronous."""
+    from odie import voice_worker
+    worker = voice_worker.current
+    if worker is None or worker_wanted(store):
+        return
+    await worker.stop()
+
+
 SCRIPT_PROMPT = ("Rewrite the assistant's reply below as a short script for a voice actor to read aloud to the user. Plain speech: "
                  "no markdown, no lists, no URLs or ids; numbers and amounts the way people say them. Keep the meaning, at most "
                  "80 words; if the reply is longer, speak a natural summary of it. Where it genuinely fits the mood, add one to three "
@@ -273,6 +292,19 @@ async def local_available(transport: httpx.AsyncBaseTransport | None = None) -> 
             return (await c.get(f"{local_url()}/health")).status_code == 200
     except httpx.HTTPError:
         return False
+
+
+async def own_server_can_speak() -> bool:
+    """Whether Kokoro can be chosen now: Odie's own voice server answers, or it is set up and would start the first time
+    Kokoro speaks (it runs only while read-aloud uses it, so with Phonon chosen it is stopped). Running -> True; set up
+    but stopped -> True; never set up (no `uv sync` in voice_server) -> False."""
+    from odie import voice_worker
+    worker = voice_worker.current
+    if worker is None:
+        return await local_available()
+    if await worker.healthy():
+        return True
+    return bool(worker.installed)
 
 
 async def speak(store: Store, text: str, engine: str | None = None, voice: str | None = None) -> tuple[bytes, str]:

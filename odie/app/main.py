@@ -74,12 +74,30 @@ def mount_addon_routes(app: FastAPI) -> None:
             logging.getLogger("odie").warning("add-on %s: its routes couldn't be mounted", a.name, exc_info=True)
 
 
-async def _learn_phonon(voice) -> None:
+async def _launch_voice_worker(store: Store, logs) -> None:
+    """Odie's own voice server at launch: the worker is always made, so choosing Kokoro later starts it on demand, but
+    it is started now only when read-aloud uses it (voice.worker_wanted). Kokoro chosen -> started; Phonon or OpenAI
+    chosen -> made, not started: one process less."""
+    from odie import voice, voice_worker
+    logs.mkdir(parents=True, exist_ok=True)
+    voice_worker.current = voice_worker.VoiceWorker(log=logs / "voice.log")
+    if not voice.worker_wanted(store):
+        return
+    try:
+        await voice_worker.current.start()
+    except Exception:  # noqa: BLE001 (voice never decides whether Odie starts)
+        logging.getLogger("odie").warning("local voice couldn't start", exc_info=True)
+
+
+async def _learn_phonon(store: Store) -> None:
     """Asks Ollama once at launch whether it has Phonon and which voices, so read-aloud's default engine knows before
-    Settings is first opened. A missing or slow Ollama is fine: Odie asks again when Settings opens."""
+    Settings is first opened; then Odie's own voice server is stopped if read-aloud turns out not to need it (nothing
+    chosen, Phonon now the default). A missing or slow Ollama is fine: Odie asks again when Settings opens."""
+    from odie import voice
     try:
         if await voice.phonon_available():
             await voice.phonon_voices()
+        await voice.settle_worker(store)
     except Exception:  # noqa: BLE001 (voice never decides whether Odie starts)
         logging.getLogger("odie").info("couldn't ask Ollama about Phonon", exc_info=True)
 
@@ -279,17 +297,11 @@ def create_app(runner=None, store: Store | None = None) -> FastAPI:
         if devices.offer_setup(store):
             logging.getLogger("odie").info("No device is paired yet: the installer opens the link in %s", devices.setup_file())
         from odie import embed_worker, machine, voice_worker
-        if runner is None:  # whether Ollama has Phonon, and its voices, in the background: Ollama never delays Odie starting
-            from odie import voice
-            app.state.phonon_task = asyncio.create_task(_learn_phonon(voice))
         logs = (s.home / "logs") if s.home else s.data_dir
         if runner is None and machine.local_voice_wanted():  # the real server, on a Mac that runs Odie's own voice
-            logs.mkdir(parents=True, exist_ok=True)
-            voice_worker.current = voice_worker.VoiceWorker(log=logs / "voice.log")
-            try:
-                await voice_worker.current.start()  # Odie's own local voices, started with it
-            except Exception:  # noqa: BLE001 (voice never decides whether Odie starts)
-                logging.getLogger("odie").warning("local voice couldn't start", exc_info=True)
+            await _launch_voice_worker(store, logs)
+        if runner is None:  # whether Ollama has Phonon, and its voices, in the background: Ollama never delays Odie starting
+            app.state.phonon_task = asyncio.create_task(_learn_phonon(store))
         if runner is None and machine.local_embeddings_wanted():
             logs.mkdir(parents=True, exist_ok=True)
             embed_worker.current = embed_worker.EmbedWorker(log=logs / "embed.log")  # started on demand by the embedder…

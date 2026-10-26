@@ -1412,7 +1412,7 @@ async def voice_get(request: Request):
         await voice.phonon_voices()  # Ollama's list, asked once per process
     engine, current = voice.get_tts(store)
     openai_ok = bool(load_secret("OPENAI_API_KEY"))
-    local_ok = await voice.local_available() if machine.local_voice_wanted() else False  # not asked for where it can't run
+    local_ok = await voice.own_server_can_speak() if machine.local_voice_wanted() else False  # not asked for where it can't run
     hidden = voice.disabled()
 
     def ready(engine_id: str, local: bool) -> bool:
@@ -1433,6 +1433,7 @@ async def voice_put(body: VoiceIn, request: Request):
     from odie import voice
     store = request.app.state.store
     engine, v = voice.set_tts(store, body.engine, body.voice)
+    await voice.settle_worker(store)  # away from Kokoro: Odie's own voice server stops
     if engine == "openai" and body.voice:
         voice.set_voice(store, body.voice)  # an OpenAI voice is also Talk's voice
     if body.reminders_spoken is not None:

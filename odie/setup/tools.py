@@ -252,6 +252,7 @@ async def set_voice(store, engine: str) -> dict:
     if engine == "kokoro" and not machine.local_voice_wanted():
         raise _Error("Odie's own voice doesn't run on this Mac (it needs Apple Silicon): choose openai, or skip the step.")
     voice.set_tts(store, engine=engine)
+    await voice.settle_worker(store)
     state.mark(store, "voice", "done")
     return {"voice": engine}
 
