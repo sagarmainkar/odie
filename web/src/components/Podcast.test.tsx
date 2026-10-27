@@ -2,8 +2,8 @@
 import { readFileSync } from "node:fs";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { CAST_TEXT, CAST_TONES, HOST_TONES, castLine, castMarks, isStory, playerWords, textToneAt, toneAt, type Media } from "../media";
-import { Podcast } from "./Podcast";
+import { CAST_TEXT, CAST_TONES, HOST_TONES, SPEAKER_SCALE, castLine, castRole, isStory, linesAt, playerWords, showsWhoIsWho, textToneAt, toneAt, type Media } from "../media";
+import { Podcast, StoryStage } from "./Podcast";
 
 const pod: Media = {
   id: "fedcba9876543210", kind: "podcast", title: "Our session", mime: "audio/wav", size: 10, created: 1, duration: 9,
@@ -16,6 +16,13 @@ const story: Media = {
   hosts: names.map((name, i) => ({ name, group: "female", voice: `Voice ${i + 1}` })),
   transcript: names.map((name, i) => ({ host: name, text: `Line ${i}`, start: i * 2 })),
 };
+const told: Media & { teaser: string } = {
+  ...story, title: "Salt and Timber",
+  teaser: "A widow restoring the house her husband left on the Oregon coast, and the quiet man hired to fix it.",
+  hosts: [{ name: "Claire", group: "female", voice: "Heart", who: "the widow who tells it" },
+    { name: "Tom", group: "male", voice: "Michael", who: "the quiet man hired to fix it" }],
+  transcript: [{ host: "Claire", text: "The storm came early.", start: 0 }, { host: "Tom", text: "Roof first.", start: 3 }],
+};
 
 describe("the story player", () => {
   it("is the podcast card, saying Audio story and Play story", () => {
@@ -27,27 +34,50 @@ describe("the story player", () => {
     expect(playerWords(story)).toEqual({ label: "Audio story", play: "Play story", pause: "Pause story", position: "Story position" });
   });
 
-  it("lists the cast with their voices", () => {
-    expect(castLine(story)).toBe(names.map((name, i) => `${name} · Voice ${i + 1}`).join(", "));
-    const html = renderToStaticMarkup(<Podcast m={story} />);
-    expect(html).toContain("Narrator · Voice 1, The keeper · Voice 2");
+  it("shows the teaser and who's who before it plays: a face, the name and who they are", () => {
+    const html = renderToStaticMarkup(<Podcast m={told} />);
+    expect(html).toContain(told.teaser);
+    expect(html).toContain("the widow who tells it");
+    expect(html).toContain("the quiet man hired to fix it");
+    expect(html.match(/data-face="/g)).toHaveLength(2);  // one drawn face per person
+    expect(html).not.toContain('aria-live="polite"');  // nothing is being said yet
   });
 
-  it("marks each speaker so two names with one first letter still differ", () => {
-    expect(castMarks(story, ["Narrator", "Nell", "The keeper", "Captain Silas Blackwater"])).toEqual(["Na", "Ne", "Ke", "CS"]);
-    expect(castMarks(story, ["Nell", "Nelson"])).toEqual(["Ne", "N2"]);  // still the same: a number tells them apart
-    expect(castMarks(pod, ["Host A", "Host B"])).toEqual(["A", "B"]);  // a podcast keeps its one letter
-    const html = renderToStaticMarkup(<Podcast m={{ ...story, hosts: [{ name: "Narrator", group: "male" }, { name: "Nell", group: "female" }] }} />);
-    expect(html).toContain(">Na</span>");
-    expect(html).toContain(">Ne</span>");
+  it("still shows a story made before teasers: the cast with their voices, and no empty teaser", () => {
+    const html = renderToStaticMarkup(<Podcast m={story} />);
+    expect(html).toContain("Voice 1");
+    expect(html).toContain("The keeper");
+    expect(html).not.toContain('data-teaser="');
+    expect(html.match(/data-face="/g)).toHaveLength(names.length);
+    expect(castRole({ name: "Ada", group: "female" })).toBe("");  // neither who nor voice: just the name
   });
 
-  it("shows the whole cast under the title, wrapping rather than cut", () => {
-    const html = renderToStaticMarkup(<Podcast m={story} />);
-    const line = html.match(/<div class="([^"]*)">Narrator · Voice 1/);
-    expect(line).not.toBeNull();
-    expect(line![1]).not.toContain("truncate");
-    expect(renderToStaticMarkup(<Podcast m={pod} />)).toMatch(/class="[^"]*truncate[^"]*">Host A and Host B/);
+  it("shows who's who until it plays, then folds it to one line unless it's opened again", () => {
+    expect(showsWhoIsWho(false, false)).toBe(true);
+    expect(showsWhoIsWho(true, false)).toBe(false);
+    expect(showsWhoIsWho(true, true)).toBe(true);
+    expect(castLine(story)).toBe(names.join(", "));  // the folded line: just the names
+  });
+
+  it("grows the speaker's face inside their turn, the others stay small", () => {
+    const html = renderToStaticMarkup(<StoryStage m={story} time={4.5} onOpen={() => {}} />);  // turn 2: Ada
+    const speaking = html.match(/<span[^>]*data-speaking="1"[^>]*>/g) ?? [];
+    expect(speaking).toHaveLength(1);
+    expect(speaking[0]).toContain('aria-label="Ada, speaking"');
+    expect(speaking[0]).toContain(`scale(${SPEAKER_SCALE})`);
+    expect(html.match(/scale\(1\.35\)/g)).toHaveLength(1);
+    expect(html.match(/data-speaking="0"/g)).toHaveLength(names.length - 1);
+    expect(SPEAKER_SCALE).toBe(1.35);
+  });
+
+  it("says the current line under the faces, the one before faded, and tells a screen reader once", () => {
+    const html = renderToStaticMarkup(<StoryStage m={story} time={4.5} onOpen={() => {}} />);
+    expect(html).toMatch(/data-line="before"[^>]*>Line 1</);
+    expect(html).toMatch(/data-line="now"[^>]*>Line 2</);
+    expect(html).toMatch(/aria-live="polite"[^>]*>Ada: Line 2</);
+    expect(linesAt(story, 4.5)).toEqual({ before: { host: "The keeper", text: "Line 1", start: 2 }, now: { host: "Ada", text: "Line 2", start: 4 } });
+    expect(linesAt(story, 0)).toEqual({ before: null, now: { host: "Narrator", text: "Line 0", start: 0 } });
+    expect(linesAt({ ...story, transcript: [] }, 3)).toEqual({ before: null, now: null });
   });
 
   it("gives up to eight speakers their own tone, then cycles", () => {
@@ -74,5 +104,11 @@ describe("the podcast player stays as it was", () => {
     expect(isStory(pod)).toBe(false);
     expect(toneAt(pod, 2)).toBe(HOST_TONES[0]);
     expect(castLine(pod)).toBe("Host A and Host B");
+    expect(html).toMatch(/class="[^"]*truncate[^"]*">Host A and Host B/);
+    expect(html).toContain(">A</span>");  // its hosts keep their coloured letters
+    expect(html).toContain(">B</span>");
+    expect(html).toContain("w-11 h-11 rounded-full");  // the same letter avatars as before
+    expect(html).not.toContain("data-face=");  // no drawn faces on a podcast
+    expect(html).not.toContain('aria-live="polite"');
   });
 });
