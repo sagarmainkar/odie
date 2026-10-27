@@ -87,6 +87,12 @@ def reply(place: int, low: int, high: int, doing: str) -> str:
     "Making it now: about 3–5 minutes (writing the script and the animation, then drawing it). …"; place 2 (one being
     made already) -> "It's number 2 in line, about 3–5 minutes after the one before. …". Either way it says the result
     comes to this chat with a ping, and that the chat stays free."""
+    return reply_in_words(place, f"about {low}–{high} minutes", doing)
+
+
+def reply_in_words(place: int, wait: str, doing: str) -> str:
+    """reply, with the wait already in words: (1, "about a minute", "writing…") -> "Making it now: about a minute
+    (writing…). …"; place 2 -> "It's number 2 in line, about a minute after the one before. …"."""
     if place <= 1:
-        return f"Making it now: about {low}–{high} minutes ({doing}). {AFTER_THE_ESTIMATE}"
-    return f"It's number {place} in line, about {low}–{high} minutes after the one before. {AFTER_THE_ESTIMATE}"
+        return f"Making it now: {wait} ({doing}). {AFTER_THE_ESTIMATE}"
+    return f"It's number {place} in line, {wait} after the one before. {AFTER_THE_ESTIMATE}"

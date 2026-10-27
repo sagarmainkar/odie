@@ -6,6 +6,7 @@ import { InCard } from "./InCard";
 import { InlineText } from "./InlineText";
 import { TEXT_VALUE, type FormBlock, type FormField, type FormOption } from "./parse/form";
 import { useAnsweredForm } from "./SavedPlace";
+import { useVoicePreviews } from "./voicePreviews";
 
 type Sent = Answered | null;
 type ViewProps = {
@@ -17,7 +18,8 @@ type ViewProps = {
  *  message (the same send the reply's buttons use): a line for the bubble and an odie-form-answer block the model
  *  reads by field id. A form is sent once; then it turns grey with the choices still showing and "✓ Sent 15:42", and
  *  stays so after a reload and on another device (useAnsweredForm). */
-export function Form(form: FormBlock) {
+export function Form(written: FormBlock) {
+  const form = useVoicePreviews(written);  // a voice option the model left without its ▶ gets one
   const { send, busy } = useContext(ChatActions);
   const [values, setValues] = useState<FormValues>(() => startingValues(form));
   const [answered, markSent] = useAnsweredForm(form);

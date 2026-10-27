@@ -97,6 +97,14 @@ def load_kinds() -> None:
         importlib.import_module(name)
 
 
+def load_user_kinds(store) -> None:
+    """Run the tools.py of every skill the user has allowed, so a kind one of them registers (by putting its Kind in
+    KINDS when the file runs) is in KINDS. Each version of a tools.py runs once, however often this is called. A skill
+    the user hasn't allowed, or switched off, never runs, so its kind stays unknown and recover() leaves its jobs."""
+    from odie.skills.registry import discover  # here, not at the top: the skills' own code imports this module
+    discover(store)
+
+
 # The line: jobs wait in _queue, one worker takes them in turn, _waiting counts the ones waiting plus the one running.
 _queue: asyncio.Queue | None = None
 _worker: asyncio.Task | None = None
@@ -278,11 +286,15 @@ async def stop() -> None:
     _worker = None
 
 
-async def recover() -> int:
+async def recover(store=None) -> int:
     """At startup: every job file, in every kind's folder, still saying queued, writing or making (or a video's old
     "running") was cut off by the restart. Tell its chat once, naming the kind of the folder it is in, and mark it
-    interrupted_told, so the next start stays quiet. Returns how many were told."""
+    interrupted_told, so the next start stays quiet. Returns how many were told.
+    Given the store (start-up passes it), the user's allowed skills are loaded first (load_user_kinds), so a job of a
+    kind a user skill registers is told too, not skipped because its kind isn't known yet."""
     load_kinds()
+    if store is not None:
+        load_user_kinds(store)
     told = 0
     for name, kind in KINDS.items():
         root = workspace() / kind.folder

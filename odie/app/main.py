@@ -342,7 +342,7 @@ def create_app(runner=None, store: Store | None = None) -> FastAPI:
                 logging.getLogger("odie").warning("reconcile at startup failed", exc_info=True)
             try:
                 from odie.making import jobs as making_jobs
-                await making_jobs.recover()  # a video (or anything else) a restart cut off is told, once, in its chat
+                await making_jobs.recover(store)  # a job a restart cut off (a user skill's too) is told, once, in its chat
             except Exception:  # noqa: BLE001 (never decides whether Odie starts)
                 logging.getLogger("odie").warning("telling interrupted background jobs failed", exc_info=True)
         yield

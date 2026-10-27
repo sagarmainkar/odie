@@ -79,15 +79,16 @@ def _path(m: dict) -> str:
 
 def make_media_tools(store, transport: httpx.AsyncBaseTransport | None = None) -> list[FunctionTool]:
     async def speak(script: str, title: str = "", voice_name: str = "") -> dict:
-        """Read text aloud as a voice memo the user can play right in the chat: the player appears under your reply.
-        Use it when the user asks for a voice memo, a voice note, or to hear something. `script` is what to say, as
-        plain speech, at most about 4,000 characters (some 4 minutes; split longer narration into several memos);
-        it's read in the voice chosen in Settings. `voice_name` (optional) is another voice for this one memo, only
-        when the user asks for one ("a man's voice"): a voice of the same engine as the Settings voice, by name
-        ("Michael"); another engine's voice is refused with the list to pick from. `title` is short (optional).
-        The result's `path` is the saved WAV file (kept), for a skill to use, e.g. with ffmpeg. When it works, reply
-        in one short line; don't repeat the script. A podcast with two hosts is make_podcast (the podcast skill),
-        not this."""
+        """Read text aloud as one short voice memo the user can play right in the chat: the player appears under your
+        reply. Use it when the user asks for a voice memo, a voice note, or to hear something. `script` is what to
+        say, as plain speech, at most about 4,000 characters (some 4 minutes); it's read in the voice chosen in
+        Settings. `voice_name` (optional) is another voice for this one memo, only when the user asks for one ("a
+        man's voice"): a voice of the same engine as the Settings voice, by name ("Michael"); another engine's voice
+        is refused with the list to pick from. `title` is short (optional). The result's `path` is the saved WAV file
+        (kept), for a skill's own narration, e.g. with ffmpeg. When it works, reply in one short line; don't repeat
+        the script. Not for a story, a radio play or anything with several voices, sound or music: that is a skill's
+        own tool, never several speak calls stitched together. A podcast with two hosts is make_podcast (the podcast
+        skill)."""
         text = plain_speech(script)
         if not text:
             return {"error": NOTHING_TO_SAY}
