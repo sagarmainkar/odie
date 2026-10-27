@@ -3,9 +3,11 @@
 import type { Deck } from "./deck";
 
 export type Turn = { host: string; text: string; start: number };
+/** A podcast host or a voice in a story. A story's `who` says who they are in a few words ("the widow who tells it"). */
+export type Host = { name: string; group: string; voice?: string; who?: string };
 export type Media = {
   id: string; kind: "memo" | "podcast" | "screenshot" | "file" | "page" | "link" | "turn" | "tracker" | "picture" | "video" | "audio"; title: string; mime: string; size: number; created: number;
-  duration?: number; peaks?: number[]; transcript?: string | Turn[]; voice?: string; hosts?: { name: string; group: string; voice?: string }[];
+  duration?: number; peaks?: number[]; transcript?: string | Turn[]; voice?: string; hosts?: Host[];
   url?: string; page_title?: string; step?: string;  // a screenshot: the page and the browser step that took it
   filename?: string;  // a file: its name for the download
   deck?: Deck;  // a designed deck (odie/decks): its PowerPoint and slide pictures
@@ -14,6 +16,7 @@ export type Media = {
   label?: string;  // a link: its button (a UPI app link's "Pay in your UPI app")
   tracker_id?: number; page?: string;  // a "check this page signed in?" card (odie/trackers/signed_in.py)
   format?: "story";  // a podcast that is an audio story (a user skill can make one): its hosts are the cast
+  teaser?: string;  // a story: what it's about in a sentence or two, shown before it plays
 };
 
 export const mediaUrl = (m: Pick<Media, "id">) => `/api/media/${m.id}`;
@@ -52,36 +55,6 @@ export function hostInitial(name: string): string {
   return (words[words.length - 1] ?? "").slice(0, 1).toUpperCase();
 }
 
-const LEADING_ARTICLES = new Set(["the", "a", "an"]);
-
-/** A story speaker's two-letter mark: the initials of the first two words, a leading "The" left out, or the first two
- *  letters of a one-word name. "Captain Silas Blackwater" → "CS"; "The keeper" → "Ke"; "Narrator" → "Na". */
-function twoLetters(name: string): string {
-  let kept = name.trim().split(/\s+/).filter(Boolean);
-  const startsWithArticle = kept.length > 1 && LEADING_ARTICLES.has(kept[0].toLowerCase());
-  if (startsWithArticle) kept = kept.slice(1);
-  if (kept.length >= 2) return (kept[0][0] + kept[1][0]).toUpperCase();
-  const word = kept[0] ?? "";
-  return word.slice(0, 1).toUpperCase() + word.slice(1, 2).toLowerCase();
-}
-
-/**
- * Decides the mark on each speaker's avatar. A podcast keeps hostInitial's one letter ("Host A" → "A"). An audio
- * story's cast is bigger and often shares a first letter, so each gets two (twoLetters), and a mark already taken
- * becomes its first letter and a number. ["Narrator", "Nell", "The keeper"] → ["Na", "Ne", "Ke"]; ["Nell", "Nelson"]
- * → ["Ne", "N2"].
- */
-export function castMarks(m: Media, names: string[]): string[] {
-  if (!isStory(m)) return names.map(hostInitial);
-  const marks: string[] = [];
-  names.forEach((name, i) => {
-    let mark = twoLetters(name);
-    if (marks.includes(mark)) mark = `${mark.slice(0, 1)}${i + 1}`;
-    marks.push(mark);
-  });
-  return marks;
-}
-
 /** The two hosts' colours: solid tokens (a gradient is dropped from rings and text). */
 export const HOST_TONES = ["var(--t-brand)", "var(--t-host-b)"];
 export const HOST_TEXT = ["var(--t-brand-text)", "var(--t-host-b-text)"];
@@ -89,13 +62,6 @@ export const HOST_TEXT = ["var(--t-brand-text)", "var(--t-host-b-text)"];
 /** An audio story's speakers' colours: the podcast's two, then six more, cycling after eight. */
 export const CAST_TONES = [...HOST_TONES, ...[3, 4, 5, 6, 7, 8].map((n) => `var(--t-cast-${n})`)];
 export const CAST_TEXT = [...HOST_TEXT, ...[3, 4, 5, 6, 7, 8].map((n) => `var(--t-cast-${n}-text)`)];
-
-/** How the line under the title is drawn: a story's cast wraps, so every voice is shown; a podcast's two hosts stay on
- *  one line. */
-export function castLineLook(m: Media): string {
-  if (isStory(m)) return "leading-4 mt-0.5";
-  return "truncate";
-}
 
 /** Whether a podcast player is an audio story: { format: "story" } → true; a podcast → false. */
 export function isStory(m: Media): boolean {
@@ -121,13 +87,44 @@ export function playerWords(m: Media): { label: string; play: string; pause: str
   return { label: "Podcast", play: "Play podcast", pause: "Pause podcast", position: "Podcast position" };
 }
 
-/** Who is in it, under the title: a story's cast with their voices ("Narrator · Heart, The keeper · Michael"); a
- * podcast's two hosts ("Host A and Host B"). */
+/** Who is in it on one line: a podcast's two hosts under its title ("Host A and Host B"); a story's cast once its
+ * who's-who folds while it plays ("Narrator, The keeper, Ada"). */
 export function castLine(m: Media): string {
-  const hosts = m.hosts ?? [];
-  if (!isStory(m)) return hosts.map((h) => h.name).join(" and ");
-  const named = hosts.map((h) => (h.voice ? `${h.name} · ${h.voice}` : h.name));
-  return named.join(", ");
+  const names = (m.hosts ?? []).map((h) => h.name);
+  if (!isStory(m)) return names.join(" and ");
+  return names.join(", ");
+}
+
+/** A story's who's-who line after a name: who they are, else the voice they're read in (a story made before `who`
+ * existed), else nothing. { who: "the widow" } → "the widow"; { voice: "Heart" } → "Heart"; neither → "". */
+export function castRole(h: Host): string {
+  if (h.who) return h.who;
+  if (h.voice) return h.voice;
+  return "";
+}
+
+/**
+ * Decides whether a story card shows its who's-who list (a face, name and who for each voice) or folds it to one line.
+ * Before it plays the list helps you know who's who; once it plays (or is paused part-way) the faces above the line
+ * being said do that, so the list folds and the player stays on a phone's screen, unless you open it again.
+ * (live false) → shown; (live, not opened) → folded; (live, opened) → shown.
+ */
+export function showsWhoIsWho(live: boolean, opened: boolean): boolean {
+  if (!live) return true;
+  return opened;
+}
+
+/** How much the speaking voice's face grows in a story (the others stay at 1). */
+export const SPEAKER_SCALE = 1.35;
+
+/** The line being said at `t` and the one before it, for under a story's faces. At 4.5 s in turns starting 0, 2, 4:
+ * { before: the turn at 2, now: the turn at 4 }; at 0: { before: null, now: the first }; no transcript: both null. */
+export function linesAt(m: Media, t: number): { before: Turn | null; now: Turn | null } {
+  const turns = Array.isArray(m.transcript) ? m.transcript : [];
+  const i = turnAt(m, t);
+  const now = i >= 0 ? turns[i] : null;
+  const before = i >= 1 ? turns[i - 1] : null;
+  return { before, now };
 }
 
 /** The messages with `m` on the reply being written (`at`; else the last reply), unless it's already there. A reminder
