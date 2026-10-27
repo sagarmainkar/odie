@@ -59,6 +59,7 @@ import { autoplayFor } from "../reminders";
 import { useProfile } from "../profile";
 import { MicWave } from "../components/MicWave";
 import { composerWith, phoneSpeech, pickMode, startDictation } from "../dictation";
+import { shrinkPhoto } from "../shrinkPhoto";
 
 // key and sid: the name the server gave a reply (its ADK event id) and the session it is in; its saved ticks hang off them.
 type Msg = { id: number; key?: string; sid?: string; role: "user" | "odie" | "approval"; text: string; tools: Tool[]; error?: string; awaiting?: boolean; ts?: number; live?: boolean; approval?: Approval; images?: string[]; asked?: string; media?: Media[]; autoplay?: string; private?: boolean; usage?: ReplyUsage };  // private: its chat read a signed-in page; usage: the reply's own token counts
@@ -252,17 +253,24 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
   const [uploading, setUploading] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
+  async function uploadPhoto(file: File): Promise<Pending | null> {
+    const fd = new FormData();
+    fd.append("file", await shrinkPhoto(file), file.name);
+    const r = await fetch("/api/upload", { method: "POST", body: fd });
+    if (!r.ok) return null;
+    return (await r.json()) as Pending;
+  }
+
   async function onPick(e: React.ChangeEvent<HTMLInputElement>) {
     const files = Array.from(e.target.files ?? []);
     e.target.value = "";
     if (!files.length) return;
     setUploading(true);
     try {
-      for (const f of files.slice(0, 4)) {
-        const fd = new FormData(); fd.append("file", f);
-        const r = await fetch("/api/upload", { method: "POST", body: fd });
-        if (r.ok) { const j = (await r.json()) as Pending; setPending((p) => [...p, j]); }
-      }
+      // Shrunk on the phone and sent together, then added in the order they were picked.
+      const sent = await Promise.all(files.slice(0, 4).map(uploadPhoto));
+      const arrived = sent.filter((one): one is Pending => one !== null);
+      setPending((p) => [...p, ...arrived]);
     } finally { setUploading(false); }
   }
 
