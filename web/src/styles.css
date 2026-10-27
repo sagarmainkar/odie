@@ -55,6 +55,10 @@
   --t-shadow-card: 0 1px 1px rgba(60,40,20,.03), 0 22px 44px -26px rgba(80,50,25,.30);
   --t-iris: linear-gradient(135deg, #7D8CFF, #B08BFF 55%, #FF9CC8);
   --t-host-b: #EE7F9A; --t-host-b-text: #C2456A;
+  /* An audio story's speakers after the first two (media.ts CAST_TONES), each solid with a text shade. */
+  --t-cast-3: #3FB8A8; --t-cast-3-text: #13806F; --t-cast-4: #F2A541; --t-cast-4-text: #A86400;
+  --t-cast-5: #A77BF0; --t-cast-5-text: #6E3FC4; --t-cast-6: #4FA8E8; --t-cast-6-text: #1F6FB2;
+  --t-cast-7: #8CC152; --t-cast-7-text: #4E7F1C; --t-cast-8: #F27B5B; --t-cast-8-text: #B5462A;
   /* Chart parts (pie slices, stacked parts, a combo's bars and lines), in this order: checked for colour-blind
      separation against the card in day and night (2026-10-12). */
   --t-chart-1: #6C7BF2; --t-chart-2: #EB6834; --t-chart-3: #1BAF7A; --t-chart-4: #EDA100;
@@ -70,6 +74,8 @@
   --t-ink: #F3F1F8; --t-ink-2: #D6D3E0; --t-muted: #9A96AA; --t-dim: #6F6B80;
   --t-brand-text: #AEB6FF; --t-brand-tint: rgba(125,140,255,.18);
   --t-host-b-text: #FFA3B8;
+  --t-cast-3-text: #7EE2D2; --t-cast-4-text: #FFC27A; --t-cast-5-text: #C9B0FF; --t-cast-6-text: #8CC8FF;
+  --t-cast-7-text: #B9E58A; --t-cast-8-text: #FFAD94;
   --t-action: #F3F1F8; --t-solid: #F3F1F8; --t-on-solid: #15131D;
   --t-bubble: linear-gradient(150deg, #2E2F5E, #3B2B5C);
   --t-good: #4FD6A2; --t-good-tint: rgba(79,214,162,.14);
