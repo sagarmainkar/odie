@@ -205,6 +205,18 @@ input, button, textarea { font-family: inherit; }
 .tile-yellow { --a: #ffd970; --b: #ffaa1c; } .tile-green { --a: #7fe6b4; --b: #20b679; } .tile-pink { --a: #ffa3c4; --b: #ff5490; }
 .tile-ink { --a: #6b6878; --b: #24222c; }
 
+/* ---------- a story's talking bars ---------- */
+/* Beside the speaker's name above a story's faces: three bars in the speaker's colour bounce like a sound meter while
+   they talk, and hold still in a gap (data-talking="0") or with reduced motion. */
+.talk-bars { display: inline-flex; align-items: flex-end; gap: 2px; height: 12px; flex-shrink: 0; }
+.talk-bars i { width: 3px; height: 100%; border-radius: 1.5px; background: currentColor; transform-origin: bottom; animation: talk-bars .9s ease-in-out infinite; }
+.talk-bars i:nth-child(1) { transform: scaleY(.55); animation-delay: -.45s; }
+.talk-bars i:nth-child(2) { transform: scaleY(1); animation-delay: -.15s; }
+.talk-bars i:nth-child(3) { transform: scaleY(.75); animation-delay: -.7s; }
+.talk-bars[data-talking="0"] i { animation: none; }
+@keyframes talk-bars { 0%, 100% { transform: scaleY(.3); } 50% { transform: scaleY(1); } }
+@media (prefers-reduced-motion: reduce) { .talk-bars i { animation: none; } }
+
 /* ---------- the orb ---------- */
 .orb { position: relative; display: inline-block; flex: 0 0 auto; border-radius: 50%; isolation: isolate; }
 /* The face (components/Orb.tsx). Idle: one colour, still, a blink now and then. Each state changes a part, never the

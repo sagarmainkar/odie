@@ -1,7 +1,7 @@
 import { useState } from "react";
 import {
-  SPEAKER_SCALE, castLine, castRole, clock, hostInitial, isStory, linesAt, playerWords, showsWhoIsWho, speakingAt,
-  textToneAt, toneAt, turnAt, type Host, type Media,
+  SPEAKER_SCALE, castLine, castRole, clock, hostInitial, isStory, linesAt, nameLineAt, playerWords, showsWhoIsWho,
+  speakingAt, textToneAt, toneAt, turnAt, type Host, type Media,
 } from "../media";
 import { Face } from "./Face";
 import { PlayPause, usePlayer } from "./VoiceMemo";
@@ -78,7 +78,7 @@ function StoryCard({ m }: { m: Media }) {
         </button>
       )}
       {showsWhoIsWho(live, castOpened) && <WhoIsWho m={m} />}
-      {live && <StoryStage m={m} time={p.time} onOpen={() => setTranscriptOpen(true)} />}
+      {live && <StoryStage m={m} time={p.time} playing={p.playing} onOpen={() => setTranscriptOpen(true)} />}
       <Scrubber m={m} p={p} />
       <Controls m={m} p={p} />
       <Transcript m={m} p={p} open={transcriptOpen} setOpen={setTranscriptOpen} />
@@ -117,10 +117,10 @@ function stageFaceSize(count: number): number {
   return 30;
 }
 
-/** While a story plays: everyone's face in a row, the speaker's grown with its ring lit, and under them the line being
- * said in the speaker's colour with the one before it faded. A tap on the line opens the full transcript. A screen
- * reader hears "Ada: <line>" once, when the line changes. */
-export function StoryStage({ m, time, onOpen }: { m: Media; time: number; onOpen: () => void }) {
+/** While a story plays: the name of who is talking, then everyone's face in a row, the speaker's grown with its ring
+ * lit, and under them the line being said in the speaker's colour with the one before it faded. A tap on the line opens
+ * the full transcript. A screen reader hears "Ada: <line>" once, when the line changes. */
+export function StoryStage({ m, time, playing, onOpen }: { m: Media; time: number; playing: boolean; onOpen: () => void }) {
   const hosts = m.hosts ?? [];
   const who = speakingAt(m, time);
   const { before, now } = linesAt(m, time);
@@ -128,6 +128,7 @@ export function StoryStage({ m, time, onOpen }: { m: Media; time: number; onOpen
   const nowTone = textToneAt(m, Math.max(0, who));
   return (
     <div className="flex flex-col gap-1.5">
+      <SpeakerName m={m} time={time} playing={playing} />
       <div className="flex justify-center -space-x-1.5 py-2.5">
         {hosts.map((h, i) => (
           <FaceAvatar key={h.name} m={m} host={h} i={i} size={size} speaking={who === i} onStage />
@@ -142,6 +143,27 @@ export function StoryStage({ m, time, onOpen }: { m: Media; time: number; onOpen
         </button>
       )}
       <p aria-live="polite" className="sr-only">{now ? `${now.host}: ${now.text}` : ""}</p>
+    </div>
+  );
+}
+
+/** Above a story's faces: who is talking, bold in their colour, with three bars beside the name bouncing like a sound
+ * meter. While only sound plays, the last speaker's name stays, dimmed, with the bars still; paused, the bars hold still
+ * too; before anyone has spoken the line is empty. It always keeps its height, so the faces never jump. A screen reader
+ * skips it: the line under the faces already says "Ada: <line>". */
+function SpeakerName({ m, time, playing }: { m: Media; time: number; playing: boolean }) {
+  const line = nameLineAt(m, time);
+  if (!line) return <div data-speaker-line="" aria-hidden className="h-[22px]" />;
+  const name = (m.hosts ?? [])[line.index].name;
+  const tone = textToneAt(m, line.index);
+  const dimmed = line.talking ? "" : "opacity-50";
+  const barsMove = line.talking && playing;
+  const talking = barsMove ? "1" : "0";
+  return (
+    <div data-speaker-line="" aria-hidden style={{ color: tone }}
+      className={`h-[22px] flex items-center justify-center gap-2 min-w-0 transition-opacity duration-300 motion-reduce:transition-none ${dimmed}`}>
+      <b className="text-[15px] leading-[22px] truncate">{name}</b>
+      <span className="talk-bars" data-talking={talking}><i></i><i></i><i></i></span>
     </div>
   );
 }
