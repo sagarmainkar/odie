@@ -127,6 +127,26 @@ export function linesAt(m: Media, t: number): { before: Turn | null; now: Turn |
   return { before, now };
 }
 
+/**
+ * Decides whose name shows above a story's faces at `t`, and whether they're talking right now. A turn whose speaker
+ * isn't in the cast (a "Sound" turn: rain, a door) is a gap: the last voice to speak stays named, but not talking.
+ * Before anyone has spoken there's no name. In turns Claire 0, Tom 3, Sound 6: at 4 → { index: 1 (Tom), talking: true };
+ * at 7 → { index: 1, talking: false }; before 0, or in a story that opens on sound alone → null.
+ */
+export function nameLineAt(m: Media, t: number): { index: number; talking: boolean } | null {
+  const turns = Array.isArray(m.transcript) ? m.transcript : [];
+  const hosts = m.hosts ?? [];
+  const castIndex = (turn: Turn) => hosts.findIndex((h) => h.name === turn.host);
+  const now = turnAt(m, t);
+  for (let i = now; i >= 0; i--) {
+    const index = castIndex(turns[i]);
+    if (index < 0) continue;  // sound only: look back for the last voice
+    const talking = i === now;
+    return { index, talking };
+  }
+  return null;
+}
+
 /** The messages with `m` on the reply being written (`at`; else the last reply), unless it's already there. A reminder
  * can arrive while a reply is written, so Chat names the reply. */
 export function withMedia<T extends { role: string; media?: Media[] }>(msgs: T[], m: Media, at?: (x: T) => boolean): T[] {

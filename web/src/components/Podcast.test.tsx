@@ -2,7 +2,10 @@
 import { readFileSync } from "node:fs";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { CAST_TEXT, CAST_TONES, HOST_TONES, SPEAKER_SCALE, castLine, castRole, isStory, linesAt, playerWords, showsWhoIsWho, textToneAt, toneAt, type Media } from "../media";
+import {
+  CAST_TEXT, CAST_TONES, HOST_TONES, SPEAKER_SCALE, castLine, castRole, isStory, linesAt, nameLineAt, playerWords, showsWhoIsWho,
+  textToneAt, toneAt, type Media, type Turn,
+} from "../media";
 import { Podcast, StoryStage } from "./Podcast";
 
 const pod: Media = {
@@ -60,7 +63,7 @@ describe("the story player", () => {
   });
 
   it("grows the speaker's face inside their turn, the others stay small", () => {
-    const html = renderToStaticMarkup(<StoryStage m={story} time={4.5} onOpen={() => {}} />);  // turn 2: Ada
+    const html = renderToStaticMarkup(<StoryStage m={story} time={4.5} playing onOpen={() => {}} />);  // turn 2: Ada
     const speaking = html.match(/<span[^>]*data-speaking="1"[^>]*>/g) ?? [];
     expect(speaking).toHaveLength(1);
     expect(speaking[0]).toContain('aria-label="Ada, speaking"');
@@ -71,13 +74,69 @@ describe("the story player", () => {
   });
 
   it("says the current line under the faces, the one before faded, and tells a screen reader once", () => {
-    const html = renderToStaticMarkup(<StoryStage m={story} time={4.5} onOpen={() => {}} />);
+    const html = renderToStaticMarkup(<StoryStage m={story} time={4.5} playing onOpen={() => {}} />);
     expect(html).toMatch(/data-line="before"[^>]*>Line 1</);
     expect(html).toMatch(/data-line="now"[^>]*>Line 2</);
     expect(html).toMatch(/aria-live="polite"[^>]*>Ada: Line 2</);
     expect(linesAt(story, 4.5)).toEqual({ before: { host: "The keeper", text: "Line 1", start: 2 }, now: { host: "Ada", text: "Line 2", start: 4 } });
     expect(linesAt(story, 0)).toEqual({ before: null, now: { host: "Narrator", text: "Line 0", start: 0 } });
     expect(linesAt({ ...story, transcript: [] }, 3)).toEqual({ before: null, now: null });
+  });
+
+  it("names who is talking above the faces, bold in their colour, with the talking bars moving", () => {
+    const html = renderToStaticMarkup(<StoryStage m={story} time={4.5} playing onOpen={() => {}} />);  // turn 2: Ada
+    const line = html.match(/<div[^>]*data-speaker-line=""[^>]*>.*?<\/div>/)?.[0] ?? "";
+    expect(line).toMatch(/<b[^>]*>Ada<\/b>/);
+    expect(line).toContain(`color:${textToneAt(story, 2)}`);
+    expect(line).toContain('data-talking="1"');
+    expect(line.match(/<i><\/i>/g)).toHaveLength(3);  // three bars
+    expect(line).toContain("talk-bars");
+    expect(html.indexOf("data-speaker-line")).toBeLessThan(html.indexOf("data-speaking="));  // above the faces
+    expect(nameLineAt(story, 4.5)).toEqual({ index: 2, talking: true });
+  });
+
+  it("keeps the last speaker's name, dimmed and with still bars, while only sound plays", () => {
+    const withSound: Media = { ...told, transcript: [...(told.transcript as Turn[]), { host: "Sound", text: "(waves)", start: 6 }] };
+    const html = renderToStaticMarkup(<StoryStage m={withSound} time={7} playing onOpen={() => {}} />);
+    const line = html.match(/<div[^>]*data-speaker-line=""[^>]*>.*?<\/div>/)?.[0] ?? "";
+    expect(line).toMatch(/<b[^>]*>Tom<\/b>/);
+    expect(line).toContain('data-talking="0"');
+    expect(line).toContain("opacity-50");
+    expect(nameLineAt(withSound, 7)).toEqual({ index: 1, talking: false });
+  });
+
+  it("holds the bars still while paused, the name still in full colour", () => {
+    const html = renderToStaticMarkup(<StoryStage m={story} time={4.5} playing={false} onOpen={() => {}} />);
+    const line = html.match(/<div[^>]*data-speaker-line=""[^>]*>.*?<\/div>/)?.[0] ?? "";
+    expect(line).toMatch(/<b[^>]*>Ada<\/b>/);
+    expect(line).toContain('data-talking="0"');
+    expect(line).not.toContain("opacity-50");
+  });
+
+  it("shows no name in the first seconds, but keeps the line's height so nothing jumps", () => {
+    const late: Media = { ...told, transcript: [{ host: "Sound", text: "(rain)", start: 0 }, { host: "Claire", text: "Hello.", start: 3 }] };
+    expect(nameLineAt(late, 1)).toBeNull();  // only rain so far
+    expect(nameLineAt({ ...told, transcript: [{ host: "Claire", text: "Hi", start: 2 }] }, 0.5)).toBeNull();  // before the first line
+    const html = renderToStaticMarkup(<StoryStage m={late} time={1} playing onOpen={() => {}} />);
+    const line = html.match(/<div[^>]*data-speaker-line=""[^>]*>.*?<\/div>/)?.[0] ?? "";
+    expect(line).toContain("h-[22px]");
+    expect(line).not.toContain("<b");
+    expect(line).not.toContain("talk-bars");
+  });
+
+  it("lets a screen reader hear the name once, with the line, not from the name above the faces", () => {
+    const html = renderToStaticMarkup(<StoryStage m={story} time={4.5} playing onOpen={() => {}} />);
+    expect(html).toMatch(/<div[^>]*data-speaker-line=""[^>]*aria-hidden="true"/);
+    expect(html).toMatch(/aria-live="polite"[^>]*>Ada: Line 2</);
+    expect(html.match(/aria-live=/g)).toHaveLength(1);
+  });
+
+  it("bounces the bars only while someone talks, and holds them still with reduced motion", () => {
+    const css = readFileSync("src/styles.css", "utf8");
+    expect(css).toMatch(/@keyframes talk-bars/);
+    expect(css).toMatch(/\.talk-bars\[data-talking="0"\] i \{[^}]*animation: none/);
+    const reduced = css.match(/@media \(prefers-reduced-motion: reduce\) \{[^}]*\.talk-bars i[^}]*\}/);
+    expect(reduced?.[0]).toContain("animation: none");
   });
 
   it("gives up to eight speakers their own tone, then cycles", () => {
@@ -110,5 +169,7 @@ describe("the podcast player stays as it was", () => {
     expect(html).toContain("w-11 h-11 rounded-full");  // the same letter avatars as before
     expect(html).not.toContain("data-face=");  // no drawn faces on a podcast
     expect(html).not.toContain('aria-live="polite"');
+    expect(html).not.toContain("data-speaker-line");  // no name line or talking bars on a podcast
+    expect(html).not.toContain("talk-bars");
   });
 });
