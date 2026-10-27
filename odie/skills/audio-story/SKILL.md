@@ -1,10 +1,10 @@
 ---
 name: audio-story
-description: Make an audio story the user listens to in the chat, a dramatised, immersive story with a narrator, character voices, ambient sound, effects and music, delivered as one finished file. Use for "make me an audio story", "a radio play", "an audio drama", "a story to listen to", "a bedtime story" to hear.
+description: Make an audio story the user listens to in the chat, a dramatised, immersive story with a narrator, character voices, ambient sound, effects and music, delivered as one finished file. Use for "make me an audio story", "a radio play", "an audio drama", "a story to listen to", "a bedtime story" to hear, or one made from photos of the user's own book pages.
 metadata:
   title: Audio stories
   summary: "A dramatised story with a narrator, voices, ambience and music, as one file that plays in the chat."
-  adk_additional_tools: [story_voices, make_audio_story]
+  adk_additional_tools: [story_voices, read_pages, make_audio_story]
 ---
 # Audio stories
 
@@ -46,6 +46,18 @@ user has already answered ("a 10-minute horror story about a lighthouse" skips s
 4. Then call `make_audio_story` once (below), and say in one or two lines that it's being made.
 
 On OpenAI the ▶ plays a voice without the accent; the story adds it.
+
+## From the user's pages
+
+When the user sends photos of a book's pages and asks for an audio drama or story from them:
+
+1. Call `read_pages` with the photos' ids in reading order (from the `[image:…]` marks). On `too_long`, ask the user
+   which pages to make, as it says, and read just those.
+2. **One form:** the accent (as in step 2), the narrator ("an outside storyteller" or a character, then the voice), a
+   voice for each character who speaks in its `text` (prefilled by gender, as in step 3), and the sound slider. No
+   genre, story or length questions: the pages are the story.
+3. `make_audio_story(source=…)` with the id `read_pages` gave, a title, the cast and the narrator; genre is your
+   reading of the text, premise one line on the passage.
 
 ## Sound
 

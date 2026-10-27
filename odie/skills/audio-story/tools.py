@@ -1,18 +1,22 @@
 """The audio-story skill's tools. story_voices gives the chat model the voices for the story's cast form, already shaped
 as form options (value, label, note, and a ▶ preview), for the engine chosen in Settings and the accent the user picked,
 so the model never builds forty options by hand or guesses a voice id. (Should it still rewrite them, the web fills
-in the ▶ of any option that names a voice: web/src/blocks/voicePreviews.ts.) make_audio_story checks the story the user chose
-within the chat turn and puts it in Odie's background queue (odie.making.jobs, kind "story" from odie.making.story):
-the writer writes the script and chooses the sound, and Odie's code speaks, mixes and posts one file. Plain trusted code
-of a built-in skill: no shell, no approval card."""
+in the ▶ of any option that names a voice: web/src/blocks/voicePreviews.ts.) read_pages reads the user's own pages
+(photos of a book; odie.making.pages) into one text for a story adapted from them. make_audio_story checks the
+story the user chose within the chat turn and puts it in Odie's background queue (odie.making.jobs, kind "story" from
+odie.making.story): the writer writes the script (or adapts the pages) and chooses the sound, and Odie's code speaks,
+mixes and posts one file. Plain trusted code of a built-in skill: no shell, no approval card."""
+import functools
+import math
 from urllib.parse import quote
 
 from google.adk.tools import FunctionTool, ToolContext
 
 from odie import voice
+from odie.agent import turn
 from odie.agent.context import session_id_of
 from odie.agent.tools.files import workspace
-from odie.making import chat, jobs, sound_library, story, story_writer
+from odie.making import chat, jobs, pages, sound_library, story, story_writer
 
 ACCENTS = {"phonon": ["American", "British"], "kokoro": ["American", "British", "Indian"],
            "openai": ["American", "British", "Indian"]}
@@ -206,7 +210,20 @@ OPENAI_SECONDS_PER_MINUTE = 66  # OpenAI speaks about as fast as the story plays
 ABOUT_A_MINUTE = 90  # a wait up to this many seconds is "about a minute"
 DOING = "writing the script and choosing the sound, then speaking every line and mixing it"
 
+# A story from the user's pages: the pauses, sounds and scene changes add about this share to the time its words take.
+SOUND_SHARE = 0.1
 NO_GENRE = "genre is the story's genre, as the user chose it (horror, mystery, a bedtime story…)."
+# What read_pages tells the chat model to do next: on 27 Oct DeepSeek read the pages and went straight to
+# make_audio_story, choosing the voices itself; the user chooses them in one form.
+AFTER_READING = ("Next, as the audio-story skill says: one form, prefilled (the accent, American unless the user said; "
+                 "the narrator, an outside storyteller or a character, and the voice; a voice for each character who "
+                 "speaks in text, from story_voices(accent); the sound slider). No emoji. Call "
+                 "make_audio_story(source=…) only after the user answers it.")
+ASK_FIRST = ("The user hasn't chosen the voices yet: ask the one form first (the accent, the narrator and their voice, "
+             "a voice for each character, the sound slider), then call make_audio_story with what they chose.")
+FROM_PAGES = "From your pages"  # the title of a story from the user's pages when the chat gave none
+NO_SOURCE = ('There are no pages read as "{source}": source is the id read_pages gave. Call read_pages with the '
+             "pages first.")
 NO_PREMISE = "premise is the story's idea: the pitch the user chose, or their own idea, in a sentence or two."
 NO_CAST = ('cast is a list of {id, name, voice, gender, age, about}: the narrator and each character, with a voice '
            "from story_voices.")
@@ -351,8 +368,9 @@ def checked_voices(store, engine: str, cast: list[dict]) -> list[dict] | str:
     return checked
 
 
-def brief_record(request: story_writer.Request, sound_level: int, brief: str) -> str:
-    """What the job's brief.md keeps: what the user chose, in plain lines."""
+def brief_record(request: story_writer.Request, sound_level: int, brief: str, source: str = "") -> str:
+    """What the job's brief.md keeps: what the user chose, in plain lines (and, for a story from their pages, which
+    pages and how many words)."""
     cast_lines = []
     for member in request.cast:
         line = f"- {member['name']} ({member['id']}), voice {member['voice']}"
@@ -361,18 +379,120 @@ def brief_record(request: story_writer.Request, sound_level: int, brief: str) ->
         cast_lines.append(line)
     chosen = (f"Genre: {request.genre}\nThe story: {request.premise}\nAccent: {request.accent}\n"
               f"Narrator: {request.narrator}\nLength: {request.minutes} minutes\nSound level: {sound_level} %")
+    if source:
+        chosen += f"\nFrom the user's pages: {source} ({len(request.source.split())} words)"
     cast_text = "\n".join(cast_lines)
     return f"{chosen}\n\nCast:\n{cast_text}\n\nBrief:\n{brief}"
 
 
-async def make_audio_story(title: str, genre: str, premise: str, cast: list[dict], narrator: str,
+# Reading the user's pages.
+
+def most_words(engine: str) -> int:
+    """The most words of the user's pages a story can take: MAX_MINUTES at the engine's pace, less the time the sound
+    adds (SOUND_SHARE). Phonon (185 a minute) -> 2522; Kokoro (145) -> 1977."""
+    pace = story_writer.words_per_minute(engine)
+    return int(MAX_MINUTES * pace / (1 + SOUND_SHARE))
+
+
+def minutes_for(words: int, pace: float) -> int:
+    """About how long the pages play as a story, in whole minutes, with the sound's share: 924 words at 185 a minute ->
+    6 (5.5 rounded up); 100 words -> 1."""
+    return max(1, math.ceil(words / pace * (1 + SOUND_SHARE)))
+
+
+def too_long_words(reading: pages.Reading, limit: int, engine: str) -> str:
+    """What the chat model tells the user when the pages run past the longest story: how many pages fit, and the
+    question to ask. Pages of 400 words, the 7th past 2522 -> "These pages run past 15 minutes, the longest an audio
+    story can be. The first 6 (photo 1 to photo 6) make about 15 minutes. Ask the user which pages to make…"."""
+    fit = pages.pages_that_fit(reading.texts, limit)
+    if fit == 0:
+        first = reading.labels[0].capitalize()
+        return (f"{first} alone runs past {MAX_MINUTES} minutes, the longest an audio story can be. Ask the user for a "
+                "shorter passage.")
+    words = sum(pages.word_count(text) for text in reading.texts[:fit])
+    minutes = minutes_for(words, story_writer.words_per_minute(engine))
+    span = reading.labels[0]
+    if fit > 1:
+        span = f"{reading.labels[0]} to {reading.labels[fit - 1]}"
+    return (f"These pages run past {MAX_MINUTES} minutes, the longest an audio story can be. The first {fit} ({span}) "
+            f"make about {minutes} minutes. Ask the user which pages to make, then call read_pages again with just "
+            "those.")
+
+
+async def read_pages(sources: list[str], tool_context: ToolContext | None = None) -> dict:
+    """Read the user's own pages for an audio story made from them: photos of a book's pages, as one text. Call it
+    first when the user sends photos of pages and asks for an audio drama or story from them.
+    sources: the photos' upload ids in reading order, from the chat's [image:ID] marks.
+    Your model reads each photo, a few seconds a page.
+    Returns {"source", "pages", "words", "minutes", "next", "text"}: find who speaks in text for the cast form and do
+    as next says; then pass source to make_audio_story. {"too_long": …}: tell the user what it says and ask which pages to make; call again
+    with those. {"error": …}: tell the user, in plain words."""
+    store = jobs.hooks["store"]
+    engine, _read_aloud = voice.get_tts(store)
+    limit = most_words(engine)
+    try:
+        references = pages.sources_as_given(sources)
+        wanted = []
+        for number, upload_id in enumerate(references, start=1):
+            wanted.append(pages.page_of(upload_id, number))
+        reading = await pages.read(wanted, functools.partial(pages.model_reads, store), limit)
+    except pages.PagesProblem as e:
+        return {"error": str(e)}
+    if reading.past_the_limit:
+        return {"too_long": too_long_words(reading, limit, engine)}
+    text = "\n\n".join(page_text for page_text in reading.texts if page_text.strip())
+    if not text:
+        return {"error": "The pages have no words to read."}
+    source = pages.source_id(text)
+    pages.READ_IN[source] = turn.USER_TEXT.get()
+    folder = workspace() / story.FOLDER
+    folder.mkdir(parents=True, exist_ok=True)
+    pages.source_path(folder, source).write_text(text, encoding="utf-8")
+    words = pages.word_count(text)
+    return {"source": source, "pages": len(reading.texts), "words": words,
+            "minutes": minutes_for(words, story_writer.words_per_minute(engine)), "next": AFTER_READING, "text": text}
+
+
+def asked_in_this_turn(source: str) -> bool:
+    """Decides whether make_audio_story is called in the same turn the pages were read in, before the user could
+    answer the cast form: the pages read for "make an audio drama of these", then make_audio_story still in that turn
+    -> True (the voices are asked first); called after the user's next message (the form's answer, or their own words)
+    -> False; outside a chat turn (no user message: a test) -> False."""
+    said = turn.USER_TEXT.get()
+    if said is None:
+        return False
+    return pages.READ_IN.get(source) == said
+
+
+def source_text(source: str) -> str | None:
+    """The text read_pages kept for a source id, or None when there is none: "pages-3fa9c1d2e4" -> its pages' words;
+    "pages-0000000000" (never read) or "../notes" -> None."""
+    path = pages.source_path(workspace() / story.FOLDER, source)
+    if path is None or not path.exists():
+        return None
+    return path.read_text(encoding="utf-8")
+
+
+def source_minutes(text: str, cast: list[dict], narrator: str, engine: str) -> int:
+    """How long a story from the user's pages runs, from its words at the cast's own paces (story_writer.story_pace)
+    with the sound's share: 924 words, everyone at 185 -> 6."""
+    request = story_writer.Request(genre="", premise="", cast=cast, narrator=narrator, accent="", minutes=0,
+                                   engine=engine)
+    pace = story_writer.story_pace(story_writer.speaker_paces(request), narrator)
+    return minutes_for(len(text.split()), pace)
+
+
+async def make_audio_story(title: str, cast: list[dict], narrator: str, genre: str = "", premise: str = "",
                            accent: str = DEFAULT_ACCENT, minutes: int = 5, sound_level: int = 25, brief: str = "",
-                           tool_context: ToolContext | None = None) -> dict:
+                           source: str = "", tool_context: ToolContext | None = None) -> dict:
     """Make the audio story the user chose in the guided start: a narrator, character voices, ambience, effects and
     music, posted to this chat as one file. Call it once, after the cast form. A separate writer writes the script and
     chooses the sound in the background; it sees only what you pass here.
     title: the story's title (short). genre: as the user chose it ("horror"). premise: the pitch or idea they chose,
     a sentence or two.
+    source: the id read_pages gave, for a story adapted from the user's pages: the writer gets their whole text and
+    keeps the author's words; genre (your reading of it) and premise (one line on the passage) are optional, and the
+    length comes from the text (minutes is not used).
     cast: [{id, name, voice, gender, age, about}] for the narrator and each character: id a short plain word
     ("keeper"), name as the listener knows them ("The keeper"), voice a value from story_voices of their gender,
     gender "female" (she), "male" (he) or "any" (a creature, a thing, an outside storyteller), age a word if it
@@ -388,9 +508,17 @@ async def make_audio_story(title: str, genre: str, premise: str, cast: list[dict
     genre = chat.text_or_empty(genre).strip()
     premise = chat.text_or_empty(premise).strip()
     brief = chat.text_or_empty(brief)
-    if not genre:
+    source = chat.text_or_empty(source).strip()
+    pages_text = ""
+    if source:
+        pages_text = source_text(source)
+        if pages_text is None:
+            return {"error": NO_SOURCE.format(source=source)}
+        if asked_in_this_turn(source):
+            return {"error": ASK_FIRST}
+    if not genre and not source:
         return {"error": NO_GENRE}
-    if not premise:
+    if not premise and not source:
         return {"error": NO_PREMISE}
 
     members = plain_cast(cast)
@@ -401,10 +529,11 @@ async def make_audio_story(title: str, genre: str, premise: str, cast: list[dict
     if problem:
         return {"error": problem}
 
-    minutes = chat.minutes_as_given(minutes, DEFAULT_MINUTES)
-    problem = chat.minutes_problem(minutes, MIN_MINUTES, MAX_MINUTES, WORD, DEFAULT_MINUTES)
-    if problem:
-        return {"error": problem}
+    if not source:  # a story from the user's pages is sized by their text, once the voices' paces are known
+        minutes = chat.minutes_as_given(minutes, DEFAULT_MINUTES)
+        problem = chat.minutes_problem(minutes, MIN_MINUTES, MAX_MINUTES, WORD, DEFAULT_MINUTES)
+        if problem:
+            return {"error": problem}
     sound_level = chat.minutes_as_given(sound_level, story.DEFAULT_SOUND_LEVEL)
     problem = sound_level_problem(sound_level)
     if problem:
@@ -426,15 +555,22 @@ async def make_audio_story(title: str, genre: str, premise: str, cast: list[dict
     if problem:
         return {"error": problem}
 
+    if source:
+        minutes = source_minutes(pages_text, members, narrator_id, engine)
     name = chat.text_or_empty(title).strip()
     if not name:
         name = premise[:80]
+    if not name:
+        name = FROM_PAGES
+    if not premise:
+        premise = name  # a story from the user's pages: its title says what the passage is
     request = story_writer.Request(genre=genre, premise=premise, cast=members, narrator=narrator_id,
-                                   accent=picked_accent, minutes=minutes, brief=brief, engine=engine)
+                                   accent=picked_accent, minutes=minutes, brief=brief, engine=engine,
+                                   source=pages_text)
     folder = chat.free_folder(workspace() / story.FOLDER, chat.slug_of(name, WORD))
     folder.mkdir(parents=True)
     job = jobs.Job(kind="story", slug=folder.name, title=name, topic=name, minutes=minutes,
-                   brief=brief_record(request, sound_level, brief), session_id=session_id_of(tool_context),
+                   brief=brief_record(request, sound_level, brief, source), session_id=session_id_of(tool_context),
                    folder=folder, data={"request": request, "sound_level": sound_level})
     place = jobs.submit(job)
     result = chat.reply_in_words(place, wait_words(minutes, engine), DOING)
@@ -444,4 +580,4 @@ async def make_audio_story(title: str, genre: str, premise: str, cast: list[dict
     return {"result": result}
 
 
-TOOLS = [FunctionTool(story_voices), FunctionTool(make_audio_story)]
+TOOLS = [FunctionTool(story_voices), FunctionTool(read_pages), FunctionTool(make_audio_story)]

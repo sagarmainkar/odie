@@ -223,7 +223,7 @@ def test_the_skill_asks_the_accent_before_the_cast_and_pastes_the_voice_options(
 
 def test_the_skill_offers_make_audio_story_and_never_speak():
     text = (SKILL / "SKILL.md").read_text()
-    assert "adk_additional_tools: [story_voices, make_audio_story]" in text
+    assert "adk_additional_tools: [story_voices, read_pages, make_audio_story]" in text
 
 
 async def test_without_imovie_the_reply_says_once_where_richer_sound_comes_from(queued, monkeypatch, tmp_path):
