@@ -49,6 +49,9 @@ exactly; on a list with no music, give no music).
   its first 8 seconds (gulls crying as the prelude opens). Never music. The next line starts `lead` seconds after it
   (0 to 8; 0 plays it under what follows). A sound right after a spoken line: `sound_after`. A `stinger` is a hit
   too.
+- **Only a sound that is what the story says.** When the list has nothing for a moment (someone singing, a
+  music box), give no sound there and let the words carry it: a near miss (a child giggling for a song) breaks the
+  spell.
 - **Levels** are words: `low`, `normal` or `up front`. Odie sets the volumes, under the speech, the same way every
   time.
 
