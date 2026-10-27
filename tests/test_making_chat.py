@@ -53,3 +53,10 @@ def test_the_reply_carries_the_kinds_middle_part():
         "ping on the phone, as soon as it's ready. Tell the user that in one or two lines, and that they can keep "
         "chatting meanwhile.")
     assert chat.reply(3, 2, 4, "anything").startswith("It's number 3 in line, about 2–4 minutes after the one before.")
+
+
+def test_the_reply_can_say_the_wait_in_its_own_words():
+    """For a kind whose wait isn't a range of minutes (a user skill's own estimate): the words go in as they are."""
+    assert chat.reply_in_words(1, "about a minute", "writing it").startswith("Making it now: about a minute (writing it).")
+    assert chat.reply_in_words(2, "about a minute", "anything").startswith(
+        "It's number 2 in line, about a minute after the one before.")
