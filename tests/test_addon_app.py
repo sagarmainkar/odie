@@ -84,7 +84,7 @@ async def _ding(store, runner):
     return None
 
 
-async def test_addon_jobs_are_scheduled_and_listed(store):
+async def test_addon_jobs_are_scheduled_and_listed(store, no_missed_brief):
     from odie.app.main import start_scheduler
     from odie.background import Background
     addons.use([Addon("bell", jobs=[Job("bell_check", _ding, {"minute": "5"}, "Doorbell battery checked hourly at :05")])])

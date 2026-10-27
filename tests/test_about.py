@@ -32,7 +32,7 @@ def test_features_reports_what_is_really_there(runner):
     assert "Arsenal v Spurs (active)" in t and "timeline" in t and "build one" in t
 
 
-async def test_schedule_matches_the_scheduler(isolated_settings, tmp_path):
+async def test_schedule_matches_the_scheduler(isolated_settings, tmp_path, no_missed_brief):
     from datetime import UTC, datetime
 
     from odie.app.main import start_scheduler
