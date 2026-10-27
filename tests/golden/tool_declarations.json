@@ -424,6 +424,72 @@
     }
   },
   {
+    "description": "Make the audio story the user chose in the guided start: a narrator, character voices, ambience, effects and\nmusic, posted to this chat as one file. Call it once, after the cast form. A separate writer writes the script and\nchooses the sound in the background; it sees only what you pass here.\ntitle: the story's title (short). genre: as the user chose it (\"horror\"). premise: the pitch or idea they chose,\na sentence or two.\nsource: the id read_pages gave, for a story adapted from the user's pages: the writer gets their whole text and\nkeeps the author's words; genre (your reading of it) and premise (one line on the passage) are optional, and the\nlength comes from the text (minutes is not used).\ncast: [{id, name, voice, gender, age, about}] for the narrator and each character: id a short plain word\n(\"keeper\"), name as the listener knows them (\"The keeper\"), voice a value from story_voices of their gender,\ngender \"female\" (she), \"male\" (he) or \"any\" (a creature, a thing, an outside storyteller), age a word if it\nmatters (\"old\", \"a girl\"), about one line on who they are.\nnarrator: the id of who tells it: \"narrator\" for an outside storyteller (then in the cast as id \"narrator\"), or a\ncharacter's id to tell it in the first person.\naccent: as chosen (\"American\", unless the user chose British or Indian). minutes: 2 to 15 (the user's length, else 5). sound_level: 10 to 40, how loud the\nambience is when no one speaks; it drops lower under the voices (the slider's value, else 25). brief: anything else the user asked for (tone, an\nending, who it's for).\nIt returns at once. {\"error\": …}: fix exactly that and call again. {\"result\": …}: reply in one or two lines as it\nsays.",
+    "name": "make_audio_story",
+    "parameters_json_schema": {
+      "properties": {
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "cast": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "title": "Cast",
+          "type": "array"
+        },
+        "narrator": {
+          "title": "Narrator",
+          "type": "string"
+        },
+        "genre": {
+          "default": "",
+          "title": "Genre",
+          "type": "string"
+        },
+        "premise": {
+          "default": "",
+          "title": "Premise",
+          "type": "string"
+        },
+        "accent": {
+          "default": "American",
+          "title": "Accent",
+          "type": "string"
+        },
+        "minutes": {
+          "default": 5,
+          "title": "Minutes",
+          "type": "integer"
+        },
+        "sound_level": {
+          "default": 25,
+          "title": "Sound Level",
+          "type": "integer"
+        },
+        "brief": {
+          "default": "",
+          "title": "Brief",
+          "type": "string"
+        },
+        "source": {
+          "default": "",
+          "title": "Source",
+          "type": "string"
+        }
+      },
+      "required": [
+        "title",
+        "cast",
+        "narrator"
+      ],
+      "title": "make_audio_storyParams",
+      "type": "object"
+    }
+  },
+  {
     "description": "Make a designed deck: a PDF and an editable PowerPoint with slide previews, posted to this chat. A separate\nwriter writes the slides from your brief, in the background; it can't see this chat, the user's notes, memory or\nthe web, and can't search for photos.\ntopic: what it's about, short (\"A weekend in Coorg\", \"Nvidia's Q2\").\nbrief: the angle, the slides' points in order, the facts it must use, and the photo addresses with their credits\nthat find_images or the browser gave you (only those can go on the slides). Up to 6,000 characters.\ntheme: editorial (dark, great with photos), minimal (clean white: research, business), warm (cream), bold (strong\ncolour: pitches).\nrevise: to change a deck made earlier, its name (\"Meghalaya Trip Guide\"); the brief then says what to change.\nsources: what the user gave, passed to the writer word for word (never retype it): \"my message\" (the user's\nlatest message), a note's name or path in their vault, or a text file's path in Odie's workspace. Up to 5.\nIt returns at once. {\"error\": …}: fix exactly that and call again. {\"result\": …}: the deck is being made; reply in\none or two lines as the result says, and don't repeat the brief.",
     "name": "make_deck",
     "parameters_json_schema": {
@@ -786,6 +852,26 @@
     }
   },
   {
+    "description": "Read the user's own pages for an audio story made from them: photos of a book's pages, as one text. Call it\nfirst when the user sends photos of pages and asks for an audio drama or story from them.\nsources: the photos' upload ids in reading order, from the chat's [image:ID] marks.\nYour model reads each photo, a few seconds a page.\nReturns {\"source\", \"pages\", \"words\", \"minutes\", \"next\", \"text\"}: find who speaks in text for the cast form and do\nas next says; then pass source to make_audio_story. {\"too_long\": …}: tell the user what it says and ask which pages to make; call again\nwith those. {\"error\": …}: tell the user, in plain words.",
+    "name": "read_pages",
+    "parameters_json_schema": {
+      "properties": {
+        "sources": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Sources",
+          "type": "array"
+        }
+      },
+      "required": [
+        "sources"
+      ],
+      "title": "read_pagesParams",
+      "type": "object"
+    }
+  },
+  {
     "description": "The SKILL.md and tools.py of an existing skill: one of the user's (to change it) or a built-in one such as\nstocks (as a worked example).",
     "name": "read_skill",
     "parameters_json_schema": {
@@ -853,7 +939,7 @@
     "name": "skill_guide"
   },
   {
-    "description": "Read text aloud as a voice memo the user can play right in the chat: the player appears under your reply.\nUse it when the user asks for a voice memo, a voice note, or to hear something. `script` is what to say, as\nplain speech, at most about 4,000 characters (some 4 minutes; split longer narration into several memos);\nit's read in the voice chosen in Settings. `voice_name` (optional) is another voice for this one memo, only\nwhen the user asks for one (\"a man's voice\"): a voice of the same engine as the Settings voice, by name\n(\"Michael\"); another engine's voice is refused with the list to pick from. `title` is short (optional).\nThe result's `path` is the saved WAV file (kept), for a skill to use, e.g. with ffmpeg. When it works, reply\nin one short line; don't repeat the script. A podcast with two hosts is make_podcast (the podcast skill),\nnot this.",
+    "description": "Read text aloud as one short voice memo the user can play right in the chat: the player appears under your\nreply. Use it when the user asks for a voice memo, a voice note, or to hear something. `script` is what to\nsay, as plain speech, at most about 4,000 characters (some 4 minutes); it's read in the voice chosen in\nSettings. `voice_name` (optional) is another voice for this one memo, only when the user asks for one (\"a\nman's voice\"): a voice of the same engine as the Settings voice, by name (\"Michael\"); another engine's voice\nis refused with the list to pick from. `title` is short (optional). The result's `path` is the saved WAV file\n(kept), for a skill's own narration, e.g. with ffmpeg. When it works, reply in one short line; don't repeat\nthe script. Not for a story, a radio play or anything with several voices, sound or music: that is\nmake_audio_story (the audio-story skill), never several speak calls stitched together. A podcast with two\nhosts is make_podcast (the podcast skill).",
     "name": "speak",
     "parameters_json_schema": {
       "properties": {
@@ -893,6 +979,21 @@
         "tracker_id"
       ],
       "title": "stop_trackerParams",
+      "type": "object"
+    }
+  },
+  {
+    "description": "The voices for an audio story's cast form, for the voice engine chosen in Settings.\naccent: \"American\", \"British\" or \"Indian\", as the user chose it with the story. Without one, it returns the\naccents this engine offers, for that question, and the one to prefill it with (\"default\": American).\nReturns {\"engine\", \"accent\", \"options\", \"notes\"}: options is the voices for that accent (and, on Phonon, its\ncharacter voices: a pirate captain, a witch, an old keeper), each {value, label, note, gender, preview}. Paste\noptions exactly as given as the options of every voice select in the cast form, previews and all; use a `value` as\nthe voice in make_audio_story. Cast each character on a voice of their gender, as notes says. {\"error\": …}: choose\nas it says.",
+    "name": "story_voices",
+    "parameters_json_schema": {
+      "properties": {
+        "accent": {
+          "default": "",
+          "title": "Accent",
+          "type": "string"
+        }
+      },
+      "title": "story_voicesParams",
       "type": "object"
     }
   },

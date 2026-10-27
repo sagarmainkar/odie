@@ -118,8 +118,9 @@ calendar by itself. When mail or an event comes through both the Mac and an MCP 
 - **Your Mac.** Shell commands run as you, after you read the exact command on a card. "Allow for 30 min" covers one
   chat, but deleting, sending data out or touching secrets always asks.
 - **Making things.** Designed decks (PDF and PowerPoint), Word documents, podcasts with two hosts, narrated
-  explainer videos, files. A deck's photos come through Odie's browser, each credited on its slide. The repo ships
-  no photos: credited photos belong to their owners, and a deck that uses them is for your own use.
+  explainer videos, files, and [audio stories](docs/audio-stories.md) with a narrator, voices, ambience and music.
+  A deck's photos come through Odie's browser, each credited on its slide. The repo ships no photos: credited photos
+  belong to their owners, and a deck that uses them is for your own use.
 
 ### Voice
 

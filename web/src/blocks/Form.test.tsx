@@ -158,3 +158,19 @@ describe("the form after a reload", () => {
     expect(typeof put.body.value.sent_at).toBe("string");
   });
 });
+
+describe("a voice the model left without its preview", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("gets its ▶ once Odie says which voices the chosen engine has", async () => {
+    const answer = { engine: "phonon", engines: [{ id: "phonon", voices: [{ id: "Old Mortlake", label: "Old Mortlake" }] }] };
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(answer), { status: 200 })));
+    const { resetVoiceList } = await import("./voicePreviews");
+    resetVoiceList();
+    const cast = form({ id: "cast", fields: [{ id: "keeper", kind: "select", label: "Keeper", value: "Old Mortlake", options: ["Old Mortlake", "Hugh"] }] });
+    const { host } = mount(cast);
+    await act(async () => { await new Promise((done) => setTimeout(done, 0)); });
+    expect(host.querySelector("button[aria-label='Hear Old Mortlake']")).not.toBeNull();
+  });
+});
+
