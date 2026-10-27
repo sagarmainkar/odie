@@ -8,6 +8,10 @@ whether Odie's code can render it: a problem goes back to the writer to fix, up 
 one exception: a script outside ±10% of the asked minutes is refused once, then accepted with a note for the job
 (LengthOnce), because a story a little long or short is still a story.
 
+A story can also come from the user's own pages (read_pages in the audio-story skill): then the Request carries the
+pages' text as its source, the writer adapts it (story_writer.md's last section) instead of inventing, and the length
+check becomes a check that the script keeps the source (kept_problem): most of its words, and none it doesn't have.
+
 The script, as the writer sends it:
 {"title": "...", "scenes": [{"title": "Prelude", "bed": {"sound": id, "level": word}, "music": {...},
   "lines": [{"sound": id, "level": word, "lead": seconds} | {"speaker": id, "text": "...", "pause_after": seconds,
@@ -46,6 +50,10 @@ DEFAULT_TRANSITION_SECONDS = 2.5  # a crossfade, when a scene gives no transitio
 LEVELS = ("low", "normal", "up front")  # the only levels the writer chooses; the dB numbers are in odie.making.story
 TRANSITIONS = ("crossfade", "stinger", "silence")
 NARRATOR_ID = "narrator"  # the outside storyteller's id in the cast; a narrator in the story has their own id
+# An adaptation keeps the author's words: the script's spoken words are at least this share of the source's (the
+# dialogue tags it drops, "he said", are a few percent; more missing is a summary)…
+KEEP_AT_LEAST = 0.75
+KEEP_AT_MOST = 1.15  # …and at most this share (more is lines the pages don't have)
 
 LINES = harness.Lines(
     nudge=("You haven't called submit_story yet. Stop planning: write the whole script now and call submit_story "
@@ -126,7 +134,8 @@ class Written:
 class Request:
     """What the chat asked for (make_audio_story): the genre, the story's idea, the cast [{id, name, voice, about}],
     who narrates (NARRATOR_ID for an outside storyteller, else a character's id), the accent, the minutes, the
-    brief, and the voice engine (its pace sizes the story)."""
+    brief, and the voice engine (its pace sizes the story). source: the text of the user's pages when the story is
+    adapted from them ("" for a story the writer invents); its minutes then come from the text."""
     genre: str
     premise: str
     cast: list[dict]
@@ -135,6 +144,7 @@ class Request:
     minutes: int
     brief: str = ""
     engine: str = ""
+    source: str = ""
 
 
 # Small readers.
@@ -332,15 +342,18 @@ def transition_problem(given, kinds: dict[str, str]) -> str | None:
     return None
 
 
-def prelude_problem(scene: dict, narrator: str) -> str | None:
+def prelude_problem(scene: dict, narrator: str, adapting: bool = False) -> str | None:
     """Decides whether the story opens as an audio story should: on sound (a cue with a lead of 2 to 6 seconds), then
     the narrator setting the place, time and mood. Seagulls for 3 s, then the narrator -> None; the narrator first ->
     "the story opens on sound. …"; seagulls, then the keeper -> 'the narrator speaks first, …; here "keeper" does.'.
+    Adapting the user's pages (adapting), the text may open on a character's line: seagulls, then the keeper -> None.
     The lead itself is line_problem's to check."""
     lines = scene.get("lines") or []
     if not lines or "sound" not in lines[0]:
         return ("the story opens on sound. Make its first line a sound with a lead of 2 to 6 seconds, then the "
                 "narrator sets the scene.")
+    if adapting:
+        return None
     for line in lines:
         if "speaker" in line:
             if line["speaker"] == narrator:
@@ -360,7 +373,7 @@ def bed_count_problem(scene: dict) -> str | None:
 
 
 def scene_problems(number: int, scene: dict, kinds: dict[str, str], speakers: list[str], narrator: str,
-                   last: bool) -> list[str]:
+                   last: bool, adapting: bool = False) -> list[str]:
     """Every problem in one scene, each named with where it is: 'Scene 2 ("The storm"), line 3: …'."""
     place = where(number, scene)
     found = []
@@ -376,7 +389,7 @@ def scene_problems(number: int, scene: dict, kinds: dict[str, str], speakers: li
                     label = "the music"
                 found.append(f"{place}, {label}: {problem}")
     if number == 1:
-        problem = prelude_problem(scene, narrator)
+        problem = prelude_problem(scene, narrator, adapting)
         if problem:
             found.append(f"{place}: {problem}")
     for index, line in enumerate(scene.get("lines") or [], start=1):
@@ -392,10 +405,12 @@ def scene_problems(number: int, scene: dict, kinds: dict[str, str], speakers: li
     return found
 
 
-def script_problems(script, catalogue: list[dict], cast: list[dict], narrator: str = NARRATOR_ID) -> list[str]:
+def script_problems(script, catalogue: list[dict], cast: list[dict], narrator: str = NARRATOR_ID,
+                    adapting: bool = False) -> list[str]:
     """Every reason the script can't be rendered, in words the writer can fix (empty when it can): the shape, then
     each scene's beds, prelude, lines and transition. An unknown sound in the prelude -> ['Scene 1 ("Prelude"), line
-    1: there is no sound "animals/owl" in the library. …']."""
+    1: there is no sound "animals/owl" in the library. …']. adapting: the story comes from the user's pages
+    (prelude_problem lets their text open it)."""
     if not isinstance(script, dict) or not isinstance(script.get("scenes"), list) or not script["scenes"]:
         return ['The script needs "scenes": a list of scenes, each with its "lines".']
     kinds = {entry["id"]: entry["kind"] for entry in catalogue}
@@ -406,18 +421,19 @@ def script_problems(script, catalogue: list[dict], cast: list[dict], narrator: s
         if not isinstance(scene, dict):
             found.append(f"Scene {number}: a scene is an object with its title, bed and lines.")
             continue
-        found.extend(scene_problems(number, scene, kinds, speakers, narrator, number == len(scenes)))
+        found.extend(scene_problems(number, scene, kinds, speakers, narrator, number == len(scenes), adapting))
     return found
 
 
-def script_problems_in(text: str, catalogue: list[dict], cast: list[dict], narrator: str = NARRATOR_ID) -> list[str]:
+def script_problems_in(text: str, catalogue: list[dict], cast: list[dict], narrator: str = NARRATOR_ID,
+                       adapting: bool = False) -> list[str]:
     """script_problems for the script as the writer sent it, JSON text (a ```json fence around it is fine): not JSON
     -> ["The script isn't JSON: … Send it as one JSON object."]."""
     try:
         script = json.loads(unfenced(text))
     except json.JSONDecodeError as e:
         return [f"The script isn't JSON: {e}. Send it as one JSON object."]
-    return script_problems(script, catalogue, cast, narrator)
+    return script_problems(script, catalogue, cast, narrator, adapting)
 
 
 def unfenced(text: str) -> str:
@@ -543,6 +559,34 @@ def length_problem(story: Story, minutes: int, paces: dict[str, int] | None = No
     return f"The story is too long: {said} Cut a beat or shorten the lines."
 
 
+def spoken_words(story: Story) -> int:
+    """The words the voices say in the whole story: every spoken line's, no sound counted."""
+    total = 0
+    for scene in story.scenes:
+        for line in scene.lines:
+            if isinstance(line, Speech):
+                total += len(line.text.split())
+    return total
+
+
+def kept_problem(story: Story, source_words: int) -> str | None:
+    """Decides whether an adaptation keeps the user's pages: its spoken words from KEEP_AT_LEAST (75%) to KEEP_AT_MOST
+    (115%) of the source's. 1,000 source words: a script of 930 -> None (the tags dropped); 600 -> "The script keeps
+    about 600 of the pages' 1,000 words (60%); …put back the narration and dialogue you left out…"; 1,300 -> "…adds
+    lines the pages don't have…"."""
+    said = spoken_words(story)
+    share = said / max(source_words, 1)
+    if KEEP_AT_LEAST <= share <= KEEP_AT_MOST:
+        return None
+    counted = f"about {said:,} of the pages' {source_words:,} words ({round(share * 100)}%)"
+    if share < KEEP_AT_LEAST:
+        return (f"The script keeps {counted}; keep at least {round(KEEP_AT_LEAST * 100)}%. Put back the narration and "
+                "dialogue you left out, in the author's words: drop only the tags that say who speaks (\"he said\") "
+                "and what works only in print.")
+    return (f"The script has {counted}: it adds lines the pages don't have. Keep to the author's words; never invent "
+            "lines, plot or characters.")
+
+
 def check_script(script, catalogue: list[dict], cast: list[dict], minutes: int,
                  narrator: str = NARRATOR_ID, paces: dict[str, int] | None = None) -> list[str]:
     """Decides whether Odie can render the script, as the problems to fix (empty: it can): every speaker in the cast,
@@ -562,8 +606,8 @@ def check_script(script, catalogue: list[dict], cast: list[dict], minutes: int,
 
 @dataclass
 class LengthOnce:
-    """The story writer's one exception to the harness's three refusals: the length is refused once, and after that
-    let through with a note for the job."""
+    """The story writer's one exception to the harness's three refusals: the length (for an adaptation, how much of
+    the pages it keeps) is refused once, and after that let through with a note for the job."""
     refused: bool = False
     note: str = ""
 
@@ -572,13 +616,26 @@ class LengthOnce:
         """Decides whether a length problem goes back to the writer: none -> None; the first -> the problem (the
         writer fixes it); any after that -> None, the script is accepted, and the note says how long it came out:
         "The story came out at about 1:08 for 2 minutes (asked once to fix its length).". """
+        note = (f"The story came out at about {clock(estimated_seconds(story, paces))} for {minutes} "
+                f"{minutes_word(minutes)} (asked once to fix its length).")
+        return self.once(problem, note)
+
+    def kept_to_send(self, problem: str | None, story: Story, source_words: int) -> str | None:
+        """The same for an adaptation's kept_problem: the first refused, then let through with the note "The script
+        kept about 600 of the pages' 1,000 words (asked once to keep more)."."""
+        note = (f"The script kept about {spoken_words(story):,} of the pages' {source_words:,} words (asked once to "
+                f"keep to them).")
+        return self.once(problem, note)
+
+    def once(self, problem: str | None, note: str) -> str | None:
+        """Decides whether a problem goes back to the writer: none -> None; the first -> the problem; any after that ->
+        None, with `note` kept for the job."""
         if problem is None:
             return None
         if not self.refused:
             self.refused = True
             return problem
-        self.note = (f"The story came out at about {clock(estimated_seconds(story, paces))} for {minutes} "
-                     f"{minutes_word(minutes)} (asked once to fix its length).")
+        self.note = note
         return None
 
 
@@ -636,10 +693,12 @@ def narrator_line(narrator: str) -> str:
 def prompt_for(request: Request, listing: str) -> str:
     """The writer's whole message: the genre, the story, the cast and narrator, the accent, the length in minutes and
     words at the voices' pace (story_pace; 2 minutes -> about 290 spoken words; on Phonon's accent voices about 370),
-    the chat's brief, and the sound list."""
+    the chat's brief, and the sound list. A story from the user's pages: adaptation_prompt instead."""
     brief = request.brief.strip()
     if not brief:
         brief = "(none)"
+    if request.source:
+        return adaptation_prompt(request, listing, brief)
     paces = speaker_paces(request)
     words = round(request.minutes * story_pace(paces, request.narrator))
     return (f"Genre: {request.genre}\n"
@@ -654,18 +713,47 @@ def prompt_for(request: Request, listing: str) -> str:
             f"Plan in a few lines, then call submit_story with the whole script.")
 
 
+def adaptation_prompt(request: Request, listing: str, brief: str) -> str:
+    """The writer's message for a story from the user's pages: what it is (the genre if the chat gave one, the passage
+    in a line), the accent, the length the text itself makes, the cast, the brief and the sounds, then the text, word
+    for word, last."""
+    paces = speaker_paces(request)
+    words = len(request.source.split())
+    genre = request.genre
+    if not genre:
+        genre = "(as the text reads)"
+    return (f"Adapt the user's pages below into the audio story: keep the author's words (see \"When the story comes "
+            f"from the user's pages\").\n"
+            f"Genre: {genre}\n"
+            f"The passage: {request.premise}\n"
+            f"Accent: {request.accent} (the voices carry it)\n"
+            f"Length: the text's own, {words} words, about {request.minutes} {minutes_word(request.minutes)} at the "
+            f"voices' pace; keep at least {round(KEEP_AT_LEAST * 100)}% of its words.\n\n"
+            f"Cast (speaker ids):\n{cast_lines(request.cast, paces)}\n"
+            f"{narrator_line(request.narrator)}\n\n"
+            f"Brief from the chat:\n{brief}\n\n"
+            f"Sounds (use these ids exactly):\n{listing}\n\n"
+            f"The source text (the user's pages, in order):\n{request.source}\n\n"
+            f"Plan the scenes in a few lines, then call submit_story with the whole script.")
+
+
 def tools_for(desk: harness.Desk, request: Request, catalogue: list[dict]) -> list:
     """The writer's one tool, submit_story (script), built by the shared harness on `desk`. Its check refuses what
     can't be rendered (up to the harness's three times) and the length once (LengthOnce); accepting makes the Written
     story, the title falling back to the desk's topic."""
     length = LengthOnce()
 
+    adapting = bool(request.source)
+
     async def check(fields: dict) -> str | None:
         text = text_or_empty(fields["script"])
-        found = script_problems_in(text, catalogue, request.cast, request.narrator)
+        found = script_problems_in(text, catalogue, request.cast, request.narrator, adapting)
         if found:
             return " ".join(found) + " " + FIX_ALL
         story = parse_script(json.loads(unfenced(text)))
+        if adapting:
+            source_words = len(request.source.split())
+            return length.kept_to_send(kept_problem(story, source_words), story, source_words)
         paces = speaker_paces(request)
         return length.problem_to_send(length_problem(story, request.minutes, paces), story, request.minutes, paces)
 

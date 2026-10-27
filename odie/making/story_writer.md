@@ -84,3 +84,21 @@ submit_story(script="""{
 - `speaker` is a cast id from the message; never invent a speaker.
 - `pause_after` (0 to 4 seconds) is the silence after a line; leave it out for the usual short gap.
 - The last scene needs no transition.
+
+## When the story comes from the user's pages
+
+When the message gives **the source text** (pages the user sent), you adapt it instead of inventing. Everything
+above holds, except where this says otherwise.
+
+- **Keep the author's words** for the narration, in their order. Never invent plot, lines or characters, and never
+  sum up: the check counts the words you keep.
+- **Dialogue:** give each quoted line to its speaker, and drop the tag that only says who speaks ("he said", "she
+  whispered") once their voice says it. What else the sentence tells stays as narration: `"Go back," Tobias said
+  quietly, setting down his mug.` is Tobias's "Go back." and the narrator's "Tobias set down his mug.", in the
+  author's words as near as they go.
+- Someone with no voice of their own in the cast is read by the narrator.
+- **Cut only what works in print alone:** page references, "see chapter 3", footnote marks.
+- **Scenes follow the text's own breaks:** a section break, a change of place or time.
+- **The prelude** can be a short opening of sound alone: its sound and the place's bed, then the text begins, on
+  whoever speaks first. Never add narration of your own.
+- **Sound and music** as above, chosen from what the text describes.
