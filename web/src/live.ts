@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 
-export type LiveEvent = { type: "ping" } | { type: "message"; text: string; ts: number; session_id: string } | { type: "task"; id: number; status: string; until?: string };
+export type LiveEvent = { type: "ping" } | { type: "message"; text: string; ts: number; session_id: string } | { type: "task"; id: number; status: string; until?: string }
+  | { type: "thinking"; session_id: string; on: boolean };  // a chat's Think harder changed, in any app
 
 /** One live connection to /api/events that reconnects after errors. Returns stop(). */
 export function connectLive(make: () => EventSource, onEvent: (e: LiveEvent) => void, onReconnect?: () => void): () => void {

@@ -30,7 +30,7 @@ router = APIRouter(prefix="/api")
 
 class ChatIn(BaseModel):
     text: str
-    thinking: bool = False
+    thinking: bool | None = None  # left out: the chat's own Think harder (odie.thinking); given (an older web app): saved first
     images: list[str] = []
     session_id: str | None = None  # continue an older thread; None = today's
 
@@ -124,6 +124,8 @@ async def chat(body: ChatIn, request: Request):
     from odie import threads
     if body.session_id is not None and not threads.valid_id(body.session_id):
         raise HTTPException(422, "not a chat thread")
+    if body.thinking is not None:  # an app that still sends it: the same as choosing it in the menu, then the turn
+        await _set_chat_thinking(request, _chat_meant(request, body.session_id), body.thinking)
     kw = {"session_id": body.session_id} if body.session_id else {}
     turn = request.app.state.runner.chat(body.text, thinking=body.thinking, images=body.images or None, **kw)
     return _sse(detached(turn, on_orphaned_done=answered_while_away))
@@ -219,6 +221,54 @@ async def thread_rename(sid: str, body: TitleIn, request: Request):
 
 class StopIn(BaseModel):
     session_id: str | None = None
+
+
+class ThinkingIn(BaseModel):
+    on: bool
+    session_id: str | None = None  # a chat thread; None = today's current chat
+
+
+def _chat_meant(request: Request, session_id: str | None) -> str:
+    """The chat a request means: the session it names, else today's current one (as /api/chat picks it)."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    if session_id:
+        return session_id
+    today = datetime.now(ZoneInfo(config.settings.timezone)).strftime("%Y-%m-%d")
+    current = getattr(request.app.state.runner, "current_session_id", None)
+    if current is None:
+        return f"chat-{today}"
+    return current(today)
+
+
+async def _set_chat_thinking(request: Request, session_id: str, on: bool) -> dict:
+    """Save a chat's Think harder (and the default for new chats), and tell every open app."""
+    from odie import thinking
+    store = request.app.state.store
+    thinking.put(store, session_id, on)
+    store.audit("user", "think_harder", result_summary=f"{session_id}: {'on' if on else 'off'}", session_id=session_id)
+    event = thinking.event(session_id, on)
+    await _publish(request, event)
+    return {"session_id": session_id, "on": bool(on)}
+
+
+@router.get("/chat/thinking")
+async def chat_thinking_get(request: Request, session_id: str | None = None):
+    """This chat's Think harder: {"session_id", "on"}. No session_id: today's current chat."""
+    from odie import thinking, threads
+    if session_id is not None and not threads.valid_id(session_id):
+        raise HTTPException(422, "not a chat thread")
+    sid = _chat_meant(request, session_id)
+    return {"session_id": sid, "on": thinking.get(request.app.state.store, sid)}
+
+
+@router.put("/chat/thinking")
+async def chat_thinking_put(body: ThinkingIn, request: Request):
+    """Turn this chat's Think harder on or off; new chats start with it too, and every open app hears of it."""
+    from odie import threads
+    if body.session_id is not None and not threads.valid_id(body.session_id):
+        raise HTTPException(422, "not a chat thread")
+    return await _set_chat_thinking(request, _chat_meant(request, body.session_id), body.on)
 
 
 @router.post("/chat/stop")
@@ -1645,7 +1695,7 @@ async def voice_ask(body: AskIn, request: Request):
         return {"text": "I didn't get a question. Ask them to say it again."}
     today = datetime.now(ZoneInfo(config.settings.timezone)).strftime("%Y-%m-%d")
     final, cards = "", 0
-    async for ev in request.app.state.runner.chat(question, session_id=f"voice-{today}"):
+    async for ev in request.app.state.runner.chat(question, thinking=False, session_id=f"voice-{today}"):  # quick answers
         if ev.get("type") == "done":
             final = ev.get("text", "")
         elif ev.get("type") == "approval":

@@ -52,6 +52,56 @@ def effort_for(think_harder: bool) -> str:
     return "low"
 
 
+# Think harder on a local server, as words at the end of that turn's message (think_harder_words). Its wording follows
+# the chat template's own line about effort (Qwen's: "Reasoning effort is set to low. Keep your thinking brief…").
+THINK_HARDER_WORDS = ("[Think harder on this one: reasoning effort for this message is medium. Think carefully through "
+                      "the task, check key assumptions and weigh alternatives before answering.]")
+# The presets that run elsewhere: their reasoning_effort is real, and a changed one doesn't cost a local re-read.
+CLOUD_PRESETS = ("openai", "anthropic", "gemini", "openrouter")
+
+
+def runs_on_local_server(selection) -> bool:
+    """Whether this chat model runs on a server whose prompt cache a changed reasoning_effort would throw away. The
+    chat template writes the effort into the first lines of the system message, so a flip of Think harder re-reads the
+    whole chat (27,752 tokens, 245 s before the first word, 28 Oct 2026). Such a selection always gets the same effort.
+      lmstudio / gemma-4-26b-a4b-it-qat                           -> True
+      a custom provider (an address the user added, like http://127.0.0.1:8001/v1) -> True
+      ollama / gemma3:12b (a model on this machine)               -> True
+      ollama / deepseek-v4.1-flash:cloud (Ollama runs it in its cloud: the effort is real there) -> False
+      openai, anthropic, gemini, openrouter                       -> False"""
+    provider_id = selection.provider.id
+    if provider_id in CLOUD_PRESETS:
+        return False
+    if provider_id == "ollama":
+        runs_in_ollamas_cloud = selection.model.endswith(("-cloud", ":cloud"))
+        return not runs_in_ollamas_cloud
+    return True  # LM Studio, or a custom provider: an OpenAI-style server the user runs or chose
+
+
+def chat_effort_think_harder(selection, think_harder: bool) -> bool:
+    """Whether the chat model is built with the higher effort: Think harder on, on a model whose effort is real. A local
+    server always gets the lower one (Think harder goes as words instead, think_harder_words).
+      openai / gpt-5.5, Think harder on        -> True  ("medium")
+      openai / gpt-5.5, Think harder off       -> False ("low")
+      lmstudio / any model, Think harder on    -> False ("low", and the words in the message)"""
+    if runs_on_local_server(selection):
+        return False
+    return think_harder
+
+
+def think_harder_words(selection, think_harder: bool) -> str:
+    """What goes at the very end of this turn's message for Think harder, with a line break before it: the words on a
+    local server with it on, nothing otherwise (a cloud model gets "medium" as its effort).
+      lmstudio, Think harder on    -> "\n[Think harder on this one: reasoning effort for this message is medium. …]"
+      lmstudio, Think harder off   -> ""
+      openai, Think harder on      -> "" """
+    if not think_harder:
+        return ""
+    if not runs_on_local_server(selection):
+        return ""
+    return "\n" + THINK_HARDER_WORDS
+
+
 @functools.cache
 def _known_output_limit(name: str) -> int:
     """The most tokens litellm's table says the model may write in one reply, or 0 when it doesn't know the model."""
