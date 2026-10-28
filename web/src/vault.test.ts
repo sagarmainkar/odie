@@ -58,3 +58,39 @@ describe("notesRow while the embedding model downloads", () => {
     expect(r.sub).toBe("1,280 notes · fetching the embedding model (about 1.5 GB)…");
   });
 });
+
+describe("notesRow with meaning updates off", () => {
+  const gemma = { provider: "ollama", model: "embeddinggemma-2:740m" };
+  const indexed = { ...base.status!, notes: 1572, chunks: 5040, vectors: 5000, model: "ollama:embeddinggemma-2:740m" };
+
+  it("says so plainly, with how many passages wait", () => {
+    const r = notesRow({ ...base, settings: { ...base.settings, embeddings: gemma, embed_every: 0 }, status: indexed })!;
+    expect(r.sub).toBe("1,572 notes · meaning updates off · 40 passages waiting");
+    expect(r.state).toBe("ok");
+  });
+
+  it("drops the count when nothing waits, and says one passage in the singular", () => {
+    const off = { ...base.settings, embeddings: gemma, embed_every: 0 };
+    expect(notesRow({ ...base, settings: off, status: { ...indexed, vectors: 5040 } })!.sub).toBe("1,572 notes · meaning updates off");
+    expect(notesRow({ ...base, settings: off, status: { ...indexed, vectors: 5039 } })!.sub).toBe("1,572 notes · meaning updates off · 1 passage waiting");
+  });
+
+  it("reads as before when it's on, or when no model is set", () => {
+    const on = notesRow({ ...base, settings: { ...base.settings, embeddings: gemma, embed_every: 15 }, status: indexed })!;
+    expect(on.sub).toBe("1,572 notes · keyword + meaning (embeddinggemma-2:740m)");
+    expect(notesRow({ ...base, settings: { ...base.settings, embed_every: 0 } })!.sub).toBe("1,280 notes · keyword search");
+  });
+
+  it("still counts while a pass runs", () => {
+    const r = notesRow({ ...base, settings: { ...base.settings, embeddings: gemma, embed_every: 0 }, status: indexed,
+                         progress: { running: true, done: 312, total: 1572, phase: "keywords", error: "" } })!;
+    expect(r.sub).toBe("Indexing 312 of 1,572 notes");
+  });
+});
+
+describe("the background embedding choices", () => {
+  it("labels each choice", async () => {
+    const { EMBED_EVERY_CHOICES, embedEveryLabel } = await import("./vault");
+    expect(EMBED_EVERY_CHOICES.map(embedEveryLabel)).toEqual(["Off", "Every 5 min", "Every 10 min", "Every 15 min", "Every 30 min", "Every 60 min"]);
+  });
+});

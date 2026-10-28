@@ -78,6 +78,12 @@ Odie is inspired by Muse, but it isn't a copy.
   are text only. Without any, search works by words. Odie's own embedding service (the same model in PyTorch, built
   with `ODIE_EMBED=on` at install) remains for a Mac without Ollama. EmbeddingGemma 2 is Google's model: Odie doesn't
   include it; it comes from Ollama's library or Hugging Face under its own licence (Apache 2.0).
+- **When meaning is updated.** Odie reads new and changed notes by their words every 5 minutes, and by meaning (which
+  loads the embedding model) on a schedule you choose in Settings → Notes: off, or every 5, 10, 15, 30 or 60 minutes
+  (5 unless you change it). Turn it off while you run a heavy chat model and the embedding model stays unloaded: new
+  notes are still found by their words, nothing already read by meaning is forgotten, and Settings shows how many
+  passages wait. A search still reads your question by meaning, so it may load the model for a moment, and it can miss
+  notes written while updates were off until you turn them back on, when Odie catches up straight away.
   Explainer videos are encoded with ffmpeg from the imageio-ffmpeg package, installed with Odie and run as a
   separate program (its bundled ffmpeg is a GPL build); the video kit ships three.js and KaTeX (both MIT).
   Explainer videos can carry pictures (yours or the web's, credited on a closing card), short stock clips and an

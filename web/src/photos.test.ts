@@ -50,3 +50,15 @@ describe("photosRow and a paused picture pass", () => {
     expect(r.sub).toBe("pictures by meaning paused: gemma said 400: couldn't open a picture");
   });
 });
+
+describe("photosRow with meaning updates off", () => {
+  it("says picture meaning is paused", () => {
+    const r = photosRow({ ...base, meaning: "gemma", meaning_every: 0 });
+    expect(r.sub).toBe("9,966 photos · 1,170 videos · people, places, things, dates · picture meaning paused");
+    expect(r.state).toBe("ok");
+  });
+
+  it("reads by meaning as before when it's on", () => {
+    expect(photosRow({ ...base, meaning: "gemma", meaning_every: 30 }).sub).toBe("9,966 photos · 1,170 videos · people, places, things, dates · by meaning");
+  });
+});
