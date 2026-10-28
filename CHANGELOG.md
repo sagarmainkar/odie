@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.2.35 (2026-10-28)
+
+- Choose how often Odie updates meaning, or turn it off: Settings → Notes → "Update meaning in the background" offers Off, or every 5, 10, 15, 30 or 60 minutes (5 as before). Only reading new notes and pictures by meaning follows it, since that is what loads the embedding model; keyword indexing and Photos library reads go on as before. Off forgets nothing: the Notes row says how many passages wait, the Photos row says picture meaning is paused, and turning it back on catches up at once. Searches still read by meaning while it's off, so notes written in that time are found by meaning once it's back on. A note Odie writes to memory is found by keyword at once, and by meaning at the next update.
+- Audio stories in the chat: the podcast card plays a story made by a skill, with its cast and their voices, a drawn face and a colour for each speaker, a teaser and who's who before it plays, the speaker's name on top while they talk, and the line being said under the faces. User skills can add their own background job kinds, and such a job cut off by a restart is reported in its chat. Forms that offer voices get their ▶ previews even when the model left them out.
+- Photos sent from the phone are shrunk there first (1280 px, the size Odie keeps anyway) and sent together, so several photos go in a moment instead of one slow upload after another.
+
 ## v0.2.34 (2026-10-26)
 
 - Forms in chat: when Odie needs several answers from you (it is unsure what you mean, it is brainstorming with you, or it is gathering choices before making something), it can ask with a small form in its reply: dropdowns, radio buttons, checkboxes, text boxes and sliders, filled in with its best guesses. Press Send and Odie gets each answer by name; the form stays greyed with your choices, and your message shows them in one line. Works in the web app and on the phone; the Mac app catches up later.
