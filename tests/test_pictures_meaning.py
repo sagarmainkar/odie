@@ -195,6 +195,7 @@ async def test_the_worker_reads_pictures_by_meaning_after_the_notes(store, pics,
     assert "pictures" not in phases
     sees = FakePictureEmbedder()
     monkeypatch.setattr(vault_settings, "embedder_and_reason", lambda s: (sees, ""))
+    w.kick()  # the embedding setting changed (PUT /api/vault kicks): meaning catches up now, not in five minutes
     await w.run_once()
     assert ix.status()["photo_vectors"] == 3 and "pictures" in phases and w.progress()["error"] == ""
     hits = await ix.search_all("beach", embedder=sees)

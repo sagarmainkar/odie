@@ -18,7 +18,7 @@ import { BrowserSection } from "../components/BrowserSection";
 import { personaChanged, usePersona } from "../persona";
 import { profileChanged, useProfile } from "../profile";
 import { has, useCaps } from "../capabilities";
-import { notesRow, type VaultInfo } from "../vault";
+import { EMBED_EVERY_CHOICES, embedEveryLabel, notesRow, type VaultInfo } from "../vault";
 import { photosRow, type PhotosInfo } from "../photos";
 import { engineLine, previewUrl, voiceGroups, voiceSection, withPhononVoices, type PhononAnswer } from "../voiceSettings";
 import { AnotherVoice } from "../components/AnotherVoice";
@@ -347,7 +347,13 @@ function NotesRow() {
     } catch { return "That didn't go through. Try again."; }
     finally { setBusy(false); }
   }
+  async function chooseEvery(minutes: number) {
+    setBusy(true);
+    try { setV(await putJSON<VaultInfo>("/api/vault", { embed_every: minutes })); setTick((n) => n + 1); } catch { /* the row keeps what it showed */ }
+    finally { setBusy(false); }
+  }
   const row = v ? notesRow(v) : null;
+  const every = v?.settings.embed_every ?? 5;
   const button = (label: string) => <button onClick={() => (panel ? setPanel(null) : void open("vault"))} className="h-10 px-2 -mx-2 text-ember-text font-medium">{panel ? "Close" : label}</button>;
   return (
     <>
@@ -357,6 +363,16 @@ function NotesRow() {
         : v && <Row icon={{ icon: "note", color: "blue" }} ok="warn" title="Notes" sub="Not set up: pick or make an Obsidian vault" right={button("Set up")} />}
       {panel && <div className="px-3 py-3 border-b border-line"><div className="text-[14px] font-medium px-1 pb-2">{panel.question}</div>
         <StepPanel panel={panel} onChoose={choose} onCheck={() => void open(panel.step as "vault" | "embeddings")} busy={busy} /></div>}
+      {row && v?.settings.embeddings && (
+        // Embedding new notes and pictures loads the embedding model; off keeps it unloaded (searches still use it).
+        <label className="flex items-center gap-3 px-4 py-3 min-h-14 border-b border-line text-[13.5px]">
+          <span className="flex-1 text-muted">Update meaning in the background</span>
+          <select value={every} disabled={busy} onChange={(e) => void chooseEvery(Number(e.target.value))} aria-label="Update meaning in the background"
+            className="h-9 px-3 rounded-full bg-well border border-line text-[13.5px] disabled:opacity-50">
+            {EMBED_EVERY_CHOICES.map((m) => <option key={m} value={m}>{embedEveryLabel(m)}</option>)}
+          </select>
+        </label>
+      )}
     </>
   );
 }

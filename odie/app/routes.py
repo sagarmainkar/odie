@@ -722,6 +722,7 @@ class VaultIn(BaseModel):
     dir: str | None = None
     ignore: list[str] | None = None
     embeddings: dict | None = None  # {"provider", "model"}; null switches meaning search off; leave it out to keep it
+    embed_every: int | None = None  # minutes between background embedding passes: 0 (off), 5, 10, 15, 30 or 60
 
 
 def _vault_view(request: Request) -> dict:
@@ -730,7 +731,26 @@ def _vault_view(request: Request) -> dict:
     ix = settings.index_for(store)
     worker = getattr(request.app.state, "vault_worker", None)
     return {"settings": settings.get(store), "status": ix.status() if ix else None, "memory_file": str(config.settings.memory_file),
+            "meaning": _meaning_schedule(store, worker),
             "progress": worker.progress() if worker else {"running": False, "done": 0, "total": 0, "phase": "idle", "error": ""}}
+
+
+def _meaning_schedule(store, worker) -> dict:
+    """How often new notes and pictures are embedded in the background, for Settings: {"every": minutes (0: off),
+    "on": bool, "embedded_at": when the last embedding pass started since Odie started (ISO), or None}."""
+    from odie.vault import settings
+    every = settings.get(store)["embed_every"]
+    embedded_at = None
+    if worker is not None:
+        embedded_at = worker.last_embedded()
+    return {"every": every, "on": every != 0, "embedded_at": embedded_at}
+
+
+def _embed_every_words(minutes: int) -> str:
+    """The audit line for the background embedding choice: 0 -> "meaning updates: off"; 15 -> "meaning updates: every 15 min"."""
+    if minutes == 0:
+        return "meaning updates: off"
+    return f"meaning updates: every {minutes} min"
 
 
 @router.get("/vault")
@@ -752,10 +772,12 @@ async def vault_put(body: VaultIn, request: Request) -> dict[str, Any]:
         except embed.EmbedError as err:
             raise HTTPException(422, str(err))
     try:
-        settings.put(store, **{k: fields[k] for k in ("dir", "ignore", "embeddings") if k in fields})
+        settings.put(store, **{k: fields[k] for k in ("dir", "ignore", "embeddings", "embed_every") if k in fields})
     except ValueError as err:
         raise HTTPException(422, str(err))
     store.audit("user", "vault_settings", result_summary=str(settings.get(store)))
+    if "embed_every" in fields:
+        store.audit("user", "vault_settings", result_summary=_embed_every_words(fields["embed_every"]))
     reload = getattr(request.app.state.runner, "reload_vault", None)
     if reload:
         await reload()
@@ -795,7 +817,9 @@ def _photos_view(request: Request) -> dict:
     # how pictures are read by meaning: "gemma" (an EmbeddingGemma 2 that sees pictures: Odie's own service, or Ollama's),
     # "text" (an embedder that reads words only), "none" (no embedder set)
     meaning = "none" if embedder is None else ("gemma" if getattr(embedder, "sees_pictures", False) else "text")
-    return {"settings": settings.get(store), "status": status, "meaning": meaning,
+    # minutes between background passes that read new pictures by meaning (the notes' setting); 0: paused
+    meaning_every = vault_settings.get(store)["embed_every"]
+    return {"settings": settings.get(store), "status": status, "meaning": meaning, "meaning_every": meaning_every,
             "progress": worker.progress() if worker else {"running": False, "done": 0, "total": 0, "phase": "idle", "error": ""}}
 
 

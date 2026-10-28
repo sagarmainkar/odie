@@ -11,17 +11,35 @@ from odie.vault.index import VaultIndex, adopt_old_index, index_path
 
 KEY = "vault"
 _KEEP = object()
+# How often the background indexer embeds new passages and pictures, in minutes; 0 is off. 5 matches the indexer's own
+# pass, so an install that never chose keeps embedding as it always did.
+EMBED_EVERY_CHOICES = (0, 5, 10, 15, 30, 60)
+EMBED_EVERY_DEFAULT = 5
 _indexes: dict[tuple, VaultIndex] = {}
 
 
 def get(store) -> dict:
     v = store.get_setting(KEY) or {}
-    return {"dir": v.get("dir"), "ignore": list(v.get("ignore") or []), "embeddings": v.get("embeddings")}
+    embed_every = v.get("embed_every", EMBED_EVERY_DEFAULT)
+    return {"dir": v.get("dir"), "ignore": list(v.get("ignore") or []), "embeddings": v.get("embeddings"),
+            "embed_every": embed_every}
 
 
-def put(store, dir=_KEEP, ignore=_KEEP, embeddings=_KEEP) -> dict:
+def embed_every_problem(value) -> str:
+    """Why this can't be the background embedding interval, or "" when it can:
+      15    -> ""
+      0     -> "" (off)
+      7     -> "Choose off, or every 5, 10, 15, 30 or 60 minutes."
+      True  -> the same refusal (a yes/no is not a number of minutes)"""
+    if isinstance(value, bool) or value not in EMBED_EVERY_CHOICES:
+        return "Choose off, or every 5, 10, 15, 30 or 60 minutes."
+    return ""
+
+
+def put(store, dir=_KEEP, ignore=_KEEP, embeddings=_KEEP, embed_every=_KEEP) -> dict:
     """Save what's given; leave a field out to keep it. dir None or "" turns the index off; otherwise a full path to a
-    folder that exists. embeddings None switches meaning search off."""
+    folder that exists. embeddings None switches meaning search off. embed_every: minutes between background embedding
+    passes, 0 to pause them (nothing is forgotten; searches still read by meaning)."""
     v = get(store)
     if dir is not _KEEP:
         if not dir:
@@ -41,6 +59,11 @@ def put(store, dir=_KEEP, ignore=_KEEP, embeddings=_KEEP) -> dict:
         url = (embeddings or {}).get("url")
         if url and str(url).strip():  # a server somewhere else: its address, kept without a trailing slash
             v["embeddings"]["url"] = str(url).strip().rstrip("/")
+    if embed_every is not _KEEP:
+        problem = embed_every_problem(embed_every)
+        if problem:
+            raise ValueError(problem)
+        v["embed_every"] = embed_every
     store.set_setting(KEY, v)
     return v
 
