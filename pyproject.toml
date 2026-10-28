@@ -1,6 +1,6 @@
 [project]
 name = "odie"
-version = "0.2.35"
+version = "0.2.36"
 description = "Odie: a personal assistant that lives on your own computer (Google ADK)"
 requires-python = ">=3.12,<3.13"
 dependencies = [

@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.2.36 (2026-10-28)
+
+- Think harder is now kept for each chat by Odie, so the web app, the phone and the Mac app always show and use the same choice; flip it in one and the others follow at once, and a new chat starts with your last choice. While it's on, a "Think harder" chip shows by the message box.
+- On a model running on your own computer (LM Studio, Ollama, llama.cpp, or an OpenAI-style server you added), flipping Think harder no longer throws away the server's prompt cache: Odie always sends the same reasoning effort and asks for harder thinking in words at the end of your message, so a long chat isn't read again from the start. Cloud models work as before.
+
 ## v0.2.35 (2026-10-28)
 
 - Choose how often Odie updates meaning, or turn it off: Settings → Notes → "Update meaning in the background" offers Off, or every 5, 10, 15, 30 or 60 minutes (5 as before). Only reading new notes and pictures by meaning follows it, since that is what loads the embedding model; keyword indexing and Photos library reads go on as before. Off forgets nothing: the Notes row says how many passages wait, the Photos row says picture meaning is paused, and turning it back on catches up at once. Searches still read by meaning while it's off, so notes written in that time are found by meaning once it's back on. A note Odie writes to memory is found by keyword at once, and by meaning at the next update.
