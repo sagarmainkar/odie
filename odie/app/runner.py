@@ -26,7 +26,7 @@ from odie import addons, config
 from odie.agent.agent import build_agent, chat_generate_config, memory_file
 from odie.agent.callbacks import OdiePlugin
 from odie.agent.context import parts_of
-from odie.agent.model import WRITER_REPLY_TOKENS, model_for
+from odie.agent.model import WRITER_REPLY_TOKENS, chat_effort_think_harder, model_for, think_harder_words
 from odie.making.writer import MAX_LLM_CALLS as WRITER_MAX_LLM_CALLS
 from odie.models import chat_completion, context_window, history_limit_for, resolve_selection
 from odie.sampling import BACKGROUND_TEMPERATURE
@@ -643,9 +643,10 @@ class OdieRunner:
                    currency=region.currency_symbol(config.settings.currency), caps=capabilities.detect(self.plugins.get("servers", []), self.store),
                    assistant=persona.get(self.store)["name"])
 
-    async def chat(self, text: str, thinking: bool = False, session_id: str | None = None,
+    async def chat(self, text: str, thinking: bool | None = None, session_id: str | None = None,
                    images: list[str] | None = None) -> AsyncIterator[dict[str, Any]]:
         """One user turn. session_id defaults to today's chat session; pass one to start elsewhere (eval, new thread).
+        thinking: Think harder for this turn; None (every app now) uses the chat's own (odie.thinking).
         images: upload ids; each becomes an inline image part the vision model sees, and an [image:id] marker in the text."""
         s = config.settings
         today = datetime.now(self.tz).strftime("%Y-%m-%d")
@@ -656,9 +657,16 @@ class OdieRunner:
         was_private = False
         try:
             session_id = await self._ensure_session(session_id)
+            if thinking is None:
+                from odie import thinking as chat_thinking
+                thinking = chat_thinking.settle(self.store, session_id)
+            selection = resolve_selection(self.store, "chat")  # the chosen model, or the fallback when nothing is chosen
             from odie.blocks.answers import without_form_answers
             words = without_form_answers(text)  # a form's answer: lookups use its line, not the fence the model reads
             trailer = self._prepare_prompt(session_id, words) + await self._visual_nudge(session_id, text)
+            # Think harder on a local server: words at the very end, after everything its cache holds (the effort stays).
+            # They stay in the history as sent, so later turns replay the same text.
+            trailer += think_harder_words(selection, thinking)
             parts: list[types.Part] = []
             markers = ""
             for iid in images or []:
@@ -685,11 +693,11 @@ class OdieRunner:
             compact_token = turn_words.HISTORY_LIMIT.set(await self._history_limit(session_id))
             sent_text = f"{text}{markers}" + (f"\n\n{blocks}" if blocks else "") + f"\n\n{trailer}"
             parts.insert(0, types.Part(text=sent_text))
-            selection = resolve_selection(self.store, "chat")
-            key = (thinking, model_key(selection))  # the chosen model, or the fallback when nothing is chosen
+            effort_up = chat_effort_think_harder(selection, thinking)  # always False on a local server
+            key = (effort_up, model_key(selection))
             if key != self._model_key:
                 self._model_key = key
-                self.agent.model = model_for(selection, thinking)
+                self.agent.model = model_for(selection, effort_up)
             self.agent.generate_content_config = chat_generate_config(self.store)  # Creativity, as set right now
             self.store.audit("user", "message", result_summary=text, session_id=session_id)
             final: list[str] = []

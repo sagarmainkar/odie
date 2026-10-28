@@ -3,6 +3,8 @@ import { badge } from "../watch";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { useLive } from "../live";
+import { loadThinking, saveThinking, thinkingAfter, type ChatThinking } from "../thinking";
+import { ThinkChip, ThinkSwitch } from "../components/ThinkHarder";
 import { has, useCaps, userCountry } from "../capabilities";
 import { ideasFor } from "../ideas";
 import { getJSON, postJSON, todayISO } from "../api";
@@ -207,13 +209,10 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
   const [msgs, setMsgs] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
-  const [thinking, setThinkingState] = useState(() => {
-    try { return localStorage.getItem("odie.think") !== "off"; } catch { return true; }
-  });
-  const setThinking = (on: boolean) => {
-    setThinkingState(on);
-    try { localStorage.setItem("odie.think", on ? "on" : "off"); } catch { /* private mode */ }
-  };
+  // This chat's Think harder, as Odie keeps it (every app shows the same); off until the server answers.
+  const [think, setThink] = useState<ChatThinking | null>(null);
+  const [savingThink, setSavingThink] = useState(false);
+  const thinking = think?.on ?? false;
   const [plusOpen, setPlusOpen] = useState(false);
   const [ctx, setCtx] = useState<{ used: number; limit: number } | null>(null);
   const [ctxNote, setCtxNote] = useState(false);
@@ -240,6 +239,19 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
   const wide = useWide();
   const [threadsReload, setThreadsReload] = useState(0);
   const threadRef = useRef<Thread | null>(null);
+  const [chatKey, setChatKey] = useState(0);  // a new segment of today's chat: its Think harder is read again
+  const loadThink = useCallback(() => {
+    const asked = threadRef.current?.id;
+    loadThinking(asked).then((got) => {
+      if (threadRef.current?.id === asked) setThink(got);  // the chat on screen hasn't changed while it was asked
+    }).catch(() => {});
+  }, []);
+  useEffect(() => { loadThink(); }, [thread?.id, chatKey, loadThink]);
+  async function setThinking(on: boolean) {
+    setSavingThink(true);
+    try { setThink(await saveThinking(on, think?.session_id ?? thread?.id)); } catch { /* keeps what it showed */ }
+    finally { setSavingThink(false); }
+  }
   threadRef.current = thread;
   const historyUrl = (q: string) => (thread ? `/api/threads/${thread.id}/history?${q}` : `/api/history?date=${todayISO()}&${q}`);
   const [earlier, setEarlier] = useState(0);  // index of the first loaded history item; >0 means more exists
@@ -361,10 +373,11 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
       setMsgs((m) => [...(e.kind === "reply" ? m.filter((x) => !x.awaiting) : m), { id: nextId++, role: "odie", text: e.text, tools: [], ts: e.ts, live: e.kind !== "reply", media: e.media, autoplay, private: !!e.private }]);
       setUnseen(true);
     }
+    if (e.type === "thinking") setThink((shown) => thinkingAfter(shown, e));  // flipped in another app or browser
     if (e.type === "google" && e.status === "connected") window.dispatchEvent(new Event("odie:google-connected"));
     if (e.type === "approval" && e.status === "pending") setMsgs((m) => m.some((x) => x.approval?.id === e.id) ? m : [...m, { id: nextId++, role: "approval", text: "", tools: [], ts: Date.now() / 1000, approval: e as Approval }]);
     if ((e.type === "approval" && e.status !== "pending") || e.type === "approval_done") setMsgs((m) => m.map((x) => x.approval?.id === e.id ? { ...x, approval: { ...x.approval!, status: e.status ?? x.approval!.status, result_text: e.text ?? x.approval!.result_text } } : x));
-  }, []), useCallback(() => { if (!busy) loadHistory(); }, [busy, loadHistory]));
+  }, []), useCallback(() => { loadThink(); if (!busy) loadHistory(); }, [busy, loadHistory, loadThink]));
 
   const tapTimers = useRef<number[]>([]);
   useEffect(() => () => tapTimers.current.forEach((t) => window.clearInterval(t)), []);
@@ -412,6 +425,7 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
     try { await postJSON("/api/chat/new", {}); } catch { return; }
     await loadHistory();
     loadCtx();
+    setChatKey((n) => n + 1);
     setThreadsReload((n) => n + 1);
     bottom.current?.scrollIntoView({ behavior: "smooth" });
   }
@@ -436,7 +450,7 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
     streamAbort.current = ac;
     lastEventAt.current = Date.now();
     try {
-      for await (const ev of streamChat(t, thinking, imgs, thread?.id, ac.signal)) {
+      for await (const ev of streamChat(t, imgs, thread?.id, ac.signal)) {
         lastEventAt.current = Date.now();
         if (ev.type === "tool_start") patch((l) => ({ ...l, tools: [...l.tools, { name: String(ev.tool), done: false }] }));
         else if (ev.type === "tool_done") patch((l) => { const i = l.tools.findIndex((x) => x.name === ev.tool && !x.done); if (i < 0) return l; const tools = [...l.tools]; tools[i] = { ...tools[i], done: true }; return { ...l, tools }; });
@@ -789,18 +803,13 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
                         className="w-full flex items-center gap-3 p-2 rounded-2xl text-[15px] font-semibold text-left active:bg-well">
                         <Tile icon="photo" color="pink" small />Add a photo
                       </button>
-                      <button type="button" role="menuitemcheckbox" aria-checked={thinking} onClick={() => setThinking(!thinking)}
-                        className="w-full flex items-center gap-3 p-2 rounded-2xl text-[15px] font-semibold text-left active:bg-well">
-                        <Tile icon="brain" color="blue" small /><span className="flex-1">Think harder</span>
-                        <span className={`relative w-11 h-[26px] rounded-full transition-colors ${thinking ? "bg-good" : "bg-dim"}`}>
-                          <span className={`absolute top-[3px] w-5 h-5 rounded-full bg-white transition-all ${thinking ? "left-[21px]" : "left-[3px]"}`} />
-                        </span>
-                      </button>
+                      <ThinkSwitch on={thinking} disabled={savingThink || think === null} onToggle={() => void setThinking(!thinking)} />
                     </motion.div>
                   </>
                 )}
               </AnimatePresence>
             </div>
+            <ThinkChip on={thinking} onTap={() => setPlusOpen(true)} />
             <span className="flex-1" />
             {/* Talk (a live voice conversation) is held back for now: the server never grants "talk", so this stays hidden. */}
             {has(caps, "talk") && (

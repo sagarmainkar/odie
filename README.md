@@ -184,6 +184,12 @@ you give up is privacy.
 Long chats keep every word: past the model's limit (up to 300k tokens), turns older than the last five go to the model
 as words only, without their tool traffic and thinking. There's no summary and no restart.
 
+**Think harder** (the chat's + menu) belongs to the chat: Odie keeps it, so every app and browser shows and uses the
+same choice, and a new chat starts with your last one. A cloud model gets it as a higher reasoning effort. A model on
+your own server (LM Studio, Ollama on the Mac, or an address you added) always gets the same effort, and Think harder
+goes as a sentence at the end of your message instead. Its chat template writes the effort into the first lines of the
+prompt, so changing it would make the server read the whole chat again; this way its prompt cache is kept.
+
 ## Install
 
 On a **Mac with macOS 14 or newer**, with [Homebrew](https://brew.sh) (Apple Silicon for everything; an Intel Mac runs
