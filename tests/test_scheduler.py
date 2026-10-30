@@ -5,7 +5,7 @@ from odie.app.main import start_scheduler
 from odie.store.db import Store
 
 
-async def test_brief_job_is_a_coroutine_function(tmp_path):
+async def test_brief_job_is_a_coroutine_function(tmp_path, no_missed_brief):
     s = Store(tmp_path / "a.db")
     s.init_schema()
     # A fresh news batch, so the "fetch now if stale" job doesn't reach the network from a test.
@@ -40,3 +40,19 @@ async def test_stale_news_is_fetched_at_startup_even_if_startup_is_slow(tmp_path
         assert job is not None and (job.misfire_grace_time is None or job.misfire_grace_time >= 300)
     finally:
         sched.shutdown(wait=False)
+
+
+async def test_a_missed_brief_is_caught_up_once(tmp_path, monkeypatch):
+    # Odie starts at 09:10 and this morning's brief never went out -> a one-off "brief_missed" job, beside the daily one.
+    import odie.jobs.brief
+    from odie.background import Background
+    monkeypatch.setattr(odie.jobs.brief, "missed_today", lambda store, now: True)
+    s = Store(tmp_path / "a.db")
+    s.init_schema()
+    s.set_setting("news", {"fetched_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"), "topics": [], "items": []})
+    sched = start_scheduler(s, background=Background())
+    try:
+        assert sched.get_job("brief_missed") is not None and sched.get_job("brief") is not None
+    finally:
+        sched.shutdown(wait=False)
+

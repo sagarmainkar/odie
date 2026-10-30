@@ -144,3 +144,13 @@ def no_mac_apps(monkeypatch):
     monkeypatch.setattr(scripts, "ALLOWED", False)
     monkeypatch.setattr(scripts, "available", lambda: False)  # routes and setup see "not a Mac" unless a test says so
     monkeypatch.setattr(sources, "native_sources", lambda available=None, status=None: [])
+
+
+@pytest.fixture
+def no_missed_brief(monkeypatch):
+    """Starts the scheduler as if this morning's brief already went out. Without it, a test run after 07:30 (and
+    before noon) also gets the one-off "brief_missed" catch-up job, so tests that list the scheduled jobs failed every
+    morning (27 Oct)."""
+    import odie.jobs.brief
+    monkeypatch.setattr(odie.jobs.brief, "missed_today", lambda store, now: False)
+
