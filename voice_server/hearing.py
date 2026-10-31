@@ -69,7 +69,7 @@ def partial_due(ms_since_partial: int) -> bool:
 
 def utterance_full(utterance_samples: int) -> bool:
     """Whether the utterance has no room for one more chunk under the 30 s cap, so it is cut before it passes 30 s.
-    479,232 samples (29.95 s) -> True, another 512 would pass 480,000; 470,000 samples -> False."""
+    479,744 samples -> True, another 512 would pass 480,000; 479,488 samples -> False, 480,000 exactly fits."""
     return utterance_samples + CHUNK > CAP_SAMPLES
 
 
@@ -84,6 +84,7 @@ class Hearing:
 
     def reset(self) -> None:
         """Forget everything: no speech, no audio kept."""
+        self.odd_byte = b""                        # half a sample, when a frame ends mid-sample; the next frame ends it
         self.remainder = np.zeros(0, np.float32)   # samples that do not yet fill a chunk; they wait for the next frame
         # The most recent audio while nobody speaks: the 300 ms lead-in plus the onset's own chunks, so an utterance
         # begins 300 ms before the first loud chunk (catches the soft start of a word the VAD is slow to hear).
@@ -96,8 +97,15 @@ class Hearing:
         self.ms_since_partial = 0
 
     def feed(self, pcm16: bytes) -> list[dict]:
-        """Take a frame of 16-bit PCM of any length; return the events it produced, in order."""
-        samples = np.frombuffer(pcm16, dtype=np.int16).astype(np.float32) / 32768
+        """Take a frame of 16-bit little-endian PCM of any length; return the events it produced, in order.
+        A frame that ends mid-sample keeps its last byte for the next: 3 bytes -> 1 sample, then 1 byte -> 1 more."""
+        data = self.odd_byte + pcm16
+        if len(data) % 2 == 1:
+            self.odd_byte = data[-1:]
+            data = data[:-1]
+        else:
+            self.odd_byte = b""
+        samples = np.frombuffer(data, dtype="<i2").astype(np.float32) / 32768
         self.remainder = np.concatenate([self.remainder, samples])
         events: list[dict] = []
         while len(self.remainder) >= CHUNK:
@@ -108,7 +116,7 @@ class Hearing:
 
     def end(self) -> list[dict]:
         """The stream is over: close an open utterance (speech off, then its final) and forget everything.
-        Nothing open -> no events."""
+        Speaking -> [speech off, final]; nobody speaking -> []."""
         events: list[dict] = []
         if self.speaking:
             self.add_to_utterance(self.remainder)  # the last few samples that never filled a chunk
@@ -126,7 +134,8 @@ class Hearing:
 
     def while_silent(self, chunk: np.ndarray, probability: float) -> list[dict]:
         """Nobody is speaking: keep the recent audio and count loud chunks; the second loud one in a row starts an
-        utterance that begins with the 300 ms before the first."""
+        utterance that begins with the 300 ms before the first.
+        2nd loud chunk in a row -> [speech on]; a loud chunk then one at 0.4 -> [], the loud count back to 0."""
         self.recent = np.concatenate([self.recent, chunk])[-(LEAD_SAMPLES + ONSET_CHUNKS * CHUNK):]
         if is_loud(probability):
             self.loud_chunks += 1
@@ -146,34 +155,42 @@ class Hearing:
 
     def while_speaking(self, chunk: np.ndarray, probability: float) -> list[dict]:
         """Someone is speaking: add the chunk to the utterance, then stop at 250 ms of quiet, or cut at the 30 s cap,
-        or send a partial every 400 ms."""
-        events: list[dict] = []
-        if utterance_full(self.utterance_samples):
-            # The cap: send what we have as a final and carry on with a fresh utterance, still speaking. The client
-            # sees the usual off / final / on, so every "on" has its "off".
-            events.append({"type": "speech", "on": False})
-            events.append(self.final())
-            events.append({"type": "speech", "on": True})
-            self.utterance = []
-            self.utterance_samples = 0
-            self.ms_since_partial = 0
-        self.add_to_utterance(chunk)
-        self.ms_since_partial += CHUNK_MS
+        or send a partial every 400 ms.
+        8th quiet chunk in a row (256 ms) -> [speech off, final]; 13th chunk since the last partial -> [partial];
+        a loud chunk with the utterance full -> [speech off, final, speech on]; a quiet one -> [speech off, final]."""
         if is_quiet(probability):
             self.quiet_ms += CHUNK_MS
         else:
             self.quiet_ms = 0
+        if utterance_full(self.utterance_samples):
+            if self.quiet_ms > 0:
+                # The cap arrives while they are already pausing: the cut is the end of speech. Carrying on would only
+                # make a 32 ms utterance of silence, and a junk final, out of the rest of the pause.
+                return self.stop_speaking()
+            # The cap: send what we have as a final and carry on with a fresh utterance, still speaking. The client
+            # sees the usual off / final / on, so every "on" has its "off".
+            events = self.stop_speaking()
+            events.append({"type": "speech", "on": True})
+            self.speaking = True
+        else:
+            events = []
+        self.add_to_utterance(chunk)
+        self.ms_since_partial += CHUNK_MS
         if speech_stops(self.quiet_ms):
-            events.append({"type": "speech", "on": False})
-            events.append(self.final())
-            self.speaking = False
-            self.utterance = []
-            self.utterance_samples = 0
-            self.quiet_ms = 0
-            return events
+            return events + self.stop_speaking()
         if partial_due(self.ms_since_partial):
             self.ms_since_partial = 0
             events.append({"type": "words", "text": self.transcribe(self.audio()), "final": False})
+        return events
+
+    def stop_speaking(self) -> list[dict]:
+        """Speech is over: say so, send the final over the whole utterance, and clear it for the next."""
+        events = [{"type": "speech", "on": False}, self.final()]
+        self.speaking = False
+        self.utterance = []
+        self.utterance_samples = 0
+        self.quiet_ms = 0
+        self.ms_since_partial = 0
         return events
 
     def add_to_utterance(self, samples: np.ndarray) -> None:

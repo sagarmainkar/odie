@@ -41,15 +41,33 @@ def test_partials_come_every_400_ms_over_the_utterance_so_far():
     assert [e["text"] for e in partials] == ["1", "2"]          # at 0.4 s and 0.8 s of speech
     assert seen[1] > seen[0]                                     # each over more audio than the last
     assert seen[0] >= int(16000 * 0.4)                           # the utterance so far, not one chunk
+    # Exactly: the 2 onset chunks (no audio came before them), then 13 chunks (416 ms) per partial.
+    # 1,024 + 13 x 512 = 7,680; then 7,680 + 13 x 512 = 14,336. A dropped chunk shows here.
+    assert seen == [7680, 14336]
 
 
 def test_the_final_covers_the_lead_in_before_the_onset():
+    heard: list[np.ndarray] = []
     lengths: list[int] = []
-    h = Hearing(vad=loud_is_speech, transcribe=lambda audio: lengths.append(len(audio)) or "x")
+
+    def transcribe(audio: np.ndarray) -> str:
+        heard.append(audio)
+        lengths.append(len(audio))
+        return "x"
+
+    h = Hearing(vad=loud_is_speech, transcribe=transcribe)
     h.feed(pcm(0.5, False))                                      # half a second of room noise first
     h.feed(pcm(0.5, True))
     h.feed(pcm(0.3, False))
     assert lengths[-1] >= int(16000 * (0.3 + 0.5)) - CHUNK       # 300 ms before the onset, and the speech
+    final = heard[-1]
+    # The 8,000 quiet samples fill 15 chunks and leave 320, so chunk 15 is 320 silent samples then the tone: the first
+    # loud chunk. 300 ms (4,800 samples) of silence come before it, and the tone starts 320 samples into it.
+    first_sound = int(np.flatnonzero(final)[0])
+    assert 4800 <= first_sound < 4800 + CHUNK
+    # 4,800 lead-in + 2 onset chunks (1,024) + 14 loud chunks (7,168) + 9 tail chunks (4,608: one with the tone's last
+    # 128 samples, so still loud, then the 8 quiet ones that make 256 ms) = 17,600.
+    assert len(final) == 17600
 
 
 def test_frames_of_any_size_lose_no_samples():
@@ -69,6 +87,29 @@ def test_speech_that_never_stops_is_cut_at_the_cap():
     finals = [e for e in events if e["type"] == "words" and e["final"]]
     assert len(finals) >= 1
     assert {"type": "speech", "on": True} in events[events.index(finals[0]) + 1:]   # speech starts again after the cut
+
+
+def test_a_pause_that_begins_just_before_the_cap_ends_the_speech_there():
+    lengths: list[int] = []
+    h = Hearing(vad=loud_is_speech, transcribe=lambda a: lengths.append(len(a)) or "long")
+    events = h.feed(pcm(29.9, True))                             # the tone ends 3 chunks before the cap
+    events += h.feed(pcm(0.6, False))
+    finals = [e for e in events if e["type"] == "words" and e["final"]]
+    assert len(finals) == 1                                      # no 32 ms leftover utterance after the cut
+    assert lengths[-1] == 479744                                 # the final came at the cap: 1,024 + 935 x 512
+    assert events[-2:] == [{"type": "speech", "on": False}, {"type": "words", "text": "long", "final": True}]
+
+
+def test_frames_split_mid_sample_lose_no_samples():
+    heard: list[np.ndarray] = []
+    h = Hearing(vad=lambda c: heard.append(c) or 0.0, transcribe=lambda a: "")
+    samples = np.arange(1, CHUNK + 1, dtype="<i2")               # 1, 2, ... 512: one chunk
+    data = samples.tobytes()
+    h.feed(data[:3])                                             # a sample and a half: nothing raised
+    h.feed(data[3:1023])
+    h.feed(data[1023:])
+    assert len(heard) == 1
+    assert np.array_equal(heard[0], samples.astype(np.float32) / 32768)
 
 
 def test_end_closes_an_open_utterance():
