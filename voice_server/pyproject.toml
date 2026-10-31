@@ -9,6 +9,8 @@ dependencies = [
     "fastapi",
     "uvicorn",
     "en-core-web-sm",
+    "silero-vad",
+    "websockets",
 ]
 
 [tool.uv]
