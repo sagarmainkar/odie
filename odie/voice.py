@@ -245,6 +245,8 @@ async def settle_worker(store: Store) -> None:
     worker = voice_worker.current
     if worker is None or worker_wanted(store):
         return
+    if hearing_streams > 0:
+        return  # a talk is listening through it (/api/talk/listen): the next settle, or Odie's exit, stops it
     await worker.stop()
 
 
@@ -307,6 +309,42 @@ async def local_available(transport: httpx.AsyncBaseTransport | None = None) -> 
             return (await c.get(f"{local_url()}/health")).status_code == 200
     except httpx.HTTPError:
         return False
+
+
+# ── Hearing: the voice worker's /stt/stream, passed through by /api/talk/listen (odie/app/routes.py) ──
+hearing_streams = 0  # listen streams open now; settle_worker never stops the worker while one is open
+
+
+def hearing_url() -> str:
+    """The voice worker's live-hearing WebSocket: "ws://127.0.0.1:8771/stt/stream" on the default port."""
+    return local_url().replace("http://", "ws://", 1) + "/stt/stream"
+
+
+async def _health_says_hearing(url: str, transport: httpx.AsyncBaseTransport | None = None) -> bool:
+    """What the voice server's /health says about hearing. {"hearing": true} -> True; {"hearing": false}, an older
+    server without the field, or nothing answering -> False."""
+    try:
+        async with httpx.AsyncClient(timeout=2, transport=transport) as c:
+            r = await c.get(f"{url}/health")
+        return r.status_code == 200 and r.json().get("hearing") is True
+    except (httpx.HTTPError, ValueError, AttributeError):
+        return False
+
+
+async def hearing_available(transport: httpx.AsyncBaseTransport | None = None) -> bool:
+    """Whether a paired app can listen through Odie (/api/talk/listen). The worker is normally stopped (read-aloud uses
+    Phonon), and the listen starts it, so being set up is enough until it runs; once it runs, its /health decides.
+    Set up and stopped -> True; running and its /health says hearing -> True; running without the hearing models ->
+    False; never set up -> False. Without a worker (tests, another Odie's), whatever answers on the port is asked."""
+    from odie import voice_worker
+    worker = voice_worker.current
+    if worker is None or transport is not None:
+        return await _health_says_hearing(local_url(), transport)
+    if not worker.installed:
+        return False
+    if not await worker.healthy():
+        return True  # set up but stopped: the listen starts it
+    return await _health_says_hearing(worker.url)
 
 
 async def own_server_can_speak() -> bool:
