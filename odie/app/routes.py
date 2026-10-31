@@ -73,11 +73,12 @@ async def health(request: Request) -> dict[str, Any]:
     from odie import addons
     for more in await addons.acall("connections"):
         connections.update(more)
-    from odie import update
+    from odie import update, voice
     brain_reachable = lm or chosen["provider"] != "lmstudio"  # only LM Studio is probed here; a cloud brain has its key
+    hearing = await voice.hearing_available()  # the Mac listens through /api/talk/listen when this is true
     return {"status": "ok", "name": "Odie", "version": update.version(), "model": chosen["model"], "provider": chosen["provider"],
             "leaves_mini": chosen["leaves_mini"], "lm_studio": lm, "connections": connections,
-            "brain_chosen": brain_chosen(request.app.state.store), "brain_reachable": brain_reachable}
+            "brain_chosen": brain_chosen(request.app.state.store), "brain_reachable": brain_reachable, "hearing": hearing}
 
 
 @router.get("/update")
@@ -1728,6 +1729,147 @@ async def voice_transcript(body: TranscriptIn, request: Request):
     text = "**Talk**\n\n" + "\n\n".join(f"**{'You' if x.who == 'you' else name}:** {x.text.strip()}" for x in lines)
     await request.app.state.runner.post_message(text, kind="talk")
     return {"saved": True}
+
+
+# --- Live hearing: the Mac's microphone through Odie's own voice server (voice_server/server.py, /stt/stream) ---
+NOT_RUNNING = "Odie's local voice isn't running"
+VOICE_OFF = "Odie's local voice is off (ODIE_VOICE=off)"
+
+
+def _close_reason(text: str) -> str:
+    """A WebSocket close reason fits in 123 bytes: a longer problem is cut there.
+    "local voice isn't set up: run `uv sync` in /a/very/long/path/voice_server" -> its first 123 bytes."""
+    return text.encode()[:123].decode(errors="ignore")
+
+
+async def _voice_ears_ready() -> str | None:
+    """Whether Odie's own voice server is up and can hear, started first if it is stopped (read-aloud with Phonon leaves
+    it stopped); None when it is ready, else why not (the 4503 reason). Stopped but set up -> started, None; never set
+    up -> "local voice isn't set up: ..."; running without the hearing models -> "Odie's local voice can't hear ...";
+    no worker at all (ODIE_VOICE=off) -> VOICE_OFF: whatever answers on ODIE_VOICE_PORT is someone else's service."""
+    from odie import voice, voice_worker
+    worker = voice_worker.current
+    if worker is None:
+        return VOICE_OFF
+    if not await worker.ensure():
+        return worker.problem or NOT_RUNNING
+    if not await voice.hearing_available():  # it runs now, so its /health decides
+        return "Odie's local voice can't hear: run `uv sync` in voice_server"
+    return None
+
+
+async def _app_to_voice(websocket: WebSocket, ears) -> None:
+    """The app's frames to the voice server as they came: audio as bytes, {"type":"end"} as text. Ends when the app
+    goes, or when the voice server has closed the stream (its final words sent)."""
+    import websockets
+    while True:
+        message = await websocket.receive()
+        if message["type"] == "websocket.disconnect":
+            return
+        try:
+            if message.get("bytes") is not None:
+                await ears.send(message["bytes"])
+            elif message.get("text") is not None:
+                await ears.send(message["text"])
+        except websockets.ConnectionClosedOK:
+            return
+
+
+def _relayed_close(code: int | None) -> int:
+    """The close code to pass on to the app when the voice server closed its stream with an error. A code that may be
+    sent in a close frame is passed as it is; a missing or reserved one (no close frame, 1005, 1006, 1015) becomes 1011.
+    1011 -> 1011; 4500 -> 4500; None -> 1011; 1006 -> 1011."""
+    if code is None or code in (1005, 1006, 1015):
+        return 1011
+    return code
+
+
+async def _voice_to_app(ears, websocket: WebSocket) -> None:
+    """The voice server's events (ready, speech, words, error) to the app. Ends when the voice server closes the stream
+    or the app has gone. When the voice server closes with an error (it has sent its `error` event first), the app is
+    closed with the same code and reason: the failure is already reported, so no traceback."""
+    import websockets
+    from starlette.websockets import WebSocketDisconnect
+    try:
+        async for frame in ears:
+            if isinstance(frame, bytes):
+                await websocket.send_bytes(frame)
+            else:
+                await websocket.send_text(frame)
+    except WebSocketDisconnect:
+        return
+    except websockets.ConnectionClosedError as e:
+        code = e.rcvd.code if e.rcvd is not None else None
+        reason = e.rcvd.reason if e.rcvd is not None else ""
+        await _close_app(websocket, _relayed_close(code), _close_reason(reason))
+
+
+async def _pass_through(websocket: WebSocket, ears) -> None:
+    """Copies frames both ways until either side is done, then stops the other copy. A failure in either is raised
+    (every finished copy's exception is read first, so none is left "never retrieved"). Cancelled (Odie shutting
+    down), both copies are cancelled and awaited, so none is left pending."""
+    copies = [asyncio.create_task(_app_to_voice(websocket, ears)), asyncio.create_task(_voice_to_app(ears, websocket))]
+    try:
+        done, _ = await asyncio.wait(copies, return_when=asyncio.FIRST_COMPLETED)
+    finally:
+        for copy in copies:
+            copy.cancel()
+        await asyncio.gather(*copies, return_exceptions=True)
+    failures = [copy.exception() for copy in done if not copy.cancelled()]
+    for failure in failures:
+        if failure is not None:
+            raise failure
+
+
+async def _close_app(websocket: WebSocket, code: int, reason: str = "") -> None:
+    """Closes the app's side unless it has already gone (then there's no one to tell).
+    The app still connected -> closed with `code`; the app already gone, or going while we close -> nothing."""
+    from starlette.websockets import WebSocketDisconnect, WebSocketState
+    if websocket.client_state != WebSocketState.CONNECTED or websocket.application_state != WebSocketState.CONNECTED:
+        return
+    try:
+        await websocket.close(code=code, reason=reason)
+    except (RuntimeError, OSError, WebSocketDisconnect):
+        pass  # it went while we were closing
+
+
+async def _listen(websocket: WebSocket) -> None:
+    """One listen, after the app's socket is accepted: the voice server ready and hearing, then the pass-through."""
+    import websockets
+
+    from odie import voice
+    why_not = await _voice_ears_ready()
+    if why_not:
+        await _close_app(websocket, 4503, _close_reason(why_not))
+        return
+    try:
+        ears = await websockets.connect(voice.hearing_url(), max_size=None, open_timeout=5, proxy=None)  # never a proxy
+    except (OSError, TimeoutError, websockets.InvalidHandshake):
+        await _close_app(websocket, 4503, NOT_RUNNING)
+        return
+    code = 1000
+    try:
+        await _pass_through(websocket, ears)
+    except Exception:  # the app is told 1011; it falls back to its own listening
+        log.warning("talk listen: the pass-through to the voice server failed", exc_info=True)
+        code = 1011
+    finally:
+        await ears.close()
+    await _close_app(websocket, code)
+
+
+@router.websocket("/talk/listen")
+async def talk_listen(websocket: WebSocket) -> None:
+    """Live hearing for a paired app (behind pairing, like every API): its 16 kHz PCM frames go to Odie's own voice
+    server's /stt/stream and that server's ready/speech/words/error events come back, as they are. Nothing is stored
+    or logged. 4503 when the voice server can't be started or can't hear; 1011 on an unexpected failure."""
+    from odie import voice
+    await websocket.accept()  # first, so a 4503 reaches the app (a close before accept is only an HTTP 403 there)
+    voice.hearing_streams += 1  # before the worker starts (up to 30 s): settle_worker must not stop it meanwhile
+    try:
+        await _listen(websocket)
+    finally:
+        voice.hearing_streams -= 1
 
 
 # --- Persona: the assistant's name and picture ---

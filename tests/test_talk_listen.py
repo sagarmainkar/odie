@@ -1,0 +1,290 @@
+"""/api/talk/listen copies frames both ways to the voice server's /stt/stream, behind pairing."""
+import asyncio
+import json
+import socket
+import threading
+import time
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+import httpx
+import pytest
+import websockets
+from starlette.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
+
+from odie import devices, voice, voice_worker
+from odie.app.main import create_app
+from odie.store.db import Store
+from tests.test_api import FakeRunner
+
+
+@pytest.fixture
+def free_port() -> int:
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+def _app(tmp_path, monkeypatch):
+    """Odie with a fresh store, pairing on, a fake brain and no voice worker (as with ODIE_VOICE=off): a test that
+    listens installs a FakeWorker (the voice_server fixture does)."""
+    monkeypatch.setenv("ODIE_PAIRING", "on")
+    monkeypatch.setattr(voice_worker, "current", None)
+    store = Store(tmp_path / "assistant.db")
+    store.init_schema()
+    return create_app(runner=FakeRunner(), store=store), store
+
+
+@pytest.fixture
+def app_client(isolated_settings, tmp_path, monkeypatch):
+    """A paired Mac app: it holds a device cookie and sends no Origin (not a browser)."""
+    app, store = _app(tmp_path, monkeypatch)
+    key = devices.add_device(store, "Test Mac")
+    with TestClient(app) as c:
+        c.cookies.set(devices.COOKIE, key)
+        yield c
+
+
+@pytest.fixture
+def unpaired_client(isolated_settings, tmp_path, monkeypatch):
+    app, _ = _app(tmp_path, monkeypatch)
+    with TestClient(app) as c:
+        yield c
+
+
+class FakeEars:
+    """What the stand-in voice server saw: each binary frame's length, and whether its socket closed."""
+    def __init__(self):
+        self.got: list[int] = []
+        self.closed = threading.Event()
+
+
+def fake_voice_server(port: int, ears: FakeEars, ready: threading.Event, stop: threading.Event):
+    """A stand-in voice server: /health says it hears; /stt/stream says ready, echoes each binary frame's length as a
+    words event, final on 'end'. On 'fail' it does what the real one does when a model fails: an error event, then a
+    close with 1011."""
+    def health(connection, request):
+        if request.path == "/health":
+            return connection.respond(200, json.dumps({"ok": True, "hearing": True}))
+        return None  # anything else: the WebSocket handshake
+    async def handle(ws):
+        try:
+            await ws.send(json.dumps({"type": "ready"}))
+            async for frame in ws:
+                if isinstance(frame, bytes):
+                    ears.got.append(len(frame))
+                    await ws.send(json.dumps({"type": "words", "text": f"{len(frame)} bytes", "final": False}))
+                elif json.loads(frame)["type"] == "fail":
+                    await ws.send(json.dumps({"type": "error", "text": "the model failed"}))
+                    await ws.close(1011, "the model failed")
+                    return
+                else:
+                    await ws.send(json.dumps({"type": "words", "text": "done", "final": True}))
+                    return
+        finally:
+            ears.closed.set()
+
+    async def main():
+        async with websockets.serve(handle, "127.0.0.1", port, process_request=health):
+            ready.set()
+            while not stop.is_set():
+                await asyncio.sleep(0.05)
+
+    asyncio.run(main())
+
+
+@pytest.fixture
+def voice_server(monkeypatch, free_port):
+    ears = FakeEars()
+    ready, stop = threading.Event(), threading.Event()
+    t = threading.Thread(target=fake_voice_server, args=(free_port, ears, ready, stop), daemon=True)
+    t.start()
+    assert ready.wait(5)
+    monkeypatch.setenv("ODIE_VOICE_PORT", str(free_port))
+    monkeypatch.setattr(voice_worker, "current", FakeWorker(installed=True, url=f"http://127.0.0.1:{free_port}"))
+    yield ears
+    stop.set()
+    t.join(5)
+
+
+def test_frames_go_through_in_order_and_the_stream_closes(app_client, voice_server):
+    with app_client.websocket_connect("/api/talk/listen") as ws:
+        assert json.loads(ws.receive_text()) == {"type": "ready"}
+        for size in (320, 640, 960):
+            ws.send_bytes(b"\x00" * size)
+        for size in (320, 640, 960):
+            assert json.loads(ws.receive_text()) == {"type": "words", "text": f"{size} bytes", "final": False}
+        ws.send_text(json.dumps({"type": "end"}))
+        assert json.loads(ws.receive_text()) == {"type": "words", "text": "done", "final": True}
+        with pytest.raises(WebSocketDisconnect) as closed:
+            ws.receive_text()
+        assert closed.value.code == 1000
+    assert voice_server.got == [320, 640, 960]
+
+
+def test_the_voice_server_hears_the_app_go(app_client, voice_server):
+    with app_client.websocket_connect("/api/talk/listen") as ws:
+        assert json.loads(ws.receive_text()) == {"type": "ready"}
+        ws.send_bytes(b"\x00" * 320)
+        assert json.loads(ws.receive_text())["text"] == "320 bytes"
+    assert voice_server.closed.wait(5)  # the app closed first: Odie closed its side to the voice server too
+
+
+def test_a_voice_server_error_reaches_the_app_with_its_code(app_client, voice_server):
+    with app_client.websocket_connect("/api/talk/listen") as ws:
+        assert json.loads(ws.receive_text()) == {"type": "ready"}
+        ws.send_text(json.dumps({"type": "fail"}))
+        assert json.loads(ws.receive_text()) == {"type": "error", "text": "the model failed"}
+        with pytest.raises(WebSocketDisconnect) as closed:
+            ws.receive_text()
+    assert closed.value.code == 1011
+    assert closed.value.reason == "the model failed"
+
+
+def test_no_voice_server_closes_with_4503(app_client, monkeypatch, free_port):
+    """The route accepts first and then closes with 4503, so the code reaches the Mac (a close before accept is only
+    an HTTP 403 there)."""
+    monkeypatch.setenv("ODIE_VOICE_PORT", str(free_port))   # nothing listens there
+    monkeypatch.setattr(voice_worker, "current", FakeWorker(installed=True, url=f"http://127.0.0.1:{free_port}"))
+    with pytest.raises(WebSocketDisconnect) as closed, app_client.websocket_connect("/api/talk/listen") as ws:
+        ws.receive_text()
+    assert closed.value.code == 4503
+    assert closed.value.reason == "Odie's local voice isn't running"
+
+
+def test_with_local_voice_off_the_port_is_never_tried(app_client, voice_server, monkeypatch):
+    """No worker (ODIE_VOICE=off): 4503, even with a voice server answering on the port (it is someone else's)."""
+    monkeypatch.setattr(voice_worker, "current", None)
+    with pytest.raises(WebSocketDisconnect) as closed, app_client.websocket_connect("/api/talk/listen") as ws:
+        ws.receive_text()
+    assert closed.value.code == 4503
+    assert closed.value.reason == "Odie's local voice is off (ODIE_VOICE=off)"
+    assert voice_server.got == []
+
+
+def test_an_unpaired_browser_is_refused(unpaired_client):
+    with pytest.raises(WebSocketDisconnect) as closed, unpaired_client.websocket_connect("/api/talk/listen"):
+        pass
+    assert closed.value.code == 4401  # DeviceGate: not paired
+
+
+def _settled(expected: int) -> bool:
+    """The route's count, given a moment to settle (the server side closes on its own thread)."""
+    for _ in range(50):
+        if voice.hearing_streams == expected:
+            return True
+        time.sleep(0.02)
+    return False
+
+
+def test_an_open_stream_is_counted_so_the_worker_stays(app_client, voice_server):
+    assert voice.hearing_streams == 0
+    with app_client.websocket_connect("/api/talk/listen") as ws:
+        assert json.loads(ws.receive_text()) == {"type": "ready"}
+        assert voice.hearing_streams == 1
+    assert _settled(0)
+
+
+class FakeWorker:
+    """voice_worker.VoiceWorker's face as hearing_available and the listen see it: set up or not, where it would
+    answer, and always up when asked (ensure) or checked (healthy)."""
+    def __init__(self, installed: bool, url: str = "http://127.0.0.1:9"):
+        self.installed, self.url = installed, url
+        self.problem = ""
+
+    async def ensure(self) -> bool:
+        return True
+
+    async def healthy(self) -> bool:
+        return True
+
+    async def stop(self):  # the app's shutdown stops the current worker
+        pass
+
+
+def _health(hears: bool | None) -> httpx.MockTransport:
+    """A voice server's /health: {"hearing": hears}, or without the field (an older server) when hears is None."""
+    body = {"ok": True} if hears is None else {"ok": True, "hearing": hears}
+    return httpx.MockTransport(lambda request: httpx.Response(200, json=body))
+
+
+def _nothing_answers() -> httpx.MockTransport:
+    def refuse(request):
+        raise httpx.ConnectError("refused", request=request)
+    return httpx.MockTransport(refuse)
+
+
+async def test_hearing_is_offered_while_the_worker_is_merely_set_up(monkeypatch):
+    monkeypatch.setattr(voice_worker, "current", FakeWorker(installed=True))
+    assert await voice.hearing_available(transport=_nothing_answers())  # stopped (Phonon reads aloud): the listen starts it
+    monkeypatch.setattr(voice_worker, "current", FakeWorker(installed=False))
+    assert not await voice.hearing_available(transport=_nothing_answers())
+
+
+async def test_a_running_worker_says_whether_it_hears(monkeypatch):
+    monkeypatch.setattr(voice_worker, "current", FakeWorker(installed=True))
+    assert await voice.hearing_available(transport=_health(True))
+    assert not await voice.hearing_available(transport=_health(False))  # running without the hearing models
+    assert not await voice.hearing_available(transport=_health(None))  # an older voice server
+
+
+async def test_without_a_worker_nothing_is_asked(monkeypatch):
+    monkeypatch.setattr(voice_worker, "current", None)  # ODIE_VOICE=off
+    assert not await voice.hearing_available(transport=_health(True))  # whatever hears on the port isn't Odie's
+
+
+@pytest.fixture
+def hearing_health(free_port):
+    """A voice server's /health on a real port that says it hears."""
+    class Health(BaseHTTPRequestHandler):
+        def do_GET(self):
+            body = json.dumps({"ok": True, "hearing": True}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args):
+            pass
+    server = HTTPServer(("127.0.0.1", free_port), Health)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    yield f"http://127.0.0.1:{free_port}"
+    server.shutdown()
+    server.server_close()
+
+
+def test_health_says_hearing_to_a_paired_app(app_client, hearing_health, monkeypatch):
+    monkeypatch.setattr(voice_worker, "current", FakeWorker(installed=True, url=hearing_health))
+    assert app_client.get("/api/health").json()["hearing"] is True
+
+
+def test_health_says_no_hearing_when_nothing_answers(app_client, free_port, monkeypatch):
+    monkeypatch.setenv("ODIE_VOICE_PORT", str(free_port))  # no worker, nothing on the port
+    assert app_client.get("/api/health").json()["hearing"] is False
+
+
+def test_an_unpaired_health_says_nothing_of_hearing(unpaired_client):
+    r = unpaired_client.get("/api/health")
+    assert r.status_code == 200 and "hearing" not in r.json()
+
+
+def test_the_hearing_url_is_the_voice_port_s_stream(monkeypatch):
+    monkeypatch.setenv("ODIE_VOICE_PORT", "8771")
+    assert voice.hearing_url() == "ws://127.0.0.1:8771/stt/stream"
+
+
+async def test_settle_leaves_the_worker_running_while_a_talk_listens(monkeypatch):
+    stopped = []
+
+    class Worker:
+        async def stop(self):
+            stopped.append(True)
+    monkeypatch.setattr(voice_worker, "current", Worker())
+    monkeypatch.setattr(voice, "worker_wanted", lambda store: False)  # read-aloud uses Phonon
+    monkeypatch.setattr(voice, "hearing_streams", 1)
+    await voice.settle_worker(store=None)
+    assert stopped == []
+    monkeypatch.setattr(voice, "hearing_streams", 0)
+    await voice.settle_worker(store=None)
+    assert stopped == [True]
