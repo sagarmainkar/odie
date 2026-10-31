@@ -1733,6 +1733,7 @@ async def voice_transcript(body: TranscriptIn, request: Request):
 
 # --- Live hearing: the Mac's microphone through Odie's own voice server (voice_server/server.py, /stt/stream) ---
 NOT_RUNNING = "Odie's local voice isn't running"
+VOICE_OFF = "Odie's local voice is off (ODIE_VOICE=off)"
 
 
 def _close_reason(text: str) -> str:
@@ -1745,11 +1746,11 @@ async def _voice_ears_ready() -> str | None:
     """Whether Odie's own voice server is up and can hear, started first if it is stopped (read-aloud with Phonon leaves
     it stopped); None when it is ready, else why not (the 4503 reason). Stopped but set up -> started, None; never set
     up -> "local voice isn't set up: ..."; running without the hearing models -> "Odie's local voice can't hear ...";
-    no worker (tests, a test copy) -> None: whatever answers on ODIE_VOICE_PORT is tried."""
+    no worker at all (ODIE_VOICE=off) -> VOICE_OFF: whatever answers on ODIE_VOICE_PORT is someone else's service."""
     from odie import voice, voice_worker
     worker = voice_worker.current
     if worker is None:
-        return None
+        return VOICE_OFF
     if not await worker.ensure():
         return worker.problem or NOT_RUNNING
     if not await voice.hearing_available():  # it runs now, so its /health decides

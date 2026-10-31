@@ -26,8 +26,8 @@ def free_port() -> int:
 
 
 def _app(tmp_path, monkeypatch):
-    """Odie with a fresh store, pairing on, a fake brain and no voice worker: the route talks to whatever answers on
-    ODIE_VOICE_PORT, as voice.local_available does without a worker."""
+    """Odie with a fresh store, pairing on, a fake brain and no voice worker (as with ODIE_VOICE=off): a test that
+    listens installs a FakeWorker (the voice_server fixture does)."""
     monkeypatch.setenv("ODIE_PAIRING", "on")
     monkeypatch.setattr(voice_worker, "current", None)
     store = Store(tmp_path / "assistant.db")
@@ -60,8 +60,13 @@ class FakeEars:
 
 
 def fake_voice_server(port: int, ears: FakeEars, ready: threading.Event, stop: threading.Event):
-    """A stand-in /stt/stream: says ready, echoes each binary frame's length as a words event, final on 'end'. On
-    'fail' it does what the real one does when a model fails: an error event, then a close with 1011."""
+    """A stand-in voice server: /health says it hears; /stt/stream says ready, echoes each binary frame's length as a
+    words event, final on 'end'. On 'fail' it does what the real one does when a model fails: an error event, then a
+    close with 1011."""
+    def health(connection, request):
+        if request.path == "/health":
+            return connection.respond(200, json.dumps({"ok": True, "hearing": True}))
+        return None  # anything else: the WebSocket handshake
     async def handle(ws):
         try:
             await ws.send(json.dumps({"type": "ready"}))
@@ -70,7 +75,7 @@ def fake_voice_server(port: int, ears: FakeEars, ready: threading.Event, stop: t
                     ears.got.append(len(frame))
                     await ws.send(json.dumps({"type": "words", "text": f"{len(frame)} bytes", "final": False}))
                 elif json.loads(frame)["type"] == "fail":
-                    await ws.send(json.dumps({"type": "error", "message": "the model failed"}))
+                    await ws.send(json.dumps({"type": "error", "text": "the model failed"}))
                     await ws.close(1011, "the model failed")
                     return
                 else:
@@ -80,7 +85,7 @@ def fake_voice_server(port: int, ears: FakeEars, ready: threading.Event, stop: t
             ears.closed.set()
 
     async def main():
-        async with websockets.serve(handle, "127.0.0.1", port):
+        async with websockets.serve(handle, "127.0.0.1", port, process_request=health):
             ready.set()
             while not stop.is_set():
                 await asyncio.sleep(0.05)
@@ -94,8 +99,9 @@ def voice_server(monkeypatch, free_port):
     ready, stop = threading.Event(), threading.Event()
     t = threading.Thread(target=fake_voice_server, args=(free_port, ears, ready, stop), daemon=True)
     t.start()
-    ready.wait(5)
+    assert ready.wait(5)
     monkeypatch.setenv("ODIE_VOICE_PORT", str(free_port))
+    monkeypatch.setattr(voice_worker, "current", FakeWorker(installed=True, url=f"http://127.0.0.1:{free_port}"))
     yield ears
     stop.set()
     t.join(5)
@@ -128,7 +134,7 @@ def test_a_voice_server_error_reaches_the_app_with_its_code(app_client, voice_se
     with app_client.websocket_connect("/api/talk/listen") as ws:
         assert json.loads(ws.receive_text()) == {"type": "ready"}
         ws.send_text(json.dumps({"type": "fail"}))
-        assert json.loads(ws.receive_text()) == {"type": "error", "message": "the model failed"}
+        assert json.loads(ws.receive_text()) == {"type": "error", "text": "the model failed"}
         with pytest.raises(WebSocketDisconnect) as closed:
             ws.receive_text()
     assert closed.value.code == 1011
@@ -139,10 +145,21 @@ def test_no_voice_server_closes_with_4503(app_client, monkeypatch, free_port):
     """The route accepts first and then closes with 4503, so the code reaches the Mac (a close before accept is only
     an HTTP 403 there)."""
     monkeypatch.setenv("ODIE_VOICE_PORT", str(free_port))   # nothing listens there
+    monkeypatch.setattr(voice_worker, "current", FakeWorker(installed=True, url=f"http://127.0.0.1:{free_port}"))
     with pytest.raises(WebSocketDisconnect) as closed, app_client.websocket_connect("/api/talk/listen") as ws:
         ws.receive_text()
     assert closed.value.code == 4503
     assert closed.value.reason == "Odie's local voice isn't running"
+
+
+def test_with_local_voice_off_the_port_is_never_tried(app_client, voice_server, monkeypatch):
+    """No worker (ODIE_VOICE=off): 4503, even with a voice server answering on the port (it is someone else's)."""
+    monkeypatch.setattr(voice_worker, "current", None)
+    with pytest.raises(WebSocketDisconnect) as closed, app_client.websocket_connect("/api/talk/listen") as ws:
+        ws.receive_text()
+    assert closed.value.code == 4503
+    assert closed.value.reason == "Odie's local voice is off (ODIE_VOICE=off)"
+    assert voice_server.got == []
 
 
 def test_an_unpaired_browser_is_refused(unpaired_client):
@@ -169,9 +186,17 @@ def test_an_open_stream_is_counted_so_the_worker_stays(app_client, voice_server)
 
 
 class FakeWorker:
-    """voice_worker.VoiceWorker's face as hearing_available sees it: set up or not, and where it would answer."""
+    """voice_worker.VoiceWorker's face as hearing_available and the listen see it: set up or not, where it would
+    answer, and always up when asked (ensure) or checked (healthy)."""
     def __init__(self, installed: bool, url: str = "http://127.0.0.1:9"):
         self.installed, self.url = installed, url
+        self.problem = ""
+
+    async def ensure(self) -> bool:
+        return True
+
+    async def healthy(self) -> bool:
+        return True
 
     async def stop(self):  # the app's shutdown stops the current worker
         pass
@@ -203,11 +228,9 @@ async def test_a_running_worker_says_whether_it_hears(monkeypatch):
     assert not await voice.hearing_available(transport=_health(None))  # an older voice server
 
 
-async def test_without_a_worker_the_port_is_asked(monkeypatch):
-    monkeypatch.setattr(voice_worker, "current", None)
-    assert await voice.hearing_available(transport=_health(True))
-    assert not await voice.hearing_available(transport=_health(False))
-    assert not await voice.hearing_available(transport=_nothing_answers())
+async def test_without_a_worker_nothing_is_asked(monkeypatch):
+    monkeypatch.setattr(voice_worker, "current", None)  # ODIE_VOICE=off
+    assert not await voice.hearing_available(transport=_health(True))  # whatever hears on the port isn't Odie's
 
 
 @pytest.fixture

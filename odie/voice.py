@@ -342,12 +342,12 @@ async def hearing_available(transport: httpx.AsyncBaseTransport | None = None) -
     Phonon), and the listen starts it, so being set up is enough until it runs; once it runs, its /health decides.
     One GET with a short timeout, so a hung worker never holds up /api/health (the Mac waits 2 s for it).
     Running and its /health says hearing -> True; running without the hearing models -> False; set up and stopped ->
-    True; never set up and stopped -> False. Without a worker (tests, a test copy), whatever answers on the port."""
+    True; never set up and stopped -> False; no worker at all (ODIE_VOICE=off) -> False: whatever answers on the port
+    is someone else's service, never asked."""
     from odie import voice_worker
     worker = voice_worker.current
     if worker is None:
-        answer = await _health_hearing(local_url(), 2, transport)
-        return answer is True
+        return False
     answer = await _health_hearing(worker.url, 0.5, transport)
     if answer is None:
         return bool(worker.installed)  # stopped: the listen starts it

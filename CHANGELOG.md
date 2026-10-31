@@ -2,7 +2,7 @@
 
 ## v0.2.37 (2026-10-31)
 
-- Odie can hear through its own ears on this Mac: Parakeet and Silero VAD run in Odie's own voice server and listen over `/api/talk/listen`, for the Mac app's talk and press-to-talk. The words appear as you speak, the end of a sentence is heard from your voice rather than from a recogniser's lag, and nothing leaves the Mac. The voice server starts when a talk begins and unloads the model after ten idle minutes (about 1.7 GB while a talk is on), and `/api/health` says `hearing`.
+- Odie can hear through its own ears on this Mac: Parakeet and Silero VAD run in Odie's own voice server and listen over `/api/talk/listen`, for the Mac app's talk and press-to-talk. The words appear as you speak, the end of a sentence is heard from your voice rather than from a recogniser's lag, and nothing leaves the Mac. The voice server starts when a talk begins and unloads the model after ten idle minutes (about 1.7 GB while a talk is on), and `/api/health` says `hearing`. The first talk downloads Parakeet (2.5 GB) once; until it is in, the Mac app uses its own recogniser, and the next talk picks Odie's ears up.
 
 ## v0.2.36 (2026-10-28)
 
