@@ -21,6 +21,7 @@ dependencies = [
   "anthropic>=1.12.1",
   "osxphotos>=0.77",
   "imageio-ffmpeg>=0.6.0",
+  "websockets>=15",  # /api/talk/listen connects to the voice server's /stt/stream
 ]
 
 [tool.uv]

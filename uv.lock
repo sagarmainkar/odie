@@ -1892,6 +1892,7 @@ dependencies = [
     { name = "pyyaml" },
     { name = "sse-starlette" },
     { name = "uvicorn", extra = ["standard"] },
+    { name = "websockets" },
     { name = "wrapt" },
 ]
 
@@ -1920,6 +1921,7 @@ requires-dist = [
     { name = "pyyaml" },
     { name = "sse-starlette", specifier = ">=2.1" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.30" },
+    { name = "websockets", specifier = ">=15" },
     { name = "wrapt", specifier = ">=2.5.0" },
 ]
 

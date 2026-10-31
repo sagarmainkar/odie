@@ -240,7 +240,9 @@ def worker_wanted_at_launch(store: Store) -> bool:
 async def settle_worker(store: Store) -> None:
     """After the read-aloud engine changes: Odie's own voice server is stopped when read-aloud no longer uses it, so the
     process goes away. When it does use it, nothing happens now: the next speech starts it (local_tts asks the worker
-    to be up first). Called by the async callers of set_tts, which is synchronous."""
+    to be up first). Called by the async callers of set_tts, which is synchronous. A talk listening through the
+    server (/api/talk/listen, hearing_streams) keeps it running. Phonon chosen, 1 stream open -> left running;
+    Phonon chosen, 0 open -> stopped; Kokoro chosen -> left alone."""
     from odie import voice_worker
     worker = voice_worker.current
     if worker is None or worker_wanted(store):
@@ -320,31 +322,36 @@ def hearing_url() -> str:
     return local_url().replace("http://", "ws://", 1) + "/stt/stream"
 
 
-async def _health_says_hearing(url: str, transport: httpx.AsyncBaseTransport | None = None) -> bool:
-    """What the voice server's /health says about hearing. {"hearing": true} -> True; {"hearing": false}, an older
-    server without the field, or nothing answering -> False."""
+async def _health_hearing(url: str, timeout: float, transport: httpx.AsyncBaseTransport | None = None) -> bool | None:
+    """What the voice server's /health says about hearing, in one quick GET; None when nothing answers there.
+    {"hearing": true} -> True; {"hearing": false}, an older server without the field, or a broken answer -> False;
+    nothing on the port -> None."""
     try:
-        async with httpx.AsyncClient(timeout=2, transport=transport) as c:
+        async with httpx.AsyncClient(timeout=timeout, transport=transport) as c:
             r = await c.get(f"{url}/health")
+    except httpx.HTTPError:
+        return None
+    try:
         return r.status_code == 200 and r.json().get("hearing") is True
-    except (httpx.HTTPError, ValueError, AttributeError):
+    except (ValueError, AttributeError):
         return False
 
 
 async def hearing_available(transport: httpx.AsyncBaseTransport | None = None) -> bool:
     """Whether a paired app can listen through Odie (/api/talk/listen). The worker is normally stopped (read-aloud uses
     Phonon), and the listen starts it, so being set up is enough until it runs; once it runs, its /health decides.
-    Set up and stopped -> True; running and its /health says hearing -> True; running without the hearing models ->
-    False; never set up -> False. Without a worker (tests, another Odie's), whatever answers on the port is asked."""
+    One GET with a short timeout, so a hung worker never holds up /api/health (the Mac waits 2 s for it).
+    Running and its /health says hearing -> True; running without the hearing models -> False; set up and stopped ->
+    True; never set up and stopped -> False. Without a worker (tests, a test copy), whatever answers on the port."""
     from odie import voice_worker
     worker = voice_worker.current
-    if worker is None or transport is not None:
-        return await _health_says_hearing(local_url(), transport)
-    if not worker.installed:
-        return False
-    if not await worker.healthy():
-        return True  # set up but stopped: the listen starts it
-    return await _health_says_hearing(worker.url)
+    if worker is None:
+        answer = await _health_hearing(local_url(), 2, transport)
+        return answer is True
+    answer = await _health_hearing(worker.url, 0.5, transport)
+    if answer is None:
+        return bool(worker.installed)  # stopped: the listen starts it
+    return answer
 
 
 async def own_server_can_speak() -> bool:

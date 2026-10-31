@@ -1774,9 +1774,20 @@ async def _app_to_voice(websocket: WebSocket, ears) -> None:
             return
 
 
+def _relayed_close(code: int | None) -> int:
+    """The close code to pass on to the app when the voice server closed its stream with an error. A code that may be
+    sent in a close frame is passed as it is; a missing or reserved one (no close frame, 1005, 1006, 1015) becomes 1011.
+    1011 -> 1011; 4500 -> 4500; None -> 1011; 1006 -> 1011."""
+    if code is None or code in (1005, 1006, 1015):
+        return 1011
+    return code
+
+
 async def _voice_to_app(ears, websocket: WebSocket) -> None:
     """The voice server's events (ready, speech, words, error) to the app. Ends when the voice server closes the stream
-    or the app has gone."""
+    or the app has gone. When the voice server closes with an error (it has sent its `error` event first), the app is
+    closed with the same code and reason: the failure is already reported, so no traceback."""
+    import websockets
     from starlette.websockets import WebSocketDisconnect
     try:
         async for frame in ears:
@@ -1786,49 +1797,55 @@ async def _voice_to_app(ears, websocket: WebSocket) -> None:
                 await websocket.send_text(frame)
     except WebSocketDisconnect:
         return
+    except websockets.ConnectionClosedError as e:
+        code = e.rcvd.code if e.rcvd is not None else None
+        reason = e.rcvd.reason if e.rcvd is not None else ""
+        await _close_app(websocket, _relayed_close(code), _close_reason(reason))
 
 
 async def _pass_through(websocket: WebSocket, ears) -> None:
-    """Copies frames both ways until either side is done, then stops the other copy. A failure in either is raised."""
+    """Copies frames both ways until either side is done, then stops the other copy. A failure in either is raised
+    (every finished copy's exception is read first, so none is left "never retrieved"). Cancelled (Odie shutting
+    down), both copies are cancelled and awaited, so none is left pending."""
     copies = [asyncio.create_task(_app_to_voice(websocket, ears)), asyncio.create_task(_voice_to_app(ears, websocket))]
-    done, pending = await asyncio.wait(copies, return_when=asyncio.FIRST_COMPLETED)
-    for copy in pending:
-        copy.cancel()
-    await asyncio.gather(*pending, return_exceptions=True)
-    for copy in done:
-        copy.result()
+    try:
+        done, _ = await asyncio.wait(copies, return_when=asyncio.FIRST_COMPLETED)
+    finally:
+        for copy in copies:
+            copy.cancel()
+        await asyncio.gather(*copies, return_exceptions=True)
+    failures = [copy.exception() for copy in done if not copy.cancelled()]
+    for failure in failures:
+        if failure is not None:
+            raise failure
 
 
 async def _close_app(websocket: WebSocket, code: int, reason: str = "") -> None:
-    """Closes the app's side unless it has already gone (then there's no one to tell)."""
-    from starlette.websockets import WebSocketState
+    """Closes the app's side unless it has already gone (then there's no one to tell).
+    The app still connected -> closed with `code`; the app already gone, or going while we close -> nothing."""
+    from starlette.websockets import WebSocketDisconnect, WebSocketState
     if websocket.client_state != WebSocketState.CONNECTED or websocket.application_state != WebSocketState.CONNECTED:
         return
     try:
         await websocket.close(code=code, reason=reason)
-    except (RuntimeError, OSError):
+    except (RuntimeError, OSError, WebSocketDisconnect):
         pass  # it went while we were closing
 
 
-@router.websocket("/talk/listen")
-async def talk_listen(websocket: WebSocket) -> None:
-    """Live hearing for a paired app (behind pairing, like every API): its 16 kHz PCM frames go to Odie's own voice
-    server's /stt/stream and that server's ready/speech/words/error events come back, as they are. Nothing is stored
-    or logged. 4503 when the voice server can't be started or can't hear; 1011 on an unexpected failure."""
+async def _listen(websocket: WebSocket) -> None:
+    """One listen, after the app's socket is accepted: the voice server ready and hearing, then the pass-through."""
     import websockets
 
     from odie import voice
-    await websocket.accept()  # first, so a 4503 reaches the app (a close before accept is only an HTTP 403 there)
     why_not = await _voice_ears_ready()
     if why_not:
         await _close_app(websocket, 4503, _close_reason(why_not))
         return
     try:
-        ears = await websockets.connect(voice.hearing_url(), max_size=None, open_timeout=5)
+        ears = await websockets.connect(voice.hearing_url(), max_size=None, open_timeout=5, proxy=None)  # never a proxy
     except (OSError, TimeoutError, websockets.InvalidHandshake):
         await _close_app(websocket, 4503, NOT_RUNNING)
         return
-    voice.hearing_streams += 1  # settle_worker leaves the worker running while this is open
     code = 1000
     try:
         await _pass_through(websocket, ears)
@@ -1836,9 +1853,22 @@ async def talk_listen(websocket: WebSocket) -> None:
         log.warning("talk listen: the pass-through to the voice server failed", exc_info=True)
         code = 1011
     finally:
-        voice.hearing_streams -= 1
         await ears.close()
     await _close_app(websocket, code)
+
+
+@router.websocket("/talk/listen")
+async def talk_listen(websocket: WebSocket) -> None:
+    """Live hearing for a paired app (behind pairing, like every API): its 16 kHz PCM frames go to Odie's own voice
+    server's /stt/stream and that server's ready/speech/words/error events come back, as they are. Nothing is stored
+    or logged. 4503 when the voice server can't be started or can't hear; 1011 on an unexpected failure."""
+    from odie import voice
+    await websocket.accept()  # first, so a 4503 reaches the app (a close before accept is only an HTTP 403 there)
+    voice.hearing_streams += 1  # before the worker starts (up to 30 s): settle_worker must not stop it meanwhile
+    try:
+        await _listen(websocket)
+    finally:
+        voice.hearing_streams -= 1
 
 
 # --- Persona: the assistant's name and picture ---
