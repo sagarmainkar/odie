@@ -37,9 +37,11 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 
 if __package__:
-    from .hearing import Hearing   # imported from the repo as voice_server.server (Odie's tests)
+    # Imported from the repo as voice_server.server (Odie's tests).
+    from .hearing import Hearing
 else:
-    from hearing import Hearing    # run from this folder: uvicorn server:app
+    # Run from this folder: uvicorn server:app
+    from hearing import Hearing
 
 MODELS = {"kokoro": "mlx-community/Kokoro-82M-bf16", "maya1": "0xhb/maya1-mlx-8bit"}
 HEARING_MODEL = "mlx-community/parakeet-tdt-0.6b-v3"
@@ -48,6 +50,7 @@ _loaded: dict[str, object] = {}
 _last_used: dict[str, float] = {}
 _locks = {k: threading.Lock() for k in [*MODELS, "hearing"]}  # one generation (or transcription) at a time per engine (GPU)
 _espeak_ready = False
+_open_streams = 0  # hearing streams open now; changed only on the event loop's thread, so no lock
 
 app = FastAPI(title="odie-voice")
 
@@ -139,7 +142,8 @@ def hearing_possible() -> bool:
 def load_hearing() -> tuple[Callable, Callable]:
     """The two models behind one stream's Hearing, as plain callables: (vad, transcribe).
 
-    Parakeet (2.5 GB) loads once and is shared by every stream; the janitor unloads it after 10 idle minutes. Silero
+    Parakeet (1.2 GB in 16-bit) loads once and is shared by every stream; the janitor unloads it after 10 idle minutes
+    with no stream open. Silero
     is tiny (12 ms to load once torch is up) but keeps state from chunk to chunk, so each stream gets its own, fresh:
     two streams may be open at once and must not mix their state. Transcriptions share the GPU, so each one takes the
     hearing lock; the lock is per call, never per stream."""
@@ -150,10 +154,16 @@ def load_hearing() -> tuple[Callable, Callable]:
 
     with _locks["hearing"]:
         if "hearing" not in _loaded:
-            _loaded["hearing"] = load_model(HEARING_MODEL)
+            # The published weights are float32 (2.5 GB). Cast them once to 16-bit, the dtype Parakeet runs in anyway:
+            # half the memory. set_dtype casts only the floating parameters; clear_cache hands back the float32 copies.
+            model = load_model(HEARING_MODEL)
+            model.set_dtype(mx.bfloat16)
+            mx.eval(model.parameters())
+            mx.clear_cache()
+            _loaded["hearing"] = model
         parakeet = _loaded["hearing"]
         silero = load_silero_vad()
-    _last_used["hearing"] = time.time()
+        _last_used["hearing"] = time.time()
 
     def vad(chunk: np.ndarray) -> float:
         # 512 float32 samples -> the probability they are speech, e.g. a spoken vowel -> 0.98, room hum -> 0.01.
@@ -166,7 +176,7 @@ def load_hearing() -> tuple[Callable, Callable]:
         # A whole utterance's float32 samples -> its text, e.g. 2 s of speech -> "what is the weather".
         with _locks["hearing"]:
             _last_used["hearing"] = time.time()
-            result = parakeet.generate(mx.array(audio))
+            result = parakeet.generate(mx.array(audio), dtype=mx.bfloat16)
         return result.text.strip()
 
     return vad, transcribe
@@ -201,21 +211,33 @@ async def serve_hearing(ws, hearing: Hearing) -> None:
     or a fake in the tests). Says {"type": "ready"}, then feeds each binary frame to the hearing and sends the events
     it makes, as JSON texts, in order. The text {"type": "end"} closes an open utterance (its speech off and final go
     out) and closes the socket. If the client goes away instead, there is nobody to send to: the hearing is just
-    forgotten. Other texts are ignored."""
+    forgotten. Other texts are ignored. If the hearing fails (a model raises), the client gets {"type": "error"} and
+    the socket closes with 1011."""
     await ws.send_text(json.dumps({"type": "ready"}))
-    while True:
-        message = await ws.receive()
-        if message["type"] == "websocket.disconnect":
-            hearing.reset()
-            return
-        if is_audio(message):
-            events = await asyncio.to_thread(hearing.feed, message["bytes"])
-            await _send_events(ws, events)
-        elif asks_to_end(message):
-            break
-    events = await asyncio.to_thread(hearing.end)
+    try:
+        while True:
+            message = await ws.receive()
+            if message["type"] == "websocket.disconnect":
+                hearing.reset()
+                return
+            if is_audio(message):
+                events = await asyncio.to_thread(hearing.feed, message["bytes"])
+                await _send_events(ws, events)
+            elif asks_to_end(message):
+                break
+        events = await asyncio.to_thread(hearing.end)
+    except Exception as e:  # noqa: BLE001
+        await _fail(ws, e)
+        return
     await _send_events(ws, events)
     await ws.close()
+
+
+async def _fail(ws, error: Exception) -> None:
+    """Tell the client what went wrong and close with 1011 (server error). Quietly, if the client is already gone."""
+    with contextlib.suppress(Exception):
+        await ws.send_text(json.dumps({"type": "error", "text": f"{type(error).__name__}: {str(error)[:200]}"}))
+        await ws.close(1011)
 
 
 class Inbox:
@@ -253,26 +275,39 @@ class Inbox:
 
 @app.websocket("/stt/stream")
 async def stt_stream(ws: WebSocket):
+    global _open_streams
     await ws.accept()
     inbox = Inbox(ws)
+    _open_streams += 1
     try:
         vad, transcribe = await asyncio.to_thread(load_hearing)  # seconds the first time; the client's audio queues
         await serve_hearing(inbox, Hearing(vad=vad, transcribe=transcribe))
-    except Exception as e:  # noqa: BLE001
-        with contextlib.suppress(Exception):  # the client may already be gone
-            await ws.send_text(json.dumps({"type": "error", "text": f"{type(e).__name__}: {str(e)[:200]}"}))
-            await ws.close(1011)
+    except Exception as e:  # noqa: BLE001  (the models failed to load; serve_hearing reports its own failures)
+        await _fail(ws, e)
     finally:
+        _open_streams -= 1
         inbox.stop()
+
+
+def hearing_in_use(open_streams: int) -> bool:
+    """Whether the janitor must keep Parakeet however long it has been idle: while any stream is open. That stream's
+    transcribe still holds the model, so unloading frees nothing and the next stream would load a second copy.
+    idle 11 min, 1 stream open -> keep; idle 11 min, 0 open -> unload."""
+    return open_streams > 0
 
 
 async def _janitor():
     while True:
         await asyncio.sleep(60)
         for engine, idle in IDLE_UNLOAD.items():
+            if engine == "hearing" and hearing_in_use(_open_streams):
+                continue
             if engine in _loaded and time.time() - _last_used.get(engine, 0) > idle and not _locks[engine].locked():
                 _loaded.pop(engine, None)
                 gc.collect()
+                # Both engines are MLX models: MLX keeps freed buffers in its own cache; hand them back to macOS.
+                import mlx.core as mx
+                mx.clear_cache()
 
 
 def _watch_parent() -> None:

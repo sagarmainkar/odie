@@ -1,10 +1,8 @@
-import asyncio
 import json
 
 import numpy as np
 import pytest
 
-from voice_server import hearing as hmod
 from voice_server.hearing import Hearing
 
 
@@ -15,6 +13,7 @@ class FakeSocket:
         self.frames = list(frames)
         self.sent: list[str] = []
         self.closed = False
+        self.close_code: int | None = None
 
     async def receive(self):
         if not self.frames:
@@ -27,6 +26,7 @@ class FakeSocket:
 
     async def close(self, code: int = 1000, reason: str = ""):
         self.closed = True
+        self.close_code = code
 
 
 def tone(seconds: float) -> bytes:
@@ -45,3 +45,31 @@ async def test_ready_then_speech_then_words_then_end():
     assert {"type": "speech", "on": True} in events
     assert events[-1] == {"type": "words", "text": "what is the weather", "final": True}
     assert ws.closed
+
+
+@pytest.mark.asyncio
+async def test_a_disconnect_mid_speech_sends_no_final_and_leaves_the_socket_alone():
+    from voice_server.server import serve_hearing
+    h = Hearing(vad=lambda c: 0.9 if np.abs(c).max() > 0.1 else 0.0, transcribe=lambda a: "what is the weather")
+    ws = FakeSocket([tone(0.5)])  # speech still going, then the client is gone (no "end")
+    await serve_hearing(ws, h)
+    events = [json.loads(s) for s in ws.sent]
+    assert {"type": "speech", "on": True} in events
+    assert not any(e["type"] == "words" and e["final"] for e in events)
+    assert not ws.closed
+    assert not h.speaking  # forgotten
+
+
+@pytest.mark.asyncio
+async def test_a_failing_recogniser_sends_an_error_and_closes_with_1011():
+    from voice_server.server import serve_hearing
+
+    def broken(audio):
+        raise RuntimeError("the GPU fell over")
+
+    h = Hearing(vad=lambda c: 0.9 if np.abs(c).max() > 0.1 else 0.0, transcribe=broken)
+    ws = FakeSocket([tone(0.5), np.zeros(16000 // 2, np.int16).tobytes(), json.dumps({"type": "end"})])
+    await serve_hearing(ws, h)
+    events = [json.loads(s) for s in ws.sent]
+    assert events[-1] == {"type": "error", "text": "RuntimeError: the GPU fell over"}
+    assert ws.close_code == 1011
