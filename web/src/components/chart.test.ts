@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { changePct, parseChart, smoothPath } from "./ChartBlock";
-import { fmt } from "./chartData";
-import { drawWidth } from "./chartWidth";
+import { parseChart } from "./ChartBlock";
+import { changePct, fmt } from "./chartData";
+import { smoothPath } from "./chartGeometry";
 
 describe("parseChart", () => {
   it("accepts the market tool's block", () => {
@@ -39,19 +39,7 @@ describe("fmt", () => {
   it("keeps US millions and percentages in plain grouping, lakhs only for rupees", () => {
     expect(fmt(109417, "$M")).toBe("$109,417M");
     expect(fmt(34.0, "%")).toBe("34%");
-    expect(fmt(250000, "₹")).toBe("₹2.50L");
+    expect(fmt(250000, "₹")).toBe("₹2.5L");
     expect(fmt(294059, "₹Cr")).toBe("₹2,94,059 Cr");
-  });
-});
-
-describe("drawWidth", () => {
-  it("draws 320 wide on a phone, scaled to fit as always", () => {
-    expect(drawWidth(0)).toBe(320);
-    expect(drawWidth(300)).toBe(320);
-    expect(drawWidth(480)).toBe(320);
-  });
-  it("draws a wide chart at its own width (1.3x), so it spreads sideways instead of growing tall", () => {
-    expect(drawWidth(740)).toBe(569);
-    expect(drawWidth(650)).toBe(500);
   });
 });

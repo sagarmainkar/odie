@@ -66,7 +66,7 @@ describe("a heatmap cell's colour and text", () => {
     expect(rangeOf([[null]])).toEqual({ low: 0, high: 0 });
   });
   it("shades losses red and gains green, deeper the bigger, on a diverging scale", () => {
-    expect(cellColour(-10, range, "diverging")).toBe("color-mix(in srgb, var(--t-chart-8) 85%, transparent)");
+    expect(cellColour(-10, range, "diverging")).toBe("color-mix(in srgb, var(--t-chart-6) 85%, transparent)");
     expect(cellColour(10, range, "diverging")).toBe("color-mix(in srgb, var(--t-chart-3) 85%, transparent)");
     expect(cellColour(5, range, "diverging")).toBe("color-mix(in srgb, var(--t-chart-3) 48%, transparent)");
     expect(cellColour(0, range, "diverging")).toBe("color-mix(in srgb, var(--t-chart-3) 10%, transparent)");
@@ -99,7 +99,7 @@ describe("drawing them", () => {
   it("draws a heatmap with numbers in the cells when there are few columns, and none when there are many", () => {
     const few = draw([{ type: "heatmap", rows: ["JPM"], cols: ["Q1", "Q2"], values: [[4.1, -1.2]], unit: "%" }]);
     expect(few).toContain(">4.1%<");
-    expect(few).toContain("var(--t-chart-8)");  // the loss
+    expect(few).toContain("var(--t-chart-6)");  // the loss
     expect(few).toContain('role="rowheader"');
     const cols = Array.from({ length: 8 }, (_, i) => `M${i + 1}`);
     const many = draw([{ type: "heatmap", rows: ["JPM"], cols, values: [cols.map((_, i) => i)] }]);

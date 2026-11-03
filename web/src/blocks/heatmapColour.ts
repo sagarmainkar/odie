@@ -1,9 +1,11 @@
-// The colour of one heatmap cell. Diverging: losses go red (chart colour 8) and gains green (chart colour 3), the
+// The colour of one heatmap cell. Diverging: losses go red (chart colour 6) and gains green (chart colour 3), the
 // deeper the bigger; sequential: one blue (chart colour 1), light to dark. The colour is mixed with transparent so it
 // sits on the card in day and night alike.
 
 export type HeatRange = { low: number; high: number };
 
+// The chart palette's places (styles.css, --t-chart-*): 1 blue, 3 green, 6 red.
+const BLUE = 1, GREEN = 3, RED = 6;
 const FAINT = 10;  // % of the colour for the smallest value, so even a zero cell reads as part of the grid
 const DEEP = 85;   // % for the biggest
 
@@ -26,7 +28,7 @@ export function rangeOf(values: (number | null)[][]): HeatRange {
  * A cell's background as CSS. Diverging shades by size against the biggest number either side of zero, so -5 next to
  * +10 is half as deep: the shades stay comparable. Worked examples (range low -10, high 10):
  *   null, any scale            → "var(--t-well)" (no number: the plain well)
- *   -10, diverging             → chart colour 8 at 85% (the biggest loss, deepest red)
+ *   -10, diverging             → chart colour 6 at 85% (the biggest loss, deepest red)
  *   10, diverging              → chart colour 3 at 85% (the biggest gain, deepest green)
  *   5, diverging               → chart colour 3 at 48% (half as big as the biggest)
  *   0, diverging               → chart colour 3 at 10% (faint)
@@ -39,11 +41,11 @@ export function cellColour(value: number | null, range: HeatRange, scale: "diver
   let share: number;  // 0 (faint) to 1 (deep)
   if (scale === "diverging") {
     const biggest = Math.max(Math.abs(range.low), Math.abs(range.high));
-    colour = value < 0 ? 8 : 3;
+    colour = value < 0 ? RED : GREEN;
     share = biggest === 0 ? 0 : Math.abs(value) / biggest;
   } else {
     const span = range.high - range.low;
-    colour = 1;
+    colour = BLUE;
     share = span === 0 ? 1 : (value - range.low) / span;
   }
   const percent = Math.round(FAINT + (DEEP - FAINT) * share);

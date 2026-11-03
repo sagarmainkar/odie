@@ -7,14 +7,14 @@ describe("app locale", () => {
     rememberLocale("en-US");
     expect(userLocale()).toBe("en-US");
     expect(usesLakhCrore()).toBe(false);
-    expect(fmt(2500000)).toBe("2,500,000");
+    expect(fmt(2500000)).toBe("2.5M");
     rememberLocale("en-IN");
     expect(usesLakhCrore()).toBe(true);
-    expect(fmt(2500000)).toBe("25.00L");
+    expect(fmt(2500000)).toBe("25L");
   });
   it("rupee amounts read in lakh/crore anywhere", () => {
     rememberLocale("en-US");
-    expect(fmt(25000000, "₹")).toBe("₹2.50Cr");
+    expect(fmt(25000000, "₹")).toBe("₹2.5Cr");
     rememberLocale("en-IN");
   });
   it("ignores an empty locale", () => {

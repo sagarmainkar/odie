@@ -1,10 +1,20 @@
-import { useEffect, useId, useMemo, useRef, useState } from "react";
-import { drawWidth } from "./chartWidth";
+// Charts that go up and down (line, bar, area, stacked, combo), and the parser every chart goes through. Pies and
+// donuts, and horizontal bars, have files of their own. Hand-drawn SVG at the width the chart has on screen: the sums
+// behind it are in chartData.ts, where things go in chartLayout.ts, the marks in *Marks.tsx, the hover card in
+// ChartTip.tsx.
+import { useId, useMemo, useRef, useState, type PointerEvent } from "react";
 import {
-  chartKind, chartScales, fmt, isOnRightScale, maxSeries, partColour, pieSlices, stackSeries, totalAt,
-  type Band, type ChartKind, type ChartSeries, type ChartSpec,
+  changePct, chartKind, chartScales, fmt, isOnRightScale, kindToDraw, maxSeries, pieSlices, stackSeries, totalAt,
+  type ChartKind, type ChartSeries, type ChartSpec,
 } from "./chartData";
+import { namesFitAtEnds, seriesEnds, xyLayout, xyTip, type XYLayout } from "./chartLayout";
+import { pickKeys } from "./chartPick";
+import { useWidth } from "./useWidth";
+import { ChartTip } from "./ChartTip";
 import { ChartLegend } from "./ChartLegend";
+import { LineMarks, Crosshair } from "./LineMarks";
+import { BarMarks, ComboMarks, StackMarks } from "./ColumnMarks";
+import { AreaMarks } from "./AreaMarks";
 import { HBarChart } from "./HBarChart";
 import { PieChart } from "./PieChart";
 import { readJson } from "../blocks/parse/lenientJson";
@@ -22,7 +32,11 @@ export type { ChartSpec } from "./chartData";
  *  Combo: the first series is drawn as bars, the others as lines. A line with its own `unit`, unlike the chart's, or
  *  with `axis: "right"`, gets a scale of its own on the right:
  *    {"type": "combo", "unit": "₹Cr", "x": ["Q1", "Q2"], "series": [{"name": "Revenue", "data": [65799, 67087]},
- *                                                               {"name": "Margin", "unit": "%", "data": [18.4, 16]}]} */
+ *                                                               {"name": "Margin", "unit": "%", "data": [18.4, 16]}]}
+ *  figure: false (a % change comparison, where a change of a change means nothing) drops the headline number and the
+ *  change chip; only true or false count. tone: "change" (exactly that) colours a one-series line by direction from its
+ *  first value. Anything else in either is ignored, so an older or sloppier answer still draws.
+ *    {..., "figure": false} → spec.figure false;  {..., "figure": "false"} → no figure (shown);  {..., "tone": "Change"} → no tone */
 export function parseChart(text: string): ChartSpec | null {
   const d: any = readJson(text);  // JSON, with the slips models make mended (numbers with thousands commas)
   if (!d || typeof d !== "object" || !Array.isArray(d.x) || !Array.isArray(d.series) || !d.series.length) return null;
@@ -42,8 +56,11 @@ export function parseChart(text: string): ChartSpec | null {
     x = slices.x;
     series = [{ ...series[0], data: slices.data }];
   }
-  return { type, title: typeof d.title === "string" ? d.title : undefined, x,
+  const spec: ChartSpec = { type, title: typeof d.title === "string" ? d.title : undefined, x,
     series, unit, source: typeof d.source === "string" ? d.source : undefined };
+  if (typeof d.figure === "boolean") spec.figure = d.figure;
+  if (d.tone === "change") spec.tone = "change";
+  return spec;
 }
 
 /** One series as the model wrote it → its name, its numbers (anything else a gap), its own unit, its scale. */
@@ -55,199 +72,133 @@ function readSeries(s: any, k: number, type: ChartKind, chartUnit: string | unde
   return { name, data, unit, right };
 }
 
-const H = 150, L = 8, R = 8, T = 12, B = 22;
-const SERIES = ["", "var(--t-dim)", "var(--t-line-2)"];  // series 0 uses the iris gradient
+const WIDE_FROM = 60;  // a line with this many points may be drawn wider than the usual cap
 
-/** First to last value as a percentage (nulls skipped); null when there's nothing to compare. */
-export function changePct(data: (number | null)[]): number | null {
-  const v = data.filter((x): x is number => x !== null);
-  if (v.length < 2 || v[0] === 0) return null;
-  return ((v[v.length - 1] - v[0]) / Math.abs(v[0])) * 100;
-}
-
-/** A smooth line through the points (Catmull-Rom as cubic Béziers). */
-export function smoothPath(pts: [number, number][]): string {
-  if (!pts.length) return "";
-  const f = (n: number) => +n.toFixed(1);
-  let d = `M${f(pts[0][0])},${f(pts[0][1])}`;
-  for (let i = 0; i < pts.length - 1; i++) {
-    const p0 = pts[i - 1] ?? pts[i], p1 = pts[i], p2 = pts[i + 1], p3 = pts[i + 2] ?? p2;
-    d += ` C${f(p1[0] + (p2[0] - p0[0]) / 6)},${f(p1[1] + (p2[1] - p0[1]) / 6)} ${f(p2[0] - (p3[0] - p1[0]) / 6)},${f(p2[1] - (p3[1] - p1[1]) / 6)} ${f(p2[0])},${f(p2[1])}`;
-  }
-  return d;
-}
-
-/** A chart of any kind: pies and donuts, and horizontal bars, have drawings of their own; the rest go up and down. */
+/** A chart of any kind: pies and donuts, and horizontal bars (asked for, or bars that read better as rows: see
+ *  kindToDraw), have drawings of their own; the rest go up and down. */
 export function ChartBlock({ spec }: { spec: ChartSpec }) {
   if (spec.type === "pie" || spec.type === "donut") return <PieChart spec={spec} />;
-  if (spec.type === "hbar") return <HBarChart spec={spec} />;
+  if (kindToDraw(spec) === "hbar") return <HBarChart spec={spec} />;
   return <XYChart spec={spec} />;
 }
 
-/** Line, bar, area, stacked and combo: x labels along the bottom, values up the side. */
+/** Line, bar, area, stacked and combo: x labels along the bottom, values up the side, a hover card per x label. */
 function XYChart({ spec }: { spec: ChartSpec }) {
-  const [hover, setHover] = useState<number | null>(null);
+  const plot = useRef<HTMLDivElement>(null);
   const svg = useRef<SVGSVGElement>(null);
-  const [shownWidth, setShownWidth] = useState(0);
-  useEffect(() => {  // follow the drawing's width on screen (the window resized, the chat column changed)
-    const el = svg.current;
-    if (!el || typeof ResizeObserver === "undefined") return;
-    const watcher = new ResizeObserver(() => setShownWidth(el.getBoundingClientRect().width));
-    watcher.observe(el);
-    return () => watcher.disconnect();
-  }, []);
-  const W = drawWidth(shownWidth);
+  const width = useWidth(plot);
+  const [hover, setHover] = useState<number | null>(null);
   const gid = useId().replace(/[^a-zA-Z0-9]/g, "");
   const n = spec.x.length;
-  const slotted = spec.type === "bar" || spec.type === "stacked" || spec.type === "combo";  // each label owns a column
   const piled = spec.type === "stacked" || spec.type === "area";  // the series pile on each other
   const bands = useMemo(() => (piled ? stackSeries(spec.series, n) : null), [spec, n, piled]);
   const scales = useMemo(() => chartScales(spec, bands), [spec, bands]);
-  const { min, max } = scales.left;
-  const slot = (W - L - R) / n;
-  const xAt = (i: number) => slotted ? L + slot * (i + 0.5) : L + (n === 1 ? (W - L - R) / 2 : ((W - L - R) * i) / (n - 1));
-  const yAt = (v: number) => T + (H - T - B) * (1 - (v - min) / (max - min || 1));
-  const yRight = (v: number) => {
-    if (!scales.right) return yAt(v);
-    const r = scales.right;
-    return T + (H - T - B) * (1 - (v - r.min) / (r.max - r.min || 1));
-  };
-  const yOf = (s: ChartSeries) => (s.right ? yRight : yAt);
-  const unitOf = (s: ChartSeries) => s.unit ?? spec.unit;
-  const pct = spec.type === "line" ? changePct(spec.series[0].data) : null;
-  const lastIdx = (() => { const d = spec.series[0].data; for (let i = d.length - 1; i >= 0; i--) if (d[i] !== null) return i; return n - 1; })();
-  const shown = hover ?? lastIdx;
-  // The big number: the whole pile for stacked bars and areas, else the first series.
-  const big = piled ? totalAt(spec.series, shown) : spec.series[0].data[shown];
-  const bigUnit = piled ? spec.unit : unitOf(spec.series[0]);
-  // The small numbers beside it: the other series (a pile's parts have theirs in the legend, where there's room).
-  const listed = piled ? [] : spec.series.slice(1);
-  const peak = spec.type === "bar" ? spec.series[0].data.reduce<number>((best, v, i, a) => (v !== null && (a[best] === null || v > (a[best] as number)) ? i : best), 0) : -1;
-  const faded = (i: number) => (hover === null || hover === i ? 1 : 0.45);  // the other columns while one is picked
+  const layout = useMemo(() => xyLayout(spec, width, scales), [spec, width, scales]);
+  const tip = useMemo(() => (hover === null ? null : xyTip(spec, hover, layout)), [spec, hover, layout]);
 
-  function pick(clientX: number) {
-    const r = svg.current?.getBoundingClientRect(); if (!r) return;
-    const x = ((clientX - r.left) / r.width) * W;
-    let best = 0, dist = Infinity;
-    for (let i = 0; i < n; i++) { const d = Math.abs(xAt(i) - x); if (d < dist) { dist = d; best = i; } }
+  /** Picks the x label nearest the pointer. */
+  function pickAt(e: PointerEvent) {
+    const r = svg.current?.getBoundingClientRect();
+    if (!r || !r.width) return;
+    const x = ((e.clientX - r.left) / r.width) * layout.W;
+    let best = 0;
+    for (let i = 1; i < n; i++) if (Math.abs(layout.xAt(i) - x) < Math.abs(layout.xAt(best) - x)) best = i;
     setHover(best);
   }
 
+  const severalLines = spec.type === "line" && spec.series.length > 1;
+  const namedAtEnds = namesFitAtEnds(spec, width);
+  const legend = spec.type === "combo" || (spec.type === "bar" && spec.series.length > 1) || (severalLines && !namedAtEnds);
+  const wide = spec.type === "line" && n >= WIDE_FROM;
   return (
-    <figure className="chart glass glass-solid rounded-[26px] px-4 pt-4 pb-3 my-2">
-      <figcaption className="flex items-center justify-between gap-2">
-        <span className="text-[13px] font-semibold text-muted truncate">{spec.title ?? spec.series[0].name ?? "Chart"}</span>
-        {pct !== null && <span className={`chip ${pct >= 0 ? "chip-good" : "chip-warn"}`}>{pct >= 0 ? "▲" : "▼"} {Math.abs(pct).toFixed(1)}%</span>}
-      </figcaption>
-      <div className="flex items-baseline gap-2 mt-0.5">
-        <span className="text-[30px] leading-tight font-extrabold tracking-[-0.03em] tabular-nums">{big === null || big === undefined ? "–" : fmt(big, bigUnit)}</span>
-        <span className="text-[12px] text-muted tabular-nums truncate">
-          {hover !== null ? spec.x[shown] : ""}
-          {listed.map((s, k) => s.data[shown] === null || s.data[shown] === undefined ? null : <span key={k} className="ml-2">{s.name ? `${s.name} ` : ""}{fmt(s.data[shown] as number, unitOf(s))}</span>)}
-        </span>
+    <figure className={`chart${wide ? " chart-wide" : ""} glass glass-solid rounded-[26px] px-4 pt-4 pb-3 my-2`}>
+      <Headline spec={spec} hover={hover} />
+      <div ref={plot} className="relative mt-2">
+        <svg ref={svg} width="100%" height={layout.H} viewBox={`0 0 ${layout.W} ${layout.H}`} className="chart-svg"
+          role="img" aria-label={spec.title ?? "chart"} {...pickKeys(n, hover, setHover)}
+          onPointerDown={pickAt} onPointerMove={(e) => (e.buttons || e.pointerType === "mouse") && pickAt(e)}
+          onPointerLeave={() => setHover(null)}>
+          <XLabels spec={spec} layout={layout} />
+          {spec.type === "line" && <LineMarks spec={spec} layout={layout} gid={gid} hover={hover} />}
+          {spec.type === "bar" && <BarMarks spec={spec} layout={layout} hover={hover} />}
+          {spec.type === "stacked" && bands && <StackMarks bands={bands} layout={layout} hover={hover} />}
+          {spec.type === "area" && bands && <AreaMarks bands={bands} layout={layout} />}
+          {spec.type === "combo" && <ComboMarks spec={spec} layout={layout} hover={hover} />}
+          {(spec.type === "area" || spec.type === "combo") && hover !== null && <Crosshair layout={layout} at={hover} />}
+        </svg>
+        <ChartTip tip={tip} />
       </div>
-      <svg ref={svg} viewBox={`0 0 ${W} ${H}`} className="w-full h-auto touch-none select-none mt-1 overflow-visible" role="img" aria-label={spec.title ?? "chart"}
-        onPointerDown={(e) => pick(e.clientX)} onPointerMove={(e) => (e.buttons || e.pointerType === "mouse") && pick(e.clientX)} onPointerLeave={() => setHover(null)}>
-        <defs>
-          <linearGradient id={`fill-${gid}`} x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#8a7dff" stopOpacity=".35" /><stop offset="1" stopColor="#8a7dff" stopOpacity="0" /></linearGradient>
-          <linearGradient id={`stroke-${gid}`} x1="0" x2="1" y1="0" y2="0"><stop offset="0" stopColor="#7d8cff" /><stop offset=".6" stopColor="#b08bff" /><stop offset="1" stopColor="#ff8cc0" /></linearGradient>
-          <linearGradient id={`bar-${gid}`} x1="0" x2="0" y1="0" y2="1"><stop offset="0" stopColor="#b08bff" /><stop offset="1" stopColor="#7d8cff" /></linearGradient>
-        </defs>
-        {[0, n - 1].filter((i, k, a) => a.indexOf(i) === k).map((i) => (
-          <text key={i} x={xAt(i)} y={H - 5} textAnchor={slotted ? "middle" : i === 0 ? "start" : "end"} fontSize="11" fill="var(--t-dim)">{String(spec.x[i])}</text>
-        ))}
-        {spec.type === "bar" && spec.series.map((s, k) => {
-          const bw = (slot * 0.62) / spec.series.length;
-          return s.data.map((v, i) => v === null ? null : (
-            <rect key={`${k}-${i}`} x={xAt(i) - slot * 0.31 + k * bw} y={Math.min(yAt(v), yAt(0))} width={Math.max(bw - 2, 3)}
-              height={Math.max(Math.abs(yAt(0) - yAt(v)), 2)} rx={Math.min(8, bw / 2)}
-              fill={k === 0 && (hover === null ? i === peak : i === hover) ? `url(#bar-${gid})` : k === 0 ? "var(--t-line-2)" : SERIES[k]} />
-          ));
-        })}
-        {spec.type === "line" && spec.series.map((s, k) => {
-          const pts = s.data.map((v, i) => (v === null ? null : [xAt(i), yAt(v)] as [number, number])).filter(Boolean) as [number, number][];
-          if (!pts.length) return null;
-          const d = smoothPath(pts);
-          return (
-            <g key={k}>
-              {k === 0 && <path d={`${d} L${pts[pts.length - 1][0]},${H - B} L${pts[0][0]},${H - B} Z`} fill={`url(#fill-${gid})`} />}
-              {k === 0
-                ? <path d={d} fill="none" stroke={`url(#stroke-${gid})`} strokeWidth="3" strokeLinecap="round" pathLength={1} strokeDasharray="1" strokeDashoffset="1" className="chart-draw" />
-                : <path d={d} fill="none" stroke={SERIES[k]} strokeWidth="2" strokeLinecap="round" />}
-            </g>
-          );
-        })}
-        {spec.type === "stacked" && bands && bands.map((partBands, k) => partBands.map((b, i) => b === null || b.from === b.to ? null : (
-          // each part 2px shorter than its band, so the parts sit apart; a zero part isn't drawn
-          <rect key={`${k}-${i}`} x={xAt(i) - slot * 0.31} y={Math.min(yAt(b.from), yAt(b.to))} width={Math.max(slot * 0.62, 3)}
-            height={Math.max(Math.abs(yAt(b.from) - yAt(b.to)) - 2, 1)} rx="3" fill={partColour(k)} opacity={faded(i)} />
-        )))}
-        {spec.type === "area" && bands && bands.map((partBands, k) => <Area key={k} bands={partBands} xAt={xAt} yAt={yAt} colour={partColour(k)} />)}
-        {spec.type === "combo" && (
-          <g>
-            {spec.series[0].data.map((v, i) => v === null ? null : (
-              <rect key={i} x={xAt(i) - slot * 0.31} y={Math.min(yAt(v), yAt(0))} width={Math.max(slot * 0.62, 3)}
-                height={Math.max(Math.abs(yAt(0) - yAt(v)), 2)} rx={Math.min(6, slot * 0.31)} fill={partColour(0)} opacity={faded(i)} />
-            ))}
-            {spec.series.slice(1).map((s, j) => <ComboLine key={j} data={s.data} xAt={xAt} yAt={yOf(s)} colour={partColour(j + 1)} />)}
-          </g>
-        )}
-        {(spec.type === "area" || spec.type === "combo") && hover !== null && (
-          <line x1={xAt(shown)} x2={xAt(shown)} y1={T} y2={H - B} stroke="var(--t-dim)" strokeDasharray="3 4" />
-        )}
-        {spec.type === "line" && spec.series[0].data[shown] !== null && (hover !== null ? (
-          <g>
-            <line x1={xAt(shown)} x2={xAt(shown)} y1={T} y2={H - B} stroke="var(--t-dim)" strokeDasharray="3 4" />
-            <circle cx={xAt(shown)} cy={yAt(spec.series[0].data[shown] as number)} r="6" fill="#fff" stroke="#8a7dff" strokeWidth="3" />
-          </g>
-        ) : (
-          <circle cx={xAt(shown)} cy={yAt(spec.series[0].data[shown] as number)} r="5" fill="#ff8cc0" className="chart-pulse" />
-        ))}
-      </svg>
-      {spec.type === "combo" && <ChartLegend series={spec.series} />}
-      {piled && spec.series.length > 1 && <ChartLegend series={spec.series} at={shown} unit={spec.unit} />}
+      {legend && <ChartLegend series={spec.series} />}
+      {piled && spec.series.length > 1 && <ChartLegend series={spec.series} at={hover ?? lastIndex(spec)} unit={spec.unit} />}
       {spec.source && <div className="text-[11px] text-dim text-right">{spec.source}</div>}
     </figure>
   );
 }
 
-type Axis = { xAt: (i: number) => number; yAt: (v: number) => number };
+/** The index of the first series's last value (gaps skipped): where the headline number is read when nothing is
+ *  picked. */
+function lastIndex(spec: ChartSpec): number {
+  const { last } = seriesEnds(spec.series[0].data);
+  if (last < 0) return spec.x.length - 1;
+  return last;
+}
 
-/** One part of a stacked area: filled between its band's bottom and top, with its top edge drawn as a line. */
-function Area({ bands, xAt, yAt, colour }: Axis & { bands: (Band | null)[]; colour: string }) {
-  const top: [number, number][] = [];
-  const bottom: [number, number][] = [];
-  bands.forEach((b, i) => {
-    if (b === null) return;
-    top.push([xAt(i), yAt(b.to)]);
-    bottom.push([xAt(i), yAt(b.from)]);
-  });
-  if (!top.length) return null;
-  const topEdge = smoothPath(top);
-  const backAlongBottom = smoothPath(bottom.reverse()).replace(/^M/, "L");
+/** The title, the line's change chip, and the big number: the value at the picked x label, or the latest. A stacked
+ *  chart's number is the whole pile; the other series's values sit beside it. figure: false keeps only the title. The
+ *  big number is shortened from 100,000 up; its title attribute has every digit. */
+function Headline({ spec, hover }: { spec: ChartSpec; hover: number | null }) {
+  const piled = spec.type === "stacked" || spec.type === "area";
+  const pct = spec.type === "line" ? changePct(spec.series[0].data) : null;
+  const shown = hover ?? lastIndex(spec);
+  const big = piled ? totalAt(spec.series, shown) : spec.series[0].data[shown] ?? null;
+  const bigUnit = piled ? spec.unit : spec.series[0].unit ?? spec.unit;
+  const listed = piled ? [] : spec.series.slice(1);  // a pile's parts have their values in the legend
+  const withFigure = spec.figure !== false;
+  const bigText = big === null ? "–" : fmt(big, bigUnit);
+  const bigFull = big === null ? "–" : fmt(big, bigUnit, { full: true });
+  return (
+    <>
+      <figcaption className="flex items-center justify-between gap-2">
+        <span className="text-[13px] font-semibold text-muted truncate">{spec.title ?? spec.series[0].name ?? "Chart"}</span>
+        {pct !== null && withFigure && <span className={`chip ${pct >= 0 ? "chip-good" : "chip-warn"}`}>{pct >= 0 ? "▲" : "▼"} {Math.abs(pct).toFixed(1)}%</span>}
+      </figcaption>
+      {withFigure && (
+        <div className="flex items-baseline gap-2 mt-0.5 min-w-0">
+          <span className="text-[30px] leading-tight font-extrabold tracking-[-0.03em] tabular-nums" title={bigFull !== bigText ? bigFull : undefined}>{bigText}</span>
+          <span className="text-[12px] text-muted tabular-nums truncate">
+            {hover !== null ? spec.x[shown] : ""}
+            {listed.map((s, k) => {
+              const v = s.data[shown] ?? null;
+              if (v === null) return null;
+              return <span key={k} className="ml-2">{s.name ? `${s.name} ` : ""}{fmt(v, s.unit ?? spec.unit)}</span>;
+            })}
+          </span>
+        </div>
+      )}
+    </>
+  );
+}
+
+/** The x labels that fit along the bottom (layout.xLabels): under each column, or for a line the first one starting
+ *  at the left edge, the last ending at the right and the rest centred. */
+function XLabels({ spec, layout }: { spec: ChartSpec; layout: XYLayout }) {
+  const last = spec.x.length - 1;
+  const anchor = (i: number) => {
+    if (layout.slotted || last === 0) return "middle";
+    if (i === 0) return "start";
+    if (i === last) return "end";
+    return "middle";
+  };
   return (
     <g>
-      <path d={`${topEdge} ${backAlongBottom} Z`} fill={colour} fillOpacity=".3" />
-      <path d={topEdge} fill="none" stroke={colour} strokeWidth="2" strokeLinecap="round" />
+      {layout.xLabels.map((i) => (
+        <text key={i} x={layout.xAt(i)} y={layout.H - 7} textAnchor={anchor(i)} className="chart-axis">{String(spec.x[i])}</text>
+      ))}
     </g>
   );
 }
 
-/** A combo's line: a smooth line with a dot on each value, ringed so it stands out over the bars. */
-function ComboLine({ data, xAt, yAt, colour }: Axis & { data: (number | null)[]; colour: string }) {
-  const pts: [number, number][] = [];
-  data.forEach((v, i) => {
-    if (v !== null) pts.push([xAt(i), yAt(v)]);
-  });
-  if (!pts.length) return null;
-  return (
-    <g>
-      <path d={smoothPath(pts)} fill="none" stroke={colour} strokeWidth="2.5" strokeLinecap="round" />
-      {pts.map(([cx, cy], i) => <circle key={i} cx={cx} cy={cy} r="3.5" fill={colour} stroke="var(--t-surface-2)" strokeWidth="2" />)}
-    </g>
-  );
-}
-
+/** The grey card a chart (or a diagram) shows while its fence is still streaming in. */
 export function ChartPending() {
   return (
     <div className="glass rounded-[26px] p-4 my-2 flex flex-col gap-2" aria-label="Drawing chart">

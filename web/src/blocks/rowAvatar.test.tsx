@@ -46,7 +46,7 @@ describe("the circle's colour", () => {
   it("is one of the palette's colours, and names spread over them", () => {
     const names = ["Asha", "Ravi", "Meera", "Bank", "Netflix", "Docs", "Kiran", "Zoe", "Uber", "Swiggy"];
     const colours = new Set(names.map(avatarColour));
-    for (const c of colours) expect(c).toMatch(/^var\(--t-chart-[1235678]\)$/);
+    for (const c of colours) expect(c).toMatch(/^var\(--t-chart-[1468]\)$/);
     expect(colours.size).toBeGreaterThan(3);
   });
 });

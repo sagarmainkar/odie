@@ -1,9 +1,13 @@
+// Pie and donut: shares of a whole, with a legend beside the drawing (below it when the card is narrower than 440px)
+// listing each slice's name, value and share, so no label is squeezed onto a slice.
 import { useState } from "react";
-import { fmt, partColour, sharePct, type ChartSpec } from "./chartData";
+import { fmt, partColour, seriesName, shareNote, sharePct, type ChartSpec } from "./chartData";
+import { ChartTip, type Tip } from "./ChartTip";
+import { pickKeys } from "./chartPick";
 
-const C = 100, OUTER = 96, HOLE = 62;  // drawn in a 200 x 200 box: the centre, the outer radius, a donut's hole
+const BOX = 168, C = BOX / 2, OUTER = 80, HOLE = 52;  // the drawing's size and centre, the outer radius, a donut's hole
 
-/** A point on the circle, at a fraction of a turn clockwise from 12 o'clock: (0, 96) -> top; (0.25, 96) -> right. */
+/** A point on the circle, at a fraction of a turn clockwise from 12 o'clock: (0, 80) -> top; (0.25, 80) -> right. */
 function at(turn: number, r: number): [number, number] {
   const a = turn * 2 * Math.PI;
   return [+(C + r * Math.sin(a)).toFixed(2), +(C - r * Math.cos(a)).toFixed(2)];
@@ -23,10 +27,10 @@ function slicePath(start: number, end: number, hole: number): string {
 }
 
 /** A slice's name short enough for a donut's hole: "Fixed deposits" stays; "Equity mutual funds (large cap)" ->
- *  "Equity mutual fun…". */
+ *  "Equity mutual f…". */
 function shortLabel(label: string): string {
-  if (label.length <= 16) return label;
-  return `${label.slice(0, 15)}…`;
+  if (label.length <= 15) return label;
+  return `${label.slice(0, 14)}…`;
 }
 
 /** Which colour a slice gets: the chart palette in order, except an "Other" slice (the small ones merged, or the
@@ -36,16 +40,22 @@ function sliceColour(label: string, i: number): string {
   return partColour(i);
 }
 
-/** Pie and donut: shares of a whole, from x (the slices) and the first series (their values, all positive: parseChart
- *  saw to that). Under it, a legend with each slice's share and value, so no label is squeezed onto a slice. A donut
- *  shows the total in its middle; a pie shows it above (values in %, a portfolio mix: the biggest slice instead).
- *  Tapping a slice or its legend row picks it: the others fade and the total gives way to that slice. */
+/**
+ * Pie and donut, from x (the slices) and the first series (their values, all positive: parseChart saw to that). A
+ * donut shows the total in its middle; a pie shows it above. Values in % are shares already, so their total (100%)
+ * says nothing: the biggest slice is shown instead, and the legend leaves out the value column. Percentages are written
+ * in the legend only, never on the slices. Pointing at a slice or its legend row (or stepping with the arrow keys)
+ * fades the others and shows its hover card, with the value in full.
+ */
 export function PieChart({ spec }: { spec: ChartSpec }) {
   const [picked, setPicked] = useState<number | null>(null);
+  const [tip, setTip] = useState<Tip | null>(null);
+  const [drawingEl, setDrawingEl] = useState<SVGSVGElement | null>(null);  // the svg, once drawn: the card is placed by it
   const values = spec.series[0].data as number[];
   const total = values.reduce((sum, v) => sum + v, 0);
   const unit = spec.series[0].unit ?? spec.unit;
   const donut = spec.type === "donut";
+  const hole = donut ? HOLE : 0;
 
   const slices: { start: number; end: number }[] = [];
   let start = 0;
@@ -54,52 +64,72 @@ export function PieChart({ spec }: { spec: ChartSpec }) {
     start += v / total;
   }
 
-  // Values in % are shares already: their total says nothing (100%), and each one's value would repeat its share.
   const valuesAreShares = unit === "%";
-  // What the big number shows: the picked slice; else the whole, or for shares the biggest slice.
   const biggest = values.indexOf(Math.max(...values));
-  const featured = picked ?? (valuesAreShares ? biggest : null);
-  const shownValue = featured === null ? total : values[featured];
-  const shownLabel = featured === null ? "Total" : `${spec.x[featured]} · ${sharePct(values[featured] / total)}`;
-  const middleText = featured === null ? fmt(total, unit) : sharePct(values[featured] / total);
-  const middleSize = middleText.length > 8 ? 17 : 22;  // a long amount ("₹2,94,059 Cr") still fits the hole
-  const toggle = (i: number) => setPicked(picked === i ? null : i);
-  const faded = (i: number) => (picked === null || picked === i ? 1 : 0.35);
+  let headline = { value: fmt(total, unit), full: fmt(total, unit, { full: true }), label: "Total" };
+  if (valuesAreShares) {
+    const share = sharePct(values[biggest] / total);
+    headline = { value: share, full: share, label: String(spec.x[biggest]) };
+  }
+
+  /** Picks slice i (or none) and points the hover card at the middle of its ring. */
+  function pick(i: number | null) {
+    setPicked(i);
+    const el = drawingEl;
+    const body = el?.parentElement;  // .chart-pie-body, which the card is placed in
+    if (i === null || !el || !body) return setTip(null);
+    const middle = (slices[i].start + slices[i].end) / 2;
+    const radius = donut ? (OUTER + HOLE) / 2 : OUTER * 0.6;
+    const [x, y] = at(middle, radius);
+    const drawing = el.getBoundingClientRect();
+    const around = body.getBoundingClientRect();
+    const label = String(spec.x[i]);
+    const note = valuesAreShares ? undefined : shareNote(values, values[i]);
+    setTip({ x: drawing.left - around.left + x, y: drawing.top - around.top + y, title: label,
+      rows: [{ colour: sliceColour(label, i), name: seriesName(spec.series, 0), value: fmt(values[i], unit, { full: true }) }], note });
+  }
+  const toggle = (i: number) => pick(picked === i ? null : i);
+  const faded = (i: number) => (picked === null || picked === i ? 1 : 0.5);
+  const mouse = (i: number | null) => (e: { pointerType: string }) => e.pointerType === "mouse" && pick(i);
+  const headlineTitle = headline.full !== headline.value ? headline.full : undefined;
 
   return (
-    <figure className="chart glass glass-solid rounded-[26px] px-4 pt-4 pb-3 my-2">
+    <figure className="chart chart-pie glass glass-solid rounded-[26px] px-4 pt-4 pb-3 my-2">
       <figcaption className="text-[13px] font-semibold text-muted truncate">{spec.title ?? spec.series[0].name ?? "Chart"}</figcaption>
       {!donut && (
-        <div className="flex items-baseline gap-2 mt-0.5">
-          <span className="text-[30px] leading-tight font-extrabold tracking-[-0.03em] tabular-nums">{fmt(shownValue, unit)}</span>
-          <span className="text-[12px] text-muted truncate">{shownLabel}</span>
+        <div className="flex items-baseline gap-2 mt-0.5 min-w-0">
+          <span className="text-[30px] leading-tight font-extrabold tracking-[-0.03em] tabular-nums" title={headlineTitle}>{headline.value}</span>
+          <span className="text-[12px] text-muted truncate">{headline.label}</span>
         </div>
       )}
-      <svg viewBox="0 0 200 200" className="block w-full max-w-[200px] h-auto mx-auto mt-2 select-none" role="img" aria-label={spec.title ?? "chart"}>
-        {slices.map((s, i) => (
-          <path key={i} d={slicePath(s.start, s.end, donut ? HOLE : 0)} fill={sliceColour(String(spec.x[i]), i)} opacity={faded(i)}
-            stroke="var(--t-surface-2)" strokeWidth="2" strokeLinejoin="round" className="cursor-pointer"
-            onClick={() => toggle(i)} onPointerEnter={(e) => e.pointerType === "mouse" && setPicked(i)} onPointerLeave={(e) => e.pointerType === "mouse" && setPicked(null)} />
-        ))}
-        {donut && (
-          <g textAnchor="middle" className="pointer-events-none">
-            <text x={C} y={C + 2} fontSize={middleSize} fontWeight="800" fill="var(--t-ink)" className="tabular-nums">{middleText}</text>
-            <text x={C} y={C + 22} fontSize="11.5" fill="var(--t-muted)">{featured === null ? "Total" : shortLabel(String(spec.x[featured]))}</text>
-          </g>
-        )}
-      </svg>
-      <table className="w-full mt-3 text-[13px] leading-[18px]">
-        <tbody>
-          {values.map((v, i) => (
-            <tr key={i} onClick={() => toggle(i)} className="cursor-pointer" style={{ opacity: faded(i) }}>
-              <td className="w-4 py-1 align-top"><i className="block w-2.5 h-2.5 mt-[4px] rounded-full" style={{ background: sliceColour(String(spec.x[i]), i) }} /></td>
-              <td className="py-1 pr-2 text-ink-2 break-words">{spec.x[i]}</td>
-              <td className="py-1 pr-2 text-right font-semibold tabular-nums whitespace-nowrap align-top">{sharePct(v / total)}</td>
-              {!valuesAreShares && <td className="py-1 text-right text-muted tabular-nums whitespace-nowrap align-top">{fmt(v, unit)}</td>}
-            </tr>
+      <div className="chart-pie-body">
+        <svg ref={setDrawingEl} width={BOX} height={BOX} viewBox={`0 0 ${BOX} ${BOX}`} className="chart-pie-svg" role="img"
+          aria-label={spec.title ?? "chart"} {...pickKeys(values.length, picked, pick)}>
+          {slices.map((s, i) => (
+            <path key={i} d={slicePath(s.start, s.end, hole)} fill={sliceColour(String(spec.x[i]), i)} opacity={faded(i)}
+              className="chart-slice" onClick={() => toggle(i)} onPointerEnter={mouse(i)} onPointerLeave={mouse(null)} />
           ))}
-        </tbody>
-      </table>
+          {donut && (
+            <g textAnchor="middle" pointerEvents="none">
+              <text x={C} y={C - 2} className="chart-pie-total"><title>{headline.full}</title>{headline.value}</text>
+              <text x={C} y={C + 15} className="chart-axis">{shortLabel(headline.label)}</text>
+            </g>
+          )}
+        </svg>
+        <table className="chart-pie-legend">
+          <tbody>
+            {values.map((v, i) => (
+              <tr key={i} onClick={() => toggle(i)} onPointerEnter={mouse(i)} onPointerLeave={mouse(null)} style={{ opacity: faded(i) }}>
+                <td className="w-2.5"><i className="block w-2.5 h-2.5 mt-[4px] rounded-[3px]" style={{ background: sliceColour(String(spec.x[i]), i) }} /></td>
+                <td className="w-full text-ink-2 [overflow-wrap:anywhere]">{spec.x[i]}</td>
+                {!valuesAreShares && <td className="text-right font-semibold whitespace-nowrap">{fmt(v, unit)}</td>}
+                <td className="text-right text-muted whitespace-nowrap">{sharePct(v / total)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <ChartTip tip={tip} />
+      </div>
       {spec.source && <div className="text-[11px] text-dim text-right">{spec.source}</div>}
     </figure>
   );

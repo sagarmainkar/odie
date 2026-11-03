@@ -59,10 +59,13 @@
   --t-cast-3: #3FB8A8; --t-cast-3-text: #13806F; --t-cast-4: #F2A541; --t-cast-4-text: #A86400;
   --t-cast-5: #A77BF0; --t-cast-5-text: #6E3FC4; --t-cast-6: #4FA8E8; --t-cast-6-text: #1F6FB2;
   --t-cast-7: #8CC152; --t-cast-7-text: #4E7F1C; --t-cast-8: #F27B5B; --t-cast-8-text: #B5462A;
-  /* Chart parts (pie slices, stacked parts, a combo's bars and lines), in this order: checked for colour-blind
-     separation against the card in day and night (2026-10-12). */
-  --t-chart-1: #6C7BF2; --t-chart-2: #EB6834; --t-chart-3: #1BAF7A; --t-chart-4: #EDA100;
-  --t-chart-5: #E87BA4; --t-chart-6: #008300; --t-chart-7: #2A9BD6; --t-chart-8: #E34948;
+  /* Chart colours (series, slices, stacked parts, sparklines, avatars), handed out in this order: blue, amber, green,
+     violet, cyan, red, lime, pink. The order passed a colour-blind check (neighbours stay apart under deuteranopia,
+     protanopia and tritanopia), so the same eight serve day and night: on the night card all reach 3.6:1. On the day
+     card amber, green, cyan and lime are paler (2-2.5:1); deeper shades of them halved the deuteranopia gap between
+     neighbours, so they stay, and every value is also written in the hover card and legend (2026-11-03). */
+  --t-chart-1: #4F7CFF; --t-chart-2: #F59E0B; --t-chart-3: #10B981; --t-chart-4: #8B5CF6;
+  --t-chart-5: #06B6D4; --t-chart-6: #EF4444; --t-chart-7: #84CC16; --t-chart-8: #EC4899;
   color-scheme: light;
 }
 :root[data-tod="noon"]    { --t-ground: #F3F5F9; --w1: #CFE4FF; --w2: #FFF0B8; --w3: #DCD5FF; --t-overlay: rgba(243,245,249,.72); }
@@ -82,8 +85,6 @@
   --t-warn: #FFB54A; --t-warn-ink: #FFCF85; --t-warn-tint: rgba(255,181,74,.14);
   --t-overlay: rgba(17,15,24,.72);
   --t-shadow-card: 0 1px 0 rgba(255,255,255,.03) inset, 0 24px 48px -26px rgba(0,0,0,.7);
-  --t-chart-1: #6C7BF2; --t-chart-2: #D95926; --t-chart-3: #199E70; --t-chart-4: #C98500;
-  --t-chart-5: #D55181; --t-chart-6: #008300; --t-chart-7: #2A8FD0; --t-chart-8: #E66767;
   color-scheme: dark;
 }
 
@@ -274,9 +275,49 @@ input, button, textarea { font-family: inherit; }
 /* Chart card: the line draws itself, the last point breathes */
 .chart-draw { animation: chart-draw 1.2s cubic-bezier(.2,.8,.2,1) forwards; }
 @keyframes chart-draw { to { stroke-dashoffset: 0; } }
-.chart-pulse { animation: chart-pulse 2s ease-in-out infinite; transform-box: fill-box; transform-origin: center; }
-@keyframes chart-pulse { 50% { transform: scale(1.8); opacity: .5; } }
-@media (prefers-reduced-motion: reduce) { .chart-draw { animation: none; stroke-dashoffset: 0; } .chart-pulse { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .chart-draw { animation: none; stroke-dashoffset: 0; } }
+
+/* Charts (ChartBlock.tsx and its marks): drawn at their real width. At the top of a reply a chart stops at 720px; a
+   long line (60+ points) may take the board's full width. */
+.blocks > figure.chart:not(.chart-wide), .md > figure.chart:not(.chart-wide) { max-width: 720px; }
+.chart-svg { display: block; width: 100%; overflow: visible; touch-action: pan-y; user-select: none; }
+.chart-svg:focus-visible, .chart-pie-svg:focus-visible, .chart-hbar-grid:focus-visible { outline: 2px solid var(--t-brand); outline-offset: 4px; border-radius: 4px; }
+.chart-axis, .chart-tick { font-size: 11px; fill: var(--t-muted); font-variant-numeric: tabular-nums; }
+.chart-value { font-size: 11.5px; font-weight: 500; fill: var(--t-ink-2); font-variant-numeric: tabular-nums; }
+.chart-end { font-size: 11.5px; font-weight: 600; fill: var(--t-ink); font-variant-numeric: tabular-nums; }
+/* Text drawn over lines (a change line's Start label): a rim of the card's colour behind the letters. */
+.chart-halo { paint-order: stroke; stroke: var(--t-surface-2); stroke-width: 3px; stroke-linejoin: round; }
+.chart-rule { stroke: var(--t-line); }
+.chart-rule-strong { stroke: var(--t-line-2); }
+.chart-dot { stroke: var(--t-surface-2); stroke-width: 2; }
+.chart-svg g, .chart-hbar-bar { transition: opacity .15s; }
+/* The hover card (ChartTip.tsx): beside the pointer, every digit of each series's value. */
+.chart-tip { position: absolute; top: 0; left: 0; z-index: 5; display: flex; flex-direction: column; gap: 4px; min-width: 120px; padding: 8px 10px;
+  border: 1px solid var(--t-line-2); border-radius: 12px; background: var(--t-surface-2); -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px);
+  box-shadow: var(--t-shadow-card), 0 6px 18px -8px rgba(0,0,0,.25); color: var(--t-ink); font-size: 12.5px; line-height: 1.35;
+  font-variant-numeric: tabular-nums; white-space: nowrap; pointer-events: none; opacity: 0; transition: opacity 120ms ease; }
+.chart-tip-on { opacity: 1; }
+.chart-tip-title, .chart-tip-note { font-size: 11.5px; color: var(--t-muted); }
+.chart-tip-row { display: flex; align-items: center; gap: 8px; }
+.chart-tip-row i { flex: none; width: 8px; height: 8px; border-radius: 2px; }
+.chart-tip-name { flex: 1; color: var(--t-ink-2); }
+.chart-tip-value { margin-left: 12px; font-weight: 700; }
+/* Horizontal bars: label | bar | value on each row. */
+.chart-hbar-grid { display: grid; grid-template-columns: fit-content(40%) minmax(0, 1fr) max-content; gap: 8px 12px; align-items: center; }
+/* Pie and donut: the legend beside the drawing from 440px wide, below it when narrower; it stops at 420px so the
+   amounts stay near their names in a wide card. */
+.chart-pie { container-type: inline-size; }
+.chart-pie-body { position: relative; display: flex; flex-direction: column; gap: 14px; margin-top: 10px; }
+@container (min-width: 440px) { .chart-pie-body { flex-direction: row; align-items: center; gap: 20px; } .chart-pie-body .chart-pie-svg { margin: 0; } }
+.chart-pie-svg { display: block; flex: none; margin: 0 auto; user-select: none; }
+.chart-pie-total { font-size: 17px; font-weight: 750; fill: var(--t-ink); font-variant-numeric: tabular-nums; }
+.chart-slice { cursor: pointer; stroke: var(--t-surface-2); stroke-width: 2; stroke-linejoin: round; transition: opacity .15s; }
+.chart-pie-legend { flex: 1; min-width: 0; max-width: 420px; border-collapse: collapse; font-size: 13px; line-height: 18px; font-variant-numeric: tabular-nums; }
+.md .chart-pie-legend { margin: 0; }
+.chart-pie-legend tr { cursor: pointer; transition: opacity .15s; }
+.chart-pie-legend td { padding: 3px 12px 3px 0; vertical-align: top; border: 0; }
+.chart-pie-legend td:last-child { padding-right: 0; }
+@media (prefers-reduced-motion: reduce) { .chart-tip, .chart-svg g, .chart-hbar-bar, .chart-slice, .chart-pie-legend tr { transition: none; } }
 
 /* Up next cards: the kind's pastel by day, its jewel tone at night; text follows the theme's ink. */
 .kind-card { background: linear-gradient(160deg, var(--ka) 0%, var(--kb) 100%); border-color: rgba(255,255,255,.7); }
