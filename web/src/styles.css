@@ -387,10 +387,20 @@ input, button, textarea { font-family: inherit; }
 
 /* Flash cards (blocks/Flip.tsx): the front turns over to the back. With reduced motion there's no turn: the back
    fades in over the front instead. */
-.flip-scene { perspective: 900px; }
-.flip-inner { position: relative; display: block; width: 100%; height: 100%; transform-style: preserve-3d; transition: transform .55s cubic-bezier(.2, .8, .2, 1); }
+/* Flash cards (Flip.tsx): a grid of --flip-cols columns when the reply is wide, two on a phone with an odd last card
+   spanning both, so no card is left alone on the last row. Both faces share one grid cell, so a card is as tall as its
+   longer side and the cards in a row share the row's height. Words wrap whole: never cut, never broken mid-word. */
+.flip-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; overflow-wrap: break-word; hyphens: none; }
+.flip-grid > :last-child:nth-child(odd) { grid-column: 1 / -1; }
+@container (min-width: 576px) {
+  .flip-grid { grid-template-columns: repeat(var(--flip-cols, 4), minmax(0, 1fr)); }
+  .flip-grid > :last-child:nth-child(odd) { grid-column: auto; }
+}
+.flip-scene { display: grid; perspective: 900px; min-width: 0; }
+.flip-inner { display: grid; grid-template-columns: minmax(0, 1fr); min-height: 150px; transform-style: preserve-3d; transition: transform .55s cubic-bezier(.2, .8, .2, 1); }
+.flip-tall .flip-inner { min-height: 200px; }
 .flip-inner.is-turned { transform: rotateY(180deg); }
-.flip-face { position: absolute; inset: 0; backface-visibility: hidden; -webkit-backface-visibility: hidden; }
+.flip-face { grid-area: 1 / 1; display: flex; flex-direction: column; gap: 6px; min-width: 0; backface-visibility: hidden; -webkit-backface-visibility: hidden; }
 .flip-back { transform: rotateY(180deg); }
 @media (prefers-reduced-motion: reduce) {
   .flip-inner, .flip-inner.is-turned { transition: none; transform: none; }

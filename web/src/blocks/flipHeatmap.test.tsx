@@ -1,6 +1,8 @@
+// Flash cards (flip) and heatmaps: how each is read, laid out and drawn.
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { Blocks } from "./Blocks";
+import { flipColumns } from "./flipColumns";
 import { cellColour, cellText, rangeOf } from "./heatmapColour";
 import { parseBlocks } from "./parse";
 import { scaleOf } from "./parse/heatmap";
@@ -105,5 +107,24 @@ describe("drawing them", () => {
     const many = draw([{ type: "heatmap", rows: ["JPM"], cols, values: [cols.map((_, i) => i)] }]);
     expect(many).not.toContain(">7<");
     expect(many).toContain('aria-label="JPM, M8: 7"');  // still there for a screen reader and the tap
+  });
+});
+
+describe("the flip card grid", () => {
+  it("puts up to 4 cards in one row", () => {
+    expect([1, 2, 3, 4].map(flipColumns)).toEqual([1, 2, 3, 4]);
+  });
+  it("picks 3 or 4 columns so the last row is as full as it can be, never one card alone", () => {
+    expect(flipColumns(5)).toBe(3);   // 3 + 2, not 4 + 1
+    expect(flipColumns(6)).toBe(3);   // 3 + 3, not 4 + 2
+    expect(flipColumns(7)).toBe(4);   // 4 + 3
+    expect(flipColumns(8)).toBe(4);
+    expect(flipColumns(9)).toBe(3);
+    expect(flipColumns(10)).toBe(4);  // 4 + 4 + 2, not 3 + 3 + 3 + 1
+    for (let n = 2; n <= 12; n++) expect(n % flipColumns(n), `${n} cards`).not.toBe(1);
+  });
+  it("tells the grid its column count", () => {
+    const html = draw([{ type: "flip", cards: Array.from({ length: 5 }, (_, i) => ({ front: `Q${i}`, back: `A${i}` })) }]);
+    expect(html).toContain('class="flip-grid" style="--flip-cols:3"');
   });
 });
