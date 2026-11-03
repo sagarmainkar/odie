@@ -4,13 +4,17 @@ export type SortState = { column: number; direction: "up" | "down" } | null;
 
 /**
  * The number a cell starts with, for sorting and right-aligning: up to three leading symbols (₹, $, "Rs ") are
- * allowed, commas ignored. "₹44,999" → 44999; "4,800 mAh" → 4800; "4.6★" → 4.6; "Pixel 10a" → null; "" → null.
+ * allowed, commas ignored, and the sign may come before them. A typeset minus (−) counts as one.
+ * "₹44,999" → 44999; "4,800 mAh" → 4800; "4.6★" → 4.6; "−4.1%" → -4.1; "-$279.84" → -279.84; "Pixel 10a" → null;
+ * "" → null.
  */
 export function cellNumber(cell: string): number | null {
-  const plain = plainInline(cell).replace(/,/g, "");
-  const m = /^[^\d\-+]{0,3}([-+]?\d+(?:\.\d+)?)/.exec(plain);
+  const plain = plainInline(cell).replace(/,/g, "").replace(/^−/, "-");
+  const m = /^([-+]?)[^\d\-+]{0,3}([-+]?\d+(?:\.\d+)?)/.exec(plain);
   if (!m) return null;
-  return Number(m[1]);
+  const n = Number(m[2]);
+  if (m[1] === "-") return -n;
+  return n;
 }
 
 /**
