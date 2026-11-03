@@ -277,9 +277,9 @@ input, button, textarea { font-family: inherit; }
 @keyframes chart-draw { to { stroke-dashoffset: 0; } }
 @media (prefers-reduced-motion: reduce) { .chart-draw { animation: none; stroke-dashoffset: 0; } }
 
-/* Charts (ChartBlock.tsx and its marks): drawn at their real width. At the top of a reply a chart stops at 720px; a
-   long line (60+ points) may take the board's full width. */
-.blocks > figure.chart:not(.chart-wide), .md > figure.chart:not(.chart-wide) { max-width: 720px; }
+/* Charts (ChartBlock.tsx and its marks): drawn at their real width, stopping at 720px; a long line (60+ points) may
+   take the board's full width. */
+figure.chart:not(.chart-wide) { max-width: 720px; }
 .chart-svg { display: block; width: 100%; overflow: visible; touch-action: pan-y; user-select: none; }
 .chart-svg:focus-visible, .chart-pie-svg:focus-visible, .chart-hbar-grid:focus-visible { outline: 2px solid var(--t-brand); outline-offset: 4px; border-radius: 4px; }
 .chart-axis, .chart-tick { font-size: 11px; fill: var(--t-muted); font-variant-numeric: tabular-nums; }
