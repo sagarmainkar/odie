@@ -28,9 +28,11 @@ def test_the_catalogue_stays_within_its_token_budget():
     """The spec allowed the visuals skill about 3,200 tokens; ~4 chars a token. Raised to 3,300 with the calculator,
     and to 3,600 with flip and heatmap (13 Oct 2026), to 3,750 with the svg drawing (14 Oct 2026), and to 4,000 with the
     form (26 Oct 2026; the owner's call: the system prompt is cached by the providers, so the extra cost is small).
-    Since 12 Oct 2026 it's in the system prompt on every request (read once, then from the provider's cache)."""
+    To 4,060 with the design pass (3 Nov 2026): a kpis trend, a line's tone and figure, and how to lay out a comparison
+    (hbar's own line went, as bars now lie down by themselves). Since 12 Oct 2026 it's in the system prompt on every
+    request (read once, then from the provider's cache)."""
     from odie.blocks import visuals_prompt
-    assert len(visuals_prompt()) / 4 <= 4000
+    assert len(visuals_prompt()) / 4 <= 4060
 
 
 def test_the_form_tells_the_model_when_to_use_it_and_how_answers_come_back():

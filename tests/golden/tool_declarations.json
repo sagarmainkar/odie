@@ -739,7 +739,7 @@
     }
   },
   {
-    "description": "Price history for a stock, index, currency or commodity, with a chart. symbol: a name or ticker, e.g. NIFTY,\nSENSEX, BANK NIFTY, RELIANCE, TCS.NS, AAPL, gold, USDINR. period: 1d, 5d, 1mo, 3mo, 6mo, 1y, 2y, 5y or 10y\n(\"last week\" = 5d; any other, like 3y, gets the next longer one).\nReturns a summary and a ```odie-blocks block to paste into the reply unchanged so the app draws the chart.",
+    "description": "Price history for a stock, index, currency or commodity, with a chart. symbol: a name or ticker, e.g. NIFTY,\nSENSEX, BANK NIFTY, RELIANCE, TCS.NS, AAPL, gold, USDINR; to compare, up to 3 separated by commas (\"TCS, INFY\"):\na card each and one % change chart. period: 1d, 5d, 1mo, 3mo, 6mo, 1y, 2y, 5y or 10y\n(\"last week\" = 5d; any other, like 3y, gets the next longer one).\nReturns a summary and a ```odie-blocks block to paste into the reply unchanged so the app draws the chart.",
     "name": "market_history",
     "parameters_json_schema": {
       "properties": {

@@ -65,3 +65,11 @@ describe("a trend", () => {
     expect(html).toContain(">$4.21B<");
   });
 });
+
+describe("a row of cards", () => {
+  it("lets an odd last card span a phone's two columns, and keeps one row on a wide screen", () => {
+    const three = draw([{ type: "kpis", items: [{ label: "A", value: 1 }, { label: "B", value: 2 }, { label: "C", value: 3 }] }]);
+    expect(three).toContain("[&amp;&gt;:last-child:nth-child(odd)]:col-span-2");
+    expect(three).toContain("@xl:grid-cols-3");
+  });
+});

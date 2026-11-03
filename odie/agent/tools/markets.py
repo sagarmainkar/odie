@@ -1,5 +1,7 @@
 """Market prices (index or stock history) from Yahoo Finance's public chart endpoint, returned as a short summary plus a
-ready-to-paste ```odie-blocks block (chart, plus Analyze for a US stock), so the model doesn't have to write numbers itself. Only the symbol leaves the mini."""
+ready-to-paste ```odie-blocks block, so the model doesn't have to write numbers itself. One symbol: its price line
+(green above the start, orange below), plus Analyze for a company. Two or three: a card each and one % change chart.
+Only the symbols leave the mini."""
 from __future__ import annotations
 
 import json
@@ -66,16 +68,30 @@ def period_for(asked: str) -> str:
     return "10y"
 
 
-async def history(symbol: str, period: str = "5d", transport: httpx.AsyncBaseTransport | None = None) -> str:
-    period = period_for(period)
+# Compared at most: more lines than this on one chart stop being readable.
+MOST_COMPARED = 3
+# A card's trend line is small: at most this many points.
+TREND_MOST = 60
+
+
+def symbols_in(asked: str) -> list[str]:
+    """The names or tickers asked for, split on commas, blanks dropped, at most 3.
+
+    "TCS, INFY" → ["TCS", "INFY"];  "nifty" → ["nifty"];  "A, , B, C, D" → ["A", "B", "C"]
+    """
+    names = [name.strip() for name in (asked or "").split(",")]
+    return [name for name in names if name][:MOST_COMPARED]
+
+
+async def _fetch(c: httpx.AsyncClient, symbol: str, period: str) -> dict | str:
+    """One symbol's closes over the period, or a sentence saying why there are none."""
     try:
-        async with httpx.AsyncClient(timeout=15, transport=transport) as c:
-            sym = resolve_alias(symbol) or await _search(c, symbol)
-            if not sym:
-                return f"Couldn't find a market symbol for '{symbol}'."
-            r = await c.get(CHART.format(sym=sym), params={"range": period, "interval": RANGES[period]}, headers=HEADERS)
-            r.raise_for_status()
-            res = r.json()["chart"]["result"][0]
+        sym = resolve_alias(symbol) or await _search(c, symbol)
+        if not sym:
+            return f"Couldn't find a market symbol for '{symbol}'."
+        r = await c.get(CHART.format(sym=sym), params={"range": period, "interval": RANGES[period]}, headers=HEADERS)
+        r.raise_for_status()
+        res = r.json()["chart"]["result"][0]
     except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError) as e:
         return f"Couldn't get prices for '{symbol}' just now ({type(e).__name__}). Try again in a minute."
     meta = res.get("meta", {})
@@ -85,19 +101,98 @@ async def history(symbol: str, period: str = "5d", transport: httpx.AsyncBaseTra
     if len(points) < 2:
         return f"Not enough price data for {sym} over {period}."
     fmt = "%H:%M" if period == "1d" else "%-d %b" if period in ("5d", "1mo", "3mo") else "%b %Y"
-    x = [datetime.fromtimestamp(t, tz).strftime(fmt) for t, _ in points]
-    y = [round(v, 2) for _, v in points]
-    first, last = y[0], y[-1]
-    change = (last - first) / first * 100
-    name = meta.get("shortName") or meta.get("longName") or sym
-    cur = "pts" if sym.startswith("^") else (meta.get("currency") or "")  # an index is points, not rupees
-    chart = {"type": "chart", "kind": "line", "title": f"{name} · {period}", "x": x, "series": [{"name": "Close", "data": y}],
-             "unit": cur, "source": "Yahoo Finance"}
+    return {
+        "name": meta.get("shortName") or meta.get("longName") or sym,
+        "sym": sym,
+        "unit": "pts" if sym.startswith("^") else (meta.get("currency") or ""),  # an index is points, not rupees
+        "kind": meta.get("instrumentType"),
+        "x": [datetime.fromtimestamp(t, tz).strftime(fmt) for t, _ in points],
+        "y": [round(v, 2) for _, v in points],
+    }
+
+
+def _change(y: list[float]) -> float:
+    return (y[-1] - y[0]) / y[0] * 100
+
+
+def _summary(p: dict, period: str) -> str:
+    y, x, unit = p["y"], p["x"], p["unit"]
+    return (f"{p['name']} ({p['sym']}) over {period}: {y[0]:,.2f} on {x[0]} to {y[-1]:,.2f} on {x[-1]} "
+            f"({_change(y):+.2f}%). High {max(y):,.2f}, low {min(y):,.2f} ({'points' if unit == 'pts' else unit}).")
+
+
+def _one_board(p: dict, period: str) -> list[dict]:
+    """One symbol: its price line, green above its first close and orange below, and Analyze for a company."""
+    chart = {"type": "chart", "kind": "line", "title": f"{p['name']} · {period}", "x": p["x"],
+             "series": [{"name": "Close", "data": p["y"]}], "unit": p["unit"], "tone": "change", "source": "Yahoo Finance"}
     blocks = [chart]
-    if can_analyze(sym, meta.get("instrumentType")):
-        blocks.append({"type": "actions", "items": [{"label": "Analyze", "run": f"Analyze {name} ({sym}): last 4 quarters"}]})
-    return (f"{name} ({sym}) over {period}: {first:,.2f} on {x[0]} to {last:,.2f} on {x[-1]} ({change:+.2f}%). "
-            f"High {max(y):,.2f}, low {min(y):,.2f} ({'points' if cur == 'pts' else cur}). Source: Yahoo Finance (may be delayed).\n"
+    if can_analyze(p["sym"], p["kind"]):
+        blocks.append({"type": "actions", "items": [{"label": "Analyze", "run": f"Analyze {p['name']} ({p['sym']}): last 4 quarters"}]})
+    return blocks
+
+
+def trend_points(y: list[float], most: int = TREND_MOST) -> list[float]:
+    """At most `most` closes for a card's trend line, evenly spread, the first and last always kept.
+
+    [1, 2, 3] → the same;  119 closes, most=60 → every other one (0, 2, …, 118)
+    """
+    if len(y) <= most:
+        return list(y)
+    step = (len(y) - 1) / (most - 1)
+    return [y[round(i * step)] for i in range(most)]
+
+
+def _compare_card(p: dict) -> dict:
+    """One symbol's card: its last price, the change over the period and a small trend line of its closes."""
+    y = p["y"]
+    return {"label": p["name"], "value": y[-1], "unit": p["unit"], "change": round(_change(y), 2), "change_unit": "%",
+            "trend": trend_points(y)}
+
+
+def rebased(found: list[dict]) -> tuple[list[str], list[dict]]:
+    """Each symbol's % change from its own first close, on the first symbol's dates; a date another market didn't
+    trade is a gap.
+
+    GOOGL 100 → 80 and MSFT 200 → 210 → GOOGL [0, …, -20], MSFT [0, …, 5]
+    """
+    x = found[0]["x"]
+    series = []
+    for p in found:
+        start = p["y"][0]
+        by_date = dict(zip(p["x"], p["y"]))
+        data = [round((by_date[d] / start - 1) * 100, 2) if d in by_date else None for d in x]
+        series.append({"name": p["name"], "data": data})
+    return x, series
+
+
+def _compare_board(found: list[dict], period: str) -> list[dict]:
+    """Two or three symbols: a card each (price, change, trend), then one chart of each one's % change from the same
+    start, so prices of very different sizes share a scale. figure false: the chart's headline would be a change of a
+    change."""
+    x, series = rebased(found)
+    names = " vs ".join(p["name"] for p in found)
+    return [
+        {"type": "kpis", "items": [_compare_card(p) for p in found]},
+        {"type": "chart", "kind": "line", "title": f"{names} · {period} (% change)", "x": x, "series": series,
+         "unit": "%", "figure": False, "source": "Yahoo Finance"},
+    ]
+
+
+async def history(symbol: str, period: str = "5d", transport: httpx.AsyncBaseTransport | None = None) -> str:
+    """A summary of each symbol asked for (up to 3, comma separated) plus a block to paste: one symbol's board, or a
+    comparison when two or three were found. Plain sentences, without a block, when none was."""
+    period = period_for(period)
+    async with httpx.AsyncClient(timeout=15, transport=transport) as c:
+        results = [await _fetch(c, name, period) for name in symbols_in(symbol)]
+    found = [r for r in results if isinstance(r, dict)]
+    lines = [r if isinstance(r, str) else _summary(r, period) for r in results]
+    if not found:
+        return " ".join(lines) or f"Couldn't find a market symbol for '{symbol}'."
+    if len(found) == 1:
+        blocks = _one_board(found[0], period)
+    else:
+        blocks = _compare_board(found, period)
+    return ("\n".join(lines) + " Source: Yahoo Finance (may be delayed).\n"
             "To show the chart, put this block in your reply exactly as it is:\n"
             f"```odie-blocks\n{json.dumps(blocks, ensure_ascii=False)}\n```")
 
@@ -105,7 +200,8 @@ async def history(symbol: str, period: str = "5d", transport: httpx.AsyncBaseTra
 def make_market_tools(transport: httpx.AsyncBaseTransport | None = None) -> list[FunctionTool]:
     async def market_history(symbol: str, period: str = "5d") -> str:
         """Price history for a stock, index, currency or commodity, with a chart. symbol: a name or ticker, e.g. NIFTY,
-        SENSEX, BANK NIFTY, RELIANCE, TCS.NS, AAPL, gold, USDINR. period: 1d, 5d, 1mo, 3mo, 6mo, 1y, 2y, 5y or 10y
+        SENSEX, BANK NIFTY, RELIANCE, TCS.NS, AAPL, gold, USDINR; to compare, up to 3 separated by commas ("TCS, INFY"):
+        a card each and one % change chart. period: 1d, 5d, 1mo, 3mo, 6mo, 1y, 2y, 5y or 10y
         ("last week" = 5d; any other, like 3y, gets the next longer one).
         Returns a summary and a ```odie-blocks block to paste into the reply unchanged so the app draws the chart."""
         return await history(symbol, period, transport=transport)

@@ -25,13 +25,16 @@ export function KpiCard({ item, trendColour }: { item: KpiItem; trendColour?: st
   );
 }
 
-/** A row of cards: two across on a phone, up to four on a wide screen. When two or more have a trend, each line takes
- *  the chart colour of its card's place (the 1st card's blue, the 2nd's amber …), so a comparison's cards match its
- *  chart's lines, which come in the same order. A lone trend keeps the first colour. */
+// On a phone's two columns, an odd last card spans both, so three cards read 2 + 1 wide rather than leaving one alone.
+const ODD_LAST_SPANS = "[&>:last-child:nth-child(odd)]:col-span-2 @xl:[&>:last-child:nth-child(odd)]:col-span-1";
+
+/** A row of cards: two across on a phone (an odd last card spanning both), all in one row on a wide screen. When two
+ *  or more have a trend, each line takes the chart colour of its card's place (the 1st card's blue, the 2nd's amber …),
+ *  so a comparison's cards match its chart's lines, which come in the same order. A lone trend keeps the first colour. */
 export function Kpis({ items }: { items: KpiItem[] }) {
   const several = items.filter((k) => k.trend).length >= 2;
   return (
-    <div className={`grid grid-cols-2 ${wideColumns(items.length)} gap-2 my-2`}>
+    <div className={`grid grid-cols-2 ${wideColumns(items.length)} ${ODD_LAST_SPANS} gap-2 my-2`}>
       {items.map((k, i) => <KpiCard key={k.label} item={k} trendColour={several ? partColour(i) : undefined} />)}
     </div>
   );
