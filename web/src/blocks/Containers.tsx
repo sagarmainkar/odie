@@ -8,7 +8,9 @@ import { wideColumns } from "./wideColumns";
 // Kinds that keep their own width in a row (a pill, a link); everything else shares the row's width.
 const OWN_WIDTH_KINDS = ["badge", "button", "link"];
 
-/** Side by side, wrapping onto the next line when there's no room (each wide part wants about 140px). */
+/** Side by side, wrapping onto the next line when there's no room (each wide part wants about 140px). A row only
+ *  holds small blocks (parse/containers.ts draws a row with a chart or a table as a stack), so its cards end at the
+ *  same height. */
 export function Row({ kinds, children }: { kinds: string[]; children: ReactNode[] }) {
   return (
     <div className="flex flex-wrap items-stretch gap-2 my-2">
@@ -21,11 +23,12 @@ export function Row({ kinds, children }: { kinds: string[]; children: ReactNode[
   );
 }
 
-/** Two columns on a phone; up to four when the block is wide (wideColumns). */
+/** Two columns on a phone; up to four when the block is wide (wideColumns). Each cell keeps its block's own height,
+ *  top-aligned, so a short card beside a tall chart stays short instead of stretching into an empty box. */
 export function Grid({ children }: { children: ReactNode[] }) {
   return (
-    <div className={`grid grid-cols-2 ${wideColumns(children.length)} gap-2 my-2`}>
-      {children.map((child, i) => <div key={i} className="min-w-0 [&>*]:my-0 [&>*]:h-full">{child}</div>)}
+    <div className={`grid grid-cols-2 ${wideColumns(children.length)} items-start gap-2 my-2`}>
+      {children.map((child, i) => <div key={i} className="min-w-0 [&>*]:my-0">{child}</div>)}
     </div>
   );
 }
