@@ -82,6 +82,32 @@ async def test_a_failing_forecast_is_none(isolated_settings, tmp_path):
     assert await weather.today_weather(s, httpx.MockTransport(timeout)) is None
 
 
+async def test_a_location_not_switched_on_sends_nothing(isolated_settings, tmp_path):
+    s = Store(tmp_path / "a.db")
+    s.init_schema()
+    coordinates = {"place": "Harbour Town, Eastmarch", "lat": 12.3456, "lon": 78.9012, "seen": NOW.isoformat()}
+    s.set_setting(location.KEY, {**coordinates, "on": False})  # declined or switched off: coordinates are kept
+
+    def never(request):
+        raise AssertionError("no network when the location is off")
+    assert await weather.today_weather(s, httpx.MockTransport(never)) is None
+    s.set_setting(location.KEY, {**coordinates, "on": None})  # never answered the ask
+    assert await weather.today_weather(s, httpx.MockTransport(never)) is None
+
+
+async def test_an_odd_forecast_body_is_no_weather(isolated_settings, tmp_path):
+    s = saved_store(tmp_path)
+    bodies = [
+        {"current": {"temperature_2m": None, "weather_code": 0}, "daily": OPEN_METEO_SHAPE["daily"]},
+        {"current": {"weather_code": 0}, "daily": OPEN_METEO_SHAPE["daily"]},
+        {"current": OPEN_METEO_SHAPE["current"], "daily": {"temperature_2m_max": [], "temperature_2m_min": [],
+                                                           "weather_code": []}},
+    ]
+    for body in bodies:
+        got = await weather.today_weather(s, httpx.MockTransport(lambda r, b=body: httpx.Response(200, json=b)))
+        assert got is None
+
+
 def test_weather_words():
     assert weather.weather_words(0) == "Clear"
     assert weather.weather_words(1) == "Mostly clear" and weather.weather_words(2) == "Mostly clear"

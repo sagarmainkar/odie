@@ -64,11 +64,20 @@ def sky_code(body: dict) -> int | None:
     return None
 
 
+def location_is_on(setting: dict) -> bool:
+    """Whether the user has the location switched on, so the coordinates may go to Open-Meteo. Only `on` True counts:
+    None (never answered) and False (declined or switched off) both send nothing.
+    True -> True; False -> False; None -> False."""
+    return setting.get("on") is True
+
+
 async def today_weather(store, transport=None) -> dict | None:
-    """Today's weather at the saved location: {"place", "now_c", "high_c", "low_c", "words"}. None when no coordinates
-    are saved (nothing is asked of the network), or when the forecast can't be fetched or read (logged at info; the
-    hello goes on without weather)."""
+    """Today's weather at the saved location: {"place", "now_c", "high_c", "low_c", "words"}. None when the location
+    is not switched on, or no coordinates are saved (nothing is asked of the network), or when the forecast can't be
+    fetched or read in full (logged at info; the hello goes on without weather)."""
     setting = location.get(store)
+    if not location_is_on(setting):
+        return None
     lat = setting.get("lat")
     lon = setting.get("lon")
     if lat is None or lon is None:
@@ -84,13 +93,13 @@ async def today_weather(store, transport=None) -> dict | None:
         current = body["current"]
         daily = body["daily"]
         code = sky_code(body)
+        return {
+            "place": setting.get("place") or "",
+            "now_c": whole_degrees(current["temperature_2m"]),
+            "high_c": whole_degrees(daily["temperature_2m_max"][0]),
+            "low_c": whole_degrees(daily["temperature_2m_min"][0]),
+            "words": weather_words(code) if code is not None else "",
+        }
     except (httpx.HTTPError, ValueError, KeyError, TypeError, IndexError, AttributeError):
         log.info("the forecast failed", exc_info=True)
         return None
-    return {
-        "place": setting.get("place") or "",
-        "now_c": whole_degrees(current["temperature_2m"]),
-        "high_c": whole_degrees(daily["temperature_2m_max"][0]),
-        "low_c": whole_degrees(daily["temperature_2m_min"][0]),
-        "words": weather_words(code) if code is not None else "",
-    }
