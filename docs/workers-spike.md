@@ -100,3 +100,22 @@ Live, on the throwaway with DeepSeek as the chat model and lfm3 picked by Odie:
   DeepSeek).
 - The watchdog was not provoked live (a 10-minute stall); its rules are tested.
 - Workers run with the pass's rules only, no container. The folder is under the workspace, so writes there pass.
+
+## Trying it without touching the live Odie
+
+The branch runs as a second Odie from the worktree, with its own home and port, while the live one keeps running on
+main. Scheduler off, so this copy never reads mail or calendar; the jobs you start are its only background work.
+
+```sh
+cd <the worktree of this branch>
+export ODIE_HOME=$HOME/odie-workers-home ODIE_PORT=8831 ODIE_SCHEDULER=0 ODIE_PAIRING=off ODIE_WORKERS=1 ODIE_VOICE=off
+export ODIE_HOSTS=127.0.0.1:8831,localhost:8831
+mkdir -p $ODIE_HOME
+uv run python -c "from odie import config; from odie.store.db import Store; s=Store(config.settings.db_path); s.init_schema(); s.set_setting('model.chat', {'provider':'ollama','model':'deepseek-v4.1-flash:1017-cloud'})"
+uv run uvicorn odie.app.main:create_app --factory --host 127.0.0.1 --port 8831
+```
+
+Then open http://127.0.0.1:8831 in a browser on the Mac. Things to try: "write a script that … and run it" (a task on
+DeepSeek), "track … every 5 minutes, only tell me when it changes" (a reporter on lfm3), a job that can't finish (a
+card on Today), Settings → Brain (the small model), Today's Jobs section, and the welcome after a few hours away.
+`rm -rf ~/odie-workers-home` when done. Only the Mac's browser sees this copy; the phone keeps talking to the live Odie.
