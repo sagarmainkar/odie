@@ -136,7 +136,7 @@ def scheduler_enabled() -> bool:
     return os.environ.get("ODIE_SCHEDULER", "1") != "0"
 
 
-BRIEF_LIMIT = 600  # seconds: gathering, then up to a 3-minute completion on a slow local model
+BRIEF_LIMIT = 900  # seconds: the morning round makes the brief and the hello, two model calls, each gathering first
 
 
 def watch_pushed(store: Store, runner, title: str, body: str) -> None:

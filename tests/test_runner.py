@@ -388,3 +388,72 @@ async def test_a_failed_server_is_retried_in_the_background(isolated_settings, t
         assert len(calls) >= 1  # it tried again by itself
     finally:
         await r.close()
+
+
+def _save_hello(store, runner, summary: str) -> None:
+    """Save a hello for the morning day the runner is in now (whatever the clock says)."""
+    from odie.morning.round import morning_day
+    day = morning_day(datetime.now(runner.tz))
+    store.execute("insert into mornings(day, card_json, summary, made_at) values(?,?,?,?)", (day, "{}", summary, "2026-11-04T07:30:00"))
+
+
+def _save_brief(store, runner, text: str) -> None:
+    store.execute("insert into briefs(date, text) values(?,?)", (datetime.now(runner.tz).strftime("%Y-%m-%d"), text))
+
+
+async def test_a_chat_starts_from_the_days_summary_and_drops_the_brief_block(isolated_settings, tmp_path):
+    s = Store(tmp_path / "assistant.db")
+    assert str(s.path).startswith(str(tmp_path))
+    s.init_schema()
+    r = OdieRunner(s)
+    _save_hello(s, r, "Dev wrote about the studio lease; nothing on the calendar before noon.")
+    _save_brief(s, r, "Brief: sunny, two mails.")
+    trailer = r._prepare_prompt("chat-2026-11-04", "hello")
+    assert r._current_prompt.endswith("Dev wrote about the studio lease; nothing on the calendar before noon.")
+    assert "today's brief" not in trailer
+    await r.close()
+
+
+async def test_with_no_hello_the_brief_stays_in_the_turn(isolated_settings, tmp_path):
+    s = Store(tmp_path / "assistant.db")
+    assert str(s.path).startswith(str(tmp_path))
+    s.init_schema()
+    r = OdieRunner(s)
+    _save_brief(s, r, "Brief: sunny, two mails.")
+    trailer = r._prepare_prompt("chat-2026-11-04", "hello")
+    assert "summary of the user's day" not in r._current_prompt
+    assert "[today's brief" in trailer and "sunny, two mails" in trailer
+    await r.close()
+
+
+async def test_the_prompt_stays_byte_identical_within_a_chat(isolated_settings, tmp_path):
+    s = Store(tmp_path / "assistant.db")
+    assert str(s.path).startswith(str(tmp_path))
+    s.init_schema()
+    r = OdieRunner(s)
+    _save_hello(s, r, "A quiet day.")
+    r._prepare_prompt("chat-2026-11-04", "first")
+    first = r._current_prompt
+    s.execute("update mornings set summary = ?", ("Changed behind the chat's back.",))
+    r._prepare_prompt("chat-2026-11-04", "second")
+    assert r._current_prompt == first and first.endswith("A quiet day.")
+    r.invalidate_prompt()  # what the morning round does after saving a hello
+    r._prepare_prompt("chat-2026-11-04", "third")
+    assert r._current_prompt.endswith("Changed behind the chat's back.")
+    await r.close()
+
+
+async def test_a_broken_hello_lookup_means_no_summary(isolated_settings, tmp_path, monkeypatch):
+    import odie.morning.round as morning_round
+    s = Store(tmp_path / "assistant.db")
+    assert str(s.path).startswith(str(tmp_path))
+    s.init_schema()
+    r = OdieRunner(s)
+
+    def boom(store, day):
+        raise RuntimeError("bad row")
+    monkeypatch.setattr(morning_round, "hello_for", boom)
+    _save_brief(s, r, "Brief: sunny.")
+    trailer = r._prepare_prompt("chat-2026-11-04", "hello")
+    assert "summary of the user's day" not in r._current_prompt and "[today's brief" in trailer
+    await r.close()

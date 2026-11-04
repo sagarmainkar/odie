@@ -420,6 +420,7 @@ class OdieRunner:
         self.tz = ZoneInfo(s.timezone)
         self._current_prompt = ""
         self._prompt_session = ""
+        self._day_summary = ""  # the summary the current static prompt carries
         self._model_key: tuple | None = None
         self.gated = True  # approval-gated tools are loaded (send, trash, invites, shell)
         self.memory = memory_file()
@@ -625,15 +626,33 @@ class OdieRunner:
             from odie import persona
             who = self.who()
             self._caps = who.caps
+            self._day_summary = self.day_summary(now)
             self._current_prompt = persona.apply_name(build_static_prompt(now, self.load_soul(), self.memory_index(), gated=self.gated,
-                                                                          who=who), persona.get(self.store)["name"])
+                                                                          who=who, day_summary=self._day_summary),
+                                                      persona.get(self.store)["name"])
             self._prompt_session = session_id
         rows = self.store.open_tasks(now.isoformat(timespec="minutes"))[:10]
-        brief = self.store.one("select text from briefs where date=? order by id desc limit 1", (now.strftime("%Y-%m-%d"),))
+        # The day summary already carries the brief's news, so a chat that has the summary doesn't get the brief too.
+        brief = None
+        if not self._day_summary:
+            brief = self.store.one("select text from briefs where date=? order by id desc limit 1", (now.strftime("%Y-%m-%d"),))
         from odie import location
         place, seen, home = location.location_bits(location.get(self.store), now)  # a place name and home, never coordinates
         return build_turn_context(now, self.prefetch(text), threads_summary(self.store), format_open_threads(rows),
                                   brief["text"] if brief else "", caps=getattr(self, "_caps", ALL_CAPS), place=place, seen=seen, home=home)
+
+    def day_summary(self, now: datetime) -> str:
+        """The summary of today's morning hello, or "" when there is none or it can't be read: a hello saved for this
+        morning day -> its summary; no hello yet, or a row that fails to load -> "" (the chat starts without it)."""
+        from odie.morning.round import hello_for, morning_day
+        try:
+            hello = hello_for(self.store, morning_day(now))
+        except Exception:
+            log.warning("could not read today's hello summary", exc_info=True)
+            return ""
+        if hello is None:
+            return ""
+        return hello["summary"]
 
     def who(self) -> Who:
         """Who the prompt is for: the profile's name, this computer, the local currency, what this install can do, and
