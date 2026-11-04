@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- A morning hello: each day opens with a card from Odie at the top of today's chat. It greets you for the time of day, asks how yesterday's events went (and asks, rather than guesses, how things turned out), says what got done and what stayed open in the last few days' chats, and shows the weather, up to four tiles (today, due soon, arriving, a trip), one nudge for something that needs a decision, the mail worth knowing about, and chips you can tap to send. It is written once a day by your chat model, from 05:00, at the 07:30 morning round or when you first open the day, and a plain card stands in when the model's answer can't be used. Every new chat that day starts from Odie's short notes about the day, including the morning brief, so you don't have to explain where you left off.
+- Recall: Odie can search its own past chats and everything it remembers by meaning, mid-chat ("what did we decide about the lease?"), with each line saying when it was said. It replaces the keyword-only memory search, and falls back to words when there is no embedding model or the index can't be read. Settings → Notes says when past chats are being read by meaning.
+- The 07:30 morning round skips the brief when one was already written that day.
+
 ## v0.2.39 (2026-11-04)
 
 - A block that a model wrote with a comma left before a closing bracket (`"series": [{...}, ]`) now draws instead of showing "Couldn't draw this". It is the third slip Odie forgives in a block, beside strings left unclosed and numbers written with thousands commas; a block that already reads is never changed.

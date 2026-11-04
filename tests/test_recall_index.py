@@ -300,3 +300,17 @@ def test_the_chats_read_until_mark(tmp_path):
     assert index.chats_read_until() == 0.0
     index.mark_chats_read_until(at(4, 0))
     assert index.chats_read_until() == at(4, 0)
+
+
+async def test_an_embedder_that_returns_too_few_vectors_is_recorded(tmp_path):
+    """Fewer vectors than texts would leave the same batch pending every pass; the run stops and says why."""
+    index, db = make_index(tmp_path)
+    fill(index)
+
+    class ShortEmbedder(FakeEmbedder):
+        async def embed(self, texts, kind: str = "document"):
+            vectors = await super().embed(texts, kind)
+            return vectors[:-1]
+    assert await index.embed_pending(ShortEmbedder()) == 0
+    assert meta_value(db, "recall_embed_error") == "the embedder returned 3 vectors for 4 passages"
+    assert count(db, "select count(*) from vectors") == 0

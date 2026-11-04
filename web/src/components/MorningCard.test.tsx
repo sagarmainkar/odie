@@ -187,6 +187,15 @@ describe("asking for the morning hello", () => {
     expect(morningAsks()).toBe(reopened);
   });
 
+  it("draws nothing between midnight and five, when the saved hello is yesterday's", async () => {
+    vi.setSystemTime(new Date(2026, 10, 5, 1, 30));
+    answer("ready");  // the route's day is still the morning of 4 Nov
+    const { host, done } = await mount(<Probe threadId={null} />);
+    expect(morningAsks()).toBe(1);
+    expect(host.textContent).toBe("nothing");
+    await done();
+  });
+
   it("never asks from an old thread or a later segment of today", async () => {
     answer("ready");
     const { host, root, done } = await mount(<Probe threadId="chat-2026-10-30-5" />);

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { accentParts, isDayStartChat, keepAsking, MORNING_ASK_FOR_MS, shouldShowMorning, weatherTitle, type ChatOnScreen } from "./morning";
+import { accentParts, isDayStartChat, isTodaysHello, keepAsking, MORNING_ASK_FOR_MS, shouldShowMorning, weatherTitle, type ChatOnScreen } from "./morning";
 
 describe("the greeting's accent word", () => {
   it("splits the greeting around the word, for the serif italic", () => {
@@ -58,5 +58,12 @@ describe("the weather strip's title", () => {
     expect(weatherTitle({ ...w, place: "" })).toBe("Clear");
     expect(weatherTitle({ ...w, words: "" })).toBe("Today in Pune");
     expect(weatherTitle({ ...w, place: "", words: "" })).toBe("Today");
+  });
+});
+
+describe("whose day the hello is", () => {
+  it("draws only today's hello, not yesterday's between midnight and five", () => {
+    expect(isTodaysHello({ state: "ready", day: "2026-11-04", card: null }, "2026-11-04")).toBe(true);
+    expect(isTodaysHello({ state: "ready", day: "2026-11-04", card: null }, "2026-11-05")).toBe(false);  // 01:30 on 5 Nov
   });
 });

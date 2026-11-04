@@ -1,11 +1,12 @@
 // Asking Odie for today's morning hello, for the card above the chat (components/MorningCard.tsx).
 import { useEffect, useState } from "react";
 import { getJSON, todayISO } from "./api";
-import { isDayStartChat, keepAsking, MORNING_ASK_EVERY_MS, type MorningReply, type MorningState } from "./morning";
+import { isDayStartChat, isTodaysHello, keepAsking, MORNING_ASK_EVERY_MS, type MorningReply, type MorningState } from "./morning";
 
 /** Today's hello from GET /api/morning, for the chat on screen. Asked when today's chat opens (and again when the app
  * comes back on screen, so a phone left open overnight gets the new day's); while the hello is being made it asks every
- * 10 s, for up to 3 minutes, then gives up and draws nothing. A later segment or an old thread never asks.
+ * 10 s, for up to 3 minutes, then gives up and draws nothing. A later segment or an old thread never asks, and a
+ * hello for another day (yesterday's, between midnight and 05:00) is not drawn.
  * null: nothing to draw. */
 export function useMorning(threadId: string | null): MorningReply | null {
   const [reply, setReply] = useState<MorningReply | null>(null);
@@ -42,5 +43,6 @@ export function useMorning(threadId: string | null): MorningReply | null {
   }, [threadId, dayStart, wake]);
 
   if (!dayStart) return null;
+  if (reply !== null && !isTodaysHello(reply, todayISO())) return null;  // 00:00-05:00: yesterday's hello
   return reply;
 }

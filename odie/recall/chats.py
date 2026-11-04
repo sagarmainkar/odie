@@ -65,7 +65,7 @@ def chat_lines(sessions_db: Path, app: str, user: str, since: float, until: floa
         rows = db.execute(
             "select session_id, timestamp, event_data from events "
             "where app_name=? and user_id=? and session_id like 'chat-%' and timestamp >= ? and timestamp < ? "
-            "order by timestamp",
+            "order by timestamp, rowid",
             (app, user, since, until)).fetchall()
     finally:
         db.close()

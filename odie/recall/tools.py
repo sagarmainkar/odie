@@ -1,6 +1,7 @@
 """The recall tool: one search over past chats and everything remembered, in place of search_memories."""
 from __future__ import annotations
 
+import logging
 from datetime import date
 from typing import TYPE_CHECKING
 
@@ -11,6 +12,8 @@ from odie.memory.store import MemoryFile
 
 if TYPE_CHECKING:  # only for the annotation: odie.recall.index reaches the runner, which imports the agent
     from odie.recall.index import RecallHit
+
+log = logging.getLogger("odie.recall.tools")
 
 HITS = 8  # lines a call returns at most
 EXCERPT = 500  # characters of a passage in one line
@@ -59,9 +62,10 @@ def make_recall_tool(store, memory: MemoryFile) -> FunctionTool:
         from odie.vault.settings import embedder_for
         try:
             index = recall_index()
-        except Exception:  # noqa: BLE001 (any failure opening the index: the memory file's words still answer)
+            hits = await index.search(query, k=HITS, embedder=embedder_for(store), since=since, until=until)
+        except Exception:  # the index won't open, or its search breaks: the memory file's words answer
+            log.warning("recall: past chats couldn't be searched; answering from the memory file's words", exc_info=True)
             return memory_words(memory, query)
-        hits = await index.search(query, k=HITS, embedder=embedder_for(store), since=since, until=until)
         if not hits:
             return NOTHING
         return "\n".join(hit_line(h) for h in hits)
@@ -70,7 +74,7 @@ def make_recall_tool(store, memory: MemoryFile) -> FunctionTool:
 
 
 def memory_words(memory: MemoryFile, query: str) -> str:
-    """The fallback when the recall index can't be opened: the memory file searched by words, and a line saying past
+    """The fallback when the recall index can't be opened or searched: the memory file searched by words, and a line saying past
     chats aren't there. "rent" with a Rent day memory -> its memory line, then the note; nothing matching -> NOTHING,
     then the note."""
     entries = memory.load().entries() if memory.exists() else []

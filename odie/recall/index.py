@@ -9,6 +9,7 @@ passages_fts is kept in step by hand: its rowid is the passage's rowid, and ever
 the same to its fts row."""
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import math
 import sqlite3
@@ -173,7 +174,8 @@ class RecallIndex:
           index's model is another name          -> nothing embedded, 0: the notes' pass (VaultIndex.embed_pending)
                                                     owns a model switch and clears all vectors, then this one runs again
           embedder fails                         -> the run stops, meta.recall_embed_error says why, the next run
-                                                    tries again (the notes keep their own embed_error, never touched)"""
+                                                    tries again (the notes keep their own embed_error, never touched)
+          embedder returns 3 vectors for 4 texts -> the same: none of the batch is kept, the error says so"""
         with self._db() as c:
             model = self._meta(c).get("model")
             if model is not None and model != embedder.name:
@@ -192,6 +194,10 @@ class RecallIndex:
             except Exception as e:  # noqa: BLE001
                 with self._db() as c:
                     self._set(c, "recall_embed_error", f"{type(e).__name__}: {e}"[:300])
+                return done
+            if len(vecs) != len(rows):  # which passage a vector belongs to is unknown: none of them is kept
+                with self._db() as c:
+                    self._set(c, "recall_embed_error", f"the embedder returned {len(vecs)} vectors for {len(rows)} passages")
                 return done
             stored = self._store_vectors([(r["kind"], r["ref"]) for r in rows], vecs)
             done += stored
@@ -289,6 +295,12 @@ class RecallIndex:
         q = await self._query_vector(query, embedder)
         if q is None:
             return self.keyword(query, k=k, since=since, until=until)
+        # Scoring is plain Python over every vector: it runs in a thread so the chats on the event loop keep moving.
+        return await asyncio.to_thread(self._nearest, query, q, k, since, until)
+
+    def _nearest(self, query: str, q: list[float], k: int, since: str | None, until: str | None) -> list[RecallHit]:
+        """The k passages nearest the question's vector `q` within the days, or the word matches when no vector
+        passes the day filter."""
         days = self._days(since, until)
         scored: list[tuple[float, str, str]] = []
         for kind in KINDS:

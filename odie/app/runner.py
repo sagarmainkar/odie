@@ -572,9 +572,9 @@ class OdieRunner:
         """The memory file changed (update_memory, the review): when it's in the vault, the notes index re-reads it.
         The system prompt keeps the memory titles it started the chat with: rebuilding it mid-chat would change the
         very start of every later request, so the model would read the whole conversation again (and Claude would drop
-        its kept thoughts). The change still reaches the model: each message's [memories] block searches the memory
-        as it is now, recall and fetch_memory read it live, and the next chat (tomorrow, or a new chat) lists
-        the new titles.
+        its kept thoughts). The change still reaches the model: each message's [memories] block finds it at once,
+        fetch_memory reads it live, recall finds it once the index worker re-syncs, and the next chat (tomorrow, or a
+        new chat) lists the new titles.
           "Remember I prefer aisle seats" at 10:00 -> saved; this chat's system prompt is unchanged
           "Which seat do I like?" at 10:05         -> the [memories] block finds the new entry"""
         worker = getattr(self, "vault_worker", None)
@@ -626,10 +626,11 @@ class OdieRunner:
             from odie import persona
             who = self.who()
             self._caps = who.caps
+            from odie.morning.round import morning_day
             self._day_summary = self.day_summary(now)
-            self._current_prompt = persona.apply_name(build_static_prompt(now, self.load_soul(), self.memory_index(), gated=self.gated,
-                                                                          who=who, day_summary=self._day_summary),
-                                                      persona.get(self.store)["name"])
+            static = build_static_prompt(now, self.load_soul(), self.memory_index(), gated=self.gated, who=who,
+                                         day_summary=self._day_summary, summary_day=morning_day(now))
+            self._current_prompt = persona.apply_name(static, persona.get(self.store)["name"])
             self._prompt_session = session_id
         rows = self.store.open_tasks(now.isoformat(timespec="minutes"))[:10]
         # The day summary already carries the brief's news, so a chat that has the summary doesn't get the brief too.

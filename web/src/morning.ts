@@ -39,6 +39,13 @@ export function accentParts(greeting: string, accent: string): [string, string, 
   return [greeting.slice(0, at), accent, greeting.slice(at + accent.length)];
 }
 
+/** Whether the hello is today's: the route says which morning it belongs to, and from midnight to 05:00 that is still
+ * yesterday's, which the card doesn't draw as today's.
+ * day "2026-11-04" on 4 Nov -> true; day "2026-11-04" at 01:30 on 5 Nov -> false. */
+export function isTodaysHello(reply: MorningReply, today: string): boolean {
+  return reply.day === today;
+}
+
 /** Whether the chat on screen can start at the top of the day: the main view (no thread), or the day's first segment
  * opened from Threads. Only these ask for the hello.
  * (null, "2026-11-04") -> true; ("chat-2026-11-04", "2026-11-04") -> true; ("chat-2026-11-04-2", "2026-11-04") -> false
