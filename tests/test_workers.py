@@ -4,6 +4,7 @@ rules refuse what they would stop in chat; every call is a row in job_actions; t
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 from typing import ClassVar
 
 import pytest
@@ -231,14 +232,14 @@ def test_off_by_default_the_chat_has_no_worker_tools(world, monkeypatch):
     assert "start_job" not in {t.name for t in build_agent(store).tools if hasattr(t, "name")}
     monkeypatch.setenv("ODIE_WORKERS", "1")
     names = {t.name for t in build_agent(store).tools if hasattr(t, "name")}
-    assert {"start_job", "jobs_status", "stop_job", "retry_job"} <= names
+    assert {"start_job", "jobs_status", "stop_job", "retry_job", "forget_job"} <= names
 
 
 async def test_start_job_from_the_chat_names_the_chat_it_came_from(world):
     store, _, _ = world
     from odie.workers.tools import make_worker_tools
     Scripted.script = [("report", {"outcome": "ready", "text": "ok"})]
-    start_job, jobs_status, stop_job, _ = make_worker_tools(store)
+    start_job, jobs_status, stop_job, _, _ = make_worker_tools(store)
 
     class Ctx:
         class session:
@@ -351,13 +352,13 @@ async def test_a_reporter_waiting_between_runs_can_be_stopped(world, monkeypatch
 async def test_start_job_with_every_minutes_makes_a_reporter_in_the_users_time(world, monkeypatch):
     store, _, _ = world
     from odie.workers.tools import make_worker_tools
-    start_job, _, stop_job, _ = make_worker_tools(store)
+    start_job, _, stop_job, _, _ = make_worker_tools(store)
     Scripted.stall = True
     got = await start_job.func("Mail count", "Count unread.", every_minutes=30, until="2026-11-04T18:00")
     row = jobs.get(store, got["job_id"])
     assert row["kind"] == "reporter" and row["every_minutes"] == 30
     assert row["until_at"] == "2026-11-04T18:00:00+05:30"  # Asia/Kolkata, the tests' timezone
-    assert got["repeats"].startswith("every 30 minutes until 2026-11-04T18:00:00+05:30")
+    assert got["repeats"] == "every 30 minutes until 2026-11-04T18:00:00+05:30, telling you: always"
     assert await stop_job.func(got["job_id"]) == {"stopped": got["job_id"]}
 
 
@@ -463,7 +464,7 @@ async def test_recover_after_a_restart_tells_cut_off_jobs_and_relaunches_reporte
 async def test_retry_job_from_the_chat(world):
     store, _, _ = world
     from odie.workers.tools import make_worker_tools
-    _, _, _, retry_job = make_worker_tools(store)
+    _, _, _, retry_job, _ = make_worker_tools(store)
     assert "error" in await retry_job.func("job-nothere")
     Scripted.stall = True
     job = router.start("task", "Stop me", "…", "chat-1")
@@ -525,8 +526,9 @@ async def test_ensure_small_model_asks_ollama_once_and_keeps_the_users_pick(worl
 
 async def test_the_brain_routes_offer_the_workers_slot_only_with_workers_on(isolated_settings, tmp_path, monkeypatch):
     import httpx
-    from odie.app.main import create_app
+
     import odie.app.routes as routes_mod
+    from odie.app.main import create_app
 
     async def nobody(providers, transport=None):
         return [{"id": p.id, "name": p.name, "local": p.local, "models": [], "error": None} for p in providers]
@@ -549,3 +551,83 @@ async def test_the_brain_routes_offer_the_workers_slot_only_with_workers_on(isol
             got = (await c.get("/api/models")).json()["selection"]["workers"]
             assert got == {"provider": "ollama", "model": "lfm3:latest", "chosen": True, "auto": False}
             assert store.get_setting("model.workers") == {"provider": "ollama", "model": "lfm3:latest"}
+
+
+# ── notify rules, done, and the cards on Today ───────────────────────────────
+
+def test_should_tell_follows_the_rule():
+    from odie.workers.store import Job
+    rep = lambda notify: Job("job-1", "reporter", "t", "b", None, Path("/x"), 60, every_minutes=5, notify=notify)  # noqa: E731
+    said = lambda **k: worker.Report(outcome="ready", text="…", **k)  # noqa: E731
+    plain = Job("job-2", "task", "t", "b", None, Path("/x"), 60)
+    assert worker.should_tell(plain, said(), None) is True
+    assert worker.should_tell(rep("always"), said(state="same"), "same") is True
+    assert worker.should_tell(rep("change"), said(state="Shipped"), None) is True          # the first run
+    assert worker.should_tell(rep("change"), said(state=" shipped "), "Shipped") is False  # the same facts
+    assert worker.should_tell(rep("change"), said(state="Out for delivery"), "Shipped") is True
+    assert worker.should_tell(rep("condition"), said(met=False), "x") is False
+    assert worker.should_tell(rep("condition"), said(met=True), "x") is True
+    assert worker.should_tell(rep("condition"), said(done=True), "x") is True
+    assert worker.should_tell(rep("condition"), worker.Report(outcome="blocked", text="need a key"), "x") is True
+
+
+async def test_a_change_reporter_stays_quiet_while_the_facts_hold_and_ends_when_done(world, monkeypatch):
+    store, chat, _ = world
+
+    async def no_wait(seconds):
+        pass
+    monkeypatch.setattr(router, "sleep", no_wait)
+    Scripted.script = [("report", {"outcome": "ready", "text": "Shipped from Pune.", "state": "Shipped"}), "ok",
+                       ("report", {"outcome": "ready", "text": "Still shipped.", "state": "shipped"}), "ok",
+                       ("report", {"outcome": "ready", "text": "Delivered at 10:40.", "state": "Delivered", "done": True}), "ok",
+                       ("report", {"outcome": "ready", "text": "would be run 4"}), "ok"]
+    job = router.start("task", "Order", "Track order 123.", "chat-1", every_minutes=5, notify="change")
+    for _ in range(300):
+        if jobs.get(store, job.id)["status"] == "done":
+            break
+        await asyncio.sleep(0.01)
+    row = jobs.get(store, job.id)
+    assert (row["status"], row["runs"], row["last_state"]) == ("done", 3, "Delivered")
+    texts = [p["text"] for p in chat.posts]
+    assert texts == [f"🔁 Report 1: Order ({job.id})\n\nShipped from Pune.",            # the first run is told
+                     f"🏁 Order ({job.id}): nothing left to watch\n\nDelivered at 10:40."]  # run 2 was quiet; run 3 ended it
+    assert [a["tool"] for a in jobs.actions(store, job.id)].count("report") == 3  # every run is on the record
+
+
+async def test_a_stuck_or_failed_job_waits_on_today_with_retry(world):
+    from datetime import UTC, datetime
+
+    from odie.watch import needs
+    store, chat, _ = world
+    Scripted.script = [("report", {"outcome": "blocked", "text": "Need the API key for Zerodha.\nThen I can go on."})]
+    job = router.start("task", "Portfolio pull", "…", "chat-1")
+    for _ in range(300):
+        if jobs.get(store, job.id)["status"] == "done":
+            break
+        await asyncio.sleep(0.01)
+    cards = needs.cards(store, datetime.now(UTC))
+    card = next(c for c in cards if c["ref"] == f"job:{job.id}")
+    assert card["title"] == "Portfolio pull" and card["why"] == "Need the API key for Zerodha."
+    assert card["main"] == {"label": "Retry", "action": "chat", "value": f"retry {job.id}"}
+    assert card["other"]["label"] == "Dismiss"
+    assert card["pile"] == "alerts"
+    from odie.workers.tools import make_worker_tools
+    *_, forget_job = make_worker_tools(store)
+    assert await forget_job.func(job.id) == {"forgotten": job.id}
+    assert not [c for c in needs.cards(store, datetime.now(UTC)) if c["ref"] == f"job:{job.id}"]
+    assert "error" in await forget_job.func(job.id)
+
+
+async def test_the_watchdogs_verdict_makes_a_card_too(world):
+    from datetime import UTC, datetime, timedelta
+
+    from odie.watch import needs
+    from odie.workers import watchdog
+    store, _, _ = world
+    Scripted.stall = True
+    job = router.start("task", "Slow", "…", "chat-1")
+    await asyncio.sleep(0.05)
+    await watchdog.check(store, datetime.now(UTC) + timedelta(minutes=11))
+    await asyncio.sleep(0.05)
+    card = next(c for c in needs.cards(store, datetime.now(UTC)) if c["ref"] == f"job:{job.id}")
+    assert card["why"] == "made no progress for 10 minutes"

@@ -41,23 +41,54 @@ REPORT_LIMIT = 4000  # characters of a report kept and posted
 
 @dataclass
 class Report:
-    """What the Worker said in report, once it has: outcome, text and the files it points at."""
+    """What the Worker said in report, once it has: outcome, text, the files it points at; a reporter's comparable
+    state, whether its condition is met, and whether there is nothing left to watch."""
     outcome: str = ""
     text: str = ""
     files: list[str] = field(default_factory=list)
+    state: str = ""
+    met: bool = False
+    done: bool = False
 
     def given(self) -> bool:
         return bool(self.outcome)
 
 
 def make_report_tool(got: Report) -> FunctionTool:
-    def report(outcome: str, text: str, files: list[str] | None = None) -> dict:
-        """Finish the job. Call it once, at the end. outcome: "ready" (the result is here, or the work is done), "blocked" (you can't finish without the user: say what you need), or "dropped" (there was nothing to do: say why). text: the report, short and plain. files: paths of files in your folder the user should get."""
+    def report(outcome: str, text: str, files: list[str] | None = None, state: str = "", met: bool = False,
+               done: bool = False) -> dict:
+        """Finish the job. Call it once, at the end. outcome: "ready" (the result is here, or the work is done), "blocked" (you can't finish without the user: say what you need), or "dropped" (there was nothing to do: say why). text: the report, short and plain. files: paths of files in your folder the user should get. For a repeating check: state is the few facts that matter, written the same way each run ("Out for delivery"); met is true when the brief's condition holds now; done is true when there is nothing left to watch."""
         got.outcome = outcome if outcome in OUTCOMES else "ready"
         got.text = (text or "").strip()[:REPORT_LIMIT]
         got.files = [str(f) for f in (files or []) if f]
+        got.state = " ".join(str(state or "").split())[:200]
+        got.met = met is True
+        got.done = done is True
         return {"ok": True}
     return FunctionTool(report)
+
+
+def _same(a: str | None, b: str | None) -> bool:
+    return " ".join((a or "").lower().split()) == " ".join((b or "").lower().split())
+
+
+def should_tell(job: Job, got: Report, last_state: str | None) -> bool:
+    """Does the user hear about this run of a reporter? A plain job: always. A reporter: always when done or blocked;
+    else as its notify rule says. "always" -> every run; "change" -> the first run, then only when the state differs
+    from the last (case and spaces don't count); "condition" -> when the Worker says the condition is met.
+      change, last "Shipped", now "Out for delivery" -> True;  change, now " shipped " -> False;
+      change, first run -> True;  condition, met False -> False;  any rule, done -> True"""
+    if not job.repeats or got.done or got.outcome == "blocked":
+        return True
+    if job.notify == "always":
+        return True
+    if job.notify == "change":
+        if last_state is None:
+            return True
+        return not _same(got.state, last_state)
+    if job.notify == "condition":
+        return got.met
+    return True
 
 
 def guard_for(store: Store, job: Job):
@@ -141,6 +172,8 @@ def message_for(kind: WorkerKind, job: Job, status: str, got: Report, error: str
         return f"⛔ {job.title} is stuck ({job.id})\n\n{got.text}"
     if got.outcome == "dropped":
         return f"➖ {job.title}: nothing to do ({job.id})\n\n{got.text}"
+    if job.repeats and got.done:
+        return f"🏁 {job.title} ({job.id}): nothing left to watch\n\n{got.text}"
     if job.repeats:
         return f"🔁 Report {job.runs}: {job.title} ({job.id})\n\n{got.text}"
     return f"✅ {kind.word.capitalize()} done: {job.title} ({job.id})\n\n{got.text}"
@@ -163,6 +196,20 @@ async def tell(store: Store, runner, job: Job, text: str, media: list[dict]) -> 
         send_to_all(store, persona.get(store)["name"], text[:160], url="/#chat", tag=job.id)
     except Exception:  # noqa: BLE001
         log.warning("push failed for %s", job.id, exc_info=True)
+
+
+def needs_you_card(store: Store, job: Job, why: str) -> None:
+    """A job that is stuck or didn't finish waits on Today's Needs you as a card, like a reply owed: ref job:<id>,
+    Retry as its button, Dismiss as the way out. One card per job: a second call replaces the first."""
+    from odie.store.db import now_iso
+    from odie.watch import report as watch_report
+    card = store.get_setting(watch_report.CARD) or {}
+    ref = f"job:{job.id}"
+    items = [i for i in card.get("needs_you", []) if i.get("ref") != ref]
+    items.append({"ref": ref, "title": job.title, "why": why[:watch_report.WHY_MAX], "at": now_iso(), "done": False,
+                  "pile": "alerts", "suggestion": {"label": "Retry", "run": f"retry {job.id}"},
+                  "escape": {"label": "Dismiss", "run": f"Forget job {job.id}"}})
+    store.set_setting(watch_report.CARD, {**card, "needs_you": items[-30:]})
 
 
 SMALL_MODEL_SETTING = "model.workers"       # {"provider": "ollama", "model": "lfm3:latest"}: the user's pick in Settings → Brain
@@ -288,10 +335,21 @@ async def run(job: Job, store: Store, runner, kind: WorkerKind | None = None, mo
     status = "failed" if error else "done"
     # A reporter's row stays open between runs: the Router sets it waiting or ends it; the run's report is kept here.
     if job.repeats:
-        store.execute("update jobs set outcome=?, report=?, error=? where id=?",
-                      (got.outcome or None, got.text or None, error or None, job.id))
+        row = jobs.get(store, job.id) or {}
+        last_state = row.get("last_state")
+        store.execute("update jobs set outcome=?, report=?, error=?, last_state=? where id=?",
+                      (got.outcome or None, got.text or None, error or None, got.state or last_state, job.id))
+        if status == "done" and not should_tell(job, got, last_state):
+            log.info("worker %s: run %s kept quiet (%s)", job.id, job.runs, job.notify)
+            return "quiet"
     else:
         jobs.ended(store, job.id, status, outcome=got.outcome or None, report=got.text or None, error=error or None)
     media = media_for(job, got.files) if status == "done" else []
     await tell(store, runner, job, message_for(kind, job, status, got, error), media)
+    if status == "failed":
+        needs_you_card(store, job, error)
+    elif got.outcome == "blocked":
+        needs_you_card(store, job, got.text.splitlines()[0] if got.text else "needs you")
+    if job.repeats and got.done:
+        return "finished"
     return status

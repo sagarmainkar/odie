@@ -61,7 +61,10 @@ already said) in notes.md with write_file; read it first with read_file.
 - Do the check the brief asks for. Compare with your last report, given below when there is one. Say what changed and \
 what matters; when nothing changed, say so in one line.
 - A command the rules refuse is not run; the answer says why. Find another way, or report it as blocked.
-- Finish by calling report, once: short, plain words. Never stop without calling report."""
+- Finish by calling report, once: short, plain words. Give `state`: the few facts that matter, written the same way \
+every run so runs compare ("2-1 FT", "Out for delivery", "416 GB free"). When the brief names a condition, set `met` \
+true only when it holds now. Set `done` true when there is nothing left to watch (the match ended, the order arrived). \
+Never stop without calling report."""
 
 
 TASK = WorkerKind(name="task", word="task", instruction=TASK_INSTRUCTION, tools=task_tools)

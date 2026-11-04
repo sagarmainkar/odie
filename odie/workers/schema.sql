@@ -12,6 +12,9 @@ create table if not exists jobs (
   every_minutes integer not null default 0,  -- a reporter runs again this often; 0 = once
   until_at text,                             -- a reporter's last run is before this (UTC)
   next_run_at text,                          -- when a waiting reporter runs next (UTC)
+  notify text not null default 'always',     -- a reporter speaks: always | change (the state differs) | condition (met)
+  condition text not null default '',        -- the condition, in words, for notify = condition
+  last_state text,                           -- the reporter's last comparable state ("2-1 FT", "Out for delivery")
   runs integer not null default 0,           -- how many times a Worker was started on it
   outcome text,                              -- what the Worker said in report: ready, blocked, dropped
   report text,                               -- the Worker's report text

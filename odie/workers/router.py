@@ -81,7 +81,7 @@ def until_for(every_minutes: int, until_at: str | None, now: datetime) -> str | 
 
 
 def start(kind_name: str, title: str, brief: str, session_id: str | None, every_minutes: int = 0,
-          until_at: str | None = None) -> Job:
+          until_at: str | None = None, notify: str = "always", condition: str = "") -> Job:
     """Start a job: the row, the folder, and a task that runs the Worker when a slot is free. every_minutes > 0 makes
     it a reporter: the kind becomes reporter and the task runs again every so often until until_at (until_for).
     Needs the running loop."""
@@ -91,7 +91,8 @@ def start(kind_name: str, title: str, brief: str, session_id: str | None, every_
     job_id = jobs.new_id()
     folder = folder_for(title, job_id)
     job = jobs.create(store, kind.name, title, brief, session_id, folder, kind.budget_seconds,
-                      every_minutes=every_minutes, until_at=until_for(every_minutes, until_at, now_utc()))
+                      every_minutes=every_minutes, until_at=until_for(every_minutes, until_at, now_utc()),
+                      notify=notify, condition=condition)
     launch(job)
     return job
 
@@ -135,6 +136,9 @@ async def _repeat(job: Job) -> None:
     failed_in_a_row = 0
     while True:
         status = await _run(job)
+        if status == "finished":  # the Worker said done: nothing left to watch
+            jobs.ended(store, job.id, "done", outcome="ready", report=(jobs.get(store, job.id) or {}).get("report"))
+            return
         failed_in_a_row = failed_in_a_row + 1 if status == "failed" else 0
         if failed_in_a_row >= FAILED_RUNS_IN_A_ROW:
             why = f"{FAILED_RUNS_IN_A_ROW} runs in a row didn't finish"
@@ -179,6 +183,7 @@ async def fail(job_id: str, why: str) -> None:
     jobs.ended(store, job_id, "failed", error=why)
     await hooks["runner"].post_message(f"❌ {row['title']} didn't finish ({job_id}): {why}. Say \"retry {job_id}\" to start it again.",
                                        row["session_id"], kind="job")
+    worker.needs_you_card(store, jobs.from_row(row), why)
 
 
 def retry(job_id: str) -> Job | None:

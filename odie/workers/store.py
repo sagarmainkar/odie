@@ -13,6 +13,7 @@ from odie.store.db import Store, now_iso
 SCHEMA = Path(__file__).with_name("schema.sql").read_text()
 STATUSES = ("queued", "running", "waiting", "done", "failed", "stopped")
 OUTCOMES = ("ready", "blocked", "dropped")  # what a Worker may say in report
+NOTIFY = ("always", "change", "condition")  # when a reporter's run is told
 
 
 @dataclass
@@ -29,6 +30,8 @@ class Job:
     every_minutes: int = 0        # a reporter: runs again this often; 0 = a job that runs once
     until_at: str | None = None   # a reporter's last run is before this (UTC ISO)
     runs: int = 0
+    notify: str = "always"        # a reporter speaks: always, on change of state, or when its condition is met
+    condition: str = ""
 
     @property
     def repeats(self) -> bool:
@@ -48,20 +51,23 @@ def new_id() -> str:
 
 
 def create(store: Store, kind: str, title: str, brief: str, session_id: str | None, folder: Path,
-           budget_seconds: int, model: str = "", every_minutes: int = 0, until_at: str | None = None) -> Job:
+           budget_seconds: int, model: str = "", every_minutes: int = 0, until_at: str | None = None,
+           notify: str = "always", condition: str = "") -> Job:
+    notify = notify if notify in NOTIFY else "always"
     job = Job(new_id(), kind, title, brief, session_id, folder, budget_seconds, model, every_minutes=every_minutes,
-              until_at=until_at)
+              until_at=until_at, notify=notify, condition=condition)
     store.execute("insert into jobs(id,kind,title,brief,model,status,session_id,folder,budget_seconds,every_minutes,"
-                  "until_at,created_at) values(?,?,?,?,?,?,?,?,?,?,?,?)",
+                  "until_at,notify,condition,created_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                   (job.id, kind, title, brief, model, "queued", session_id, str(folder), budget_seconds, every_minutes,
-                   until_at, now_iso()))
+                   until_at, notify, condition, now_iso()))
     return job
 
 
 def from_row(row: dict) -> Job:
     """A Job from its row (recovery after a restart, the watchdog)."""
     return Job(row["id"], row["kind"], row["title"], row["brief"], row["session_id"], Path(row["folder"]),
-               row["budget_seconds"], row["model"], row["status"], row["every_minutes"], row["until_at"], row["runs"])
+               row["budget_seconds"], row["model"], row["status"], row["every_minutes"], row["until_at"], row["runs"],
+               row["notify"], row["condition"])
 
 
 def started(store: Store, job: Job) -> int:
