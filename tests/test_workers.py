@@ -488,3 +488,32 @@ def test_a_kind_runs_on_its_own_model_when_one_is_set(world):
     assert worker.selection_for_kind(store, TASK).model == "deepseek-v4.1-flash:cloud"  # the task kind is untouched
     store.set_setting("workers.model.reporter", {"provider": "gone", "model": "x"})
     assert worker.selection_for_kind(store, REPORTER).model == "deepseek-v4.1-flash:cloud"  # an unknown provider: the chat's
+
+
+async def test_stop_all_at_shutdown_leaves_the_rows_for_recovery(world):
+    store, _, _ = world
+    Scripted.stall = True
+    plain = router.start("task", "Plain", "…", "chat-1")
+    rep = router.start("task", "Hourly", "…", "chat-1", every_minutes=60)
+    await asyncio.sleep(0.05)
+    await router.stop_all()
+    assert router.running_ids() == []
+    assert jobs.get(store, plain.id)["status"] == "running"  # as the restart will find it
+    assert jobs.get(store, rep.id)["status"] == "running"
+
+
+async def test_a_reporter_whose_runs_keep_failing_stops(world, monkeypatch):
+    store, chat, _ = world
+
+    async def no_wait(seconds):
+        pass
+    monkeypatch.setattr(router, "sleep", no_wait)
+    Scripted.script = ["no report", "still none", "no report", "still none", "would be run 3"]
+    job = router.start("task", "Doomed", "…", "chat-1", every_minutes=5)
+    for _ in range(300):
+        if jobs.get(store, job.id)["status"] == "failed":
+            break
+        await asyncio.sleep(0.01)
+    row = jobs.get(store, job.id)
+    assert (row["status"], row["runs"], row["error"]) == ("failed", 2, "2 runs in a row didn't finish")
+    assert chat.posts[-1]["text"] == f'❌ Doomed ({job.id}) stopped: 2 runs in a row didn\'t finish. Say "retry {job.id}" to start it again.'

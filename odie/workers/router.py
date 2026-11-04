@@ -23,6 +23,7 @@ MAX_AT_ONCE = 3
 DEFAULT_REPORTER_HOURS = 24  # a reporter with no end runs this long
 MAX_REPORTER_DAYS = 7
 MIN_EVERY_MINUTES = 5
+FAILED_RUNS_IN_A_ROW = 2  # a reporter whose runs keep failing stops here (its model is down, its brief can't be done)
 hooks: dict = {}  # runner (posts the messages) and store; set by setup()
 _tasks: dict[str, asyncio.Task] = {}
 _slots: asyncio.Semaphore | None = None
@@ -105,14 +106,16 @@ def launch(job: Job) -> asyncio.Task:
     return task
 
 
-async def _run(job: Job) -> None:
+async def _run(job: Job) -> str:
+    """One run of the Worker, when a slot is free: the run's status ("done" or "failed")."""
     async with _slots_now():
         try:
-            await worker.run(job, hooks["store"], hooks["runner"])
+            return await worker.run(job, hooks["store"], hooks["runner"])
         except asyncio.CancelledError:
             raise
         except Exception:  # noqa: BLE001 (worker.run tells the chat itself; this is the last net)
             log.exception("worker %s crashed", job.id)
+            return "failed"
 
 
 async def sleep(seconds: float) -> None:
@@ -129,8 +132,16 @@ async def _repeat(job: Job) -> None:
     if kept and datetime.fromisoformat(kept) > now_utc():
         jobs.waiting(store, job.id, kept)
         await sleep((datetime.fromisoformat(kept) - now_utc()).total_seconds())
+    failed_in_a_row = 0
     while True:
-        await _run(job)
+        status = await _run(job)
+        failed_in_a_row = failed_in_a_row + 1 if status == "failed" else 0
+        if failed_in_a_row >= FAILED_RUNS_IN_A_ROW:
+            why = f"{FAILED_RUNS_IN_A_ROW} runs in a row didn't finish"
+            jobs.ended(store, job.id, "failed", error=why)
+            await hooks["runner"].post_message(f"❌ {job.title} ({job.id}) stopped: {why}. Say \"retry {job.id}\" to start it again.",
+                                               job.session_id, kind="job")
+            return
         next_at = now_utc() + timedelta(minutes=job.every_minutes)
         if end is not None and next_at >= end:
             break
@@ -206,7 +217,10 @@ async def recover() -> list[str]:
 
 
 async def stop_all() -> None:
-    """Odie is shutting down: cancel every Worker and mark its job stopped."""
-    for job_id in list(_tasks):
-        stop(job_id)
-    await asyncio.gather(*_tasks.values(), return_exceptions=True)
+    """Odie is shutting down: cancel every Worker's task and leave the rows as they are (running, waiting), so
+    recover() at the next start tells the cut-off jobs and launches the reporters again. (Marking them stopped here
+    made recover() find nothing: seen live on 4 Nov.)"""
+    tasks = list(_tasks.values())
+    for task in tasks:
+        task.cancel()
+    await asyncio.gather(*tasks, return_exceptions=True)

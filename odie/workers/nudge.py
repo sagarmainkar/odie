@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import re
 
-NUDGE = "[If this takes code to write and run, a test, more than one shell command, or repeated checks, hand it to a Worker with start_job and answer now.]"
+NUDGE = "[This is a job for a Worker: call start_job now with a full brief and say it started. Don't use run_shell here for it.]"
 
 # Messages that read like a job: code or a script to write, something to build, run, test, fix, debug or install, a
 # check on the machine, a repeated check or report, or an explicit ask for the background.
