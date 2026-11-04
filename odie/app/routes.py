@@ -6,8 +6,10 @@ import json
 import logging
 import os
 import re
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import httpx
 from fastapi import APIRouter, File, HTTPException, Request, UploadFile, WebSocket
@@ -2081,17 +2083,54 @@ async def brief_run(request: Request):
 
 # --- Morning hello ---
 _morning_tasks: set[asyncio.Task] = set()  # rounds this route started; held here so they aren't garbage-collected
+_round_failed_at: datetime | None = None  # when the last round this route started ended with no hello saved
+ROUND_COOL_OFF = timedelta(minutes=10)
 
 
-def morning_now():
+def morning_now() -> datetime:
     """The clock the morning route reads (tests replace it): now, in the owner's time zone."""
-    from datetime import datetime
-    from zoneinfo import ZoneInfo
     return datetime.now(ZoneInfo(config.settings.timezone))
 
 
-def start_morning_round(request: Request, now) -> None:
-    task = asyncio.create_task(morning_round(request.app.state.store, now, runner=request.app.state.runner, push=True))
+def retry_allowed(failed_at: datetime | None, now: datetime) -> bool:
+    """Whether the web may start another round after one failed: only once the cool-off has passed, so a page that
+    keeps asking doesn't re-run the gathering and the model call every few seconds. No failure yet -> True; failed
+    3 minutes ago -> False; failed 11 minutes ago -> True."""
+    if failed_at is None:
+        return True
+    return now - failed_at >= ROUND_COOL_OFF
+
+
+async def run_web_round(request: Request, now: datetime) -> None:
+    """The morning round started from the web, run as the cron's is: beside no running tick, and stopped after
+    BRIEF_LIMIT seconds. A round that raised, ran out of time, or ended with no hello saved is logged and starts the
+    cool-off."""
+    # main imports this module, so these come in when the round starts
+    from odie.app.main import BRIEF_LIMIT
+    from odie.background import Part
+
+    store = request.app.state.store
+    background = request.app.state.background
+
+    async def go() -> None:
+        await morning_round(store, now, runner=request.app.state.runner, push=True)
+
+    try:
+        if background is None:
+            await asyncio.wait_for(go(), BRIEF_LIMIT)
+        else:
+            await background.exclusive(Part("brief", go, limit=BRIEF_LIMIT))  # never beside a running tick
+    except Exception:
+        log.warning("morning: the round the web started failed", exc_info=True)
+
+    if hello_for(store, morning_day(now)) is None:
+        global _round_failed_at
+        _round_failed_at = morning_now()
+        log.warning("morning: the round the web started saved no hello; trying again in %s", ROUND_COOL_OFF)
+
+
+def start_morning_round(request: Request, now: datetime) -> None:
+    task = asyncio.create_task(run_web_round(request, now))
     _morning_tasks.add(task)
     task.add_done_callback(_morning_tasks.discard)
 
@@ -2101,7 +2140,8 @@ async def morning_get(request: Request):
     """Today's hello for the web card and the Mac app: {"state": "ready" | "making" | "none", "day", "card"}.
     A saved hello -> ready, with its card (the summary is for chats, not sent). Before 05:00 with none saved, or no
     chat model chosen -> none. Otherwise a round is running or this call starts one -> making; the page asks again.
-    Two calls while the hello is due start one round: the second sees the first's task still in `_morning_tasks`."""
+    Two calls while the hello is due start one round: the second sees the first's task still in `_morning_tasks`.
+    Within 10 minutes of a failed round -> none, so the page doesn't start another on every poll."""
     store = request.app.state.store
     now = morning_now()
     day = morning_day(now)
@@ -2114,8 +2154,11 @@ async def morning_get(request: Request):
     if not hello_due(store, now) or not brain_chosen(store):
         return {"state": "none", "day": day, "card": None}
 
-    if not round_running() and not _morning_tasks:
-        start_morning_round(request, now)
+    if round_running() or _morning_tasks:
+        return {"state": "making", "day": day, "card": None}
+    if not retry_allowed(_round_failed_at, now):
+        return {"state": "none", "day": day, "card": None}
+    start_morning_round(request, now)
     return {"state": "making", "day": day, "card": None}
 
 

@@ -1,6 +1,7 @@
 """GET /api/morning: today's hello for the web card and the Mac app."""
 import asyncio
 import json
+import logging
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -25,7 +26,7 @@ class QuietRunner:
 
 @pytest.fixture
 async def morning(isolated_settings, tmp_path, monkeypatch):
-    """(client, store, clock) on an isolated store with a chat model chosen; clock["now"] is what the route reads."""
+    """(client, store, clock, app) on an isolated store with a chat model chosen; clock["now"] is what the route reads."""
     assert tmp_path in isolated_settings.data_dir.parents or isolated_settings.data_dir == tmp_path
     monkeypatch.setattr(round_mod, "user_tz", lambda: IST)  # the owner's zone, whatever the machine's is
     store = Store(tmp_path / "assistant.db")
@@ -34,10 +35,11 @@ async def morning(isolated_settings, tmp_path, monkeypatch):
     clock = {"now": datetime(2026, 11, 4, 9, 0, tzinfo=IST)}
     monkeypatch.setattr(routes, "morning_now", lambda: clock["now"])
     monkeypatch.setattr(routes, "_morning_tasks", set())
+    monkeypatch.setattr(routes, "_round_failed_at", None)
     app = create_app(runner=QuietRunner(), store=store)
     async with (httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c,
                 app.router.lifespan_context(app)):
-        yield c, store, clock
+        yield c, store, clock, app
 
 
 def save_hello(store: Store, day: str = "2026-11-04") -> None:
@@ -46,7 +48,7 @@ def save_hello(store: Store, day: str = "2026-11-04") -> None:
 
 
 async def test_morning_ready_returns_the_card_without_the_summary(morning):
-    client, store, _ = morning
+    client, store, _, _ = morning
     save_hello(store)
     body = (await client.get("/api/morning")).json()
     assert body["state"] == "ready" and body["day"] == "2026-11-04"
@@ -57,7 +59,7 @@ async def test_morning_ready_returns_the_card_without_the_summary(morning):
 
 
 async def test_morning_due_starts_one_round_and_says_making(morning, monkeypatch):
-    client, _, _ = morning
+    client, _, _, _ = morning
     started = []
     release = asyncio.Event()
 
@@ -78,7 +80,7 @@ async def test_morning_due_starts_one_round_and_says_making(morning, monkeypatch
 
 
 async def test_morning_is_making_while_a_round_from_elsewhere_runs(morning, monkeypatch):
-    client, _, _ = morning
+    client, _, _, _ = morning
     started = []
 
     async def fake_round(store, now, runner=None, push=True):
@@ -91,7 +93,7 @@ async def test_morning_is_making_while_a_round_from_elsewhere_runs(morning, monk
 
 
 async def test_morning_before_five_is_none(morning, monkeypatch):
-    client, _, clock = morning
+    client, _, clock, _ = morning
     started = []
 
     async def fake_round(store, now, runner=None, push=True):
@@ -105,6 +107,69 @@ async def test_morning_before_five_is_none(morning, monkeypatch):
 
 
 async def test_morning_with_no_chat_model_is_none(morning, monkeypatch):
-    client, store, _ = morning
+    client, store, _, _ = morning
     store.execute("delete from settings where key = 'model.chat'")
     assert (await client.get("/api/morning")).json()["state"] == "none"
+
+
+async def settle() -> None:
+    """Wait for the rounds the route started to finish."""
+    await asyncio.gather(*routes._morning_tasks)
+
+
+async def test_a_failing_round_is_logged_once_and_cools_off(morning, monkeypatch, caplog):
+    client, _, clock, _ = morning
+    started = []
+
+    async def failing_round(store, now, runner=None, push=True):
+        started.append(now)
+        raise RuntimeError("model down")
+
+    monkeypatch.setattr(routes, "morning_round", failing_round)
+    with caplog.at_level(logging.WARNING, logger="odie.api"):
+        assert (await client.get("/api/morning")).json()["state"] == "making"
+        await settle()
+        failures = [r for r in caplog.records if "failed" in r.getMessage() and r.exc_info]
+        assert len(failures) == 1
+        assert (await client.get("/api/morning")).json()["state"] == "none"  # inside the cool-off
+        assert len(started) == 1
+
+    clock["now"] = datetime(2026, 11, 4, 9, 11, tzinfo=IST)  # 11 minutes on: the cool-off is over
+    assert (await client.get("/api/morning")).json()["state"] == "making"
+    await settle()
+    assert len(started) == 2
+
+
+def test_retry_allowed_only_after_the_cool_off():
+    failed = datetime(2026, 11, 4, 9, 0, tzinfo=IST)
+    assert routes.retry_allowed(None, failed)
+    assert not routes.retry_allowed(failed, datetime(2026, 11, 4, 9, 3, tzinfo=IST))
+    assert routes.retry_allowed(failed, datetime(2026, 11, 4, 9, 11, tzinfo=IST))
+
+
+async def test_the_web_round_runs_through_the_background_with_the_brief_limit(morning, monkeypatch):
+    from odie.app.main import BRIEF_LIMIT
+    client, _, _, app = morning
+    ran = []
+    seen = []
+
+    class FakeBackground:
+        async def exclusive(self, part):
+            seen.append((part.name, part.limit))
+            await part.run()
+            return True
+
+        async def stop(self):
+            pass
+
+    async def fake_round(store, now, runner=None, push=True):
+        ran.append(now)
+        save_hello(store)
+
+    app.state.background = FakeBackground()
+    monkeypatch.setattr(routes, "morning_round", fake_round)
+    assert (await client.get("/api/morning")).json()["state"] == "making"
+    await settle()
+    assert seen == [("brief", BRIEF_LIMIT)]
+    assert len(ran) == 1
+    assert (await client.get("/api/morning")).json()["state"] == "ready"
