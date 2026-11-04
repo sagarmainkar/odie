@@ -107,6 +107,7 @@ async def _fetch(c: httpx.AsyncClient, symbol: str, period: str) -> dict | str:
         "unit": "pts" if sym.startswith("^") else (meta.get("currency") or ""),  # an index is points, not rupees
         "kind": meta.get("instrumentType"),
         "x": [datetime.fromtimestamp(t, tz).strftime(fmt) for t, _ in points],
+        "t": [t for t, _ in points],  # the join key for a comparison: labels repeat (a month) over 6mo and longer
         "y": [round(v, 2) for _, v in points],
     }
 
@@ -150,17 +151,19 @@ def _compare_card(p: dict) -> dict:
 
 
 def rebased(found: list[dict]) -> tuple[list[str], list[dict]]:
-    """Each symbol's % change from its own first close, on the first symbol's dates; a date another market didn't
-    trade is a gap.
+    """Each symbol's % change from its own first close, at the first symbol's times; a time another market didn't
+    trade is a gap. The join is on the timestamps, never on the labels: over 6mo and longer a label names a month,
+    so many points share one.
 
     GOOGL 100 → 80 and MSFT 200 → 210 → GOOGL [0, …, -20], MSFT [0, …, 5]
     """
     x = found[0]["x"]
+    times = found[0]["t"]
     series = []
     for p in found:
         start = p["y"][0]
-        by_date = dict(zip(p["x"], p["y"]))
-        data = [round((by_date[d] / start - 1) * 100, 2) if d in by_date else None for d in x]
+        by_time = dict(zip(p["t"], p["y"]))
+        data = [round((by_time[t] / start - 1) * 100, 2) if t in by_time else None for t in times]
         series.append({"name": p["name"], "data": data})
     return x, series
 

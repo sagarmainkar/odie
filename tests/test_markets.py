@@ -101,10 +101,20 @@ def test_trend_points_spread_evenly_keeping_both_ends():
 
 
 def test_rebased_series_start_at_zero_on_the_first_symbols_dates():
-    x, series = markets.rebased([{"name": "GOOGL", "x": ["1", "2", "3"], "y": [100, 90, 80]},
-                                 {"name": "MSFT", "x": ["1", "3"], "y": [200, 210]}])
+    x, series = markets.rebased([{"name": "GOOGL", "x": ["1", "2", "3"], "t": [1, 2, 3], "y": [100, 90, 80]},
+                                 {"name": "MSFT", "x": ["1", "3"], "t": [1, 3], "y": [200, 210]}])
     assert x == ["1", "2", "3"]
     assert series == [{"name": "GOOGL", "data": [0.0, -10.0, -20.0]}, {"name": "MSFT", "data": [0.0, None, 5.0]}]
+
+
+def test_rebased_joins_on_time_when_several_points_share_a_label():
+    # Over 6mo, 1y and 2y the points are labelled by month, so a label repeats. Each point must still get its own
+    # close, or every day of a month would show that month's last close and the lines would step.
+    x = ["May 2026", "May 2026", "Jun 2026"]
+    x_out, series = markets.rebased([{"name": "A", "x": x, "t": [1, 2, 3], "y": [100, 110, 120]},
+                                     {"name": "B", "x": x, "t": [1, 2, 3], "y": [50, 50, 25]}])
+    assert x_out == x
+    assert series == [{"name": "A", "data": [0.0, 10.0, 20.0]}, {"name": "B", "data": [0.0, 0.0, -50.0]}]
 
 
 async def test_two_symbols_get_a_card_each_and_one_percent_change_chart():
