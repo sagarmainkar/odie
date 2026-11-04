@@ -2,60 +2,73 @@
 
 An experiment on the branch `workers-spike`, switched on with `ODIE_WORKERS=1` and off by default. It tries the Worker
 half of DeepSeek Harness's "Exploring Super-agent Design" (31 October 2026) inside Odie: a long job the user asks for
-in chat runs in a background Worker of its own and reports back into the chat. Three questions it should answer:
+in chat runs in a background Worker of its own and reports back into the chat. Three questions it set out to answer,
+and the answers so far:
 
-1. Can the kinds that don't need the main model (a reporter, a mail summary) run on a small local model?
-2. How are Worker errors caught, and who starts a job again?
-3. How does data flow from the chat to the Router to the Worker and back, as one system?
+1. **Can kinds that don't need the main model run on a small local model?** Yes for a reporter. Ollama's `lfm3`
+   (1.7 GB) ran a Downloads-folder report in 5 clean tool calls and 13 seconds; Gemma 4 26B in LM Studio did a
+   process-count report in 14 seconds and, on its second run, said what changed against the first. Loading a second
+   LM Studio model beside the one already loaded failed for memory, so a kind's local model has to be the one that is
+   already up (or on Ollama, which loads small models on demand).
+2. **How are errors caught, and who starts a job again?** A watchdog in code reads the jobs store once a minute and
+   fails a job that ran past its budget, made no call for 10 minutes, or hit the same refusal three times; a reporter
+   that fails two runs in a row stops. The chat is told with "retry <id>". Starting again is the user's call, through
+   `retry_job`. A restart of Odie tells each cut-off job in its chat and relaunches reporters on their kept schedule;
+   checked live.
+3. **How does data flow?** Chat -> `start_job` -> Router (code: row, folder, task) -> Worker (own session, the brief
+   as its first message, every call to `job_actions`) -> `report` -> Router posts one message into the chat with a
+   push. A reporter runs again every N minutes in a fresh session, told its last report. Nothing else crosses.
 
-## What is built (step 1)
+## What is built
 
-- `start_job`, `jobs_status`, `stop_job` in the chat; the docstrings carry the rule for when to delegate.
-- `odie/workers/router.py`: plain code. Writes the job row, makes `<workspace>/jobs/<slug>-<id>/`, runs the Worker in
-  its own task. At most 3 at a time.
-- `odie/workers/worker.py`: one ADK session per job with the kind's instruction and tools plus `report`. No Odie
-  prompt, memory or chat history. Ends on `report`; otherwise one nudge, then the job fails. A budget (30 minutes)
-  and a call cap (80) end it too.
-- `odie/workers/kinds.py`: the `task` kind: the shell without a tap but behind the pass's always-ask rules (a refused
-  command fails with the rule's words), `write_file` and `read_file` inside the job folder, web search and fetch.
-- `odie/workers/store.py` and `schema.sql`: the `jobs` and `job_actions` tables. Every call, its result size and every
-  refusal is a row.
-- The chat the job came from gets one message (done, stuck, nothing to do, didn't finish) with a push.
-
-## Data flow
-
-Chat (the model) decides the job is long and calls `start_job(title, brief)` -> Router writes the row and folder,
-starts the task -> Worker runs with the brief as its first message, its calls go to `job_actions` -> `report(outcome,
-text, files)` -> Router stores it and posts the message into the chat with a push -> the next chat turn sees it as
-history. Nothing else crosses: the chat sees the brief going out and the report coming back.
+- `odie/workers/tools.py`: `start_job(title, brief, every_minutes, until)`, `jobs_status`, `stop_job`, `retry_job`.
+- `odie/workers/nudge.py`: a one-line reminder on messages that read like a job, after the context note.
+- `odie/workers/router.py`: writes the row and folder, runs the Worker in its own task (3 at a time), repeats a
+  reporter, fails on the watchdog's word, retries, recovers after a restart, stops everything at shutdown.
+- `odie/workers/worker.py`: one ADK session per run with the kind's instruction and tools plus `report`; the guard
+  on the shell (the pass's always-ask rules, refused with a line); the record of every call; the message to the chat.
+- `odie/workers/kinds.py`: `task` (shell, `write_file`, `read_file`, web reads; 30 minutes, 80 calls) and `reporter`
+  (the same tools, a shorter run, notes in its folder). A kind can run on its own model: setting
+  `workers.model.<kind>` = `{"provider": "ollama", "model": "lfm3:latest"}`.
+- `odie/workers/watchdog.py`: the verdicts above; `odie/workers/store.py` and `schema.sql`: `jobs` and `job_actions`.
+- `odie/app/main.py`: the watchdog job every minute, recovery at startup, stop at shutdown, all behind the switch.
 
 ## Live findings (4 November, DeepSeek V4.1 Flash as the chat model, throwaway home)
 
-| Job | Calls | Refusals | Wall time |
-|---|---|---|---|
-| Fibonacci script, before `write_file` | 26 | 6 | 37 s |
-| Mac health check (disk, memory, uptime) | 6 | 0 | 11 s |
-| Primes below 100 script, after `write_file` | 6 | 1 | 10 s |
+| Job | Model | Calls | Refusals | Wall time |
+|---|---|---|---|---|
+| Fibonacci script, files through the shell | DeepSeek | 26 | 6 | 37 s |
+| Mac health check | DeepSeek | 6 | 0 | 11 s |
+| Primes script, with `write_file` | DeepSeek | 6 | 1 | 10 s |
+| Primes script, no hint in the message | DeepSeek | 4 | 0 | 8 s |
+| Disk and memory reporter, 2 runs | DeepSeek | 5 per run | 0 | 20 s per run |
+| Downloads reporter | lfm3 on Ollama | 5 | 0 | 13 s |
+| Processes reporter, 2 runs | Gemma 4 26B, LM Studio | 6 and 5 | 0 | 14 s per run |
 
-- The chat delegated on its own when the message said "in the background". Without those words it once tried the
-  shell itself and raised an approval card instead. The rule in the `start_job` docstring needs more live turns to
-  judge.
-- The two later jobs ran in parallel (started 4 s apart, both done within 14 s).
-- Before `write_file`, every file went through the shell: heredocs with backticks in a docstring tripped "runs text
-  as commands", and a relative path outside the folder tripped "writes a file outside /tmp". With `write_file` the
-  same kind of job needed 6 calls.
-- A Worker never asked anything and never touched the user's pass: a refused command is recorded with the rule's
-  words and the Worker went on.
-- The chat recognised a repeat request ("Already done a few minutes ago, job-…") from its own history: the report
-  posted into the chat is enough context for follow-ups.
-- The throwaway home under `/tmp` confused the Worker once: the chat shell only runs under the user's home. A real
-  install's workspace is under `~/.odie`, so this is an artefact of the test setup.
+- **Delegation.** With a soft nudge ("if this takes code to write and run… hand it to a Worker") DeepSeek still ran
+  the coding request in the chat and raised a shell card. With a direct one ("This is a job for a Worker: call
+  start_job now… Don't use run_shell here for it") the same message went to a Worker. "Every 5 minutes" alone was
+  enough for the reporter. A question ("how is the market today?") gets no nudge.
+- **Files.** Before `write_file`, every file went through the shell, where backticks in a docstring tripped "runs
+  text as commands" six times. With `write_file` the same job needed 6 calls, then 4.
+- **Reporters.** Each run is a fresh session told its last report; run 2 said "disk and swap identical to last run,
+  RAM compressed harder" (DeepSeek) and "processes decreased from 730 to 635" (Gemma). Both kept notes in their
+  folder without being asked twice.
+- **Recovery.** The first restart found nothing to relaunch: shutdown had marked every row stopped. Fixed; the second
+  restart logged "reporter launched again", waited for the kept `next_run_at`, ran, and finished on schedule.
+- **Local models.** Gemma 12B could not load beside the 26B already in LM Studio ("insufficient system resources");
+  the reporter failed twice and, before the fix, still "finished after 2 reports". Now two failed runs stop it.
+  Gemma 26B called `ls -a` and `report` twice each (harmless; the second report overwrote the first with the same
+  text). lfm3 made no such slip.
+- **The chat remembers.** Asked for the same script again, the chat answered from the earlier report in its history
+  ("Already done a few minutes ago, job-…"), and it called a second Downloads watch "(retry)" on its own.
 
-## Not yet built
+## Not built, by choice or not yet
 
-- Step 2: the reporter kind (a schedule; a report each run until stopped) and the mail kind (may send, no shell,
-  recipients fixed at start).
-- Step 3: the watchdog reading the store (budget, stall, same error three times), restarts for passing errors, a
-  Retry on the job card, and what a restart of Odie does with running jobs (today: they are lost silently).
-- Step 4: a kind on a small local model (Gemma 4 12B, then LFM 1.7B) and what it can and cannot do.
-- A Running list on Today with Stop; the job card's log in the chat.
+- The mail kind (may send, no shell, recipients fixed at start). It needs the user's mail app's send tool unlocked
+  for a Worker; parked until the mail app for it is chosen.
+- A Running list on Today with Stop, and the job's log opened from its card. The record is there (`job_actions`);
+  only `jobs_status` reads it so far.
+- A Settings row for a kind's model; today it is a settings-table entry.
+- The watchdog was not provoked live (a 10-minute stall); its rules are tested.
+- Workers run with the pass's rules only, no container. The folder is under the workspace, so writes there pass.
