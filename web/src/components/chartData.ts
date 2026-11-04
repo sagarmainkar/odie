@@ -186,11 +186,20 @@ function compactLocale(rupees: boolean, unit: string | undefined): string {
 // A unit that is a currency sign on its own: it goes in front of the number ("$4.21B").
 const CURRENCY_SIGN = /^[$€£¥]$/;
 
+/** A big number shortened for its unit, the unit itself left out. The words follow compactLocale, so dollars and
+ *  other units never read in lakh and crore. en-IN: (1840000, "USD") → "1.84M";  (1840000) → "18.4L";  (-250000, "$") → "-250K" */
+export function shortNumber(v: number, unit?: string): string {
+  const rupees = unit === "₹" || unit === "INR";
+  return `${v < 0 ? "-" : ""}${formatCompact(Math.abs(v), compactLocale(rupees, unit))}`;
+}
+
 /**
  * A value with its unit, as charts, tables and cards show it. Big numbers (100,000 and up) are shortened unless `full`
- * is set (hover cards and title attributes). Money already in a scale ("$M", "₹Cr") is never shortened again. A word
- * unit goes after a space; "pts" and anything longer than 12 characters are left out.
- *   en-US: 4213500000 → "4.21B" (full: "4,213,500,000");  (1840000, "₹") → "₹18.4L";  (4213500000, "$") → "$4.21B";
+ * is set (hover cards and title attributes), which keeps every digit and up to 2 decimals. Money already in a scale
+ * ("$M", "₹Cr") is never shortened again. A word unit goes after a space; "pts" and anything longer than 12 characters
+ * are left out.
+ *   en-US: 4213500000 → "4.21B" (full: "4,213,500,000");  (23063.1, full) → "23,063.1";  (1840000, "₹") → "₹18.4L";
+ *   (4213500000, "$") → "$4.21B";
  *   (18.6, "%") → "18.6%";  (109417, "$M") → "$109,417M";  (1500000, "kg") → "1.5M kg";  (12, "people") → "12 people"
  *   en-IN: 2500000 → "25L";  de-DE: 4213500000 → "4,21 Mrd."
  */
@@ -207,7 +216,8 @@ export function fmt(v: number, unit?: string, { full = false }: { full?: boolean
     digits = formatCompact(abs, compactLocale(rupees, unit));
   } else {
     const locale = rupees ? "en-IN" : userLocale();
-    digits = abs.toLocaleString(locale, { maximumFractionDigits: abs >= 1000 ? 0 : 2 });
+    const decimals = full || abs < 1000 ? 2 : 0;  // a shown price keeps its paise; a chart axis rounds from 1,000 up
+    digits = abs.toLocaleString(locale, { maximumFractionDigits: decimals });
   }
   const signed = `${v < 0 ? "-" : ""}${sign}${digits}`;
   const unitLeftOut = sign !== "" || !unit || unit === "pts" || unit.length > MAX_UNIT;

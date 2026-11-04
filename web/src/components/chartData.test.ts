@@ -109,3 +109,12 @@ describe("names and notes", () => {
     expect(shareNote([40, -60], 40)).toBeUndefined();
   });
 });
+
+describe("fmt in full", () => {
+  it("keeps a price's decimals for hover cards and titles", () => {
+    rememberLocale("en-US");
+    expect(fmt(23063.1, undefined, { full: true })).toBe("23,063.1");
+    expect(fmt(3082.15, "INR", { full: true })).toBe("₹3,082.15");
+    expect(fmt(24310, "pts", { full: true })).toBe("24,310");
+  });
+});

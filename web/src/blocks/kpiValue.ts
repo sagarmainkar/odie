@@ -1,6 +1,6 @@
 // How a headline number reads in a kpis or stat card (Kpis.tsx), and the path of its trend line. Their own file so
 // the component file exports only components.
-import { fmt, SHORT_FROM } from "../components/chartData";
+import { fmt, SHORT_FROM, shortNumber } from "../components/chartData";
 import { userLocale } from "../locale";
 import { formatAmount, type KpiItem } from "./parse";
 
@@ -20,19 +20,20 @@ const CURRENCY = /^[$₹€£¥]$/;
  *   {value: 72275, unit: "₹Cr"} → "₹72,275 Cr";  {value: 18.6, unit: "%"} → "18.6%";  {value: 9, unit: "/10"} → "9/10"
  *   {value: 4213500000, unit: "$"} → "$4.21B" (full: "$4,213,500,000");  {value: 1840000} → "1.84M" (en-IN "18.4L")
  *   {value: 250000, unit: "pts"} → "250K pts";  {value: 1986} → "1986";  {value: "Leeds United (H)"} → as written
+ *   en-IN: {value: 1840000, unit: "USD"} → "1.84M USD" (lakh and crore are for rupees);  {value: 150000, unit: "%"} → "1,50,000%"
  */
 export function kpiValue(k: KpiItem, { full = false }: { full?: boolean } = {}): string {
   if (k.value === null) return "–";
   if (typeof k.value === "string") return k.value;
   if (isYear(k)) return String(k.value);
-  const short = !full && Math.abs(k.value) >= SHORT_FROM;
+  const short = !full && k.unit !== "%" && Math.abs(k.value) >= SHORT_FROM;  // a percentage is never shortened
   const isCurrency = k.unit !== undefined && CURRENCY.test(k.unit);
   if (short && isCurrency) return fmt(k.value, k.unit);
   const money = formatAmount(k.value, k.unit);
   if (money !== null) return money;
   let plain: string;
   if (short) {
-    plain = fmt(k.value);
+    plain = shortNumber(k.value, k.unit);
   } else {
     const digits = Math.abs(k.value) >= 1000 ? 0 : 1;
     plain = k.value.toLocaleString(userLocale(), { maximumFractionDigits: digits });

@@ -73,3 +73,15 @@ describe("a row of cards", () => {
     expect(three).toContain("@xl:grid-cols-3");
   });
 });
+
+describe("kpiValue with a unit that isn't rupees", () => {
+  it("keeps dollars and other units out of lakh and crore on an Indian install", () => {
+    rememberLocale("en-IN");
+    expect(kpiValue(kpi({ value: 1840000, unit: "USD" }))).toBe("1.84M USD");
+    expect(kpiValue(kpi({ value: 1840000, unit: "kg" }))).toBe("1.84M kg");
+  });
+  it("never shortens a percentage", () => {
+    rememberLocale("en-US");
+    expect(kpiValue(kpi({ value: 150000, unit: "%" }))).toBe("150,000%");
+  });
+});
