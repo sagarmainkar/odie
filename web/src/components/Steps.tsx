@@ -10,7 +10,7 @@ const TOOL_LABEL: Record<string, [string, string]> = {
   read_note: ["Reading a note", "Read a note"], task_add: ["Adding to your threads", "Added to your threads"], task_update: ["Updating a thread", "Updated a thread"],
   task_list: ["Checking threads", "Checked threads"], now: ["Checking the time", "Checked the time"], calendar_list_events: ["Checking calendar", "Checked calendar"],
   calendar_find_free: ["Looking for a slot", "Looked for a slot"], life_admin: ["Checking your ledger", "Checked your ledger"],
-  fetch_memory: ["Recalling", "Recalled a memory"], search_memories: ["Searching memory", "Searched memory"], update_memory: ["Remembering", "Remembered that"],
+  fetch_memory: ["Recalling", "Recalled a memory"], recall: ["Looking back", "Looked back"], update_memory: ["Remembering", "Remembered that"],
   run_shell: ["Running a command", "Ran a command"], web_search: ["Searching the web", "Searched the web"], web_fetch: ["Reading a page", "Read a page"],
   gmail_send_draft: ["Sending", "Sent the email"], gmail_trash: ["Moving to Trash", "Moved to Trash"], calendar_create_event: ["Creating an event", "Created an event"],
   calendar_respond: ["Replying to the invite", "Replied to the invite"], market_history: ["Checking markets", "Checked markets"],

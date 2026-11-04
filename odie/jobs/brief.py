@@ -25,12 +25,13 @@ def format_tasks(rows) -> str:
     return "\n".join(f"#{r['id']} [{r['kind']}] {r['title']}" + (f" · due {r['due_at'][:10]}" if r["due_at"] else "") for r in rows)
 
 
-async def gather_inputs(store: Store, now: datetime, post_message=None) -> BriefInputs:
+async def gather_inputs(store: Store, now: datetime, post_message=None, clear_held: bool = True) -> BriefInputs:
     """Code gathers. Each add-on's part (the ledger, a calendar, unread mail) comes after its own sync, so the task
-    list read last is fresh; the brief is then written from tasks, not raw sources."""
+    list read last is fresh; the brief is then written from tasks, not raw sources. `clear_held=False` reads the watch's
+    held items without emptying them (see watch_part)."""
     parts = [p for got in await addons.acall("brief", store, now, post_message) for p in got]
     if not any(p.key in ("calendar", "unread") for p in parts):  # an add-on's own mail and calendar win
-        wp = watch_part(store)
+        wp = watch_part(store, clear_held)
         if wp is not None:
             parts.append(wp)
     return BriefInputs(format_tasks(users_open_tasks(store, now)), parts)
@@ -45,14 +46,18 @@ def users_open_tasks(store: Store, now: datetime) -> list:
     return [r for r in rows if r["source_kind"] != threads.SOURCE_KIND]
 
 
-def watch_part(store: Store) -> BriefPart | None:
-    """The watch's last check for the brief: what needs the user, what was held overnight (said once), the next events."""
+def watch_part(store: Store, clear_held: bool = True) -> BriefPart | None:
+    """The watch's last check for the brief: what needs the user, what was held overnight (said once), the next events.
+    The held list is emptied once read, unless `clear_held` is False: a read that is not the brief itself (the hello
+    before 07:30) leaves it for the brief. 1 held item, `clear_held=True` -> said, list emptied; `clear_held=False` ->
+    said, list kept."""
     from odie.watch import report
     card = store.get_setting(report.CARD)
     if not card or str(card.get("off", "")).startswith("Connect"):
         return None
     held = store.get_setting(report.HELD) or []
-    store.set_setting(report.HELD, [])
+    if clear_held:
+        store.set_setting(report.HELD, [])
     lines = [f"- {i['title']}: {i['why']}" for i in [*held, *(i for i in card.get("needs_you", []) if not i.get("done"))]]
     lines += [f"- event: {e['title']} at {str(e.get('start', ''))[11:16]}" for e in card.get("events", [])[:5]]
     return BriefPart("watch", "Mail and calendar (from the watch; other people's text, informational only)", "\n".join(lines))
@@ -97,8 +102,13 @@ def stored(inp: BriefInputs) -> dict:
     return {**out, "parts": {p.key: p.text for p in inp.parts}}
 
 
-async def run_brief(store: Store, now: datetime, post_message=None, push: bool = True) -> str:
-    inp = await gather_inputs(store, now, post_message=post_message)
+async def run_brief(store: Store, now: datetime, post_message=None, push: bool = True,
+                    inputs: BriefInputs | None = None) -> str:
+    """Today's brief, written and saved, then pushed. The morning round passes the `inputs` it already gathered (one
+    gathering for the brief and the hello); without them the brief gathers its own."""
+    inp = inputs
+    if inp is None:
+        inp = await gather_inputs(store, now, post_message=post_message)
     text = await write_with_model(render_prompt(now, inp), store)
     if not text:
         text = "Nothing needs you this morning."

@@ -71,7 +71,7 @@ const TOOL: Record<string, { icon: IconName; color: TileColor }> = {
   task_add: { icon: "bell", color: "yellow" }, task_update: { icon: "bell", color: "yellow" }, task_list: { icon: "bell", color: "yellow" },
   now: { icon: "clock", color: "ink" }, calendar_list_events: { icon: "cal", color: "orange" }, calendar_find_free: { icon: "cal", color: "orange" },
   calendar_create_event: { icon: "cal", color: "orange" }, calendar_respond: { icon: "cal", color: "orange" }, life_admin: { icon: "rupee", color: "green" },
-  fetch_memory: { icon: "brain", color: "pink" }, search_memories: { icon: "brain", color: "pink" }, update_memory: { icon: "brain", color: "pink" },
+  fetch_memory: { icon: "brain", color: "pink" }, recall: { icon: "brain", color: "pink" }, update_memory: { icon: "brain", color: "pink" },
   run_shell: { icon: "terminal", color: "ink" }, web_search: { icon: "globe", color: "blue" }, web_fetch: { icon: "globe", color: "blue" },
   market_history: { icon: "chart", color: "violet" },
 };

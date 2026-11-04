@@ -3,6 +3,7 @@ only). Kept in the store's settings as "vault"; the index (odie-index.db, notes 
 folder."""
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 
 from odie import config
@@ -73,17 +74,37 @@ def configured(store) -> bool:
     return bool(d) and Path(d).is_dir()
 
 
+def index_has_vault_rows(path: Path) -> bool:
+    """Whether this index file holds the vault's own rows: at least one note or one photo. Recall keeps its chats and
+    memories in the same file, but those alone don't make a notes or photos index. Opened read-only.
+      no file                                   -> False
+      only recall's tables (passages, meta)     -> False (the notes and photos tables don't exist yet)
+      notes and photos tables, both empty       -> False
+      photos read once, photos now switched off -> True (so the next pass can forget them)"""
+    if not path.exists():
+        return False
+    db = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    try:
+        tables = {r[0] for r in db.execute("select name from sqlite_master where type='table'")}
+        for table in ("notes", "photos"):
+            if table in tables and db.execute(f"select 1 from {table} limit 1").fetchone() is not None:
+                return True
+    finally:
+        db.close()
+    return False
+
+
 def index_for(store) -> VaultIndex | None:
     """The index (one per folder and ignore list, so its vector cache is kept), or None when there's nothing to index:
-      a notes folder set                         -> the index over that folder (and the photos, when they're on)
-      no folder, photos on                       -> the index with no notes folder: photos alone
-      neither, but odie-index.db already there   -> the index as it is (so switching photos off can forget them)
-      neither, no file                           -> None"""
+      a notes folder set                             -> the index over that folder (and the photos, when they're on)
+      no folder, photos on                           -> the index with no notes folder: photos alone
+      neither, odie-index.db holds notes or photos   -> the index as it is (so switching photos off can forget them)
+      neither, no file, or a file of recall's alone  -> None (recall's chats and memories aren't a notes index)"""
     from odie.photos import settings as photos
     v = get(store)
     data_dir = config.settings.data_dir
     has_notes = configured(store)
-    if not has_notes and not photos.is_on(store) and not index_path(data_dir).exists():
+    if not has_notes and not photos.is_on(store) and not index_has_vault_rows(index_path(data_dir)):
         return None
     folder = v["dir"] if has_notes else None
     key = (str(data_dir), folder, tuple(v["ignore"]))

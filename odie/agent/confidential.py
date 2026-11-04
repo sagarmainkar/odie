@@ -8,7 +8,7 @@ MAIL_WORDS = ("mail", "inbox", "imap", "outlook", "thread", "watch_item")
 MESSAGE_WORDS = ("message", "sms", "imessage", "whatsapp", "chat_history")
 CALENDAR_WORDS = ("calendar", "event", "reminder")
 NOTES = frozenset({"read_note", "related_notes", "search_everything"})
-MEMORY = frozenset({"fetch_memory", "search_memories"})
+MEMORY = frozenset({"fetch_memory", "recall"})
 # Odie's own plumbing: a skill's name ("mcp-gmail-calendar") says nothing about what the chat has read.
 
 

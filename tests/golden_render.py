@@ -29,11 +29,12 @@ def _tool_declarations(tmp: Path) -> str:
     from odie.agent.tools.web import make_web_tools
     from odie.memory.store import MemoryFile
     from odie.memory.tools import make_memory_tools
+    from odie.recall.tools import make_recall_tool
     from odie.store.db import Store
     store = Store(tmp / "golden.db")
     store.init_schema()
     memory = MemoryFile(tmp / "memories.md", tmp / "memory.lock", "golden")
-    tools = [*make_memory_tools(memory), make_shell_tool(store=store), *make_web_tools(api_key=""),
+    tools = [*make_memory_tools(memory), make_recall_tool(store, memory), make_shell_tool(store=store), *make_web_tools(api_key=""),
              *make_local_tools(store, "Asia/Kolkata"), *make_watch_item_tools(store), *make_media_tools(store),
              *make_file_tools()]
     tools += [t for a in addons.active() for t in addons.tools_of(a, store) if isinstance(t, FunctionTool)]  # MCP ones list online

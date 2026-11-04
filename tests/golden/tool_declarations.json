@@ -803,6 +803,47 @@
     }
   },
   {
+    "description": "Search what you and the user said in past chats, and everything remembered about them, by meaning. Use it\nwhen they refer to something from before (\"what did we decide about…\", \"like last time\"), or when nothing\nlisted in What you remember fits. since, until: ISO dates. Lines are tagged [chat <day>] or [memory]. Say when\nsomething was said.",
+    "name": "recall",
+    "parameters_json_schema": {
+      "properties": {
+        "query": {
+          "title": "Query",
+          "type": "string"
+        },
+        "since": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Since"
+        },
+        "until": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Until"
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "title": "recallParams",
+      "type": "object"
+    }
+  },
+  {
     "description": "Run a shell command on this computer (zsh). The user sees the exact command and directory and approves it first. Use for files, git, scripts, system questions. cwd defaults to their home and must stay under it. Output is capped at 8 KB and 60 seconds.",
     "name": "run_shell",
     "parameters_json_schema": {
@@ -828,23 +869,6 @@
         "command"
       ],
       "title": "run_shellParams",
-      "type": "object"
-    }
-  },
-  {
-    "description": "Keyword search across everything remembered about the user. Use when the index has no obvious title.",
-    "name": "search_memories",
-    "parameters_json_schema": {
-      "properties": {
-        "query": {
-          "title": "Query",
-          "type": "string"
-        }
-      },
-      "required": [
-        "query"
-      ],
-      "title": "search_memoriesParams",
       "type": "object"
     }
   },

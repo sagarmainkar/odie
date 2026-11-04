@@ -3,7 +3,10 @@ straight away when Odie writes it; the Photos library read into the same index e
 straight away when that setting changes. Meaning (embedding new passages and pictures, which loads the embedding model)
 runs on its own schedule, the vault setting's embed_every: every 5 to 60 minutes, or never while it's off (the user
 runs a heavy chat model and wants the embedding model left unloaded). Never blocks a reply: the file work runs in a
-thread, and embedding is awaited between batches."""
+thread, and embedding is awaited between batches.
+
+Every pass also keeps recall filled (odie.recall): past days' chats and the memory file by words, even with no vault and
+no photos, and their meaning after the notes and pictures, on the same schedule."""
 from __future__ import annotations
 
 import asyncio
@@ -14,6 +17,8 @@ from pathlib import Path
 
 from odie.photos import library
 from odie.photos import settings as photos
+from odie.recall.fill import fill_words, recall_index
+from odie.recall.index import RecallIndex
 from odie.vault import settings
 
 log = logging.getLogger("odie.vault")
@@ -120,17 +125,27 @@ class VaultWorker:
         return max(0.0, min(self.every, left))
 
     async def run_once(self) -> None:
+        problems: list[str] = []
+        recall = await self._fill_recall(problems)
         try:
             ix = settings.index_for(self.store)
         except Exception as e:  # noqa: BLE001
             log.warning("vault index unavailable", exc_info=True)
-            self._state["error"] = f"{type(e).__name__}: {e}"[:300]
+            problems.append(f"{type(e).__name__}: {e}"[:300])
+            self._state["error"] = "; ".join(problems)[:300]
             return
         if ix is None:
             self._touched.clear()
+            try:
+                if recall is not None:
+                    await self._recall_meaning_alone(recall, problems)
+            except Exception as e:
+                log.warning("recall pass failed", exc_info=True)
+                problems.append(f"Recall: {type(e).__name__}: {e}"[:300])
+            finally:
+                self._state.update(running=False, phase="idle", error="; ".join(problems)[:300])
             return
         self._state.update(running=True, error="", phase="keywords", done=0, total=0)
-        problems: list[str] = []
         try:
             if ix.vault is not None:
                 for p in list(self._touched):
@@ -145,7 +160,7 @@ class VaultWorker:
                 # Off pauses embedding only: the vectors, the model setting and the passages waiting are all kept.
                 every_minutes = settings.get(self.store)["embed_every"]
                 if self.embed_due(time.monotonic(), every_minutes):
-                    await self._meaning_pass(ix, embedder, problems)
+                    await self._meaning_pass(ix, recall, embedder, problems)
                 self._embed_every_seen = every_minutes
             else:
                 self._embed_every_seen = 0  # nothing to embed with: the loop waits the plain keyword interval
@@ -159,11 +174,28 @@ class VaultWorker:
         finally:
             self._state.update(running=False, phase="idle", error="; ".join(problems)[:300])
 
-    async def _meaning_pass(self, ix, embedder, problems: list[str]) -> None:
-        """New note passages by meaning, then new pictures when photos are on and the model sees pictures."""
-        self._embedded_at = time.monotonic()  # the start, so the next one is an interval after this one, not after it ends
+    async def _fill_recall(self, problems: list[str]) -> RecallIndex | None:
+        """Past days' chats and the memory file into recall by words (no embedding model needed). Returns the recall
+        index, or None when this pass couldn't fill it (the reason goes in problems; the next pass tries again)."""
+        try:
+            recall = recall_index()
+            await asyncio.to_thread(fill_words, recall, datetime.now().astimezone())
+        except Exception as e:
+            log.warning("recall fill failed", exc_info=True)
+            problems.append(f"Recall: {type(e).__name__}: {e}"[:300])
+            return None
+        return recall
+
+    def _start_meaning(self) -> None:
+        """Note that an embedding pass starts now: the next one is an interval after this start, not after it ends."""
+        self._embedded_at = time.monotonic()
         self._embedded_wall = datetime.now().astimezone().isoformat(timespec="seconds")
         self._embed_kick = False
+
+    async def _meaning_pass(self, ix, recall: RecallIndex | None, embedder, problems: list[str]) -> None:
+        """New note passages by meaning, then new pictures when photos are on and the model sees pictures, then recall's
+        chats and memories. A notes failure (the embedder is down) skips the rest; they wait for the next pass."""
+        self._start_meaning()
         self._state.update(phase="meaning", done=0, total=0)
         await ix.embed_pending(embedder, progress=self._count("meaning"))
         sees_pictures = getattr(embedder, "sees_pictures", False)
@@ -172,6 +204,32 @@ class VaultWorker:
             await ix.embed_pending_pictures(embedder, progress=self._count("pictures"))
         if ix.status()["embed_error"]:
             problems.append(ix.status()["embed_error"])
+            return
+        if recall is not None:
+            await self._embed_recall(recall, embedder, problems)
+
+    async def _recall_meaning_alone(self, recall: RecallIndex, problems: list[str]) -> None:
+        """With no notes and photos off there's no vault index, but recall is still read by meaning on the same
+        schedule. Recall then owns a change of embedding model itself (adopt_model)."""
+        embedder, reason = settings.embedder_and_reason(self.store)
+        if embedder is None:
+            self._embed_every_seen = 0  # nothing to embed with: the loop waits the plain keyword interval
+            if reason:
+                problems.append(f"Meaning search is off: {reason}")
+            return
+        every_minutes = settings.get(self.store)["embed_every"]
+        if self.embed_due(time.monotonic(), every_minutes):
+            self._start_meaning()
+            await asyncio.to_thread(recall.adopt_model, embedder)
+            await self._embed_recall(recall, embedder, problems)
+        self._embed_every_seen = every_minutes
+
+    async def _embed_recall(self, recall: RecallIndex, embedder, problems: list[str]) -> None:
+        self._state.update(running=True, phase="recall", done=0, total=0)
+        await recall.embed_pending(embedder, progress=self._count("recall"))
+        error = recall.embed_error()
+        if error:
+            problems.append(f"Recall: {error}")
 
     async def _photos_pass(self, ix, problems: list[str]) -> None:
         """The Photos library into the index when photos are on and due; forgotten when they were switched off."""

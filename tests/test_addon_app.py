@@ -115,7 +115,7 @@ async def test_job_id_clash_is_refused(store):
     addons.use([Addon("bell", jobs=[Job("brief", _ding, {"minute": "5"}, "Not the brief")])])
     sched = start_scheduler(store)
     try:
-        assert sched.get_job("brief").func is not _ding and about.schedule()["brief"].startswith("Morning brief")
+        assert sched.get_job("brief").func is not _ding and about.schedule()["brief"].startswith("Morning round")
     finally:
         sched.shutdown(wait=False)
 

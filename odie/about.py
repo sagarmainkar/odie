@@ -16,7 +16,7 @@ ABILITIES = [
 
 # What runs on its own (scheduler job id -> what it does). A test keeps this in step with the scheduler.
 SCHEDULE = {
-    "brief": "Morning brief at 07:30: a short push and a message in Chat",
+    "brief": "Morning round at 07:30: the brief (a short push and a message in Chat), and the day's hello when it isn't made yet",
     "reminders": "Reminders checked every minute",
     "expiry": "Approvals left untapped lapse after 24 hours",
     "news": "News on Today refreshed at 06, 10, 14, 18 and 22",

@@ -420,6 +420,7 @@ class OdieRunner:
         self.tz = ZoneInfo(s.timezone)
         self._current_prompt = ""
         self._prompt_session = ""
+        self._day_summary = ""  # the summary the current static prompt carries
         self._model_key: tuple | None = None
         self.gated = True  # approval-gated tools are loaded (send, trash, invites, shell)
         self.memory = memory_file()
@@ -571,9 +572,9 @@ class OdieRunner:
         """The memory file changed (update_memory, the review): when it's in the vault, the notes index re-reads it.
         The system prompt keeps the memory titles it started the chat with: rebuilding it mid-chat would change the
         very start of every later request, so the model would read the whole conversation again (and Claude would drop
-        its kept thoughts). The change still reaches the model: each message's [memories] block searches the memory
-        as it is now, search_memories and fetch_memory read it live, and the next chat (tomorrow, or a new chat) lists
-        the new titles.
+        its kept thoughts). The change still reaches the model: each message's [memories] block finds it at once,
+        fetch_memory reads it live, recall finds it once the index worker re-syncs, and the next chat (tomorrow, or a
+        new chat) lists the new titles.
           "Remember I prefer aisle seats" at 10:00 -> saved; this chat's system prompt is unchanged
           "Which seat do I like?" at 10:05         -> the [memories] block finds the new entry"""
         worker = getattr(self, "vault_worker", None)
@@ -625,15 +626,34 @@ class OdieRunner:
             from odie import persona
             who = self.who()
             self._caps = who.caps
-            self._current_prompt = persona.apply_name(build_static_prompt(now, self.load_soul(), self.memory_index(), gated=self.gated,
-                                                                          who=who), persona.get(self.store)["name"])
+            from odie.morning.round import morning_day
+            self._day_summary = self.day_summary(now)
+            static = build_static_prompt(now, self.load_soul(), self.memory_index(), gated=self.gated, who=who,
+                                         day_summary=self._day_summary, summary_day=morning_day(now))
+            self._current_prompt = persona.apply_name(static, persona.get(self.store)["name"])
             self._prompt_session = session_id
         rows = self.store.open_tasks(now.isoformat(timespec="minutes"))[:10]
-        brief = self.store.one("select text from briefs where date=? order by id desc limit 1", (now.strftime("%Y-%m-%d"),))
+        # The day summary already carries the brief's news, so a chat that has the summary doesn't get the brief too.
+        brief = None
+        if not self._day_summary:
+            brief = self.store.one("select text from briefs where date=? order by id desc limit 1", (now.strftime("%Y-%m-%d"),))
         from odie import location
         place, seen, home = location.location_bits(location.get(self.store), now)  # a place name and home, never coordinates
         return build_turn_context(now, self.prefetch(text), threads_summary(self.store), format_open_threads(rows),
                                   brief["text"] if brief else "", caps=getattr(self, "_caps", ALL_CAPS), place=place, seen=seen, home=home)
+
+    def day_summary(self, now: datetime) -> str:
+        """The summary of today's morning hello, or "" when there is none or it can't be read: a hello saved for this
+        morning day -> its summary; no hello yet, or a row that fails to load -> "" (the chat starts without it)."""
+        from odie.morning.round import hello_for, morning_day
+        try:
+            hello = hello_for(self.store, morning_day(now))
+        except Exception:
+            log.warning("could not read today's hello summary", exc_info=True)
+            return ""
+        if hello is None:
+            return ""
+        return hello["summary"]
 
     def who(self) -> Who:
         """Who the prompt is for: the profile's name, this computer, the local currency, what this install can do, and

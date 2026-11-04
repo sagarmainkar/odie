@@ -17,6 +17,10 @@ CREATE TABLE IF NOT EXISTS audit_log(
   event TEXT NOT NULL, tool TEXT, args_json TEXT, result_summary TEXT, approval_id INTEGER);
 CREATE TABLE IF NOT EXISTS briefs(id INTEGER PRIMARY KEY, date TEXT NOT NULL, text TEXT NOT NULL, items_json TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')));
+-- the morning hello: one card a day (the day starts at 05:00), its summary for the day's chats, and what it was
+-- written from (odie.morning.round)
+CREATE TABLE IF NOT EXISTS mornings(day TEXT PRIMARY KEY, card_json TEXT NOT NULL, summary TEXT NOT NULL,
+  made_at TEXT NOT NULL, inputs_json TEXT);
 CREATE TABLE IF NOT EXISTS push_subscriptions(id INTEGER PRIMARY KEY, endpoint TEXT NOT NULL UNIQUE, p256dh TEXT NOT NULL,
   auth TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')), last_ok_at TEXT);
 CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value_json TEXT NOT NULL);

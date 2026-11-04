@@ -551,7 +551,7 @@ def test_what_a_tool_exposes_is_judged_by_its_name():
     for name in ("gmail_find_email", "GMAIL_FETCH_EMAILS", "mac_mail_read", "watch_item", "read_thread", "outlook_list_inbox"):
         assert c.label_for(name) == "your mail", name
     assert c.label_for("read_note") == c.label_for("search_everything") == "your notes"
-    assert c.label_for("fetch_memory") == c.label_for("search_memories") == "your memory"
+    assert c.label_for("fetch_memory") == c.label_for("recall") == "your memory"
     assert c.label_for("mac_calendar_events") == "your calendar"
     assert c.label_for("sms_search") == "your messages"
     for name in ("web_search", "web_fetch", "run_shell", "make_file", "find_images", "now", "load_skill", "load_skill_resource"):
