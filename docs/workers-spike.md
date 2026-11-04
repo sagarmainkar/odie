@@ -63,12 +63,40 @@ and the answers so far:
 - **The chat remembers.** Asked for the same script again, the chat answered from the earlier report in its history
   ("Already done a few minutes ago, job-…"), and it called a second Downloads watch "(retry)" on its own.
 
+## Round two (4 November, evening): the trimmed plan
+
+Built after the decision to keep the chat and the clock as the only triggers (no Router model, no trigger queue):
+
+- **One small model for the light kinds.** Settings → Brain shows "Small model for Workers" with a Chat / Workers
+  switch; the pick is `model.workers`. With none, Odie asks Ollama once per process and takes `lfm3:latest` (else an
+  `lfm2`) as its own pick, else the chat model. A reporter runs on it; a task job stays on the chat model.
+- **Reporters speak by a rule.** `start_job(notify="always" | "change" | "condition", condition=…)`; `report` takes
+  `state`, `met` and `done`. Code decides whether a run is told, as a tracker's check is judged; a quiet run is still
+  on the record. `done` ends the reporter with "nothing left to watch". The old trackers are untouched for now.
+- **Stuck jobs wait on Today.** A job that is blocked, failed, or failed by the watchdog gets a Needs-you card with
+  Retry and Dismiss (`forget_job`).
+- **Odie speaks first.** When the app opens or comes back after 3 hours or more away (`POST /api/chat/welcome`), one
+  message in the chat: done, didn't finish, waiting on you, up next, with an `actions` block (Retry …, "What needs
+  me?", "Show what you did"). Once per absence; nothing when there is nothing to say.
+- **Today lists the jobs.** A Jobs section: running with Stop, ended with Retry, More opens the report and the log
+  (`/api/jobs`, `/api/jobs/{id}`, stop and retry).
+- Messages Odie posts on its own say what they are after its name: job, while you were away, tracker.
+
+Live, on the throwaway with DeepSeek as the chat model and lfm3 picked by Odie:
+
+| Check | Result |
+|---|---|
+| Change-only reporter on lfm3 (Downloads count) | Ran; report every 30 s until stopped at report (26 model calls): fixed, a Worker makes no model call after `report`. It called the first run "dropped" and `done`: a reporter now treats "dropped" as a quiet run; `done` from a small model is still trusted. |
+| Blocked job (Zerodha holdings, no token) | DeepSeek's Worker searched env, profiles and files, tested the API, reported blocked with a clear ask and handed over the script it wrote; a Needs-you card appeared with Retry and Dismiss. |
+| Welcome after a simulated 5.6 h away | Posted into the chat with the three buttons; a second call posted nothing. |
+| Today | Needs-you card and the Jobs section render (screenshots under `.playwright-mcp/workers/`). |
+| Chat | The welcome renders with its buttons after a reload. A hash-only switch from Today to Chat in the headless browser showed the chat's earlier state; worth watching on the phone. |
+
 ## Not built, by choice or not yet
 
-- The mail kind (may send, no shell, recipients fixed at start). It needs the user's mail app's send tool unlocked
-  for a Worker; parked until the mail app for it is chosen.
-- A Running list on Today with Stop, and the job's log opened from its card. The record is there (`job_actions`);
-  only `jobs_status` reads it so far.
-- A Settings row for a kind's model; today it is a settings-table entry.
+- The mail kind (may send, no shell, recipients fixed at start, only from the user's own chat turn). Decided: the
+  Gmail MCP send tool; parked until built.
+- Trackers moved onto reporters, and the watch as a job on the small model (after the watch eval compares lfm3 with
+  DeepSeek).
 - The watchdog was not provoked live (a 10-minute stall); its rules are tested.
 - Workers run with the pass's rules only, no container. The folder is under the workspace, so writes there pass.
