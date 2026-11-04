@@ -572,7 +572,7 @@ class OdieRunner:
         The system prompt keeps the memory titles it started the chat with: rebuilding it mid-chat would change the
         very start of every later request, so the model would read the whole conversation again (and Claude would drop
         its kept thoughts). The change still reaches the model: each message's [memories] block searches the memory
-        as it is now, search_memories and fetch_memory read it live, and the next chat (tomorrow, or a new chat) lists
+        as it is now, recall and fetch_memory read it live, and the next chat (tomorrow, or a new chat) lists
         the new titles.
           "Remember I prefer aisle seats" at 10:00 -> saved; this chat's system prompt is unchanged
           "Which seat do I like?" at 10:05         -> the [memories] block finds the new entry"""

@@ -3,8 +3,6 @@ from __future__ import annotations
 
 from google.adk.tools import FunctionTool
 
-from odie.memory.index import render_prefetch
-from odie.memory.search import search
 from odie.memory.store import MemoryFile
 
 
@@ -40,16 +38,8 @@ def make_memory_tools(memory: MemoryFile, on_change=None) -> list[FunctionTool]:
         """Read one remembered entry by its title (as listed in 'What you remember'). Partial titles work when unique."""
         e = memory.load().find(title)
         if e is None:
-            return f"Nothing remembered under '{title}'. Try search_memories."
+            return f"Nothing remembered under '{title}'. Try recall."
         return f"{e.title} ({e.date}) [{e.topic}]\n{e.body}"
-
-    def search_memories(query: str) -> str:
-        """Keyword search across everything remembered about the user. Use when the index has no obvious title."""
-        hits = search(memory.load().entries(), query, limit=5)
-        if not hits:
-            return "Nothing remembered about that."
-        text, _ = render_prefetch(hits, max_entries=5, max_chars=3000)
-        return text
 
     def update_memory(title: str, content: str, topic: str | None = None) -> str:
         """Save something worth keeping about the user, people, preferences, projects or decisions. Reuse an existing title to update it; topic groups it (Identity, People, Projects, Health, Finance, ...)."""
@@ -81,6 +71,6 @@ def make_memory_tools(memory: MemoryFile, on_change=None) -> list[FunctionTool]:
             on_change()
         return f"Forgot '{entry.title}' (from {entry.topic})."
 
-    return [FunctionTool(fetch_memory), FunctionTool(search_memories),
+    return [FunctionTool(fetch_memory),
             FunctionTool(update_memory, require_confirmation=watch_for_needs_tap(memory)),  # a Watch for entry: the card
             FunctionTool(forget_memory)]

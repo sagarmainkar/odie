@@ -86,8 +86,7 @@ def test_memory_tools(tmp_path):
     from odie.memory.tools import make_memory_tools
     mf = MemoryFile(tmp_path / "m.md", tmp_path / ".lock", "odie")
     tools = {t.name: t for t in make_memory_tools(mf)}
-    assert set(tools) == {"fetch_memory", "search_memories", "update_memory", "forget_memory"}
+    assert set(tools) == {"fetch_memory", "update_memory", "forget_memory"}
     assert "Saved" in tools["update_memory"].func(title="Dentist", content="Smile Dental.", topic="Health")
     assert "Smile Dental" in tools["fetch_memory"].func(title="dentist")
-    assert "Dentist" in tools["search_memories"].func(query="dental appointment")
     assert "nothing" in tools["fetch_memory"].func(title="zebra").lower()
