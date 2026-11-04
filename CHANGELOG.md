@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.2.39 (2026-11-04)
+
+- A block that a model wrote with a comma left before a closing bracket (`"series": [{...}, ]`) now draws instead of showing "Couldn't draw this". It is the third slip Odie forgives in a block, beside strings left unclosed and numbers written with thousands commas; a block that already reads is never changed.
+- The test suite passes at any hour: three scheduler tests no longer trip over the morning catch-up brief that Odie schedules when it starts between 07:30 and noon.
+
 ## v0.2.38 (2026-11-04)
 
 - Charts, numbers and tables got a design pass. Big numbers are shortened the way you say them (4.21B, ₹18.4L, 4,21 Mrd.), with every digit kept in the hover card and the tooltip. A new palette of eight colours. Bar charts lie down on their own when the names are long, there are only two or three bars, or it's a ranking; months, quarters and years stay as columns. A line on its own can be coloured by where it started: green above, orange below, with a "Start" line. Every chart has a hover card that follows the pointer and the arrow keys, and on the phone it stays after a tap.
