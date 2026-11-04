@@ -35,6 +35,7 @@ from odie.workers.store import OUTCOMES, Job
 log = logging.getLogger("odie.workers")
 
 NUDGE = "You stopped without calling report. Call report now with what you did and what you found."
+REFUSED = "__refused__"  # set on a call's args by the guard, so the after-callback knows the tool never ran
 REPORT_LIMIT = 4000  # characters of a report kept and posted
 
 
@@ -78,13 +79,17 @@ def guard_for(store: Store, job: Job):
         if why is None:
             return None
         jobs.record_action(store, job.id, tool.name, args, refused=why)
-        return {"error": f"Not run: it {why}. Find another way, or report it as blocked."}
+        args[REFUSED] = why
+        return {"error": f"Not run: it {why}. Write files with write_file; find another way, or report it as blocked."}
     return guard
 
 
 def after_for(store: Store, job: Job):
-    """after_tool_callback: every call that ran goes on the record with the size of its answer."""
+    """after_tool_callback: every call that ran goes on the record with the size of its answer. A call the guard
+    refused is already on the record (ADK still calls this with the refusal as the answer): nothing more."""
     def after(tool, args, tool_context, tool_response):
+        if isinstance(args, dict) and args.pop(REFUSED, None):
+            return
         jobs.record_action(store, job.id, tool.name, args, result_chars=len(json.dumps(tool_response, default=str)))
     return after
 

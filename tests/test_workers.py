@@ -101,11 +101,15 @@ def test_the_guard_puts_the_shell_in_the_jobs_folder_and_refuses_what_the_pass_w
     assert guard(Tool("run_shell"), args, None) is None
     assert args["cwd"] == str(job.folder)  # the Worker's commands start in its own folder
     assert guard(Tool("run_shell"), {"command": "echo x > notes.txt", "cwd": str(job.folder)}, None) is None  # its folder is a safe place
-    refused = guard(Tool("run_shell"), {"command": "rm old.txt", "cwd": str(job.folder)}, None)
-    assert refused == {"error": "Not run: it deletes or stops something. Find another way, or report it as blocked."}
+    bad = {"command": "rm old.txt", "cwd": str(job.folder)}
+    refused = guard(Tool("run_shell"), bad, None)
+    assert refused == {"error": "Not run: it deletes or stops something. Write files with write_file; find another way, or report it as blocked."}
     assert guard(Tool("web_search"), {"query": "tides"}, None) is None
+    worker.after_for(store, job)(Tool("run_shell"), bad, None, refused)  # ADK calls after even for a refused call
+    worker.after_for(store, job)(Tool("web_search"), {"query": "tides"}, None, {"results": []})
     recorded = jobs.actions(store, job.id)
-    assert [(a["tool"], a["refused"]) for a in recorded] == [("run_shell", "deletes or stops something")]
+    assert [(a["tool"], a["refused"], a["result_chars"]) for a in recorded] == [
+        ("run_shell", "deletes or stops something", None), ("web_search", None, 15)]  # the refusal once, not twice
 
 
 # ── a run, end to end ────────────────────────────────────────────────────────
@@ -128,7 +132,7 @@ async def test_a_worker_runs_the_shell_in_its_folder_reports_and_the_chat_hears_
     # the model saw only the kind's tools and report, and only the kind's instruction
     first = Scripted.seen[0]
     names = sorted(f.name for t in first.config.tools for f in t.function_declarations)
-    assert names == ["attach_file", "make_file", "report", "run_shell", "web_fetch", "web_search"]
+    assert names == ["read_file", "report", "run_shell", "web_fetch", "web_search", "write_file"]
     assert str(first.config.system_instruction).startswith("You are a Worker")
     assert str(job.folder) in str(first.config.system_instruction)
     # the shell ran in the job's folder (its answer, in the tool result the model got next)
@@ -168,6 +172,20 @@ async def test_a_blocked_report_reads_as_stuck_and_files_in_the_folder_ride_alon
     post = chat.posts[0]
     assert post["text"] == f"⛔ Tides is stuck ({job.id})\n\nNeed the API key."
     assert [m["filename"] for m in post["media"]] == ["notes.txt"]  # /etc/hosts is outside the folder: left out
+
+
+async def test_write_file_and_read_file_stay_inside_the_jobs_folder(world, tmp_path):
+    store, _, _ = world
+    job = a_job(store, tmp_path)
+    from odie.workers.files import make_job_file_tools
+    write_file, read_file = make_job_file_tools(job.folder)
+    assert (await write_file.func("src/fib.py", "print(1)\n"))["bytes"] == 9
+    assert (job.folder / "src" / "fib.py").read_text() == "print(1)\n"
+    assert (await read_file.func("src/fib.py"))["text"] == "print(1)\n"
+    assert "error" in await write_file.func("../escape.txt", "x")
+    assert "error" in await write_file.func("/etc/hosts", "x")
+    assert "error" in await read_file.func("missing.txt")
+    assert not (tmp_path / "escape.txt").exists()
 
 
 def test_budget_words():

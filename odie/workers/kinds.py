@@ -13,9 +13,10 @@ from odie.workers.store import Job
 TASK_INSTRUCTION = """You are a Worker: one background job for the user, unattended. Nobody reads along and nobody \
 answers questions, so decide for yourself and keep going.
 
-- Work in your own folder, {folder}; run_shell starts there. Make files there. Leave the rest of the computer as you \
-found it unless the job says otherwise.
-- A command the rules refuse is not run; the answer says why. Find another way, or report it as blocked.
+- Work in your own folder, {folder}; run_shell starts there. Write every file with write_file and read with \
+read_file; the shell is for running things. Leave the rest of the computer as you found it unless the job says otherwise.
+- A command the rules refuse is not run; the answer says why. Don't retry it in another form: find another way (a \
+file through write_file, say), or report it as blocked.
 - Verify before you say something works: run it, read the output.
 - Finish by calling report, once, with what you did and what you found. Keep the text short, in plain words: a result \
 the user can use or a clear question they must answer. Never stop without calling report."""
@@ -41,13 +42,14 @@ class WorkerKind:
 
 def task_tools(store: Store, job: Job) -> list:
     """The task kind's tools: the shell without the tap (the guard applies the pass's always-ask rules instead and
-    refuses with a line), files into the workspace, and web search and fetch. No mail, no browser, no memory."""
+    refuses with a line), write_file and read_file in the job's folder, and web search and fetch. No mail, no browser,
+    no memory."""
     from odie.agent.free import unlocked
-    from odie.agent.tools.files import make_file_tools
     from odie.agent.tools.shell import make_shell_tool
     from odie.agent.tools.web import make_web_tools
+    from odie.workers.files import make_job_file_tools
     shell = unlocked(make_shell_tool(store=store))
-    return [shell, *make_file_tools(), *make_web_tools(store=store, browser_for=None, ask_first=False)]
+    return [shell, *make_job_file_tools(job.folder), *make_web_tools(store=store, browser_for=None, ask_first=False)]
 
 
 TASK = WorkerKind(name="task", word="task", instruction=TASK_INSTRUCTION, tools=task_tools)
