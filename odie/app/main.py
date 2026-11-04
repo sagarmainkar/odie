@@ -257,6 +257,15 @@ def start_scheduler(store: Store, runner=None, background=None):
             logging.getLogger("odie").warning("news refresh failed", exc_info=True)
 
     sched.add_job(news_job, CronTrigger(hour="6,10,14,18,22", minute=0, timezone=tz), id="news", misfire_grace_time=1800, coalesce=True)
+    from odie import workers
+    if workers.enabled():  # the spike's watchdog: once a minute, reads the jobs store and fails what is stuck
+        async def workers_watchdog_job():
+            from odie.workers import watchdog
+            try:
+                await watchdog.check(store)
+            except Exception:  # noqa: BLE001
+                logging.getLogger("odie").warning("workers watchdog failed", exc_info=True)
+        sched.add_job(workers_watchdog_job, IntervalTrigger(minutes=1, timezone=tz), id="workers_watchdog", misfire_grace_time=120, coalesce=True)
     from odie import addons
     for a in addons.active():
         for j in a.jobs:
@@ -345,7 +354,21 @@ def create_app(runner=None, store: Store | None = None) -> FastAPI:
                 await making_jobs.recover(store)  # a job a restart cut off (a user skill's too) is told, once, in its chat
             except Exception:  # noqa: BLE001 (never decides whether Odie starts)
                 logging.getLogger("odie").warning("telling interrupted background jobs failed", exc_info=True)
+            from odie import workers
+            if workers.enabled():  # the spike's Workers: a cut-off job is told, a reporter picks its schedule up again
+                try:
+                    from odie.workers import router as workers_router
+                    await workers_router.recover()
+                except Exception:  # noqa: BLE001 (never decides whether Odie starts)
+                    logging.getLogger("odie").warning("recovering workers failed", exc_info=True)
         yield
+        from odie import workers
+        if workers.enabled():
+            try:
+                from odie.workers import router as workers_router
+                await workers_router.stop_all()  # Workers end with Odie; recover() at the next start says so in the chat
+            except Exception:  # noqa: BLE001 (never blocks shutdown)
+                logging.getLogger("odie").warning("stopping workers failed", exc_info=True)
         try:
             from odie.making import jobs as making_jobs
             await making_jobs.stop()  # first: a render in progress ends before its browser is closed under it

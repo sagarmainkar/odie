@@ -165,11 +165,25 @@ async def tell(store: Store, runner, job: Job, text: str, media: list[dict]) -> 
         log.warning("push failed for %s", job.id, exc_info=True)
 
 
+MODEL_SETTING = "workers.model.{kind}"  # {"provider": "lmstudio", "model": "google/gemma-4-12b-qat"}: this kind's own model
+
+
+def selection_for_kind(store: Store, kind: WorkerKind):
+    """Which model a kind's Worker runs on: the kind's own, when the setting workers.model.<kind> names a provider Odie
+    knows, else the chat's model. Example: {"provider": "ollama", "model": "lfm3"} for reporter -> Ollama's lfm3;
+    nothing saved, or a provider that is gone -> the chat's model."""
+    from odie.models import Selection, all_providers, resolve_selection
+    chosen = store.get_setting(MODEL_SETTING.format(kind=kind.name))
+    providers = {p.id: p for p in all_providers(store)}
+    if chosen and chosen.get("provider") in providers and chosen.get("model"):
+        return Selection(providers[chosen["provider"]], chosen["model"], "chat")
+    return resolve_selection(store, "chat")
+
+
 def model_for_kind(store: Store, kind: WorkerKind):
-    """The ADK model a kind's Worker runs on: the model chosen for the kind's slot ("chat" is the user's chat model)."""
+    """The ADK model a kind's Worker runs on (selection_for_kind)."""
     from odie.agent.model import model_for
-    from odie.models import resolve_selection
-    return model_for(resolve_selection(store, kind.model_slot), False)
+    return model_for(selection_for_kind(store, kind), False)
 
 
 async def run(job: Job, store: Store, runner, kind: WorkerKind | None = None, model=None) -> str:

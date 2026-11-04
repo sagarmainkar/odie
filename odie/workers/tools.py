@@ -53,4 +53,11 @@ def make_worker_tools(store: Store) -> list[FunctionTool]:
             return {"stopped": job_id}
         return {"error": f"{job_id} isn't running."}
 
-    return [FunctionTool(start_job), FunctionTool(jobs_status), FunctionTool(stop_job)]
+    async def retry_job(job_id: str) -> dict:
+        """Start a failed or stopped job again by its id, with the same brief and folder: when the user says retry, or asks for it again after it didn't finish."""
+        job = router.retry(job_id)
+        if job is None:
+            return {"error": f"{job_id} can't be retried: it is still going, its schedule is over, or there's no such job."}
+        return {"job_id": job.id, "status": "started again", "run": job.runs + 1}
+
+    return [FunctionTool(start_job), FunctionTool(jobs_status), FunctionTool(stop_job), FunctionTool(retry_job)]

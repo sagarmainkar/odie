@@ -121,9 +121,14 @@ async def sleep(seconds: float) -> None:
 
 async def _repeat(job: Job) -> None:
     """A reporter's life: run, wait every_minutes, run again, until until_at has passed; then the row says done and
-    the chat hears once. A run that fails doesn't end the reporter (the next run may work; the watchdog counts)."""
+    the chat hears once. A run that fails doesn't end the reporter (the next run may work; the watchdog counts). A
+    reporter launched again (after a restart) first waits for the next_run_at its row kept, when that is still ahead."""
     store = hooks["store"]
     end = datetime.fromisoformat(job.until_at) if job.until_at else None
+    kept = (jobs.get(store, job.id) or {}).get("next_run_at")
+    if kept and datetime.fromisoformat(kept) > now_utc():
+        jobs.waiting(store, job.id, kept)
+        await sleep((datetime.fromisoformat(kept) - now_utc()).total_seconds())
     while True:
         await _run(job)
         next_at = now_utc() + timedelta(minutes=job.every_minutes)
@@ -148,6 +153,56 @@ def stop(job_id: str) -> bool:
 
 def running_ids() -> list[str]:
     return [job_id for job_id, t in _tasks.items() if not t.done()]
+
+
+async def fail(job_id: str, why: str) -> None:
+    """The watchdog's verdict: cancel the job's task, mark the row failed with why, and tell its chat. A reporter is
+    failed as a whole (its schedule ends); Retry starts it again."""
+    store = hooks["store"]
+    task = _tasks.get(job_id)
+    if task is not None and not task.done():
+        task.cancel()
+    row = jobs.get(store, job_id)
+    if row is None:
+        return
+    jobs.ended(store, job_id, "failed", error=why)
+    await hooks["runner"].post_message(f"❌ {row['title']} didn't finish ({job_id}): {why}. Say \"retry {job_id}\" to start it again.",
+                                       row["session_id"], kind="job")
+
+
+def retry(job_id: str) -> Job | None:
+    """Start a failed or stopped job again, same row, same folder, same brief (a reporter: its schedule again from
+    now). A job still going, or unknown -> None."""
+    store = hooks["store"]
+    row = jobs.get(store, job_id)
+    if row is None or row["status"] not in ("failed", "stopped"):
+        return None
+    if row["every_minutes"] and row["until_at"] and datetime.fromisoformat(row["until_at"]) <= now_utc():
+        return None  # its schedule is over
+    store.execute("update jobs set status='queued', error=null, ended_at=null, next_run_at=null where id=?", (job_id,))
+    job = jobs.from_row(jobs.get(store, job_id))
+    launch(job)
+    return job
+
+
+async def recover() -> list[str]:
+    """Odie started: a job that was running or queued is told as cut off (its Worker is gone); a reporter that was
+    running or waiting is launched again and keeps its schedule. Returns one line per job, for the log."""
+    store = hooks["store"]
+    lines = []
+    for row in jobs.running(store):
+        job = jobs.from_row(row)
+        if job.repeats:
+            launch(job)
+            lines.append(f"{job.id}: reporter launched again")
+            continue
+        jobs.ended(store, job.id, "failed", error="Odie restarted")
+        await hooks["runner"].post_message(f"❌ {job.title} didn't finish ({job.id}): Odie restarted. Say \"retry {job.id}\" to start it again.",
+                                           job.session_id, kind="job")
+        lines.append(f"{job.id}: cut off by the restart")
+    for line in lines:
+        log.info("workers: %s", line)
+    return lines
 
 
 async def stop_all() -> None:

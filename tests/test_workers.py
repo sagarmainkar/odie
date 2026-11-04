@@ -231,14 +231,14 @@ def test_off_by_default_the_chat_has_no_worker_tools(world, monkeypatch):
     assert "start_job" not in {t.name for t in build_agent(store).tools if hasattr(t, "name")}
     monkeypatch.setenv("ODIE_WORKERS", "1")
     names = {t.name for t in build_agent(store).tools if hasattr(t, "name")}
-    assert {"start_job", "jobs_status", "stop_job"} <= names
+    assert {"start_job", "jobs_status", "stop_job", "retry_job"} <= names
 
 
 async def test_start_job_from_the_chat_names_the_chat_it_came_from(world):
     store, _, _ = world
     from odie.workers.tools import make_worker_tools
     Scripted.script = [("report", {"outcome": "ready", "text": "ok"})]
-    start_job, jobs_status, stop_job = make_worker_tools(store)
+    start_job, jobs_status, stop_job, _ = make_worker_tools(store)
 
     class Ctx:
         class session:
@@ -351,7 +351,7 @@ async def test_a_reporter_waiting_between_runs_can_be_stopped(world, monkeypatch
 async def test_start_job_with_every_minutes_makes_a_reporter_in_the_users_time(world, monkeypatch):
     store, _, _ = world
     from odie.workers.tools import make_worker_tools
-    start_job, _, stop_job = make_worker_tools(store)
+    start_job, _, stop_job, _ = make_worker_tools(store)
     Scripted.stall = True
     got = await start_job.func("Mail count", "Count unread.", every_minutes=30, until="2026-11-04T18:00")
     row = jobs.get(store, got["job_id"])
@@ -359,3 +359,132 @@ async def test_start_job_with_every_minutes_makes_a_reporter_in_the_users_time(w
     assert row["until_at"] == "2026-11-04T18:00:00+05:30"  # Asia/Kolkata, the tests' timezone
     assert got["repeats"].startswith("every 30 minutes until 2026-11-04T18:00:00+05:30")
     assert await stop_job.func(got["job_id"]) == {"stopped": got["job_id"]}
+
+
+# ── the watchdog, retry and recovery ─────────────────────────────────────────
+
+def _row(**over):
+    base = {"id": "job-1", "status": "running", "budget_seconds": 1800, "started_at": "2026-11-04T10:00:00.000Z",
+            "next_run_at": None, "every_minutes": 0}
+    return {**base, **over}
+
+
+def test_why_stuck_reads_budget_stall_and_repeated_errors():
+    from datetime import UTC, datetime
+
+    from odie.workers import watchdog
+    at = lambda h, m: datetime(2026, 11, 4, h, m, tzinfo=UTC)  # noqa: E731
+    act = lambda h, m, **k: {"ts": f"2026-11-04T{h:02d}:{m:02d}:00.000Z", "refused": None, "error": None, **k}  # noqa: E731
+    assert watchdog.why_stuck(_row(), [act(10, 1)], at(10, 2)) is None
+    assert watchdog.why_stuck(_row(), [act(10, 1)], at(10, 12)) == "made no progress for 10 minutes"
+    assert watchdog.why_stuck(_row(), [], at(10, 11)) == "made no progress for 10 minutes"  # no call since the start
+    assert watchdog.why_stuck(_row(), [act(10, 39)], at(10, 40)) == "ran past its budget and didn't stop"
+    same = [act(10, 1, refused="deletes or stops something") for _ in range(3)]
+    assert watchdog.why_stuck(_row(), same, at(10, 2)) == "hit the same refusal 3 times: deletes or stops something"
+    mixed = [act(10, 1, refused="x"), act(10, 1, refused="y"), act(10, 1, refused="x")]
+    assert watchdog.why_stuck(_row(), mixed, at(10, 2)) is None
+
+
+def test_missed_run_waits_for_the_grace():
+    from datetime import UTC, datetime
+
+    from odie.workers import watchdog
+    waiting = _row(status="waiting", next_run_at="2026-11-04T10:00:00+00:00", every_minutes=60)
+    assert watchdog.missed_run(waiting, datetime(2026, 11, 4, 10, 3, tzinfo=UTC)) is False
+    assert watchdog.missed_run(waiting, datetime(2026, 11, 4, 10, 7, tzinfo=UTC)) is True
+    assert watchdog.missed_run(_row(), datetime(2026, 11, 4, 12, 0, tzinfo=UTC)) is False
+
+
+async def test_the_watchdog_fails_a_stalled_job_and_tells_the_chat(world, monkeypatch):
+    from datetime import UTC, datetime, timedelta
+
+    from odie.workers import watchdog
+    store, chat, _ = world
+    Scripted.stall = True
+    job = router.start("task", "Slow one", "Take forever.", "chat-1")
+    await asyncio.sleep(0.05)
+    later = datetime.now(UTC) + timedelta(minutes=11)
+    done = await watchdog.check(store, later)
+    assert done == [f"{job.id}: failed, made no progress for 10 minutes"]
+    await asyncio.sleep(0.05)
+    row = jobs.get(store, job.id)
+    assert (row["status"], row["error"]) == ("failed", "made no progress for 10 minutes")
+    assert job.id not in router.running_ids()
+    assert chat.posts[-1]["text"] == f'❌ Slow one didn\'t finish ({job.id}): made no progress for 10 minutes. Say "retry {job.id}" to start it again.'
+    assert await watchdog.check(store, later) == []  # nothing left to do
+
+
+async def test_retry_runs_a_failed_job_again_in_the_same_folder(world):
+    store, _, _ = world
+    Scripted.script = ["I give up.", "Really."]  # no report: fails
+    job = router.start("task", "Flaky", "Try.", "chat-1")
+    for _ in range(300):
+        if jobs.get(store, job.id)["status"] == "failed":
+            break
+        await asyncio.sleep(0.01)
+    Scripted.script = [("report", {"outcome": "ready", "text": "Second time lucky."})]
+    again = router.retry(job.id)
+    assert again is not None and again.folder == job.folder
+    for _ in range(300):
+        if jobs.get(store, job.id)["status"] == "done":
+            break
+        await asyncio.sleep(0.01)
+    row = jobs.get(store, job.id)
+    assert (row["status"], row["runs"], row["report"], row["error"]) == ("done", 2, "Second time lucky.", None)
+    assert router.retry(job.id) is None  # done: nothing to retry
+    assert router.retry("job-nothere") is None
+
+
+async def test_recover_after_a_restart_tells_cut_off_jobs_and_relaunches_reporters(world, monkeypatch):
+    store, chat, _ = world
+    # rows as a restart finds them: a plain job that was running, a reporter waiting for a run far ahead
+    cut = jobs.create(store, "task", "Cut off", "…", "chat-1", store.path.parent / "a", 60)
+    jobs.started(store, cut)
+    rep = jobs.create(store, "reporter", "Hourly", "…", "chat-1", store.path.parent / "b", 60, every_minutes=60,
+                      until_at="2099-01-01T00:00:00+00:00")
+    jobs.started(store, rep)
+    jobs.waiting(store, rep.id, "2099-01-01T00:00:00+00:00")
+    slept = []
+
+    async def record(seconds):
+        slept.append(seconds)
+        await asyncio.sleep(3600)
+    monkeypatch.setattr(router, "sleep", record)
+    lines = await router.recover()
+    await asyncio.sleep(0.05)
+    assert lines == [f"{cut.id}: cut off by the restart", f"{rep.id}: reporter launched again"]
+    assert jobs.get(store, cut.id)["status"] == "failed" and jobs.get(store, cut.id)["error"] == "Odie restarted"
+    assert chat.posts[0]["text"].startswith(f"❌ Cut off didn't finish ({cut.id}): Odie restarted.")
+    assert jobs.get(store, rep.id)["status"] == "waiting" and rep.id in router.running_ids()
+    assert slept and slept[0] > 3600  # it waits for the next_run_at its row kept, not a run now
+    router.stop(rep.id)
+
+
+async def test_retry_job_from_the_chat(world):
+    store, _, _ = world
+    from odie.workers.tools import make_worker_tools
+    _, _, _, retry_job = make_worker_tools(store)
+    assert "error" in await retry_job.func("job-nothere")
+    Scripted.stall = True
+    job = router.start("task", "Stop me", "…", "chat-1")
+    await asyncio.sleep(0.02)
+    router.stop(job.id)
+    await asyncio.sleep(0.02)
+    got = await retry_job.func(job.id)
+    assert got == {"job_id": job.id, "status": "started again", "run": 2}
+    router.stop(job.id)
+
+
+# ── a model per kind ─────────────────────────────────────────────────────────
+
+def test_a_kind_runs_on_its_own_model_when_one_is_set(world):
+    store, _, _ = world
+    from odie.workers.kinds import REPORTER, TASK
+    store.set_setting("model.chat", {"provider": "ollama", "model": "deepseek-v4.1-flash:cloud"})
+    assert worker.selection_for_kind(store, REPORTER).model == "deepseek-v4.1-flash:cloud"  # nothing set: the chat's
+    store.set_setting("workers.model.reporter", {"provider": "lmstudio", "model": "google/gemma-4-12b-qat"})
+    chosen = worker.selection_for_kind(store, REPORTER)
+    assert (chosen.provider.id, chosen.model) == ("lmstudio", "google/gemma-4-12b-qat")
+    assert worker.selection_for_kind(store, TASK).model == "deepseek-v4.1-flash:cloud"  # the task kind is untouched
+    store.set_setting("workers.model.reporter", {"provider": "gone", "model": "x"})
+    assert worker.selection_for_kind(store, REPORTER).model == "deepseek-v4.1-flash:cloud"  # an unknown provider: the chat's
