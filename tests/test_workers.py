@@ -142,6 +142,16 @@ async def test_a_worker_runs_the_shell_in_its_folder_reports_and_the_chat_hears_
     assert str(job.folder) in str(results[0])
 
 
+async def test_after_report_the_model_is_not_called_again(world, tmp_path):
+    store, chat, _ = world
+    job = a_job(store, tmp_path)
+    Scripted.script = [("report", {"outcome": "ready", "text": "First."}), ("report", {"outcome": "ready", "text": "Again."}), "more"]
+    await worker.run(job, store, chat, model=Scripted(model="scripted"))
+    assert len(Scripted.seen) == 1  # the brief; nothing after the report
+    assert [a["tool"] for a in jobs.actions(store, job.id)] == ["report"]
+    assert jobs.get(store, job.id)["report"] == "First."
+
+
 async def test_a_worker_that_stops_without_a_report_is_nudged_once_then_fails(world, tmp_path):
     store, chat, _ = world
     job = a_job(store, tmp_path)
@@ -497,6 +507,8 @@ def test_pick_small_model_prefers_lfm3_on_ollama():
     listing = [{"id": "lmstudio", "models": [{"id": "lfm3-big"}]},
                {"id": "ollama", "models": [{"id": "phonon:latest"}, {"id": "lfm2.5:1.2b"}, {"id": "lfm3:latest"}]}]
     assert worker.pick_small_model(listing) == {"provider": "ollama", "model": "lfm3:latest"}
+    both = [{"id": "ollama", "models": [{"id": "lfm3-150k:latest"}, {"id": "lfm3:latest"}]}]
+    assert worker.pick_small_model(both) == {"provider": "ollama", "model": "lfm3:latest"}  # the plain one
     assert worker.pick_small_model([{"id": "ollama", "models": [{"id": "lfm2.5:1.2b"}]}]) == {"provider": "ollama", "model": "lfm2.5:1.2b"}
     assert worker.pick_small_model([{"id": "ollama", "models": [{"id": "qwen3.5:0.8b"}]}]) is None
     assert worker.pick_small_model([{"id": "lmstudio", "models": [{"id": "lfm3"}]}]) is None  # LM Studio: one model at a time
@@ -578,7 +590,7 @@ async def test_a_change_reporter_stays_quiet_while_the_facts_hold_and_ends_when_
         pass
     monkeypatch.setattr(router, "sleep", no_wait)
     Scripted.script = [("report", {"outcome": "ready", "text": "Shipped from Pune.", "state": "Shipped"}), "ok",
-                       ("report", {"outcome": "ready", "text": "Still shipped.", "state": "shipped"}), "ok",
+                       ("report", {"outcome": "dropped", "text": "Still shipped.", "state": "shipped"}), "ok",  # "dropped" = no change
                        ("report", {"outcome": "ready", "text": "Delivered at 10:40.", "state": "Delivered", "done": True}), "ok",
                        ("report", {"outcome": "ready", "text": "would be run 4"}), "ok"]
     job = router.start("task", "Order", "Track order 123.", "chat-1", every_minutes=5, notify="change")

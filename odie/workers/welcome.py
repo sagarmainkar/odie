@@ -63,8 +63,11 @@ def gather(store: Store, since: datetime, now: datetime) -> dict:
 
 
 def _why(job: dict) -> str:
-    text = job.get("error") or (job.get("report") or "").splitlines()[0] if (job.get("error") or job.get("report")) else ""
-    return text[:80]
+    """One short reason a job didn't finish: its error, else the first line of its report, cut to 80 characters."""
+    text = job.get("error") or ""
+    if not text and job.get("report"):
+        text = job["report"].splitlines()[0]
+    return text[:80].rstrip()
 
 
 def compose(found: dict, hours: float) -> str:

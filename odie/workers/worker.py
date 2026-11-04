@@ -19,6 +19,7 @@ from zoneinfo import ZoneInfo
 
 from google.adk.agents import LlmAgent
 from google.adk.agents.run_config import RunConfig
+from google.adk.models.llm_response import LlmResponse
 from google.adk.apps import App
 from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
@@ -89,6 +90,16 @@ def should_tell(job: Job, got: Report, last_state: str | None) -> bool:
     if job.notify == "condition":
         return got.met
     return True
+
+
+def stop_after_report(got: Report):
+    """before_model_callback: once the Worker has called report, no model call follows; the run ends there. A small
+    local model (lfm3, 4 Nov) otherwise kept calling report every half minute, 26 model calls on one run."""
+    def before(callback_context, llm_request):
+        if not got.given():
+            return None
+        return LlmResponse(content=types.Content(role="model", parts=[types.Part(text="Reported.")]))
+    return before
 
 
 def guard_for(store: Store, job: Job):
@@ -232,15 +243,16 @@ def small_model_chosen(store: Store) -> dict | None:
 
 def pick_small_model(listing: list[dict]) -> dict | None:
     """Odie's own pick from the local providers' lists: the first Ollama model whose name starts with lfm3, else lfm2;
-    none -> None. [{"id": "ollama", "models": [{"id": "phonon:latest"}, {"id": "lfm3:latest"}]}] -> ollama/lfm3:latest."""
+    the plainest name when several match ("lfm3:latest" over "lfm3-150k:latest"); none -> None.
+    [{"id": "ollama", "models": [{"id": "phonon:latest"}, {"id": "lfm3:latest"}]}] -> ollama/lfm3:latest."""
     ollama = next((p for p in listing if p.get("id") == "ollama"), None)
     if not ollama:
         return None
     ids = [m["id"] for m in ollama.get("models", [])]
     for prefix in SMALL_MODEL_PREFIXES:
-        for mid in ids:
-            if mid.startswith(prefix):
-                return {"provider": "ollama", "model": mid}
+        matching = sorted((mid for mid in ids if mid.startswith(prefix)), key=len)  # "lfm3:latest" before "lfm3-150k:latest"
+        if matching:
+            return {"provider": "ollama", "model": matching[0]}
     return None
 
 
@@ -300,7 +312,8 @@ async def run(job: Job, store: Store, runner, kind: WorkerKind | None = None, mo
 
     agent = LlmAgent(name="odie_worker", model=model, tools=[*kind.tools(store, job), make_report_tool(got)],
                      instruction=as_written, before_tool_callback=guard_for(store, job),
-                     after_tool_callback=after_for(store, job), on_tool_error_callback=on_error_for(store, job))
+                     after_tool_callback=after_for(store, job), on_tool_error_callback=on_error_for(store, job),
+                     before_model_callback=stop_after_report(got))
     sessions = InMemorySessionService()
     sess = await sessions.create_session(app_name="odie_worker", user_id=s.user_id, session_id=job.id)
     adk = Runner(app=App(name="odie_worker", root_agent=agent), session_service=sessions)
@@ -335,6 +348,8 @@ async def run(job: Job, store: Store, runner, kind: WorkerKind | None = None, mo
     status = "failed" if error else "done"
     # A reporter's row stays open between runs: the Router sets it waiting or ends it; the run's report is kept here.
     if job.repeats:
+        if got.outcome == "dropped":  # a run with nothing new is an ordinary run (lfm3 said "dropped" for "no change")
+            got.outcome = "ready"
         row = jobs.get(store, job.id) or {}
         last_state = row.get("last_state")
         store.execute("update jobs set outcome=?, report=?, error=?, last_state=? where id=?",
