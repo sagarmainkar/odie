@@ -16,6 +16,8 @@ import { Avatar } from "../components/Avatar";
 import { Orb } from "../components/Orb";
 import { Icon as Glyph, Tile } from "../components/Tile";
 import { greetingParts } from "../greeting";
+import { MorningHello, useMorning } from "../components/MorningCard";
+import { shouldShowMorning, type MorningReply } from "../morning";
 import { Steps, type Tool } from "../components/Steps";
 import { replyLine, type ReplyUsage } from "../usage";
 import { ToBody } from "../components/ToBody";
@@ -584,6 +586,15 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
   if (listening) micPlaceholder = "Listening… tap the mic to finish";
   if (transcribing) micPlaceholder = "Writing it down…";
   const lastOdie = [...msgs].reverse().find((m) => m.role === "odie");
+  // Today's morning hello sits above today's first message, so it waits until the earliest of today's is loaded.
+  // Once its card is ready it takes the empty chat's greeting's place.
+  const morning = useMorning(thread?.id ?? null);
+  let morningOnTop: MorningReply | null = null;
+  if (morning && earlier === 0 && shouldShowMorning(thread?.id ?? null, todayISO(), morning.state)) morningOnTop = morning;
+  const morningReady = morningOnTop?.card != null;
+  // In an empty chat the hello is the latest thing, so "to the latest" (opening the chat, a reload) lands on its top,
+  // not under its chips.
+  const latestIsHello = msgs.length === 0 && morningReady;
   const laterAnswers = useMemo(() => answersAfterEach(msgs), [msgs]);  // a form finds its answer in a later message
 
   return (
@@ -651,7 +662,9 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
                 )}
               </div>
             )}
-            {msgs.length === 0 && (() => { const g = greetingParts(); return (
+            {latestIsHello && <div ref={bottom} />}
+            {morningOnTop && <MorningHello reply={morningOnTop} onChip={(t) => void send(t)} />}
+            {msgs.length === 0 && !morningReady && (() => { const g = greetingParts(); return (
               <div className="min-h-[60dvh] flex flex-col items-center justify-center text-center pt-5">
                 <Orb size={150} halo />
                 <h2 className="text-[28px] font-bold tracking-[-0.02em] mt-7">{g.lead} <span className="serif text-[32px]">{g.accent}</span>{you ? `, ${you}` : ""}</h2>
@@ -732,7 +745,7 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
                 );
               })}
             </AnimatePresence>
-            <div ref={bottom} />
+            {!latestIsHello && <div ref={bottom} />}
             <div className="fade-bottom" />
             </ChatActions.Provider>
           </main>
