@@ -43,6 +43,8 @@ class MorningInputs:
     tasks: str
     brief_parts: str
     weather: dict | None
+    yesterday_hello: str = ""  # yesterday's greeting and paragraphs, so today's says something different
+    brief_line: str = ""  # today's morning brief, when one was written
 
 
 def user_tz() -> ZoneInfo:
@@ -117,9 +119,12 @@ def has_source(store, kind: str) -> bool:
 
 
 def mail_record(mail: Mail) -> str:
-    """One mail as a short record: sender · subject · the snippet on one line, cut at SNIPPET_CHARS. Never the body."""
+    """One mail as a short record: sender · subject · the snippet on one line, cut at SNIPPET_CHARS. Never the body.
+    Each part is kept to one line, so a newline in a sender or subject can't fake a heading in the writer's prompt."""
+    sender = " ".join(mail.frm.split())
+    subject = " ".join(mail.subject.split())
     snippet = " ".join(mail.snippet.split())[:SNIPPET_CHARS]
-    return f"{mail.frm} · {mail.subject} · {snippet}"
+    return f"{sender} · {subject} · {snippet}"
 
 
 async def fresh_mail(store, now: datetime) -> str:

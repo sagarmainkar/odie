@@ -195,7 +195,7 @@ def background_for(store: Store, runner):
 
 
 def start_scheduler(store: Store, runner=None, background=None):
-    """Background jobs in the user's timezone: brief 07:30, reminders every minute,
+    """Background jobs in the user's timezone: the morning round (brief and hello) 07:30, reminders every minute,
     news at 06/10/14/18/22 (and right away if the stored batch is stale).
     Jobs are coroutine FUNCTIONS: APScheduler awaits those; a lambda would run in a thread and never be awaited."""
     from datetime import UTC, datetime
@@ -205,14 +205,14 @@ def start_scheduler(store: Store, runner=None, background=None):
     from apscheduler.triggers.cron import CronTrigger
     from apscheduler.triggers.interval import IntervalTrigger
 
-    from odie.jobs.brief import run_brief
     from odie.jobs.reminders import run_due
+    from odie.morning import round as morning
     tz = ZoneInfo(config.settings.timezone)
     sched = AsyncIOScheduler(timezone=tz)
 
     async def brief_job() -> None:
         async def go() -> None:
-            await run_brief(store, datetime.now(tz), post_message=runner.post_message if runner is not None else None)
+            await morning.morning_round(store, datetime.now(tz), runner=runner)
         if background is None:
             await go()
         else:
@@ -231,7 +231,10 @@ def start_scheduler(store: Store, runner=None, background=None):
 
     sched.add_job(brief_job, CronTrigger(hour=7, minute=30, timezone=tz), id="brief", misfire_grace_time=3600, coalesce=True)
     from odie.jobs.brief import missed_today
-    if missed_today(store, datetime.now(tz)):  # the computer was off at 07:30: send it now, after the first watch check
+    started_at = datetime.now(tz)
+    # The computer was off at 07:30 (the brief is owed), or Odie starts with no hello yet today (the hello is owed):
+    # run the round soon, after the first watch check.
+    if missed_today(store, started_at) or morning.hello_due(store, started_at):
         from datetime import timedelta
 
         from apscheduler.triggers.date import DateTrigger

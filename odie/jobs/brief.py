@@ -102,8 +102,13 @@ def stored(inp: BriefInputs) -> dict:
     return {**out, "parts": {p.key: p.text for p in inp.parts}}
 
 
-async def run_brief(store: Store, now: datetime, post_message=None, push: bool = True) -> str:
-    inp = await gather_inputs(store, now, post_message=post_message)
+async def run_brief(store: Store, now: datetime, post_message=None, push: bool = True,
+                    inputs: BriefInputs | None = None) -> str:
+    """Today's brief, written and saved, then pushed. The morning round passes the `inputs` it already gathered (one
+    gathering for the brief and the hello); without them the brief gathers its own."""
+    inp = inputs
+    if inp is None:
+        inp = await gather_inputs(store, now, post_message=post_message)
     text = await write_with_model(render_prompt(now, inp), store)
     if not text:
         text = "Nothing needs you this morning."

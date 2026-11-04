@@ -3,7 +3,7 @@ the recall index by words, with or without a vault or photos. Their meaning is e
 schedule (odie.vault.worker).
 
 Today's chats are left for tomorrow: a chat still going on is read once its day is over, so an exchange is never
-indexed half-finished. No chats are left out, including ones that read a signed-in page (Sagar's decision)."""
+indexed half-finished. No chats are left out, including ones that read a signed-in page (the owner's decision)."""
 from __future__ import annotations
 
 from datetime import datetime

@@ -282,7 +282,7 @@ class RecallIndex:
     async def search(self, query: str, k: int = 8, embedder=None, since: str | None = None,
                      until: str | None = None) -> list[RecallHit]:
         """Passages nearest the question by meaning when an embedder and vectors are there, else the word matches.
-        Never both (Sagar's D-057: mixed scores pulled in noise).
+        Never both (the owner's D-057: mixed scores pulled in noise).
           "bill payment", embedder fits, vectors exist -> the invoice chat and the rent memory, by likeness
           same question, no embedder / another model / embedder down / no vectors -> keyword("bill payment")
         since / until are ISO days, inclusive, as in keyword."""

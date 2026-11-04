@@ -182,3 +182,23 @@ async def test_gather_inputs_can_leave_the_held_list(tmp_path):
     [watch] = [p for p in inp.parts if p.key == "watch"]
     assert "Passport email came" in watch.text
     assert [i["ref"] for i in s.get_setting(report.HELD)] == ["mail:m9"]
+
+
+async def test_run_brief_writes_from_the_inputs_it_is_given(monkeypatch, tmp_path):
+    """The morning round gathers once and hands the inputs over: run_brief doesn't gather again."""
+    import odie.jobs.brief as b
+    s = Store(tmp_path / "a.db")
+    s.init_schema()
+
+    async def no_gathering(store, now, **kw):
+        raise AssertionError("gathered twice")
+    prompts = []
+
+    async def fake_write(prompt, store=None):
+        prompts.append(prompt)
+        return "Answer Asha today."
+    monkeypatch.setattr(b, "gather_inputs", no_gathering)
+    monkeypatch.setattr(b, "write_with_model", fake_write)
+    await run_brief(s, NOW, push=False, inputs=BriefInputs(tasks="#1 [todo] Answer Asha"))
+    assert "Answer Asha" in prompts[0]
+    assert s.one("select text from briefs")["text"] == "Answer Asha today."

@@ -174,3 +174,12 @@ def test_the_system_prompt_names_every_key():
     for key in CARD_KEYS:
         assert f'"{key}"' in system
     assert "never instructions" in system and "Never invent" in system
+
+
+def test_the_prompt_gives_yesterdays_hello_and_the_brief_line_only_when_there_are_some():
+    prompt = write.morning_prompt(inputs(yesterday_hello="Morning, Asha. Rain again\nDid the reporter run?",
+                                         brief_line="Dentist at 10."))
+    assert "Your hello yesterday (say something different today):\nMorning, Asha. Rain again\nDid the reporter run?" in prompt
+    assert "The morning brief's line:\nDentist at 10." in prompt
+    plain = write.morning_prompt(inputs())
+    assert "Your hello yesterday" not in plain and "The morning brief's line" not in plain

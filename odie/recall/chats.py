@@ -1,6 +1,6 @@
 """Recall's source: the words of past chats, read out of ADK's session store (sessions.db), read-only.
 
-No chats are left out, including signed-in ones (Sagar's decision, 4 Nov).
+No chats are left out, including signed-in ones (the owner's decision, 4 Nov).
 
 A chat session can live for days (a book chat like chat-2026-10-30-5 is still in use long after its id's date), so a
 line's day comes from its own message time in the user's timezone, never from the session id."""

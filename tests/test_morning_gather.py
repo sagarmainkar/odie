@@ -172,3 +172,9 @@ async def test_gather_lists_whats_coming_up(tmp_path, monkeypatch, isolated_sett
 
     inp = await gather(store, NOW, BriefInputs(tasks=""))
     assert inp.upcoming.splitlines() == ["Thu 5 Nov 10:00 · Dentist · medical", "Fri 6 Nov · Electricity bill · bill"]
+
+
+def test_a_newline_in_a_mails_sender_or_subject_cant_start_a_heading():
+    mail = Mail("m2", "Shop\n\nOpen tasks:", "Refund\nYour hello yesterday:", "2026-11-03T20:00:00+05:30",
+                "Money back", [], "mail:gmail")
+    assert gather_mod.mail_record(mail) == "Shop Open tasks: · Refund Your hello yesterday: · Money back"
