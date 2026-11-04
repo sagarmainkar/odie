@@ -253,3 +253,35 @@ async def test_start_job_from_the_chat_names_the_chat_it_came_from(world):
     status = await jobs_status.func()
     assert status["running"] == [] and status["recent"][0].startswith(got["job_id"])
     assert await stop_job.func(got["job_id"]) == {"error": f"{got['job_id']} isn't running."}
+
+
+# ── the nudge ────────────────────────────────────────────────────────────────
+
+@pytest.mark.parametrize("text, expected", [
+    ("Write a Python script that prints the first 20 primes and run it", True),
+    ("Can you test the new parser and fix what breaks?", True),
+    ("Check this Mac's disk and memory and tell me", True),
+    ("Track the HN front page and report every hour", True),
+    ("Do this in the background: tidy the downloads folder", True),
+    ("How is the market today?", False),
+    ("What does this script do?", False),
+    ("Remind me to run the tests at 5", False),
+    ("Make me a deck about tides", False),
+    ("ls ~/Downloads", False),
+])
+def test_looks_like_a_job(text, expected):
+    from odie.workers.nudge import looks_like_a_job
+    assert looks_like_a_job(text) is expected
+
+
+def test_the_job_nudge_rides_on_the_turn_only_with_workers_on(world, monkeypatch, tmp_path):
+    store, _, _ = world
+    from odie.app.runner import OdieRunner
+    from odie.workers.nudge import NUDGE
+    r = OdieRunner.__new__(OdieRunner)
+    r.store = store
+    monkeypatch.delenv("ODIE_WORKERS", raising=False)
+    assert r._job_nudge("chat-1", "Write a script that sorts my photos and run it") == ""
+    monkeypatch.setenv("ODIE_WORKERS", "1")
+    assert r._job_nudge("chat-1", "Write a script that sorts my photos and run it") == "\n" + NUDGE
+    assert r._job_nudge("chat-1", "How is the market today?") == ""

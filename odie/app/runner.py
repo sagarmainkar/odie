@@ -524,6 +524,21 @@ class OdieRunner:
         self.store.audit("agent", "visual_nudge", result_summary=text[:200], session_id=session_id)
         return "\n" + visual_nudge.NUDGE
 
+    def _job_nudge(self, session_id: str, text: str) -> str:
+        """The line that reminds the model to hand a long job to a Worker (odie.workers.nudge), with a line break before
+        it, when workers are on and this message looks like a job; "" otherwise.
+          "Write a script that … and run it", workers on  -> a line break, then "[If this takes code to write …]"
+          the same, workers off                           -> ""
+          "How is the market today?"                      -> """""
+        from odie import workers
+        if not workers.enabled():
+            return ""
+        from odie.workers import nudge
+        if not nudge.looks_like_a_job(text):
+            return ""
+        self.store.audit("agent", "job_nudge", result_summary=text[:200], session_id=session_id)
+        return "\n" + nudge.NUDGE
+
     async def _last_reply(self, session_id: str) -> str:
         """Odie's whole reply to the user's last message in this session ("" when there's none yet)."""
         s = config.settings
@@ -668,6 +683,7 @@ class OdieRunner:
             from odie.blocks.answers import without_form_answers
             words = without_form_answers(text)  # a form's answer: lookups use its line, not the fence the model reads
             trailer = self._prepare_prompt(session_id, words) + await self._visual_nudge(session_id, text)
+            trailer += self._job_nudge(session_id, text)
             # Think harder on a local server: words at the very end, after everything its cache holds (the effort stays).
             # They stay in the history as sent, so later turns replay the same text.
             trailer += think_harder_words(selection, thinking)
