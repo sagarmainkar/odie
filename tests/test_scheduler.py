@@ -20,7 +20,8 @@ async def test_brief_job_is_a_coroutine_function(tmp_path):
             async def post_message(self, text, session_id=None):
                 pass
         sched2 = start_scheduler(s, R(), Background())
-        assert {j.id for j in sched2.get_jobs()} == {"brief", "reminders", "expiry", "news", "background", "background_now"}
+        # "brief_missed" is set aside: it is added only when Odie starts between 07:30 and noon with no brief yet today.
+        assert {j.id for j in sched2.get_jobs()} - {"brief_missed"} == {"brief", "reminders", "expiry", "news", "background", "background_now"}
         sched2.shutdown(wait=False)
     finally:
         sched.shutdown(wait=False)

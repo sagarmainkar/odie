@@ -94,7 +94,10 @@ async def test_addon_jobs_are_scheduled_and_listed(store):
         import asyncio
         assert job is not None and asyncio.iscoroutinefunction(job.func)
         assert about.schedule()["bell_check"] == "Doorbell battery checked hourly at :05"
-        assert {j.id for j in sched.get_jobs()} - {"news_now", "background_now"} == set(about.schedule())
+        # Start-up one-offs aren't in the schedule: the stale news fetch, the first background tick, and the brief when
+        # Odie starts between 07:30 and noon with no brief yet today (a test store never has one).
+        once = {"news_now", "background_now", "brief_missed"}
+        assert {j.id for j in sched.get_jobs()} - once == set(about.schedule())
     finally:
         sched.shutdown(wait=False)
 

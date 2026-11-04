@@ -42,7 +42,10 @@ async def test_schedule_matches_the_scheduler(isolated_settings, tmp_path):
     from odie.background import Background
     sched = start_scheduler(s, runner=None, background=Background())
     try:
-        assert {j.id for j in sched.get_jobs()} - {"news_now", "background_now"} == set(about.schedule())
+        # Start-up one-offs aren't in the schedule: the stale news fetch, the first background tick, and the brief when
+        # Odie starts between 07:30 and noon with no brief yet today (a test store never has one).
+        once = {"news_now", "background_now", "brief_missed"}
+        assert {j.id for j in sched.get_jobs()} - once == set(about.schedule())
     finally:
         sched.shutdown(wait=False)
 
