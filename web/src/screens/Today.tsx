@@ -1,5 +1,6 @@
 import { AnimatePresence, motion } from "framer-motion";
 import { NeedsYou } from "../components/NeedsYou";
+import { Jobs } from "../components/Jobs";
 import { footer, type WatchCardData } from "../watch";
 import { chatRunHash, type Need, type NeedAction, type WatchNote } from "../needs";
 import { useCallback, useEffect, useState } from "react";
@@ -168,6 +169,8 @@ export function Today() {
           <div className="rise" style={delay(0.08)}>
             <NeedsYou items={needs} footer={checked} closed={watchClosed} notes={notes} onAct={(n, a) => void act(n, a)} onReopen={(id) => void reopen(id)} />
           </div>
+
+          <div className="rise" style={delay(0.09)}><Jobs /></div>
 
           <div className="rise" style={delay(0.1)}><UpNext items={up?.items ?? null} loading={upLoading} /></div>
 

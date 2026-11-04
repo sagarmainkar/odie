@@ -2,7 +2,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { badge } from "../watch";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { useLive } from "../live";
+import { liveLabel, useLive } from "../live";
 import { loadThinking, saveThinking, thinkingAfter, type ChatThinking } from "../thinking";
 import { ThinkChip, ThinkSwitch } from "../components/ThinkHarder";
 import { has, useCaps, userCountry } from "../capabilities";
@@ -64,7 +64,7 @@ import { composerWith, phoneSpeech, pickMode, startDictation } from "../dictatio
 import { shrinkPhoto } from "../shrinkPhoto";
 
 // key and sid: the name the server gave a reply (its ADK event id) and the session it is in; its saved ticks hang off them.
-type Msg = { id: number; key?: string; sid?: string; role: "user" | "odie" | "approval"; text: string; tools: Tool[]; error?: string; awaiting?: boolean; ts?: number; live?: boolean; approval?: Approval; images?: string[]; asked?: string; media?: Media[]; autoplay?: string; private?: boolean; usage?: ReplyUsage };  // private: its chat read a signed-in page; usage: the reply's own token counts
+type Msg = { id: number; key?: string; sid?: string; role: "user" | "odie" | "approval"; text: string; tools: Tool[]; error?: string; awaiting?: boolean; ts?: number; live?: boolean; label?: string; approval?: Approval; images?: string[]; asked?: string; media?: Media[]; autoplay?: string; private?: boolean; usage?: ReplyUsage };  // private: its chat read a signed-in page; usage: the reply's own token counts
 type Pending = { id: string; url: string; w: number; h: number };
 let nextId = 1;
 const EASE = [0.2, 0.8, 0.2, 1] as const;
@@ -370,7 +370,7 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
       // A reply after a tap is her answer, not a reminder: show it like any other reply.
       // A reply after a tap replaces the "still working" row that waitForTap put up.
       const autoplay = autoplayFor(e, document.visibilityState === "visible", somethingPlaying()) ?? undefined;  // a spoken reminder
-      setMsgs((m) => [...(e.kind === "reply" ? m.filter((x) => !x.awaiting) : m), { id: nextId++, role: "odie", text: e.text, tools: [], ts: e.ts, live: e.kind !== "reply", media: e.media, autoplay, private: !!e.private }]);
+      setMsgs((m) => [...(e.kind === "reply" ? m.filter((x) => !x.awaiting) : m), { id: nextId++, role: "odie", text: e.text, tools: [], ts: e.ts, live: e.kind !== "reply", label: liveLabel(e.kind), media: e.media, autoplay, private: !!e.private }]);
       setUnseen(true);
     }
     if (e.type === "thinking") setThink((shown) => thinkingAfter(shown, e));  // flipped in another app or browser
@@ -687,7 +687,7 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
                     ) : (
                       <motion.div {...enter} className="flex flex-col gap-2.5">
                         <div className="flex items-center gap-2 text-[12.5px] text-muted font-semibold">
-                          <Avatar size={36} /><span className="text-[13.5px]"><b className="text-ink-2 font-bold">{name}</b>{m.live ? " · reminder" : ""}{m.ts ? ` · ${fmtTime(m.ts)}` : ""}</span>
+                          <Avatar size={36} /><span className="text-[13.5px]"><b className="text-ink-2 font-bold">{name}</b>{m.live ? ` · ${m.label ?? "reminder"}` : ""}{m.ts ? ` · ${fmtTime(m.ts)}` : ""}</span>
                         </div>
                         <Steps tools={m.tools} running={streaming} />
                         {m.awaiting && (

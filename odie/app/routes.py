@@ -174,6 +174,80 @@ async def media_file(mid: str):
     return FileResponse(path, media_type=m["mime"], headers={**safe, "Cache-Control": "private, max-age=86400"})  # ranges served: a video scrubs
 
 
+@router.post("/chat/welcome")
+async def chat_welcome(request: Request) -> dict[str, Any]:
+    """The app opened or came back to the screen: when the user has been away a while (odie.workers.welcome), Odie
+    posts what it did, what waits and what's next into today's chat. Nothing happens while workers are off."""
+    from odie import workers
+    if not workers.enabled():
+        return {"posted": False}
+    from odie.workers import welcome
+    posted = await welcome.welcome(request.app.state.store, request.app.state.runner)
+    return {"posted": posted}
+
+
+def _jobs_on() -> None:
+    from odie import workers
+    if not workers.enabled():
+        raise HTTPException(404, "Workers are off")
+
+
+def _job_view(j: dict) -> dict:
+    """A job row for the app: the columns Today shows, the report cut short."""
+    keys = ("id", "kind", "title", "status", "runs", "outcome", "error", "every_minutes", "next_run_at", "until_at",
+            "notify", "created_at", "started_at", "ended_at")
+    out = {k: j.get(k) for k in keys}
+    out["report"] = (j.get("report") or "")[:300]
+    return out
+
+
+@router.get("/jobs")
+async def jobs_list(request: Request) -> dict[str, Any]:
+    """Today's Running list: the jobs going now (queued, running, a reporter waiting) and the last few that ended."""
+    _jobs_on()
+    from odie.workers import store as jobs_store
+    store = request.app.state.store
+    running = [_job_view(j) for j in jobs_store.running(store)]
+    going = {j["id"] for j in running}
+    recent = [_job_view(j) for j in jobs_store.recent(store, 8) if j["id"] not in going]
+    return {"running": running, "recent": recent}
+
+
+@router.get("/jobs/{job_id}")
+async def job_get(job_id: str, request: Request) -> dict[str, Any]:
+    """One job with its log: every call its Worker made, with what, and how it went (More on its card)."""
+    _jobs_on()
+    from odie.workers import store as jobs_store
+    store = request.app.state.store
+    row = jobs_store.get(store, job_id)
+    if row is None:
+        raise HTTPException(404, "no such job")
+    acts = [{"ts": a["ts"], "tool": a["tool"], "args": (a.get("args_json") or "")[:200], "result_chars": a.get("result_chars"),
+             "refused": a.get("refused"), "error": a.get("error")} for a in jobs_store.actions(store, job_id)]
+    return {**_job_view(row), "report": row.get("report") or "", "brief": row.get("brief") or "", "actions": acts}
+
+
+@router.post("/jobs/{job_id}/stop")
+async def job_stop(job_id: str, request: Request) -> dict[str, Any]:
+    _jobs_on()
+    from odie.workers import router as workers_router
+    if not workers_router.stop(job_id):
+        raise HTTPException(409, f"{job_id} isn't running")
+    request.app.state.store.audit("user", "job_stopped", result_summary=job_id)
+    return {"ok": True}
+
+
+@router.post("/jobs/{job_id}/retry")
+async def job_retry(job_id: str, request: Request) -> dict[str, Any]:
+    _jobs_on()
+    from odie.workers import router as workers_router
+    job = workers_router.retry(job_id)
+    if job is None:
+        raise HTTPException(409, f"{job_id} can't be retried")
+    request.app.state.store.audit("user", "job_retried", result_summary=job_id)
+    return {"ok": True, "run": job.runs + 1}
+
+
 @router.get("/history")
 async def history(date: str, request: Request, limit: int | None = None, before: int | None = None):
     return await request.app.state.runner.history(date, limit=limit, before=before)

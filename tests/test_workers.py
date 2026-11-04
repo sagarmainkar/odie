@@ -631,3 +631,102 @@ async def test_the_watchdogs_verdict_makes_a_card_too(world):
     await asyncio.sleep(0.05)
     card = next(c for c in needs.cards(store, datetime.now(UTC)) if c["ref"] == f"job:{job.id}")
     assert card["why"] == "made no progress for 10 minutes"
+
+
+# ── the welcome back ─────────────────────────────────────────────────────────
+
+def _user_wrote(store, hours_ago: float):
+    from datetime import UTC, datetime, timedelta
+    store.audit("user", "message", result_summary="hi")
+    ts = (datetime.now(UTC) - timedelta(hours=hours_ago)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    store.execute("update audit_log set ts=? where id=(select max(id) from audit_log where actor='user')", (ts,))
+
+
+def test_away_since_needs_a_gap_and_no_welcome_since(world):
+    from datetime import UTC, datetime
+    from odie.workers import welcome
+    store, _, _ = world
+    now = datetime.now(UTC)
+    assert welcome.away_since(store, now) is None  # never wrote
+    _user_wrote(store, hours_ago=0.5)
+    assert welcome.away_since(store, now) is None  # just here
+    _user_wrote(store, hours_ago=5)
+    assert welcome.away_since(store, now) is not None
+    store.audit("agent", "welcome", result_summary="said")
+    assert welcome.away_since(store, now) is None  # welcomed since
+
+
+def test_compose_says_done_stuck_waiting_and_next_with_buttons():
+    from odie.workers import welcome
+    found = {"done": [{"id": "job-1", "title": "Primes script"}, {"id": "job-2", "title": "Mac health"}],
+             "stuck": [{"id": "job-3", "title": "Portfolio pull", "error": None, "report": "Need the API key.\nmore"}],
+             "cards": [{"title": "Reply to Asha"}, {"title": "Electricity bill"}, {"title": "Portfolio pull"}],
+             "events": [{"title": "Dentist", "start": "2026-11-04T16:00"}]}
+    text = welcome.compose(found, 5)
+    lines = text.split("\n")
+    assert lines[0] == "Welcome back. While you were away (5 h):"
+    assert lines[1] == "✅ Done: Primes script, Mac health"
+    assert lines[2] == "❌ Didn't finish: Portfolio pull (Need the API key.)"
+    assert lines[3] == "Waiting on you (3): Reply to Asha, Electricity bill, Portfolio pull"
+    assert lines[4] == "Up next: Dentist 16:00"
+    import json
+    block = json.loads(text.split("```odie-blocks\n")[1].split("\n```")[0])
+    assert block[0]["type"] == "actions"
+    assert [a["run"] for a in block[0]["items"]] == ["retry job-3", "What needs me today, and what would you do first?",
+                                                      "Show me what the jobs did while I was away."]
+    assert welcome.compose({"done": [], "stuck": [], "cards": [], "events": []}, 5) == ""
+
+
+async def test_welcome_with_nothing_to_say_stays_quiet_and_notes_it(world):
+    from odie.workers import welcome
+    store, chat, _ = world
+    _user_wrote(store, hours_ago=5)
+    assert await welcome.welcome(store, chat) is False  # nothing happened: quiet, and noted so it doesn't ask again
+    assert chat.posts == []
+    assert store.one("select 1 from audit_log where event='welcome'") is not None
+
+
+async def test_welcome_posts_once(world):
+    from odie.workers import welcome
+    store, chat, _ = world
+    _user_wrote(store, hours_ago=4)
+    Scripted.script = [("report", {"outcome": "ready", "text": "ok"})]
+    job = router.start("task", "Primes", "…", "chat-1")
+    for _ in range(300):
+        if jobs.get(store, job.id)["status"] == "done":
+            break
+        await asyncio.sleep(0.01)
+    assert await welcome.welcome(store, chat) is True
+    assert chat.posts[-1]["kind"] == "welcome" and chat.posts[-1]["text"].startswith("Welcome back. While you were away (4 h):\n✅ Done: Primes")
+    assert await welcome.welcome(store, chat) is False  # not twice
+
+
+async def test_the_jobs_api_lists_shows_the_log_and_stops(isolated_settings, tmp_path, monkeypatch):
+    import httpx
+    from odie.app.main import create_app
+    from tests.test_models import FakeRunner
+    monkeypatch.setenv("ODIE_WORKERS", "1")
+    store = Store(tmp_path / "assistant.db")
+    store.init_schema()
+    jobs.ensure(store)
+    app = create_app(runner=FakeRunner(), store=store)
+    router.hooks.update(store=store, runner=FakeRunner())
+    monkeypatch.setattr(worker, "model_for_kind", lambda store, kind: Scripted(model="scripted"))
+    async with app.router.lifespan_context(app), httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+        Scripted.stall = True
+        job = router.start("task", "Slow one", "…", "chat-1")
+        await asyncio.sleep(0.05)
+        got = (await c.get("/api/jobs")).json()
+        assert [j["id"] for j in got["running"]] == [job.id] and got["recent"] == []
+        assert got["running"][0]["status"] == "running"
+        assert (await c.post(f"/api/jobs/{job.id}/stop")).status_code == 200
+        await asyncio.sleep(0.05)
+        got = (await c.get("/api/jobs")).json()
+        assert got["running"] == [] and got["recent"][0]["status"] == "stopped"
+        one = (await c.get(f"/api/jobs/{job.id}")).json()
+        assert one["title"] == "Slow one" and isinstance(one["actions"], list)
+        assert (await c.get("/api/jobs/job-nothere")).status_code == 404
+        assert (await c.post(f"/api/jobs/{job.id}/stop")).status_code == 409
+        monkeypatch.delenv("ODIE_WORKERS")
+        assert (await c.get("/api/jobs")).status_code == 404  # off: not there
+        router.stop(job.id)

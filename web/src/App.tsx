@@ -71,6 +71,12 @@ function Main() {
   }, [loadPending]);
   // The Ask bar shows approvals waiting in Chat.
   useLive(useCallback((e: { type: string }) => { if (e.type === "approval" || e.type === "approval_done") loadPending(); }, [loadPending]), loadPending);
+  useEffect(() => {  // back after a while: Odie says what it did meanwhile (the server decides; nothing while Workers are off)
+    const ask = () => { if (document.visibilityState === "visible") fetch("/api/chat/welcome", { method: "POST" }).catch(() => {}); };
+    ask();
+    document.addEventListener("visibilitychange", ask);
+    return () => document.removeEventListener("visibilitychange", ask);
+  }, []);
   // On a phone and a tablet: one centred column. On a desktop (lg): the rail of tabs, then the column (layout.ts).
   return (
     <div className="h-full lg:flex text-ink">
