@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.2.38 (2026-11-04)
+
+- Charts, numbers and tables got a design pass. Big numbers are shortened the way you say them (4.21B, ₹18.4L, 4,21 Mrd.), with every digit kept in the hover card and the tooltip. A new palette of eight colours. Bar charts lie down on their own when the names are long, there are only two or three bars, or it's a ranking; months, quarters and years stay as columns. A line on its own can be coloured by where it started: green above, orange below, with a "Start" line. Every chart has a hover card that follows the pointer and the arrow keys, and on the phone it stays after a tap.
+- Comparing stocks: ask for two or three ("TCS, INFY, WIPRO") and get a card each, with the price, the change and a small trend line, then one chart of % change from the same start with the names at the line ends.
+- KPI cards can carry a trend line. Tables colour only real change columns, with mini bars from three rows up. The donut's legend sits beside it. Flip cards sit in a grid and grow with their text instead of clipping. Boards stop at 1100px on a wide screen.
+
 ## v0.2.37 (2026-10-31)
 
 - Odie can hear through its own ears on this Mac: Parakeet and Silero VAD run in Odie's own voice server and listen over `/api/talk/listen`, for the Mac app's talk and press-to-talk. The words appear as you speak, the end of a sentence is heard from your voice rather than from a recogniser's lag, and nothing leaves the Mac. The voice server starts when a talk begins and unloads the model after ten idle minutes (about 1.7 GB while a talk is on), and `/api/health` says `hearing`. The first talk downloads Parakeet (2.5 GB) once; until it is in, the Mac app uses its own recogniser, and the next talk picks Odie's ears up.
