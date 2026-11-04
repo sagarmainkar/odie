@@ -129,3 +129,127 @@ def test_the_notes_tables_are_untouched(tmp_path):
 
     assert count(db, "select count(*) from chunks") == before
     assert count(db, "select count(*) from chunks_fts") == before
+
+
+# ── recall by meaning ──
+
+
+class FakeEmbedder:
+    """Gives a text a 3-d one-hot vector by its topic word: money, travel, or (anything else) the third. Stands for a
+    real model, in which "bill" and "invoice" land close together without sharing a word."""
+
+    def __init__(self, name: str = "fake", fail: bool = False) -> None:
+        self.name = name
+        self.fail = fail
+        self.calls = 0
+
+    async def embed(self, texts, kind: str = "document") -> list[list[float]]:
+        self.calls += 1
+        if self.fail:
+            raise RuntimeError("embedder is down")
+        return [self._vector(t["text"] if isinstance(t, dict) else t) for t in texts]
+
+    def _vector(self, text: str) -> list[float]:
+        words = text.lower()
+        if any(w in words for w in ("invoice", "bill", "rent")):
+            return [1.0, 0.0, 0.0]
+        if any(w in words for w in ("flight", "train", "trip")):
+            return [0.0, 1.0, 0.0]
+        return [0.0, 0.0, 1.0]
+
+
+def meta_value(db: Path, key: str) -> str | None:
+    c = sqlite3.connect(db)
+    try:
+        row = c.execute("select value from meta where key=?", (key,)).fetchone()
+    finally:
+        c.close()
+    return row[0] if row else None
+
+
+def fill(index: RecallIndex) -> None:
+    index.add_exchanges([
+        exchange("chat-1", 3, 9, "you: the invoice from the studio\nOdie: due on Friday"),
+        exchange("chat-1", 3, 10, "you: book a flight to Pune\nOdie: noted"),
+        exchange("chat-1", 4, 9, "you: what shall we cook\nOdie: dal"),
+    ])
+    index.sync_memories([Entry(topic="Home", title="Rent day", date="2026-10-01", body="rent is paid on the first")])
+
+
+async def test_meaning_ranks_by_likeness(tmp_path):
+    index, db = make_index(tmp_path)
+    fill(index)
+    embedder = FakeEmbedder()
+    assert await index.embed_pending(embedder) == 4
+    assert await index.embed_pending(embedder) == 0  # all have a vector now
+    # "bill payment" shares no word with "invoice", yet the money passages come first.
+    hits = await index.search("bill payment", k=2, embedder=embedder)
+    assert {h.title for h in hits} == {"chat 2026-11-03", "Rent day"}
+    assert all(h.score == 1.0 for h in hits)
+    assert meta_value(db, "model") == "fake"
+    assert meta_value(db, "embed_error") is None
+
+
+async def test_meaning_respects_since_and_until(tmp_path):
+    index, _ = make_index(tmp_path)
+    fill(index)
+    embedder = FakeEmbedder()
+    await index.embed_pending(embedder)
+    hits = await index.search("bill payment", k=8, embedder=embedder, since="2026-11-01")
+    assert hits[0].title == "chat 2026-11-03"
+    assert all(h.day >= "2026-11-01" for h in hits)
+    hits = await index.search("bill payment", k=8, embedder=embedder, until="2026-10-31")
+    assert [h.title for h in hits] == ["Rent day"]
+
+
+async def test_without_an_embedder_words_are_used(tmp_path):
+    index, _ = make_index(tmp_path)
+    fill(index)
+    assert await index.search("invoice", k=3) == index.keyword("invoice", k=3)
+    assert [h.title for h in await index.search("invoice", k=3)] == ["chat 2026-11-03"]
+    # Vectors exist, but no embedder is given: still words.
+    await index.embed_pending(FakeEmbedder())
+    assert [h.title for h in await index.search("invoice", k=3)] == ["chat 2026-11-03"]
+
+
+async def test_another_models_vectors_are_left_alone(tmp_path):
+    index, db = make_index(tmp_path)
+    fill(index)
+    c = sqlite3.connect(db)
+    c.execute("insert into meta values ('model', 'other')")
+    c.execute("insert into vectors values ('chunk', '1', x'00')")
+    c.commit()
+    c.close()
+    embedder = FakeEmbedder()
+    assert await index.embed_pending(embedder) == 0
+    assert embedder.calls == 0
+    assert meta_value(db, "model") == "other"
+    assert count(db, "select count(*) from vectors") == 1  # the notes' vector is still there
+    assert [h.title for h in await index.search("invoice", k=3, embedder=embedder)] == ["chat 2026-11-03"]
+
+
+async def test_a_failing_embedder_is_recorded(tmp_path):
+    index, db = make_index(tmp_path)
+    fill(index)
+    broken = FakeEmbedder(fail=True)
+    assert await index.embed_pending(broken) == 0
+    assert "embedder is down" in meta_value(db, "embed_error")
+    assert [h.title for h in await index.search("invoice", k=3, embedder=broken)] == ["chat 2026-11-03"]
+    # The next run, with the embedder back, tries again and clears the error.
+    assert await index.embed_pending(FakeEmbedder()) == 4
+    assert meta_value(db, "embed_error") is None
+
+
+async def test_vectors_cleared_by_another_pass_are_embedded_again(tmp_path):
+    index, db = make_index(tmp_path)
+    fill(index)
+    embedder = FakeEmbedder()
+    await index.embed_pending(embedder)
+    # The notes' pass cleared every vector (a model switch back to the same name), leaving model as it was.
+    c = sqlite3.connect(db)
+    c.execute("delete from vectors")
+    c.commit()
+    c.close()
+    assert await index.search("bill payment", k=2, embedder=embedder) == index.keyword("bill payment", k=2)
+    assert await index.embed_pending(embedder) == 4
+    assert len(await index.search("bill payment", k=2, embedder=embedder)) == 2
