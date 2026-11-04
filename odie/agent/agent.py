@@ -18,7 +18,7 @@ from odie.memory.tools import make_memory_tools
 from odie.models import resolve_selection
 from odie.sampling import CHAT_TOP_P, chat_temperature
 from odie.skills import build_skill_toolset
-from odie import config
+from odie import config, workers
 from odie.store.db import Store
 
 GATED_TOOLS = frozenset({"run_shell", "install_skill"})
@@ -54,6 +54,15 @@ def signin_tools(store: Store) -> list:
     return tools
 
 
+def worker_tools(store: Store) -> list:
+    """start_job, jobs_status and stop_job, only while workers are switched on (ODIE_WORKERS=1); off -> none, and the
+    prompt reads exactly as before."""
+    if not workers.enabled():
+        return []
+    from odie.workers.tools import make_worker_tools
+    return make_worker_tools(store)
+
+
 def memory_file() -> MemoryFile:
     s = config.settings
     return MemoryFile(s.memory_file, s.data_dir / "memory.lock", "odie")
@@ -78,7 +87,7 @@ def build_agent(store: Store, instruction: str | Callable | None = None,
             *make_web_tools(store=store, browser_for=shared if browser else None),
             *make_local_tools(store, config.settings.timezone, source_done=source_done), *make_watch_item_tools(store),
             *make_media_tools(store), *make_file_tools(),
-            *(make_browser_tools(store) if browser else [])]
+            *(make_browser_tools(store) if browser else []), *worker_tools(store)]
     from odie import addons
     taken = {t.name for t in core} | CORE_NAMES
     for a in addons.active():

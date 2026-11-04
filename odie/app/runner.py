@@ -441,6 +441,10 @@ class OdieRunner:
         about.hooks.update(runner=self)
         from odie.making import jobs as making_jobs
         making_jobs.hooks.update(runner=self, store=store)
+        from odie import workers
+        if workers.enabled():  # the spike's background Workers (odie.workers): off by default, nothing changes
+            from odie.workers import router as workers_router
+            workers_router.setup(store, self)
         self._plugin_toolsets: list = []  # MCP connections owned by the current plugin set
         self._plugins_lock = asyncio.Lock()  # one reload at a time, each reading the latest config
         self.close_grace = 120.0  # seconds old connections stay open after a reload, for a turn still using them
