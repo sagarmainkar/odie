@@ -18,10 +18,27 @@ def job_line(j: dict) -> str:
 
 
 def make_worker_tools(store: Store) -> list[FunctionTool]:
-    async def start_job(title: str, brief: str, tool_context: ToolContext = None) -> dict:
-        """Hand a long job to a background Worker and answer the user now. A job is: code to write and run, a test to run, a check that takes more than one shell command, anything that repeats, or anything that would take you over a minute. Coding, testing, a system check, a report that takes digging. One read or one command: do it here yourself, as before; a question (today's market, a sum, a note, a picture): answer here. If unsure, start the job. The Worker runs alone with the shell, files and the web, never asks the user anything, and posts its report into this chat when done or stuck. title: a few words the user will recognise. brief: everything the Worker needs, in full: the goal, where things are, what done looks like, what to leave alone. The Worker has a folder of its own for what it makes: name no paths for that unless the user did. Tell the user it started and that the result will come here."""
-        job = router.start("task", title.strip()[:80] or "Job", brief.strip(), session_id_of(tool_context))
-        return {"job_id": job.id, "folder": str(job.folder), "status": "started"}
+    async def start_job(title: str, brief: str, every_minutes: int = 0, until: str = "", tool_context: ToolContext = None) -> dict:
+        """Hand a long job to a background Worker and answer the user now. A job is: code to write and run, a test to run, a check that takes more than one shell command, anything that repeats, or anything that would take you over a minute. Coding, testing, a system check, a report that takes digging. One read or one command: do it here yourself, as before; a question (today's market, a sum, a note, a picture): answer here. If unsure, start the job. The Worker runs alone with the shell, files and the web, never asks the user anything, and posts its report into this chat when done or stuck. title: a few words the user will recognise. brief: everything the Worker needs, in full: the goal, where things are, what done looks like, what to leave alone. The Worker has a folder of its own for what it makes: name no paths for that unless the user did. every_minutes: for something to check again and again ("track X and report every hour" -> 60): the same Worker runs that often and posts a report each time, until `until` (a local date-time like 2026-11-04T18:00; left out: 24 hours) or stop_job. Tell the user it started and that the result will come here."""
+        until_at = until.strip() or None
+        if until_at:
+            from datetime import datetime
+            from zoneinfo import ZoneInfo
+
+            from odie import config
+            try:
+                asked = datetime.fromisoformat(until_at)
+                if asked.tzinfo is None:
+                    asked = asked.replace(tzinfo=ZoneInfo(config.settings.timezone))
+                until_at = asked.isoformat(timespec="seconds")
+            except ValueError:
+                until_at = None
+        job = router.start("task", title.strip()[:80] or "Job", brief.strip(), session_id_of(tool_context),
+                           every_minutes=int(every_minutes or 0), until_at=until_at)
+        out = {"job_id": job.id, "folder": str(job.folder), "status": "started"}
+        if job.repeats:
+            out["repeats"] = f"every {job.every_minutes} minutes until {job.until_at}"
+        return out
 
     async def jobs_status() -> dict:
         """The background jobs: what is running or waiting, and the last few that ended, with their reports."""

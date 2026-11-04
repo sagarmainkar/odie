@@ -74,7 +74,7 @@ def test_the_tables_keep_a_job_from_start_to_end(world, tmp_path):
     store, _, _ = world
     job = a_job(store, tmp_path)
     assert job.id.startswith("job-") and jobs.get(store, job.id)["status"] == "queued"
-    jobs.started(store, job.id)
+    assert jobs.started(store, job) == 1
     assert jobs.running(store)[0]["runs"] == 1
     jobs.record_action(store, job.id, "run_shell", {"command": "ls"}, result_chars=12)
     jobs.ended(store, job.id, "done", outcome="ready", report="hello")
@@ -285,3 +285,77 @@ def test_the_job_nudge_rides_on_the_turn_only_with_workers_on(world, monkeypatch
     monkeypatch.setenv("ODIE_WORKERS", "1")
     assert r._job_nudge("chat-1", "Write a script that sorts my photos and run it") == "\n" + NUDGE
     assert r._job_nudge("chat-1", "How is the market today?") == ""
+
+
+# ── reporters ────────────────────────────────────────────────────────────────
+
+def test_until_for_caps_and_defaults():
+    from datetime import UTC, datetime
+    now = datetime(2026, 11, 4, 10, 0, tzinfo=UTC)
+    assert router.until_for(0, None, now) is None
+    assert router.until_for(60, None, now) == "2026-11-05T10:00:00+00:00"  # 24 hours
+    assert router.until_for(60, "2026-11-04T18:00:00+00:00", now) == "2026-11-04T18:00:00+00:00"
+    assert router.until_for(60, "2026-12-01T00:00:00+00:00", now) == "2026-11-11T10:00:00+00:00"  # 7 days at most
+    assert router.until_for(60, "not a time", now) == "2026-11-05T10:00:00+00:00"
+
+
+async def test_a_reporter_runs_again_sees_its_last_report_and_finishes(world, monkeypatch):
+    from datetime import UTC, datetime, timedelta
+    store, chat, _ = world
+    clock = {"now": datetime(2026, 11, 4, 10, 0, tzinfo=UTC)}
+    monkeypatch.setattr(router, "now_utc", lambda: clock["now"])
+
+    async def no_wait(seconds):
+        clock["now"] += timedelta(seconds=seconds)
+    monkeypatch.setattr(router, "sleep", no_wait)
+    Scripted.script = [("report", {"outcome": "ready", "text": "Front page: 3 new posts."}), "Done.",
+                       ("report", {"outcome": "ready", "text": "Nothing changed."}), "Done."]
+    job = router.start("task", "HN front page", "Check news.ycombinator.com.", "chat-1", every_minutes=60,
+                       until_at="2026-11-04T11:30:00+00:00")
+    assert job.kind == "reporter" and job.repeats
+    for _ in range(300):
+        if jobs.get(store, job.id)["status"] == "done":
+            break
+        await asyncio.sleep(0.01)
+    row = jobs.get(store, job.id)
+    assert (row["status"], row["runs"], row["report"]) == ("done", 2, "Nothing changed.")
+    texts = [p["text"] for p in chat.posts]
+    assert texts[0] == f"🔁 Report 1: HN front page ({job.id})\n\nFront page: 3 new posts."
+    assert texts[1] == f"🔁 Report 2: HN front page ({job.id})\n\nNothing changed."
+    assert texts[2] == f"🔁 HN front page ({job.id}) finished after 2 reports."
+    # the second run was told the first run's report; the first run was told nothing of the kind
+    first_prompt = Scripted.seen[0].contents[0].parts[0].text
+    second_prompt = Scripted.seen[2].contents[0].parts[0].text
+    assert "Your last report" not in first_prompt
+    assert "This is run 2. Your last report:\nFront page: 3 new posts." in second_prompt
+    assert str(Scripted.seen[2].config.system_instruction).startswith("You are a Worker that checks")
+
+
+async def test_a_reporter_waiting_between_runs_can_be_stopped(world, monkeypatch):
+    store, chat, _ = world
+    Scripted.script = [("report", {"outcome": "ready", "text": "First look."})]
+    job = router.start("task", "Disk", "Check disk.", "chat-1", every_minutes=5)
+    for _ in range(300):
+        if jobs.get(store, job.id)["status"] == "waiting":
+            break
+        await asyncio.sleep(0.01)
+    row = jobs.get(store, job.id)
+    assert row["status"] == "waiting" and row["next_run_at"] is not None
+    assert jobs.running(store)[0]["id"] == job.id  # still on the running list while it waits
+    assert router.stop(job.id) is True
+    await asyncio.sleep(0.05)
+    assert jobs.get(store, job.id)["status"] == "stopped"
+    assert len(chat.posts) == 1  # the one report; a stop says nothing
+
+
+async def test_start_job_with_every_minutes_makes_a_reporter_in_the_users_time(world, monkeypatch):
+    store, _, _ = world
+    from odie.workers.tools import make_worker_tools
+    start_job, _, stop_job = make_worker_tools(store)
+    Scripted.stall = True
+    got = await start_job.func("Mail count", "Count unread.", every_minutes=30, until="2026-11-04T18:00")
+    row = jobs.get(store, got["job_id"])
+    assert row["kind"] == "reporter" and row["every_minutes"] == 30
+    assert row["until_at"] == "2026-11-04T18:00:00+05:30"  # Asia/Kolkata, the tests' timezone
+    assert got["repeats"].startswith("every 30 minutes until 2026-11-04T18:00:00+05:30")
+    assert await stop_job.func(got["job_id"]) == {"stopped": got["job_id"]}

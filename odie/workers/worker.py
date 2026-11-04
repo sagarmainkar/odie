@@ -131,16 +131,29 @@ def media_for(job: Job, files: list[str]) -> list[dict]:
 
 
 def message_for(kind: WorkerKind, job: Job, status: str, got: Report, error: str) -> str:
-    """The one message the chat gets when a job ends. Examples:
+    """The one message the chat gets when a run ends. Examples:
     done/ready -> "✅ Task done: Tides (job-3f9a2c)\n\n<report>"; done/blocked -> "⛔ Tides is stuck (…)\n\n<report>";
-    failed -> "❌ Tides didn't finish (job-3f9a2c): ran past its budget of 30 minutes"."""
+    failed -> "❌ Tides didn't finish (job-3f9a2c): ran past its budget of 30 minutes";
+    a reporter's 3rd run, ready -> "🔁 Report 3: HN front page (job-…)\n\n<report>"."""
     if status == "failed":
         return f"❌ {job.title} didn't finish ({job.id}): {error}"
     if got.outcome == "blocked":
         return f"⛔ {job.title} is stuck ({job.id})\n\n{got.text}"
     if got.outcome == "dropped":
         return f"➖ {job.title}: nothing to do ({job.id})\n\n{got.text}"
+    if job.repeats:
+        return f"🔁 Report {job.runs}: {job.title} ({job.id})\n\n{got.text}"
     return f"✅ {kind.word.capitalize()} done: {job.title} ({job.id})\n\n{got.text}"
+
+
+def preface_for(job: Job, last_report: str | None) -> str:
+    """What a reporter's run is told before the brief: which run this is and the last report, so it can say what
+    changed. A first run, or a plain job -> ""; run 3 with a last report -> "This is run 3. Your last report:\n…"."""
+    if not job.repeats or job.runs <= 1:
+        return ""
+    if not last_report:
+        return f"This is run {job.runs}; the last run left no report.\n\n"
+    return f"This is run {job.runs}. Your last report:\n{last_report}\n\n"
 
 
 async def tell(store: Store, runner, job: Job, text: str, media: list[dict]) -> None:
@@ -188,12 +201,15 @@ async def run(job: Job, store: Store, runner, kind: WorkerKind | None = None, mo
         async for _ in adk.run_async(user_id=s.user_id, session_id=sess.id, new_message=message, run_config=capped):
             pass
 
+    last_report = (jobs.get(store, job.id) or {}).get("report")
+    jobs.started(store, job)
+    preface = preface_for(job, last_report)
+
     async def go() -> None:
-        await send(f"It is {now} ({s.timezone}). Your job, '{job.title}':\n\n{job.brief}")
+        await send(f"It is {now} ({s.timezone}). {preface}Your job, '{job.title}':\n\n{job.brief}")
         if not got.given():
             await send(NUDGE)
 
-    jobs.started(store, job.id)
     error = ""
     try:
         await asyncio.wait_for(go(), job.budget_seconds)
@@ -207,7 +223,12 @@ async def run(job: Job, store: Store, runner, kind: WorkerKind | None = None, mo
     if not error and not got.given():
         error = "stopped without a report"
     status = "failed" if error else "done"
-    jobs.ended(store, job.id, status, outcome=got.outcome or None, report=got.text or None, error=error or None)
+    # A reporter's row stays open between runs: the Router sets it waiting or ends it; the run's report is kept here.
+    if job.repeats:
+        store.execute("update jobs set outcome=?, report=?, error=? where id=?",
+                      (got.outcome or None, got.text or None, error or None, job.id))
+    else:
+        jobs.ended(store, job.id, status, outcome=got.outcome or None, report=got.text or None, error=error or None)
     media = media_for(job, got.files) if status == "done" else []
     await tell(store, runner, job, message_for(kind, job, status, got, error), media)
     return status

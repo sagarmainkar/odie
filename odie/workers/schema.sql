@@ -5,10 +5,13 @@ create table if not exists jobs (
   title text not null,
   brief text not null,
   model text not null default '',            -- '' = the chat's model; else the model slot the kind named
-  status text not null check (status in ('queued','running','done','failed','stopped')),
+  status text not null check (status in ('queued','running','waiting','done','failed','stopped')),  -- waiting: a reporter between runs
   session_id text,                           -- the chat the job came from, where its report is posted
   folder text not null,
   budget_seconds integer not null,
+  every_minutes integer not null default 0,  -- a reporter runs again this often; 0 = once
+  until_at text,                             -- a reporter's last run is before this (UTC)
+  next_run_at text,                          -- when a waiting reporter runs next (UTC)
   runs integer not null default 0,           -- how many times a Worker was started on it
   outcome text,                              -- what the Worker said in report: ready, blocked, dropped
   report text,                               -- the Worker's report text

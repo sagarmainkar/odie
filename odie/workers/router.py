@@ -8,6 +8,7 @@ import asyncio
 import contextvars
 import logging
 import re
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from odie.store.db import Store
@@ -19,6 +20,9 @@ from odie.workers.store import Job
 log = logging.getLogger("odie.workers")
 
 MAX_AT_ONCE = 3
+DEFAULT_REPORTER_HOURS = 24  # a reporter with no end runs this long
+MAX_REPORTER_DAYS = 7
+MIN_EVERY_MINUTES = 5
 hooks: dict = {}  # runner (posts the messages) and store; set by setup()
 _tasks: dict[str, asyncio.Task] = {}
 _slots: asyncio.Semaphore | None = None
@@ -51,18 +55,54 @@ def _slots_now() -> asyncio.Semaphore:
     return _slots
 
 
-def start(kind_name: str, title: str, brief: str, session_id: str | None) -> Job:
-    """Start a job: the row, the folder, and a task that runs the Worker when a slot is free. Needs the running loop."""
-    kind = KINDS[kind_name]
+def now_utc() -> datetime:
+    return datetime.now(UTC)
+
+
+def until_for(every_minutes: int, until_at: str | None, now: datetime) -> str | None:
+    """When a reporter stops: the asked time, capped at MAX_REPORTER_DAYS; none asked -> DEFAULT_REPORTER_HOURS from now;
+    a plain job (every_minutes 0) -> None."""
+    if every_minutes <= 0:
+        return None
+    cap = now + timedelta(days=MAX_REPORTER_DAYS)
+    end = cap
+    if until_at:
+        try:
+            asked = datetime.fromisoformat(until_at)
+            if asked.tzinfo is None:
+                asked = asked.replace(tzinfo=UTC)
+            end = min(asked, cap)
+        except ValueError:
+            end = now + timedelta(hours=DEFAULT_REPORTER_HOURS)
+    else:
+        end = now + timedelta(hours=DEFAULT_REPORTER_HOURS)
+    return end.isoformat(timespec="seconds")
+
+
+def start(kind_name: str, title: str, brief: str, session_id: str | None, every_minutes: int = 0,
+          until_at: str | None = None) -> Job:
+    """Start a job: the row, the folder, and a task that runs the Worker when a slot is free. every_minutes > 0 makes
+    it a reporter: the kind becomes reporter and the task runs again every so often until until_at (until_for).
+    Needs the running loop."""
+    every_minutes = max(every_minutes, MIN_EVERY_MINUTES) if every_minutes > 0 else 0
+    kind = KINDS["reporter"] if every_minutes else KINDS[kind_name]
     store = hooks["store"]
     job_id = jobs.new_id()
     folder = folder_for(title, job_id)
-    job = jobs.create(store, kind.name, title, brief, session_id, folder, kind.budget_seconds)
-    # The Worker starts in a fresh, empty context, not a copy of the chat turn's (the making queue does the same).
-    task = asyncio.create_task(_run(job), context=contextvars.Context(), name=job.id)
+    job = jobs.create(store, kind.name, title, brief, session_id, folder, kind.budget_seconds,
+                      every_minutes=every_minutes, until_at=until_for(every_minutes, until_at, now_utc()))
+    launch(job)
+    return job
+
+
+def launch(job: Job) -> asyncio.Task:
+    """Run the job's Worker in its own task (a reporter: again and again). Used by start, and by recovery after a
+    restart. The Worker starts in a fresh, empty context, not a copy of the chat turn's (the making queue does the same)."""
+    body = _repeat(job) if job.repeats else _run(job)
+    task = asyncio.create_task(body, context=contextvars.Context(), name=job.id)
     _tasks[job.id] = task
     task.add_done_callback(lambda t: _tasks.pop(job.id, None))
-    return job
+    return task
 
 
 async def _run(job: Job) -> None:
@@ -73,6 +113,26 @@ async def _run(job: Job) -> None:
             raise
         except Exception:  # noqa: BLE001 (worker.run tells the chat itself; this is the last net)
             log.exception("worker %s crashed", job.id)
+
+
+async def sleep(seconds: float) -> None:
+    await asyncio.sleep(seconds)
+
+
+async def _repeat(job: Job) -> None:
+    """A reporter's life: run, wait every_minutes, run again, until until_at has passed; then the row says done and
+    the chat hears once. A run that fails doesn't end the reporter (the next run may work; the watchdog counts)."""
+    store = hooks["store"]
+    end = datetime.fromisoformat(job.until_at) if job.until_at else None
+    while True:
+        await _run(job)
+        next_at = now_utc() + timedelta(minutes=job.every_minutes)
+        if end is not None and next_at >= end:
+            break
+        jobs.waiting(store, job.id, next_at.isoformat(timespec="seconds"))
+        await sleep((next_at - now_utc()).total_seconds())
+    jobs.ended(store, job.id, "done", outcome="ready", report=(jobs.get(store, job.id) or {}).get("report"))
+    await hooks["runner"].post_message(f"🔁 {job.title} ({job.id}) finished after {job.runs} reports.", job.session_id, kind="job")
 
 
 def stop(job_id: str) -> bool:

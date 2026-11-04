@@ -52,6 +52,20 @@ def task_tools(store: Store, job: Job) -> list:
     return [shell, *make_job_file_tools(job.folder), *make_web_tools(store=store, browser_for=None, ask_first=False)]
 
 
-TASK = WorkerKind(name="task", word="task", instruction=TASK_INSTRUCTION, tools=task_tools)
+REPORTER_INSTRUCTION = """You are a Worker that checks on something for the user on a schedule, unattended. This is one \
+run; the same job runs again later in a fresh session, so nothing you remember survives except what you write down.
 
-KINDS: dict[str, WorkerKind] = {TASK.name: TASK}
+- Work in your own folder, {folder}; run_shell starts there. Keep what the next run needs (numbers seen, what was \
+already said) in notes.md with write_file; read it first with read_file.
+- Do the check the brief asks for. Compare with your last report, given below when there is one. Say what changed and \
+what matters; when nothing changed, say so in one line.
+- A command the rules refuse is not run; the answer says why. Find another way, or report it as blocked.
+- Finish by calling report, once: short, plain words. Never stop without calling report."""
+
+
+TASK = WorkerKind(name="task", word="task", instruction=TASK_INSTRUCTION, tools=task_tools)
+# The reporter runs again every so often (the Router keeps the schedule); each run is short.
+REPORTER = WorkerKind(name="reporter", word="report", instruction=REPORTER_INSTRUCTION, tools=task_tools,
+                      budget_seconds=10 * 60, max_llm_calls=40)
+
+KINDS: dict[str, WorkerKind] = {TASK.name: TASK, REPORTER.name: REPORTER}
