@@ -18,6 +18,13 @@ export function stepPick(at: number | null, key: string, n: number, rows = false
 }
 
 /** The props that make a drawing focusable and steerable from the keyboard: spread them on its svg (or grid). */
+/** Whether a pointer leaving the chart clears the hover card. A mouse leaving means the reader moved on; a finger
+ *  or pen "leaves" the moment it lifts, and the card must stay to be read (Escape or a tap elsewhere clears it).
+ *  "mouse" → true;  "touch" → false;  "pen" → false */
+export function clearsOnLeave(pointerType: string): boolean {
+  return pointerType === "mouse";
+}
+
 export function pickKeys(n: number, at: number | null, pick: (i: number | null) => void, rows = false) {
   return {
     tabIndex: 0,

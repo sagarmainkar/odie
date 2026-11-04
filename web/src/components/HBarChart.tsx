@@ -4,7 +4,7 @@ import { Fragment, useRef, useState } from "react";
 import { fmt, partColour, seriesName, type ChartSpec } from "./chartData";
 import { ChartTip, type Tip } from "./ChartTip";
 import { ChartLegend } from "./ChartLegend";
-import { pickKeys } from "./chartPick";
+import { clearsOnLeave, pickKeys } from "./chartPick";
 
 /**
  * hbar: label | bar | value on each row, the label wrapping so a long name still reads on a phone. One series of
@@ -71,7 +71,7 @@ export function HBarChart({ spec }: { spec: ChartSpec }) {
       {!single && <ChartLegend series={spec.series} />}
       <div ref={box} className="relative mt-2.5 mb-1">
         <div className="chart-hbar-grid" role="img" aria-label={spec.title ?? "chart"}
-          {...pickKeys(spec.x.length, picked, pick, true)} onPointerLeave={() => pick(null)}>
+          {...pickKeys(spec.x.length, picked, pick, true)} onPointerLeave={(e) => clearsOnLeave(e.pointerType) && pick(null)}>
           {spec.x.map((label, i) => (
             <Fragment key={i}>
               <div className="min-w-[64px] text-[13px] leading-[17px] text-ink-2" {...rowEvents(i)}>{label}</div>

@@ -8,7 +8,7 @@ import {
   type ChartKind, type ChartSeries, type ChartSpec,
 } from "./chartData";
 import { namesFitAtEnds, seriesEnds, xyLayout, xyTip, type XYLayout } from "./chartLayout";
-import { pickKeys } from "./chartPick";
+import { clearsOnLeave, pickKeys } from "./chartPick";
 import { useWidth } from "./useWidth";
 import { ChartTip } from "./ChartTip";
 import { ChartLegend } from "./ChartLegend";
@@ -117,7 +117,7 @@ function XYChart({ spec }: { spec: ChartSpec }) {
         <svg ref={svg} width="100%" height={layout.H} viewBox={`0 0 ${layout.W} ${layout.H}`} className="chart-svg"
           role="img" aria-label={spec.title ?? "chart"} {...pickKeys(n, hover, setHover)}
           onPointerDown={pickAt} onPointerMove={(e) => (e.buttons || e.pointerType === "mouse") && pickAt(e)}
-          onPointerLeave={() => setHover(null)}>
+          onPointerLeave={(e) => clearsOnLeave(e.pointerType) && setHover(null)}>
           <XLabels spec={spec} layout={layout} />
           {spec.type === "line" && <LineMarks spec={spec} layout={layout} gid={gid} hover={hover} />}
           {spec.type === "bar" && <BarMarks spec={spec} layout={layout} hover={hover} />}
