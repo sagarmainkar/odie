@@ -77,3 +77,69 @@ async def test_three_years_fetches_five_not_one_month():
     out = await markets.history("nifty", "3y", transport=httpx.MockTransport(handler))
     assert asked == ["5y"]
     assert "over 5y" in out
+
+
+def _blocks(out: str) -> list:
+    return json.loads(out.split("```odie-blocks\n", 1)[1].split("\n```", 1)[0])
+
+
+async def test_one_symbol_draws_a_change_line():
+    out = await markets.history("nifty", "5d", transport=httpx.MockTransport(lambda r: httpx.Response(200, json=_chart_payload())))
+    assert _blocks(out)[0]["tone"] == "change"  # green above the first close, orange below
+
+
+def test_symbols_are_split_on_commas_three_at_most():
+    assert markets.symbols_in("TCS, INFY") == ["TCS", "INFY"]
+    assert markets.symbols_in("nifty") == ["nifty"]
+    assert markets.symbols_in("A, , B, C, D") == ["A", "B", "C"]
+
+
+def test_trend_points_spread_evenly_keeping_both_ends():
+    assert markets.trend_points([1, 2, 3]) == [1, 2, 3]
+    thinned = markets.trend_points(list(range(119)), most=60)
+    assert len(thinned) == 60 and thinned[0] == 0 and thinned[-1] == 118 and thinned[1] == 2
+
+
+def test_rebased_series_start_at_zero_on_the_first_symbols_dates():
+    x, series = markets.rebased([{"name": "GOOGL", "x": ["1", "2", "3"], "t": [1, 2, 3], "y": [100, 90, 80]},
+                                 {"name": "MSFT", "x": ["1", "3"], "t": [1, 3], "y": [200, 210]}])
+    assert x == ["1", "2", "3"]
+    assert series == [{"name": "GOOGL", "data": [0.0, -10.0, -20.0]}, {"name": "MSFT", "data": [0.0, None, 5.0]}]
+
+
+def test_rebased_joins_on_time_when_several_points_share_a_label():
+    # Over 6mo, 1y and 2y the points are labelled by month, so a label repeats. Each point must still get its own
+    # close, or every day of a month would show that month's last close and the lines would step.
+    x = ["May 2026", "May 2026", "Jun 2026"]
+    x_out, series = markets.rebased([{"name": "A", "x": x, "t": [1, 2, 3], "y": [100, 110, 120]},
+                                     {"name": "B", "x": x, "t": [1, 2, 3], "y": [50, 50, 25]}])
+    assert x_out == x
+    assert series == [{"name": "A", "data": [0.0, 10.0, 20.0]}, {"name": "B", "data": [0.0, 0.0, -50.0]}]
+
+
+async def test_two_symbols_get_a_card_each_and_one_percent_change_chart():
+    closes = {"TCS.NS": [3290.0, 3150.0, 3082.0], "INFY.NS": [1520.0, 1600.0, 1670.0]}
+
+    def handler(r: httpx.Request) -> httpx.Response:
+        sym = r.url.path.rsplit("/", 1)[1]
+        return httpx.Response(200, json={"chart": {"result": [{
+            "meta": {"symbol": sym, "currency": "INR", "shortName": sym.split(".")[0], "instrumentType": "EQUITY"},
+            "timestamp": [1790208000, 1790294400, 1790380800], "indicators": {"quote": [{"close": closes[sym]}]}}]}})
+    out = await markets.history("TCS.NS, INFY.NS", "3mo", transport=httpx.MockTransport(handler))
+    assert "TCS (TCS.NS)" in out and "INFY (INFY.NS)" in out  # a summary line each
+    cards, chart = _blocks(out)
+    assert [c["label"] for c in cards["items"]] == ["TCS", "INFY"]
+    assert cards["items"][0]["trend"] == [3290.0, 3150.0, 3082.0] and cards["items"][0]["change"] == -6.32
+    assert chart["kind"] == "line" and chart["unit"] == "%" and chart["figure"] is False
+    assert [s["data"][0] for s in chart["series"]] == [0.0, 0.0]
+    assert chart["series"][1]["data"][-1] == 9.87
+
+
+async def test_a_symbol_that_fails_is_named_and_the_rest_still_drawn():
+    def handler(r: httpx.Request) -> httpx.Response:
+        if "/search" in r.url.path:
+            return httpx.Response(200, json={"quotes": []})
+        return httpx.Response(200, json=_chart_payload())
+    out = await markets.history("nifty, nosuchthing", "5d", transport=httpx.MockTransport(handler))
+    assert "Couldn't find a market symbol for 'nosuchthing'" in out
+    assert _blocks(out)[0]["kind"] == "line"  # one found: its own board, not a comparison

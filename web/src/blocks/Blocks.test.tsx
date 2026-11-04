@@ -125,3 +125,12 @@ describe("drawing a calculator and shared values", () => {
     expect(draw([{ type: "text", text: "Use {p} here" }])).toContain("Use {p} here");
   });
 });
+
+describe("boards", () => {
+  it("keep each grid cell at its own height, so a short card beside a tall chart doesn't stretch", () => {
+    const html = draw([{ type: "grid", children: [{ type: "stat", label: "Saved", value: 42000, unit: "₹" },
+      { type: "chart", kind: "line", x: ["Jan", "Feb"], series: [{ data: [1, 2] }] }] }]);
+    expect(html).toContain("items-start");
+    expect(html).not.toContain("[&amp;&gt;*]:h-full");
+  });
+});

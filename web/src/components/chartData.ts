@@ -14,6 +14,10 @@ export type ChartSeries = { name?: string; data: (number | null)[]; unit?: strin
 export type ChartSpec = {
   type: ChartKind; title?: string; x: (string | number)[];
   series: ChartSeries[]; unit?: string; source?: string;
+  /** false: no headline number or change chip (a % change comparison, where a change of a change means nothing). */
+  figure?: boolean;
+  /** "change": a one-series line is green above its first value and orange below it, with the start marked. */
+  tone?: "change";
 };
 
 // Other names models use for the same kinds, written without spaces, dashes or underscores.
@@ -155,14 +159,141 @@ function numbersOf(data: (number | null)[]): number[] {
   return data.filter((v): v is number => v !== null);
 }
 
-/** A value for display: lakh/crore for rupees, and for plain numbers on an Indian install; elsewhere plain grouping. */
-export function fmt(v: number, unit?: string) {
+/** From this size up, numbers are shortened (4.21B, 18.4L); hover cards and title attributes show them in full. */
+export const SHORT_FROM = 100_000;
+
+// Longest unit written after a number ("participants"); a longer one is a phrase the title should carry.
+const MAX_UNIT = 12;
+
+/** A big number shortened the way the reader says it, to 3 significant digits (Intl's compact notation).
+ *  en-US: 4213500000 → "4.21B";  en-GB → "4.21bn";  de-DE → "4,21 Mrd.";  ja-JP → "42.1億";  en-IN: 1840000 → "18.4L" */
+export function formatCompact(v: number, locale: string = userLocale()): string {
+  return new Intl.NumberFormat(locale, { notation: "compact", maximumSignificantDigits: 3 }).format(v);
+}
+
+/**
+ * Which locale shortens an amount. Rupees always read in lakh and crore, and so do plain numbers on an Indian install;
+ * any other amount (dollars, kilograms) in the reader's own words, but never in lakh and crore, which are for rupees.
+ *   ("₹", en-US) → "en-IN";  (no unit, en-IN) → "en-IN";  ("$", en-IN) → "en";  ("$", de-DE) → "de-DE"
+ */
+function compactLocale(rupees: boolean, unit: string | undefined): string {
+  if (rupees) return "en-IN";
+  if (!unit && usesLakhCrore()) return "en-IN";
+  if (usesLakhCrore()) return "en";
+  return userLocale();
+}
+
+// A unit that is a currency sign on its own: it goes in front of the number ("$4.21B").
+const CURRENCY_SIGN = /^[$€£¥]$/;
+
+/** A big number shortened for its unit, the unit itself left out. The words follow compactLocale, so dollars and
+ *  other units never read in lakh and crore. en-IN: (1840000, "USD") → "1.84M";  (1840000) → "18.4L";  (-250000, "$") → "-250K" */
+export function shortNumber(v: number, unit?: string): string {
+  const rupees = unit === "₹" || unit === "INR";
+  return `${v < 0 ? "-" : ""}${formatCompact(Math.abs(v), compactLocale(rupees, unit))}`;
+}
+
+/**
+ * A value with its unit, as charts, tables and cards show it. Big numbers (100,000 and up) are shortened unless `full`
+ * is set (hover cards and title attributes), which keeps every digit and up to 2 decimals. Money already in a scale
+ * ("$M", "₹Cr") is never shortened again. A word unit goes after a space; "pts" and anything longer than 12 characters
+ * are left out.
+ *   en-US: 4213500000 → "4.21B" (full: "4,213,500,000");  (23063.1, full) → "23,063.1";  (1840000, "₹") → "₹18.4L";
+ *   (4213500000, "$") → "$4.21B";
+ *   (18.6, "%") → "18.6%";  (109417, "$M") → "$109,417M";  (1500000, "kg") → "1.5M kg";  (12, "people") → "12 people"
+ *   en-IN: 2500000 → "25L";  de-DE: 4213500000 → "4,21 Mrd."
+ */
+export function fmt(v: number, unit?: string, { full = false }: { full?: boolean } = {}): string {
   if (unit && /^\D(Cr|K|M|B)$/.test(unit)) return formatAmount(v, unit) ?? String(v);
-  if (unit === "%") return `${v.toLocaleString("en-US", { maximumFractionDigits: 1 })}%`;
+  if (unit === "%") return `${v.toLocaleString(userLocale(), { maximumFractionDigits: 1 })}%`;
   const abs = Math.abs(v);
   const rupees = unit === "₹" || unit === "INR";
-  const lakhCrore = rupees || (!unit && usesLakhCrore());
-  const s = lakhCrore && abs >= 1e7 ? `${(v / 1e7).toFixed(2)}Cr` : lakhCrore && abs >= 1e5 ? `${(v / 1e5).toFixed(2)}L`
-    : v.toLocaleString(rupees ? "en-IN" : userLocale(), { maximumFractionDigits: abs >= 1000 ? 0 : 2 });
-  return rupees ? `₹${s}` : unit && unit.length <= 3 && unit !== "pts" ? `${s} ${unit}` : s;
+  let sign = "";
+  if (rupees) sign = "₹";
+  else if (unit && CURRENCY_SIGN.test(unit)) sign = unit;
+  let digits: string;
+  if (!full && abs >= SHORT_FROM) {
+    digits = formatCompact(abs, compactLocale(rupees, unit));
+  } else {
+    const locale = rupees ? "en-IN" : userLocale();
+    const decimals = full || abs < 1000 ? 2 : 0;  // a shown price keeps its paise; a chart axis rounds from 1,000 up
+    digits = abs.toLocaleString(locale, { maximumFractionDigits: decimals });
+  }
+  const signed = `${v < 0 ? "-" : ""}${sign}${digits}`;
+  const unitLeftOut = sign !== "" || !unit || unit === "pts" || unit.length > MAX_UNIT;
+  if (unitLeftOut) return signed;
+  return `${signed} ${unit}`;
+}
+
+/** First to last value as a percentage (gaps skipped); null when there's nothing to compare. [100, null, 110] → 10 */
+export function changePct(data: (number | null)[]): number | null {
+  const v = data.filter((x): x is number => x !== null);
+  if (v.length < 2 || v[0] === 0) return null;
+  return ((v[v.length - 1] - v[0]) / Math.abs(v[0])) * 100;
+}
+
+/** A series's name for the legend, the hover card and line ends; an only series without one is just "Value".
+ *  [{name: "Close"}] at 0 → "Close";  [{}] at 0 → "Value";  [{}, {}] at 1 → "Series 2" */
+export function seriesName(series: { name?: string }[], k: number): string {
+  const name = series[k].name;
+  if (name) return name;
+  if (series.length === 1) return "Value";
+  return `Series ${k + 1}`;
+}
+
+/** A pie slice's share of the total as a hover note, among values that are all zero or more:
+ *  (40, [40, 60]) → "40% of total"; undefined when any value is negative or they add up to nothing. */
+export function shareNote(values: (number | null)[], v: number): string | undefined {
+  const known = values.filter((d): d is number => d !== null);
+  const total = known.reduce((sum, d) => sum + d, 0);
+  if (known.some((d) => d < 0) || total <= 0) return undefined;
+  return `${sharePct(v / total)} of total`;
+}
+
+// Labels with a natural order. Months (with a year or day), quarters (with a year or FY), financial years, dates and
+// steps like "Year 3"; plain numbers (a year, or a calculator's 0, 0.25, 0.5 …) too.
+const MONTH = "(jan(uary)?|feb(ruary)?|mar(ch)?|apr(il)?|may|june?|july?|aug(ust)?|sep(t(ember)?)?|oct(ober)?|nov(ember)?|dec(ember)?)\\.?";
+const YEAR = "('?\\d{2}|\\d{4})";
+const FY = `(fy\\s*)?${YEAR}([-/]\\d{2,4})?`;  // 25, 2025, FY25, FY2024-25
+const ORDERED = [
+  `-?\\d+(\\.\\d+)?`,                                   // 2024, 7, 0.25
+  `${MONTH}(\\s*[-'’/]?\\s*${YEAR})?`,                // Jan, March 2025, Jan '25, Jan-25
+  `\\d{1,2}\\s+${MONTH}(,?\\s+${YEAR})?`,             // 12 Oct, 12 Oct 2025
+  `${MONTH}\\s+\\d{1,2}(,?\\s+\\d{4})?`,              // Oct 12, Oct 12, 2025
+  `q[1-4](\\s*[-'’]?\\s*${FY})?`,                     // Q1, Q3 2025, Q1 FY25, Q4'24
+  `${FY}\\s*-?\\s*q[1-4]`,                            // 2025 Q1, FY25 Q2
+  `fy\\s*${YEAR}([-/]\\d{2,4})?`,                     // FY24, FY2024-25, FY 24-25
+  `\\d{4}-\\d{2}(-\\d{2}([t ].*)?)?`,                 // 2025-11, 2025-11-03, 2025-11-03T09:15
+  `\\d{1,2}[/.-]\\d{1,2}[/.-]\\d{2,4}`,               // 03/11/2025, 3.11.25
+  `(year|yr|month|week|wk|day|hour|hr)s?\\s*\\d+`,    // Year 3, Week 12
+].map((p) => new RegExp(`^${p}$`, "i"));
+
+/** Whether a label has a natural order, so its bars must stay columns read left to right.
+ *  "Q3 FY2024-25" → true;  "12 Oct" → true;  "2024" → true;  "Rent" → false;  "Octopus" → false */
+export function isOrderedLabel(label: string | number): boolean {
+  const text = String(label).trim();
+  return ORDERED.some((re) => re.test(text));
+}
+
+// Bars lie down when a label is longer than this, and when one series ranks this many or more.
+const LONG_LABEL = 12;
+const LONG_RANKING = 9;
+
+/**
+ * The kind a chart is drawn as: a bar chart lies down (hbar) when the model asked for horizontal bars, or its labels
+ * read better as rows, unless they have a natural order (months, quarters, years, dates), which always stay columns.
+ * Rows when any label is longer than 12 characters, there are only 2 or 3 items, or a single series ranks 9 or more.
+ * Every other kind is drawn as asked.
+ *   bar of ["Stay", "Flights", "Local transport"] → hbar;  bar of ["Q1", "Q2"] → bar;  bar of 10 cities, one series →
+ *   hbar;  bar of 4 short names, two series → bar;  hbar of ["Q1", "Q2"] → hbar (asked for)
+ */
+export function kindToDraw(spec: ChartSpec): ChartKind {
+  if (spec.type !== "bar") return spec.type;
+  const { x } = spec;
+  if (x.every(isOrderedLabel)) return "bar";
+  const longLabel = x.some((label) => String(label).length > LONG_LABEL);
+  const fewItems = x.length >= 2 && x.length <= 3;
+  const longRanking = spec.series.length === 1 && x.length >= LONG_RANKING;
+  if (longLabel || fewItems || longRanking) return "hbar";
+  return "bar";
 }

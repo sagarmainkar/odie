@@ -5,8 +5,9 @@ import { splitInline } from "./inlineSyntax";
 /** What a row shows at its left, after the rank number (if any). */
 export type RowLead = "image" | "icon" | "initial" | "none";
 
-/** The chart palette's colours that white text reads well on (4, an amber, is too light). */
-const AVATAR_COLOURS = [1, 2, 3, 5, 6, 7, 8];
+/** The chart palette's colours that white text reads well on (3.5:1 or more): blue, violet, red and pink. Amber,
+ *  green, cyan and lime (2, 3, 5, 7) are too light for a white letter. */
+const AVATAR_COLOURS = [1, 4, 6, 8];
 
 /**
  * Which picture a row leads with. A photo when it has one and may show it (a private chat holds web photos back);
@@ -45,7 +46,7 @@ export function initialOf(title: string): string | null {
  * The circle's colour, as a CSS value: one of the palette's colours, picked by the name (the title up to " · ",
  * ignoring case and spaces at the ends), so a sender keeps their colour across rows and replies.
  *   "Asha · Lease renewal" and "asha · Dinner on Sat" -> the same colour
- *   "Asha" and "Ravi"                                  -> usually different ones (7 colours to go round)
+ *   "Asha" and "Ravi"                                  -> usually different ones (4 colours to go round)
  */
 export function avatarColour(title: string): string {
   const name = nameOf(title);

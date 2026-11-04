@@ -11,40 +11,11 @@ import { Flip } from "./Flip";
 import { Form } from "./Form";
 import { Heatmap } from "./Heatmap";
 import { FenceValues, startingValues } from "./fenceValues";
-import { InlineText } from "./InlineText";
 import { List } from "./List";
 import { Progress, Streak, Tiles, Timeline } from "./Rich";
 import { Table } from "./Table";
-import { wideColumns } from "./wideColumns";
-import { formatAmount, formatChange, type Block, type KpiItem } from "./parse";
-
-function fmtValue(k: KpiItem): string {
-  if (k.value === null) return "–";
-  if (typeof k.value === "string") return k.value;
-  const v = Math.abs(k.value) >= 1000 ? k.value.toLocaleString("en-US", { maximumFractionDigits: 0 }) : k.value.toLocaleString("en-US", { maximumFractionDigits: 1 });
-  return formatAmount(k.value, k.unit) ?? (k.unit === "%" ? `${v}%` : k.unit ? `${v} ${k.unit}` : v);
-}
-
-/** One headline number in a card: a kpis item, or a stat on its own. */
-function KpiCard({ item }: { item: KpiItem }) {
-  const change = formatChange(item.change, item.change_unit);
-  const valueSize = typeof item.value === "string" ? "text-[16px] leading-snug" : "text-[22px] leading-tight tabular-nums";
-  return (
-    <div className="glass glass-solid rounded-[20px] px-3.5 py-3">
-      <div className="text-[12px] font-semibold text-muted">{item.label}</div>
-      <div className={`${valueSize} font-extrabold tracking-[-0.02em] mt-0.5 [overflow-wrap:anywhere]`}>{typeof item.value === "string" ? <InlineText text={item.value} /> : fmtValue(item)}</div>
-      {change && <span className={`chip mt-1.5 ${item.change! >= 0 ? "chip-good" : "chip-warn"}`}>{change}</span>}
-    </div>
-  );
-}
-
-function Kpis({ items }: { items: KpiItem[] }) {
-  return (
-    <div className={`grid grid-cols-2 ${wideColumns(items.length)} gap-2 my-2`}>
-      {items.map((k) => <KpiCard key={k.label} item={k} />)}
-    </div>
-  );
-}
+import { KpiCard, Kpis } from "./Kpis";
+import type { Block } from "./parse";
 
 function Actions({ items }: { items: { label: string; run: string }[] }) {
   const { send, busy } = useContext(ChatActions);

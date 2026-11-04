@@ -141,7 +141,7 @@ describe("drawing the new kinds", () => {
   });
   it("draws a single-slice pie as a whole circle", () => {
     const html = draw(chart({ type: "pie", x: ["All"], series: [{ data: [10] }] })!);
-    expect(html).toMatch(/A96,96 0 1 1/);
+    expect(html).toMatch(/A80,80 0 1 1/);
     expect(html).toContain("100%");
   });
   it("draws a donut with the total in its hole, and an Other slice in grey", () => {
@@ -150,11 +150,11 @@ describe("drawing the new kinds", () => {
     expect(count(html, "path")).toBe(8);
     expect(html).toContain("Other");
     expect(html).toContain("var(--t-dim)");
-    expect(html).toMatch(/<text[^>]*>₹100<\/text>/);  // 20 + 15 + … + 5 = 100, in the middle
+    expect(html).toMatch(/>₹100<\/text>/);  // 20 + 15 + … + 5 = 100, in the middle
   });
   it("draws shares given in % without repeating them: the biggest slice in the middle, no value column", () => {
     const html = draw(chart({ type: "donut", unit: "%", x: ["Equity", "Debt", "Gold"], series: [{ data: [60, 30, 10] }] })!);
-    expect(html).toMatch(/<text[^>]*>60%<\/text>/);
+    expect(html).toMatch(/>60%<\/text>/);
     expect(html).toMatch(/<text[^>]*>Equity<\/text>/);
     expect(count(html, "td")).toBe(9);  // dot, name and share for each of the 3 slices
   });
@@ -177,22 +177,24 @@ describe("drawing the new kinds", () => {
   it("draws areas piled up, a filled band and an edge per series", () => {
     const html = draw(chart({ type: "area", unit: "₹", x: ["Start", "Yr 3", "Yr 6"], series: [{ name: "Invested", data: [0, 360000, 720000] }, { name: "Gains", data: [0, 75076, 337570] }] })!);
     expect(count(html, "path")).toBe(4);
-    expect(html).toContain("₹10.58L");  // invested + gains at Yr 6
+    expect(html).toContain("₹10.6L");  // invested + gains at Yr 6, shortened
     expect(html).toContain("Gains");
   });
   it("draws a combo as bars and a dotted line, saying which series has the right scale", () => {
     const html = draw(chart({ type: "combo", unit: "₹Cr", x: ["Q1", "Q2", "Q3"], series: [{ name: "Revenue", data: [65799, 67087, 70698] }, { name: "Margin", unit: "%", data: [18.4, 16, 19.5] }] })!);
-    expect(count(html, "rect")).toBe(3);
+    expect(html.match(/class="chart-bar"/g)).toHaveLength(3);
     expect(count(html, "circle")).toBe(3);
     expect(html).toContain("(right scale)");
     expect(html).toContain("Margin 19.5%");  // the line's value beside the bars', in its own unit
   });
-  it("still draws a line and a bar chart as before", () => {
-    const line = draw(chart({ type: "line", x: ["a", "b"], series: [{ data: [1, 2] }] })!);
+  it("draws each series of a line or bar chart in its own palette colour, columns rounded at the top", () => {
+    const line = draw(chart({ type: "line", x: ["a", "b"], series: [{ data: [1, 2] }, { data: [2, 1] }] })!);
     expect(line).toContain("chart-draw");
-    expect(line).not.toContain("--t-chart-");
-    const bar = draw(chart({ type: "bar", x: ["a", "b"], series: [{ data: [1, 2] }] })!);
-    expect(count(bar, "rect")).toBe(2);
-    expect(bar).not.toContain("--t-chart-");
+    expect(line).toContain('stroke="var(--t-chart-1)"');
+    expect(line).toContain('stroke="var(--t-chart-2)"');
+    const bar = draw(chart({ type: "bar", x: ["Q1", "Q2"], series: [{ data: [1, 2] }] })!);
+    expect(bar.match(/class="chart-bar"/g)).toHaveLength(2);
+    expect(bar).toContain('fill="var(--t-chart-1)"');
   });
+
 });

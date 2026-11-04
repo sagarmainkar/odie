@@ -13,6 +13,9 @@ metadata:
 ```odie-blocks block in your reply exactly as it is. The app draws the chart and, for a single company, an Analyze
 button.
 
+**Comparing 2-3 stocks or indices:** call `market_history` once with them comma separated ("TCS, INFY") and put
+its block in your reply exactly as it is: a card each, then one chart of % change from the same start.
+
 **"Analyze <company> (<TICKER>): last 4 quarters"** (the Analyze button sends this). A ticker with an exchange
 suffix (RELIANCE.NS, TCS.BO, SAP.DE) or a company outside the US goes to **Companies outside the US** below. For a
 US company, call `quarterly_financials` with the ticker in brackets, or with the company name if no ticker was given. Start

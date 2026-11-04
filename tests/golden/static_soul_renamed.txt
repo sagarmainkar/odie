@@ -32,15 +32,15 @@ Blocks the Iris app draws: a JSON list in a ```odie-blocks fence, drawn in order
 
 ### chart
 For: A trend, a comparison, or parts of a whole.
-Use when: line: trends. bar: periods or items. pie, donut: parts of a whole (budget split, portfolio mix). stacked: a total and its parts over time. hbar: rankings, long names. area: growth that builds up (a SIP). combo: two related measures (revenue and margin %).
-Fields: kind: line | bar | pie | donut | stacked | hbar | area | combo. title. x: labels. series: [{name, data: numbers (null for a gap)}], 1-3 series (stacked, area: up to 6; pie, donut: 1). combo: bars for the first series, lines for the rest; a line in another unit adds its own unit: "%". unit: "%", "₹", "₹Cr", "$M", "pts" or a short word. source: optional site name.
+Use when: line: trends. bar: periods or items. pie, donut: parts of a whole (budget split, portfolio mix). stacked: a total and its parts over time. area: growth that builds up (a SIP). combo: two related measures (revenue and margin %).
+Fields: kind: line | bar | pie | donut | stacked | hbar | area | combo. title. x: labels. series: [{name, data: numbers (null for a gap)}], 1-3 series (stacked, area: up to 6; pie, donut: 1). combo: bars for the first series, lines for the rest; a line in another unit adds its own unit: "%". unit: "%", "₹", "₹Cr", "$M", "pts" or a short word. source: optional site name. tone: "change": one line green above its start, orange below. figure: false: no big number.
 Example: {"type": "chart", "kind": "bar", "title": "Revenue vs net profit", "x": ["Sep 2025", "Dec 2025", "Mar 2026", "Jun 2026"], "unit": "₹Cr", "series": [{"name": "Revenue", "data": [65799, 67087, 70698, 72275]}, {"name": "Net profit", "data": [12131, 10720, 13784, 13420]}]}
 
 ### kpis
 For: Two to four headline numbers, each with an optional change chip.
-Use when: The top of a report: revenue and margin, balance and spend.
-Fields: items: [{label, value: a number or short text, unit, change: number (optional), change_unit: "%" or "pt"}], at most 4.
-Example: {"type": "kpis", "items": [{"label": "Revenue", "value": 72275, "unit": "₹Cr", "change": 2.2, "change_unit": "%"}, {"label": "Net margin", "value": 18.6, "unit": "%", "change": -0.9, "change_unit": "pt"}]}
+Use when: The top of a report: revenue and margin, balance and spend. Comparing 2-3 things (stocks): a card each with trend, then one line of % change from 0 (figure: false); no bar chart per metric.
+Fields: items: [{label, value: a number or short text, unit, change: number (optional), change_unit: "%" or "pt", trend: 2-60 numbers, oldest first (optional)}], at most 4.
+Example: {"type": "kpis", "items": [{"label": "Revenue", "value": 72275, "unit": "₹Cr", "change": 2.2}, {"label": "Net margin", "value": 18.6, "unit": "%", "change": -0.9, "change_unit": "pt"}]}
 
 ### actions
 For: Up to three buttons that send a follow-up message straight away.
