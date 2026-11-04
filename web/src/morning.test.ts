@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { accentParts, isTodaysChat, keepAsking, MORNING_ASK_FOR_MS, shouldShowMorning, weatherTitle } from "./morning";
+import { accentParts, isDayStartChat, keepAsking, MORNING_ASK_FOR_MS, shouldShowMorning, weatherTitle, type ChatOnScreen } from "./morning";
 
 describe("the greeting's accent word", () => {
   it("splits the greeting around the word, for the serif italic", () => {
@@ -14,18 +14,31 @@ describe("the greeting's accent word", () => {
 });
 
 describe("where the morning hello is drawn", () => {
-  it("is today's chat: the main view, or one of today's segments opened from Threads", () => {
-    expect(isTodaysChat(null, "2026-11-04")).toBe(true);
-    expect(isTodaysChat("chat-2026-11-04-2", "2026-11-04")).toBe(true);
-    expect(isTodaysChat("chat-2026-10-30-5", "2026-11-04")).toBe(false);
+  const dayTop: ChatOnScreen = { threadId: null, historyLoaded: true, earlier: 0, cut: false };
+
+  it("asks only from a chat that can start the day: the main view, or the day's first segment", () => {
+    expect(isDayStartChat(null, "2026-11-04")).toBe(true);
+    expect(isDayStartChat("chat-2026-11-04", "2026-11-04")).toBe(true);
+    expect(isDayStartChat("chat-2026-11-04-2", "2026-11-04")).toBe(false);  // a later segment
+    expect(isDayStartChat("chat-2026-10-30-5", "2026-11-04")).toBe(false);  // an old thread
   });
 
-  it("shows while the hello is ready or being made, in today's chat only", () => {
-    expect(shouldShowMorning(null, "2026-11-04", "ready")).toBe(true);
-    expect(shouldShowMorning(null, "2026-11-04", "making")).toBe(true);
-    expect(shouldShowMorning(null, "2026-11-04", "none")).toBe(false);
-    expect(shouldShowMorning("chat-2026-11-04", "2026-11-04", "ready")).toBe(true);
-    expect(shouldShowMorning("chat-2026-10-30-5", "2026-11-04", "ready")).toBe(false);  // an old thread
+  it("shows at the true top of the day, while the hello is ready or being made", () => {
+    expect(shouldShowMorning(dayTop, "2026-11-04", "ready")).toBe(true);
+    expect(shouldShowMorning(dayTop, "2026-11-04", "making")).toBe(true);
+    expect(shouldShowMorning(dayTop, "2026-11-04", "none")).toBe(false);
+    expect(shouldShowMorning({ ...dayTop, threadId: "chat-2026-11-04" }, "2026-11-04", "ready")).toBe(true);
+  });
+
+  it("never shows after a /new, above unloaded messages, or before the history answers", () => {
+    expect(shouldShowMorning({ ...dayTop, cut: true }, "2026-11-04", "ready")).toBe(false);
+    expect(shouldShowMorning({ ...dayTop, earlier: 30 }, "2026-11-04", "ready")).toBe(false);
+    expect(shouldShowMorning({ ...dayTop, historyLoaded: false }, "2026-11-04", "ready")).toBe(false);
+  });
+
+  it("never shows in a later segment or an old thread", () => {
+    expect(shouldShowMorning({ ...dayTop, threadId: "chat-2026-11-04-2" }, "2026-11-04", "ready")).toBe(false);
+    expect(shouldShowMorning({ ...dayTop, threadId: "chat-2026-10-30-5" }, "2026-11-04", "ready")).toBe(false);
   });
 });
 

@@ -16,8 +16,9 @@ import { Avatar } from "../components/Avatar";
 import { Orb } from "../components/Orb";
 import { Icon as Glyph, Tile } from "../components/Tile";
 import { greetingParts } from "../greeting";
-import { MorningHello, useMorning } from "../components/MorningCard";
-import { shouldShowMorning, type MorningReply } from "../morning";
+import { MorningHello } from "../components/MorningCard";
+import { useMorning } from "../useMorning";
+import { chatOnScreen, shouldShowMorning, type MorningReply } from "../morning";
 import { Steps, type Tool } from "../components/Steps";
 import { replyLine, type ReplyUsage } from "../usage";
 import { ToBody } from "../components/ToBody";
@@ -257,6 +258,7 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
   threadRef.current = thread;
   const historyUrl = (q: string) => (thread ? `/api/threads/${thread.id}/history?${q}` : `/api/history?date=${todayISO()}&${q}`);
   const [earlier, setEarlier] = useState(0);  // index of the first loaded history item; >0 means more exists
+  const [historyCut, setHistoryCut] = useState<{ threadId: string | null; cut: boolean } | null>(null);  // the last history that answered
   const [loadingEarlier, setLoadingEarlier] = useState(false);
   const [atBottom, setAtBottom] = useState(true);
   const [unseen, setUnseen] = useState(false);
@@ -303,6 +305,7 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
       const h = await getJSON<H>(historyUrl("limit=30"));
       const fresh = afterLastNewChat(h.items);
       setEarlier(fresh.cut ? 0 : h.start);  // nothing above a "/new" is shown here
+      setHistoryCut({ threadId: thread?.id ?? null, cut: fresh.cut });
       const base: Msg[] = toMsgs(fresh.items);
       let waiting: Approval[] = [];
       try { waiting = await getJSON<Approval[]>("/api/approvals"); } catch { /* fine */ }
@@ -324,6 +327,7 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
       const el = mainRef.current; const h0 = el?.scrollHeight ?? 0;
       const fresh = afterLastNewChat(h.items);
       setEarlier(fresh.cut ? 0 : h.start);
+      if (fresh.cut) setHistoryCut({ threadId: thread?.id ?? null, cut: true });  // a "/new" further up: not the day's top
       setMsgs((m) => [...toMsgs(fresh.items), ...m]);
       requestAnimationFrame(() => { if (el) el.scrollTop += el.scrollHeight - h0; });  // keep the viewport where it was
     } catch { /* ignore */ } finally { setLoadingEarlier(false); }
@@ -586,11 +590,12 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
   if (listening) micPlaceholder = "Listening… tap the mic to finish";
   if (transcribing) micPlaceholder = "Writing it down…";
   const lastOdie = [...msgs].reverse().find((m) => m.role === "odie");
-  // Today's morning hello sits above today's first message, so it waits until the earliest of today's is loaded.
-  // Once its card is ready it takes the empty chat's greeting's place.
+  // Today's morning hello sits only at the true top of the day: above the day's first message, with no "/new" above it,
+  // once the history has said so. Once its card is ready it takes the empty chat's greeting's place.
   const morning = useMorning(thread?.id ?? null);
+  const onScreen = chatOnScreen(thread?.id ?? null, historyCut, earlier);
   let morningOnTop: MorningReply | null = null;
-  if (morning && earlier === 0 && shouldShowMorning(thread?.id ?? null, todayISO(), morning.state)) morningOnTop = morning;
+  if (morning && shouldShowMorning(onScreen, todayISO(), morning.state)) morningOnTop = morning;
   const morningReady = morningOnTop?.card != null;
   // In an empty chat the hello is the latest thing, so "to the latest" (opening the chat, a reload) lands on its top,
   // not under its chips.

@@ -39,18 +39,44 @@ export function accentParts(greeting: string, accent: string): [string, string, 
   return [greeting.slice(0, at), accent, greeting.slice(at + accent.length)];
 }
 
-/** Whether the chat on screen is today's: the main view (no thread), or a segment of today's chat opened from Threads.
- * (null, "2026-11-04") -> true; ("chat-2026-11-04-2", "2026-11-04") -> true; ("chat-2026-10-30-5", "2026-11-04") -> false. */
-export function isTodaysChat(threadId: string | null, today: string): boolean {
+/** Whether the chat on screen can start at the top of the day: the main view (no thread), or the day's first segment
+ * opened from Threads. Only these ask for the hello.
+ * (null, "2026-11-04") -> true; ("chat-2026-11-04", "2026-11-04") -> true; ("chat-2026-11-04-2", "2026-11-04") -> false
+ * (a later segment); ("chat-2026-10-30-5", "2026-11-04") -> false (an old thread). */
+export function isDayStartChat(threadId: string | null, today: string): boolean {
   if (threadId === null) return true;
-  return threadId.startsWith(`chat-${today}`);
+  return threadId === `chat-${today}`;
 }
 
-/** Whether the morning hello is drawn above the chat: in today's chat, while the hello is ready or being made.
- * Today's chat, "ready" -> true (the card); today's chat, "making" -> true (the "Getting your day ready…" line);
- * "none" -> false (nothing); an old thread like "chat-2026-10-30-5" -> false, whatever the state. */
-export function shouldShowMorning(threadId: string | null, today: string, state: MorningState | string): boolean {
-  if (!isTodaysChat(threadId, today)) return false;
+/** What the chat on screen knows about its history, for the morning card. */
+export type ChatOnScreen = {
+  threadId: string | null;
+  historyLoaded: boolean;  // this chat's history has answered (before it does, nothing says where the day starts)
+  earlier: number;  // how many older messages are still to load above (0: the loaded history reaches the day's start)
+  cut: boolean;  // a "/new" hid the messages above it: what's shown is a later conversation, not the day's first
+};
+
+/** What the chat on screen knows about its history, for the morning card: whether its own history has answered, and
+ * whether a "/new" cut it. `loaded` is the last history that answered (which chat it was for, and its cut).
+ * Today's view, its history answered with no cut, earlier 0 -> loaded, no cut (the card may show);
+ * the same after "/new" -> loaded, cut; nothing answered yet, or the last answer was another thread's -> not loaded. */
+export function chatOnScreen(threadId: string | null, loaded: { threadId: string | null; cut: boolean } | null, earlier: number): ChatOnScreen {
+  if (loaded === null || loaded.threadId !== threadId) return { threadId, historyLoaded: false, earlier, cut: false };
+  return { threadId, historyLoaded: true, earlier, cut: loaded.cut };
+}
+
+/** Whether the morning card is drawn: only at the true top of the day, while the hello is ready or being made. That is
+ * the main view or the day's first segment, its history loaded, reaching the day's start (nothing earlier to load), with
+ * no "/new" above it. A chat after "/new", or a later segment, gets the plain empty-chat greeting instead.
+ * The main view at 07:40, loaded, earlier 0, no cut, "ready" -> true (the card);
+ * the same, "making" -> true (the "Getting your day ready…" line); the same, "none" -> false;
+ * after "/new" at 21:00 (cut) -> false; 30 more messages to load above (earlier 30) -> false;
+ * history not answered yet -> false (no flash of the card); "chat-2026-11-04-2" -> false; an old thread -> false. */
+export function shouldShowMorning(chat: ChatOnScreen, today: string, state: MorningState | string): boolean {
+  if (!isDayStartChat(chat.threadId, today)) return false;
+  if (!chat.historyLoaded) return false;
+  if (chat.earlier > 0) return false;
+  if (chat.cut) return false;
   return state === "ready" || state === "making";
 }
 

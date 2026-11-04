@@ -5,7 +5,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getJSON } from "../api";
 import type { MorningCard as Card, MorningReply } from "../morning";
-import { MorningCard, MorningHello, useMorning } from "./MorningCard";
+import { useMorning } from "../useMorning";
+import { MorningCard, MorningHello } from "./MorningCard";
 
 vi.mock("../api", async (real) => ({ ...(await real<typeof import("../api")>()), getJSON: vi.fn(async () => ({})) }));
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -81,6 +82,13 @@ describe("the morning hello card", () => {
     expect([...places].sort((a, b) => a - b)).toEqual(places);
   });
 
+  it("draws a row whose state it doesn't know as open, instead of breaking", () => {
+    const odd = { state: "maybe", text: "Pick a name for the app", note: "" } as unknown as Card["recent"][number];
+    const html = draw({ ...card, recent: [odd] });
+    expect(html).toContain("Pick a name for the app");
+    expect(html).toContain('aria-label="Open"');
+  });
+
   it("skips a part that is empty: no mail, no section", () => {
     const html = draw({ ...card, mail: [] });
     expect(html).not.toContain("From your mail");
@@ -149,12 +157,17 @@ describe("asking for the morning hello", () => {
     await done();
   });
 
-  it("gives up after three minutes of making, and draws nothing", async () => {
+  it("keeps asking for three minutes of making, then gives up, stops asking and draws nothing", async () => {
     answer("making");
     const { host, done } = await mount(<Probe threadId={null} />);
-    await act(async () => { await vi.advanceTimersByTimeAsync(4 * 60_000); });
-    expect(morningAsks()).toBeLessThanOrEqual(19);
+    await act(async () => { await vi.advanceTimersByTimeAsync(175_000); });
+    expect(morningAsks()).toBe(18);  // at 0, 10, … 170 s
+    expect(host.textContent).toBe("making");
+    await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
+    expect(morningAsks()).toBe(19);  // the ask at 180 s is the last
     expect(host.textContent).toBe("nothing");
+    await act(async () => { await vi.advanceTimersByTimeAsync(10 * 60_000); });
+    expect(morningAsks()).toBe(19);  // flat from then on
     await done();
   });
 
@@ -174,9 +187,12 @@ describe("asking for the morning hello", () => {
     expect(morningAsks()).toBe(reopened);
   });
 
-  it("never asks from an old thread", async () => {
+  it("never asks from an old thread or a later segment of today", async () => {
     answer("ready");
-    const { host, done } = await mount(<Probe threadId="chat-2026-10-30-5" />);
+    const { host, root, done } = await mount(<Probe threadId="chat-2026-10-30-5" />);
+    expect(morningAsks()).toBe(0);
+    expect(host.textContent).toBe("nothing");
+    await act(async () => root.render(<Probe threadId="chat-2026-11-04-2" />));
     expect(morningAsks()).toBe(0);
     expect(host.textContent).toBe("nothing");
     await done();

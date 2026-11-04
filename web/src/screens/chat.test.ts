@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { askedFromHash, composerHeight, runFromHash } from "./Chat";
+import { chatOnScreen, shouldShowMorning } from "../morning";
+import { afterLastNewChat, askedFromHash, composerHeight, runFromHash } from "./Chat";
 
 describe("composerHeight", () => {
   it("grows from one to five lines", () => {
@@ -29,6 +30,28 @@ describe("a new chat starts clean", () => {
     expect(afterLastNewChat(items)).toEqual({ items: [m("user", "fresh"), m("odie", "reply")], cut: true });
     expect(afterLastNewChat([m("user", "a"), m("odie", "(New chat.)")])).toEqual({ items: [], cut: true });
     expect(afterLastNewChat([m("user", "a")])).toEqual({ items: [m("user", "a")], cut: false });
+  });
+});
+
+describe("the morning card in the chat", () => {
+  const m = (role: string, text: string) => ({ role, text });
+  const show = (items: { role: string; text: string }[], loadedFor: string | null = null) => {
+    const fresh = afterLastNewChat(items);
+    return shouldShowMorning(chatOnScreen(null, { threadId: loadedFor, cut: fresh.cut }, 0), "2026-11-04", "ready");
+  };
+
+  it("shows above the day's first message", () => {
+    expect(show([])).toBe(true);
+    expect(show([m("user", "Plan my day"), m("odie", "Here it is")])).toBe(true);
+  });
+
+  it("gives way to the plain greeting after a /new, at any hour", () => {
+    expect(show([m("user", "Plan my day"), m("odie", "Here it is"), m("odie", "(New chat.)")])).toBe(false);
+  });
+
+  it("waits for this chat's own history, so it never flashes", () => {
+    expect(shouldShowMorning(chatOnScreen(null, null, 0), "2026-11-04", "ready")).toBe(false);
+    expect(show([], "chat-2026-10-30-5")).toBe(false);  // the last answer was another thread's
   });
 });
 
