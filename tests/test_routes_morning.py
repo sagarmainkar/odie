@@ -20,8 +20,14 @@ CARD = {"greeting": "Morning, Asha", "accent": "launch", "emoji": "", "say": ["T
 
 
 class QuietRunner:
+    def __init__(self):
+        self.invalidated = 0
+
     async def close(self):
         pass
+
+    def invalidate_prompt(self):
+        self.invalidated += 1
 
 
 @pytest.fixture
@@ -173,3 +179,25 @@ async def test_the_web_round_runs_through_the_background_with_the_brief_limit(mo
     assert seen == [("brief", BRIEF_LIMIT)]
     assert len(ran) == 1
     assert (await client.get("/api/morning")).json()["state"] == "ready"
+
+
+async def test_a_brief_run_by_hand_after_the_hello_joins_its_summary(morning, monkeypatch):
+    """The hello was made at 06:10; a brief run by hand at 09:00 reaches chats through the day's summary."""
+    from odie.jobs import brief as brief_mod
+    from odie.jobs.brief import BriefInputs
+    client, store, _, app = morning
+    save_hello(store)
+
+    async def no_gathering(store, now, **kw):
+        return BriefInputs(tasks="")
+
+    async def fake_write(prompt, store=None):
+        return "Dentist at 10."
+    monkeypatch.setattr(brief_mod, "gather_inputs", no_gathering)
+    monkeypatch.setattr(brief_mod, "write_with_model", fake_write)
+
+    body = (await client.post("/api/brief/run")).json()
+    assert body == {"text": "Dentist at 10."}
+    summary = store.one("select summary from mornings where day = '2026-11-04'")["summary"]
+    assert summary == "The day: a launch.\n\nThe morning brief: Dentist at 10."
+    assert app.state.runner.invalidated == 1

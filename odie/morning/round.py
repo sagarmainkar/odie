@@ -19,6 +19,7 @@ from odie.store.db import Store
 log = logging.getLogger("odie.morning.round")
 
 DAY_STARTS = 5  # the hello's day starts at 05:00 local time; before it, the hello is yesterday's
+BRIEF_MARK = "\n\nThe morning brief: "  # what starts a brief's line added to a day summary after the hello
 
 _round_lock = asyncio.Lock()
 
@@ -73,6 +74,32 @@ def todays_brief_text(store: Store, now: datetime) -> str:
     return row["text"]
 
 
+def summary_with_brief(summary: str, brief_text: str) -> str:
+    """The day summary with the brief's line at its end. A line an earlier brief added is replaced, never repeated.
+    ("Dev wrote about the lease.", "Dentist at 10.") -> "Dev wrote about the lease.\n\nThe morning brief: Dentist at 10.";
+    that summary and a second brief "Rain at 4." -> "Dev wrote about the lease.\n\nThe morning brief: Rain at 4."."""
+    earlier = summary.rfind(BRIEF_MARK)
+    if earlier != -1:
+        summary = summary[:earlier]
+    return summary + BRIEF_MARK + brief_text.strip()
+
+
+def add_brief_to_hello(store: Store, now: datetime, brief_text: str) -> bool:
+    """Whether a brief written after the day's hello was added to that hello's summary. A chat that starts from the
+    summary gets no [today's brief] block, so a brief written later must reach it through the summary.
+    Hello at 06:10, brief at 07:30 -> True (the summary ends with the brief's line); no hello saved yet (the hello is
+    written next, with the brief among its inputs) -> False; an empty brief -> False."""
+    if not brief_text.strip():
+        return False
+    day = morning_day(now)
+    hello = hello_for(store, day)
+    if hello is None:
+        return False
+    summary = summary_with_brief(hello["summary"], brief_text)
+    store.execute("update mornings set summary = ? where day = ?", (summary, day))
+    return True
+
+
 def round_running() -> bool:
     """Whether a morning round is running right now (the web shows "making" while it is). A round holding the lock ->
     True; the lock free (no round, or the last one finished) -> False."""
@@ -110,6 +137,10 @@ async def run_round(store: Store, now: datetime, runner, push: bool) -> None:
             log.warning("morning: the brief couldn't be written; the hello goes on", exc_info=True)
 
     if not hello_wanted:
+        # Today's hello was made before the brief (06:10, then 07:30): the brief joins its summary.
+        added = add_brief_to_hello(store, now, brief_text)
+        if added and runner is not None:
+            runner.invalidate_prompt()  # open chats take the brief on their next message
         return
     await make_hello(store, now, brief_inputs, brief_text)
     if runner is not None:

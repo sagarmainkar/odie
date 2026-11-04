@@ -20,7 +20,7 @@ from sse_starlette.sse import EventSourceResponse
 from odie import config, devices, persona, qr
 from odie.models import (PRESET_BY_ID, PRESETS, Provider, all_providers, auth_headers, brain_chosen, custom_key_name,
                          list_models, preset_base_url, refresh_fallback, resolve_selection, slug)
-from odie.morning.round import hello_due, hello_for, morning_day, morning_round, round_running
+from odie.morning.round import add_brief_to_hello, hello_due, hello_for, morning_day, morning_round, round_running
 from odie.photos.library import PHOTO_UUID
 from odie.secrets import remove_secret, save_secret
 from odie.store.db import approval_dict as _approval_dict
@@ -2073,11 +2073,14 @@ async def brief_get(request: Request):
 
 @router.post("/brief/run")
 async def brief_run(request: Request):
-    from datetime import datetime
-    from zoneinfo import ZoneInfo
-
+    """A brief run by hand (the user is looking at it, so no push). When the day's hello is already made, the brief
+    joins its summary and open chats rebuild their prompt to read it."""
     from odie.jobs.brief import run_brief
-    text = await run_brief(request.app.state.store, datetime.now(ZoneInfo(config.settings.timezone)), push=False)  # The user is looking at it
+    store = request.app.state.store
+    now = morning_now()
+    text = await run_brief(store, now, push=False)
+    if add_brief_to_hello(store, now, text):
+        request.app.state.runner.invalidate_prompt()
     return {"text": text}
 
 

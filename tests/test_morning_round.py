@@ -1,7 +1,7 @@
 """One morning round: the brief when it's due, and the day's hello, saved once a day."""
 import asyncio
 import json
-from datetime import datetime
+from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
 from odie.jobs import brief as brief_mod
@@ -17,6 +17,10 @@ IST = ZoneInfo("Asia/Kolkata")
 
 def at(day: int, hour: int, minute: int = 0) -> datetime:
     return datetime(2026, 11, day, hour, minute, tzinfo=IST)
+
+
+def date_of(day: str) -> date:
+    return date.fromisoformat(day)
 
 
 def store_at(tmp_path) -> Store:
@@ -245,3 +249,43 @@ async def test_with_nothing_connected_the_hello_is_still_written(tmp_path, monke
     await morning_round(s, at(4, 15, 0), push=False)
     hello = hello_for(s, "2026-11-04")
     assert hello is not None and hello["card"]["fallback"] is False
+
+
+async def test_a_brief_after_an_early_hello_reaches_the_chats(tmp_path, monkeypatch, isolated_settings):
+    """Hello at 06:10, brief at 07:30: chats start from the day's summary (so they get no [today's brief] block), and
+    the brief's line is in that summary."""
+    from datetime import time
+
+    from odie.app.runner import OdieRunner
+    s = store_at(tmp_path)
+    assert isolated_settings.sessions_db_path.parent == tmp_path
+    runner = OdieRunner(s)
+    day = date_of(morning_day(datetime.now(runner.tz)))  # the day the runner's chats read, whatever the clock says
+    monkeypatch.setattr(round_mod, "gather", plain_gather())
+    a_model(monkeypatch, [])
+    a_brief_writer(monkeypatch, [])
+
+    await morning_round(s, datetime.combine(day, time(6, 10), runner.tz), runner=runner, push=False)
+    assert "The morning brief" not in hello_for(s, day.isoformat())["summary"]
+    runner._prepare_prompt(f"chat-{day.isoformat()}", "hello")  # a chat opened before the brief
+    await morning_round(s, datetime.combine(day, time(7, 30), runner.tz), runner=runner, push=False)
+
+    summary = hello_for(s, day.isoformat())["summary"]
+    assert summary == "The day: a design review, the reporter open.\n\nThe morning brief: The invoice is due Friday."
+    trailer = runner._prepare_prompt(f"chat-{day.isoformat()}", "hello")  # the same chat, rebuilt
+    assert runner._current_prompt.endswith("The morning brief: The invoice is due Friday.")
+    assert "today's brief" not in trailer
+    assert "The invoice is due Friday" not in trailer
+    await runner.close()
+
+
+def test_a_second_brief_replaces_the_first_in_the_summary():
+    first = round_mod.summary_with_brief("Dev wrote about the lease.", "Dentist at 10.")
+    assert first == "Dev wrote about the lease.\n\nThe morning brief: Dentist at 10."
+    assert round_mod.summary_with_brief(first, "Rain at 4.") == "Dev wrote about the lease.\n\nThe morning brief: Rain at 4."
+
+
+def test_a_brief_with_no_hello_yet_leaves_the_mornings_alone(tmp_path):
+    s = store_at(tmp_path)
+    assert round_mod.add_brief_to_hello(s, at(4, 7, 30), "Dentist at 10.") is False
+    assert s.one("select count(*) n from mornings")["n"] == 0
