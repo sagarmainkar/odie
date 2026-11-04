@@ -80,3 +80,10 @@ describe("niceTicks", () => {
     expect(niceTicks(5, 5)).toEqual([4, 5, 6]);
   });
 });
+
+describe("barPath for a zero", () => {
+  it("keeps a 2px sliver above the base, so a zero still differs from a gap", () => {
+    expect(barPath(10, 20, 100, 100)).toBe(barPath(10, 20, 100, 98));
+    expect(barPath(10, 20, 100, 99.5)).toBe(barPath(10, 20, 100, 98));
+  });
+});

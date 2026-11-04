@@ -35,15 +35,20 @@ export function columnLayout(plotWidth: number, n: number, seriesCount: number):
   return { slot, bar, start: (plotWidth - slot * n) / 2 };
 }
 
+// A column is never shorter than this, so a zero still shows a sliver and differs from a gap (a null).
+const MIN_HEIGHT = 2;
+
 /**
  * A column's outline from its base to its end, the end's two corners rounded (radius 4, less for a thin or short
- * column): the top for a value above the base, the bottom for one below it.
- *   (x 10, width 20, base 100, end 40) → "M10,100V44Q10,40 14,40H26Q30,40 30,44V100Z"
+ * column): the top for a value above the base, the bottom for one below it. A zero draws as a 2px sliver above the base.
+ *   (x 10, width 20, base 100, end 40) → "M10,100V44Q10,40 14,40H26Q30,40 30,44V100Z";  (…, base 100, end 100) → as end 98
  */
 export function barPath(x: number, width: number, base: number, end: number, radius = 4): string {
   const f = (n: number) => +n.toFixed(1);
+  const above = end <= base;
+  if (Math.abs(base - end) < MIN_HEIGHT) end = above ? base - MIN_HEIGHT : base + MIN_HEIGHT;
   const r = Math.min(radius, width / 2, Math.abs(base - end));
-  const toward = end < base ? 1 : -1;  // from the end back toward the base
+  const toward = above ? 1 : -1;  // from the end back toward the base
   const x2 = x + width;
   return `M${f(x)},${f(base)}V${f(end + toward * r)}Q${f(x)},${f(end)} ${f(x + r)},${f(end)}`
     + `H${f(x2 - r)}Q${f(x2)},${f(end)} ${f(x2)},${f(end + toward * r)}V${f(base)}Z`;
