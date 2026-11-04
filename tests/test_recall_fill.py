@@ -102,29 +102,66 @@ def test_fill_words_reads_the_chats_once_a_day(home, monkeypatch):
 
 async def test_fill_words_runs_with_no_vault(store, home, monkeypatch):
     from odie.recall.fill import recall_index
+    from odie.recall.index import RecallIndex
     from odie.vault import settings
     from odie.vault.worker import VaultWorker
     yesterday = datetime.now(ZoneInfo(home.timezone)) - timedelta(days=1)
+    chat_title = f"chat {yesterday.date().isoformat()}"
     write_chats(home, [("chat-1", yesterday.timestamp(), "user", "Remind me about the invoice")])
     write_memories(home)
-    monkeypatch.setattr(settings, "index_for", lambda s: None)  # no notes folder, photos off
+    assert settings.get(store)["dir"] is None  # no notes folder, and photos are off by default
     monkeypatch.setattr(settings, "embedder_and_reason", lambda s: (None, ""))
     w = VaultWorker(store)
     await w.run_once()
+    assert settings.index_for(store) is None  # recall's rows alone aren't a notes or photos index
     ix = recall_index()
-    assert [h.title for h in ix.keyword("invoice")] == [f"chat {yesterday.date().isoformat()}"]
+    assert [h.title for h in ix.keyword("invoice")] == [chat_title]
     assert [h.title for h in ix.keyword("rent")] == ["Rent day"]
     assert w.progress()["error"] == "" and w.progress()["running"] is False
 
-    # With an embedder, recall is read by meaning on the same schedule, still with no vault.
+    # With an embedder, recall is read by meaning on the same schedule, through the no-vault path.
+    steps = []
+    real_adopt, real_embed = RecallIndex.adopt_model, RecallIndex.embed_pending
+
+    def adopt(self, embedder):
+        steps.append(("adopt", embedder.name))
+        return real_adopt(self, embedder)
+
+    async def embed(self, embedder, batch=32, progress=None):
+        steps.append(("embed", embedder.name))
+        return await real_embed(self, embedder, batch=batch, progress=progress)
+    monkeypatch.setattr(RecallIndex, "adopt_model", adopt)
+    monkeypatch.setattr(RecallIndex, "embed_pending", embed)
     embedder = FakeEmbedder()
     monkeypatch.setattr(settings, "embedder_and_reason", lambda s: (embedder, ""))
     await w.run_once()
-    assert {d["title"] for d in embedder.documents} == {f"chat {yesterday.date().isoformat()}", "Rent day"}
+    assert steps == [("adopt", "fake:words"), ("embed", "fake:words")]
+    assert {d["title"] for d in embedder.documents} == {chat_title, "Rent day"}
     hits = await ix.search("invoice", embedder=embedder)
-    assert hits[0].title.startswith("chat ") and w.last_embedded()
+    assert hits[0].title == chat_title and w.last_embedded()
     await w.run_once()  # a keyword pass a moment later: not due, nothing embedded again
-    assert len(embedder.documents) == 2
+    assert len(embedder.documents) == 2 and len(steps) == 2
+
+    # Another model: recall drops its old vectors and reads everything again with the new one.
+    other = FakeEmbedder(name="fake:other")
+    monkeypatch.setattr(settings, "embedder_and_reason", lambda s: (other, ""))
+    w.kick()
+    await w.run_once()
+    assert steps[2:] == [("adopt", "fake:other"), ("embed", "fake:other")]
+    assert {d["title"] for d in other.documents} == {chat_title, "Rent day"}
+    assert settings.index_for(store) is None
+
+
+async def test_a_home_with_only_recall_still_has_no_notes_index(store, home):
+    from odie.recall.fill import fill_words, recall_index
+    from odie.vault import settings
+    from odie.vault.tools import make_vault_tools
+    write_memories(home)
+    fill_words(recall_index(), datetime.now(ZoneInfo(home.timezone)))
+    assert (home.data_dir / "odie-index.db").is_file()
+    assert settings.index_for(store) is None
+    search = next(t for t in make_vault_tools(store) if t.name == "search_everything").func
+    assert await search(query="rent") == "Neither notes nor photos are set up."
 
 
 async def test_the_meaning_pass_embeds_recall_after_notes(store, home, tmp_path, monkeypatch):

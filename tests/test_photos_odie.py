@@ -187,8 +187,7 @@ async def test_the_worker_reads_the_library_when_photos_are_on(store, library):
     from odie.vault.worker import VaultWorker
     w = VaultWorker(store)
     await w.run_once()
-    # off: nothing read. The index file is there all the same (recall keeps past chats and memories in it), with no photos.
-    assert library["calls"] == [] and vault_settings.index_for(store).status()["photos"] == 0
+    assert vault_settings.index_for(store) is None and library["calls"] == []  # off: nothing read, no index
     settings.put(store, on=True)
     await w.run_once()
     assert library["calls"] == [False]
