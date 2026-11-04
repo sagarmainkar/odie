@@ -10,13 +10,14 @@ from odie.morning.gather import MorningInputs
 CARD_KEYS = ("greeting", "accent", "emoji", "say", "tiles", "nudge", "mail", "recent", "chips", "summary")
 SUMMARY_CHARS = 3_500
 EMOJI_CHARS = 2
-SAY_MOST, SAY_CHARS = 2, 600
+SAY_MOST, SAY_CHARS = 2, 900
 TILES_MOST, TILE_VALUE_CHARS = 4, 30
 MAIL_MOST = 6
 RECENT_MOST = 5
 RECENT_STATES = ("done", "stuck", "open")
 CHIPS_MOST, CHIP_CHARS = 4, 40
 TASK_PREFIX_RE = re.compile(r"^#\d+ \[[^\]]*\] ")  # "#3 [todo] " before a task's title (jobs.brief.format_tasks)
+SENTENCE_END_RE = re.compile(r"[.!?…](?=\s)")  # a sentence's last mark, with a space or newline after it
 
 
 def plain(value) -> str:
@@ -41,15 +42,28 @@ def checked_accent(accent: str, greeting: str) -> str:
     return ""
 
 
+def within_say_chars(paragraph: str) -> str:
+    """A paragraph of at most SAY_CHARS: as it is when it fits, else cut after its last sentence that ends within
+    SAY_CHARS; "" when no sentence ends there. 890 characters -> as it is; 989 characters of 33-character sentences ->
+    the first 27 sentences (890 characters); 950 characters with no full stop -> ""."""
+    if len(paragraph) <= SAY_CHARS:
+        return paragraph
+    ends = [m.end() for m in SENTENCE_END_RE.finditer(paragraph[:SAY_CHARS + 1])]  # +1: the space after a last mark
+    if not ends:
+        return ""
+    return paragraph[:ends[-1]]
+
+
 def checked_say(value) -> list[str]:
-    """Odie's one or two paragraphs. A plain string counts as one; a paragraph over SAY_CHARS, or not text, is dropped.
-    ["How was it?", 7] -> ["How was it?"]; "How was it?" -> ["How was it?"]; ["x" * 601] -> []."""
+    """Odie's one or two paragraphs. A plain string counts as one; a paragraph over SAY_CHARS is cut at a sentence
+    end (within_say_chars); one that is not text is dropped.
+    ["How was it?", 7] -> ["How was it?"]; "How was it?" -> ["How was it?"]; ["x" * 950] -> []."""
     if isinstance(value, str):
         value = [value]
     if not isinstance(value, list):
         return []
-    paragraphs = [plain(p) for p in value]
-    kept = [p for p in paragraphs if p and len(p) <= SAY_CHARS]
+    paragraphs = [within_say_chars(plain(p)) for p in value]
+    kept = [p for p in paragraphs if p]
     return kept[:SAY_MOST]
 
 
@@ -135,15 +149,19 @@ def checked(raw) -> dict | None:
 
 
 # ── the fallback ──
+def part_of_day(hour: int) -> str:
+    """The part of the day an hour is in, for the greeting: 7 -> "morning"; 15 -> "afternoon"; 19 -> "evening"."""
+    if hour < 12:
+        return "morning"
+    if hour < 17:
+        return "afternoon"
+    return "evening"
+
+
 def greeting_for(now: datetime, user: str) -> str:
     """The plain greeting, from the hour. 07:30, "Asha" -> "Good morning, Asha."; 14:00, "" -> "Good afternoon.";
     19:00, "" -> "Good evening."."""
-    if now.hour < 12:
-        words = "Good morning"
-    elif now.hour < 17:
-        words = "Good afternoon"
-    else:
-        words = "Good evening"
+    words = f"Good {part_of_day(now.hour)}"
     if user:
         return f"{words}, {user}."
     return f"{words}."
