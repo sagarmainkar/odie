@@ -50,3 +50,15 @@ export function creativityLabel(temperature: number): string {
   if (temperature > 0.9) word = "inventive";
   return `${temperature.toFixed(1)} · ${word}`;
 }
+
+export type SmallSel = { provider: string | null; model: string | null; chosen: boolean; auto: boolean };
+
+/** What the Brain screen says under "Small model for Workers":
+ *    {model: "lfm3:latest", auto: true}  -> "lfm3:latest · picked by Odie (Ollama had it)"
+ *    {model: "lfm3:latest", chosen: true} -> "lfm3:latest · your pick"
+ *    {model: null}                        -> "Same as the chat model · pick a small local one below" */
+export function smallModelLine(sel: SmallSel, providerName: (id: string) => string): string {
+  if (!sel.model || !sel.provider) return "Same as the chat model · pick a small local one below";
+  if (sel.auto) return `${sel.model} · picked by Odie (${providerName(sel.provider)} had it)`;
+  return `${sel.model} · your pick`;
+}

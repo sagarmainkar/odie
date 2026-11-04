@@ -30,7 +30,8 @@ class WorkerKind:
     tools(store, job): the tools the Worker gets, besides report. Fixed by the kind, never by the job.
     budget_seconds: wall time the Worker gets before it is stopped and the job fails.
     max_llm_calls: model calls one message may lead to (a model looping on a tool runs out and the job fails).
-    model_slot: which chosen model runs it (odie.models.resolve_selection's slot); "chat" is the user's chat model."""
+    model_slot: "chat" runs on the user's main model (coding, anything heavy); "small" on the small model for Workers
+    from Settings → Brain when one is chosen (a reporter, later the watch and mail), else on the main model."""
     name: str
     word: str
     instruction: str
@@ -66,6 +67,6 @@ what matters; when nothing changed, say so in one line.
 TASK = WorkerKind(name="task", word="task", instruction=TASK_INSTRUCTION, tools=task_tools)
 # The reporter runs again every so often (the Router keeps the schedule); each run is short.
 REPORTER = WorkerKind(name="reporter", word="report", instruction=REPORTER_INSTRUCTION, tools=task_tools,
-                      budget_seconds=10 * 60, max_llm_calls=40)
+                      budget_seconds=10 * 60, max_llm_calls=40, model_slot="small")
 
 KINDS: dict[str, WorkerKind] = {TASK.name: TASK, REPORTER.name: REPORTER}

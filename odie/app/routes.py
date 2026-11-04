@@ -2162,7 +2162,14 @@ async def models_get(request: Request):
     reachable = row is not None and row["error"] is None
     chat = {"provider": r.provider.id, "model": r.model, "leaves_mini": r.leaves_mini,
             "chosen": brain_chosen(store), "reachable": reachable}
-    return {"providers": listed, "selection": {"chat": chat}, "creativity": _creativity(store)}
+    selection = {"chat": chat}
+    from odie import workers
+    if workers.enabled():  # the spike's small model for Workers: the pick, Odie's own, or none (the chat model then)
+        from odie.workers.worker import small_model_chosen
+        small = small_model_chosen(store)
+        selection["workers"] = {"provider": small["provider"], "model": small["model"], "chosen": not small["auto"],
+                                "auto": small["auto"]} if small else {"provider": None, "model": None, "chosen": False, "auto": False}
+    return {"providers": listed, "selection": selection, "creativity": _creativity(store)}
 
 
 class CreativityIn(BaseModel):
@@ -2190,12 +2197,16 @@ async def models_usage(request: Request):
 @router.put("/models/selection")
 async def models_select(body: SelectionIn, request: Request):
     store = request.app.state.store
-    if body.slot != "chat":
+    from odie import workers
+    slots = {"chat", "workers"} if workers.enabled() else {"chat"}
+    if body.slot not in slots:
         raise HTTPException(422, "There's one model now: slot is chat.")
     if body.provider not in {p.id for p in all_providers(store)}:
         raise HTTPException(404, "unknown provider")
     store.set_setting(f"model.{body.slot}", {"provider": body.provider, "model": body.model})
     store.audit("user", "model_selected", result_summary=f"{body.slot}: {body.provider}/{body.model}")
+    if body.slot == "workers":
+        return {"ok": True, "slot": "workers", "provider": body.provider, "model": body.model}
     apply = getattr(request.app.state.runner, "apply_model_selection", None)
     if apply:
         apply()

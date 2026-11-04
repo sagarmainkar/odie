@@ -3,13 +3,14 @@ import type { ReactNode } from "react";
 import { getJSON, postJSON } from "../api";
 import { badge, brainState, partLine, said, tone, type BrainReport } from "../brain";
 import { Collapse } from "../components/Collapse";
-import { addressHint, creativityLabel, visibleModels, type Creativity } from "../providers";
+import { addressHint, creativityLabel, smallModelLine, visibleModels, type Creativity, type SmallSel } from "../providers";
 import { usageLine, type Usage } from "../usage";
 
 type ModelRow = { id: string; local: boolean };
 type ProviderRow = { id: string; name: string; local: boolean; models: ModelRow[]; error: string | null; base_url?: string; base_url_env?: string | null };
 type Sel = { provider: string; model: string; leaves_mini: boolean; chosen?: boolean; reachable?: boolean };
-type Data = { providers: ProviderRow[]; selection: { chat: Sel }; creativity?: Creativity };
+type Data = { providers: ProviderRow[]; selection: { chat: Sel; workers?: SmallSel }; creativity?: Creativity };
+type Slot = "chat" | "workers";
 
 function Pill({ local, children }: { local: boolean; children?: ReactNode }) {
   return <span className={`chip ${local ? "chip-good" : "chip-warn"}`}>{children ?? (local ? "on this computer" : "leaves this computer")}</span>;
@@ -74,6 +75,7 @@ export function Brain() {
   const [checks, setChecks] = useState<Record<string, BrainReport>>({});
   const [checking, setChecking] = useState(false);
   const [usage, setUsage] = useState<Usage | null>(null);
+  const [slot, setSlot] = useState<Slot>("chat");  // which model a tap below chooses: the chat's, or the Workers' small one
   const load = useCallback(() => {
     setFailed(false);
     getJSON<Data>("/api/models").then(setData).catch(() => setFailed(true));
@@ -95,11 +97,14 @@ export function Brain() {
   async function choose(provider: string, model: string) {
     setBusy(`${provider}/${model}`);
     try {
-      const r = await fetch("/api/models/selection", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ slot: "chat", provider, model }) });
+      const r = await fetch("/api/models/selection", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ slot, provider, model }) });
       if (r.ok) load();
     } finally { setBusy(null); }
   }
   const current = data?.selection.chat;
+  const small = data?.selection.workers;  // only while Workers are switched on
+  // the model the list marks: the chat's, or the Workers' small one when that is what a tap chooses
+  const marked = slot === "workers" ? { provider: small?.provider ?? undefined, model: small?.model ?? undefined } : { provider: current?.provider, model: current?.model };
   const state = brainState(current?.chosen, current?.reachable);
   const providerName = (id: string) => data?.providers.find((p) => p.id === id)?.name ?? id;
 
@@ -136,6 +141,20 @@ export function Brain() {
         </div>
       )}
 
+      {small && (
+        <div className="glass rounded-[26px] p-4 flex flex-col gap-1">
+          <div className="text-[13px] leading-5 font-bold text-muted">Small model for Workers</div>
+          <div className="text-[15px] leading-5">{smallModelLine(small, providerName)}</div>
+          <div className="text-[13px] leading-[18px] text-muted">Trackers and checks run on it; coding and heavy jobs stay on the chat model.</div>
+          <div className="flex gap-2 pt-2" role="radiogroup" aria-label="A tap below chooses the model for">
+            {(["chat", "workers"] as Slot[]).map((s) => (
+              <button key={s} role="radio" aria-checked={slot === s} onClick={() => setSlot(s)}
+                className={`pill h-9 px-4 text-[14px] ${slot === s ? "bg-iris text-white" : ""}`}>{s === "chat" ? "Chat" : "Workers"}</button>
+            ))}
+          </div>
+        </div>
+      )}
+
       {data?.creativity && <CreativityCard key={data.creativity.value} creativity={data.creativity} isClaude={current?.provider === "anthropic"} />}
 
       {!data && !failed && [0, 1].map((k) => (
@@ -151,16 +170,16 @@ export function Brain() {
       {failed && <div className="text-[14px] text-muted">Couldn't reach the server. <button onClick={load} className="text-ember-text font-medium">Retry</button></div>}
 
       {data?.providers.map((p) => {
-        const { shown, hidden } = visibleModels(p.models, query, expanded[p.id] ? Infinity : 12, current?.provider === p.id ? current.model : undefined);
+        const { shown, hidden } = visibleModels(p.models, query, expanded[p.id] ? Infinity : 12, marked.provider === p.id ? marked.model : undefined);
         if (query.trim() && shown.length === 0) return null;
         return (
-        <Collapse key={`${p.id}-${query.trim() ? "q" : ""}`} title={p.name} defaultOpen={!!query.trim() || current?.provider === p.id}
+        <Collapse key={`${p.id}-${query.trim() ? "q" : ""}`} title={p.name} defaultOpen={!!query.trim() || marked.provider === p.id}
           summary={p.error ? <span>not reachable</span> : <><span>{p.models.length} model{p.models.length === 1 ? "" : "s"}</span><Pill local={p.local} /></>}>
           <div className="glass rounded-[26px] overflow-hidden">
             {p.error && <div className="px-4 py-2 text-[14px] text-muted flex items-center justify-between">Not reachable <button onClick={load} className="h-10 px-3 -mr-3 text-ember-text font-medium">Retry</button></div>}
             {!p.error && p.models.length === 0 && <div className="px-4 py-3 text-[14px] text-muted">No chat models listed</div>}
             {shown.map((m, i) => {
-              const on = current?.provider === p.id && current?.model === m.id;
+              const on = marked.provider === p.id && marked.model === m.id;
               const isBusy = busy === `${p.id}/${m.id}`;
               return (
                 <button key={m.id} onClick={() => choose(p.id, m.id)} disabled={busy !== null}

@@ -165,18 +165,66 @@ async def tell(store: Store, runner, job: Job, text: str, media: list[dict]) -> 
         log.warning("push failed for %s", job.id, exc_info=True)
 
 
-MODEL_SETTING = "workers.model.{kind}"  # {"provider": "lmstudio", "model": "google/gemma-4-12b-qat"}: this kind's own model
+SMALL_MODEL_SETTING = "model.workers"       # {"provider": "ollama", "model": "lfm3:latest"}: the user's pick in Settings → Brain
+SMALL_MODEL_AUTO = "model.workers.auto"     # the same shape, what Odie picked itself when nothing is chosen (lfm3 on Ollama)
+SMALL_MODEL_PREFIXES = ("lfm3", "lfm2")     # what Odie picks on its own, in order of preference
+_auto_checked = False
+
+
+def small_model_chosen(store: Store) -> dict | None:
+    """The small model for Workers: the user's pick, else Odie's own (auto), else None (the light kinds then run on
+    the chat model). A pick whose provider is gone counts as none."""
+    from odie.models import all_providers
+    providers = {p.id for p in all_providers(store)}
+    for key in (SMALL_MODEL_SETTING, SMALL_MODEL_AUTO):
+        chosen = store.get_setting(key)
+        if chosen and chosen.get("provider") in providers and chosen.get("model"):
+            return {"provider": chosen["provider"], "model": chosen["model"], "auto": key == SMALL_MODEL_AUTO}
+    return None
+
+
+def pick_small_model(listing: list[dict]) -> dict | None:
+    """Odie's own pick from the local providers' lists: the first Ollama model whose name starts with lfm3, else lfm2;
+    none -> None. [{"id": "ollama", "models": [{"id": "phonon:latest"}, {"id": "lfm3:latest"}]}] -> ollama/lfm3:latest."""
+    ollama = next((p for p in listing if p.get("id") == "ollama"), None)
+    if not ollama:
+        return None
+    ids = [m["id"] for m in ollama.get("models", [])]
+    for prefix in SMALL_MODEL_PREFIXES:
+        for mid in ids:
+            if mid.startswith(prefix):
+                return {"provider": "ollama", "model": mid}
+    return None
+
+
+async def ensure_small_model(store: Store, transport=None) -> None:
+    """Once per process, when the user hasn't chosen one: ask Ollama what it has and save Odie's own pick (or clear a
+    stale one). Never raises: a provider that doesn't answer leaves the light kinds on the chat model."""
+    global _auto_checked
+    if _auto_checked or store.get_setting(SMALL_MODEL_SETTING):
+        return
+    _auto_checked = True
+    from odie.models import ask_local_providers
+    try:
+        picked = pick_small_model(await ask_local_providers(transport))
+    except Exception:  # noqa: BLE001
+        log.warning("couldn't ask the local providers for a small model", exc_info=True)
+        return
+    if picked != store.get_setting(SMALL_MODEL_AUTO):
+        store.set_setting(SMALL_MODEL_AUTO, picked)
+        log.info("small model for Workers: %s", f"{picked['provider']}/{picked['model']}" if picked else "none found")
 
 
 def selection_for_kind(store: Store, kind: WorkerKind):
-    """Which model a kind's Worker runs on: the kind's own, when the setting workers.model.<kind> names a provider Odie
-    knows, else the chat's model. Example: {"provider": "ollama", "model": "lfm3"} for reporter -> Ollama's lfm3;
-    nothing saved, or a provider that is gone -> the chat's model."""
+    """Which model a kind's Worker runs on: a kind on the "small" slot gets the small model (small_model_chosen) when
+    there is one, else the chat's; a kind on the "chat" slot always gets the chat's.
+      reporter, small model ollama/lfm3 chosen -> lfm3;  reporter, none chosen -> the chat's;  task -> the chat's."""
     from odie.models import Selection, all_providers, resolve_selection
-    chosen = store.get_setting(MODEL_SETTING.format(kind=kind.name))
-    providers = {p.id: p for p in all_providers(store)}
-    if chosen and chosen.get("provider") in providers and chosen.get("model"):
-        return Selection(providers[chosen["provider"]], chosen["model"], "chat")
+    if kind.model_slot == "small":
+        chosen = small_model_chosen(store)
+        if chosen:
+            providers = {p.id: p for p in all_providers(store)}
+            return Selection(providers[chosen["provider"]], chosen["model"], "chat")
     return resolve_selection(store, "chat")
 
 
@@ -193,6 +241,7 @@ async def run(job: Job, store: Store, runner, kind: WorkerKind | None = None, mo
     kind = kind or KINDS[job.kind]
     s = config.settings
     if model is None:
+        await ensure_small_model(store)
         model = model_for_kind(store, kind)
     tz = ZoneInfo(s.timezone)
     now = datetime.now(tz).strftime("%A %d %B %Y, %H:%M")

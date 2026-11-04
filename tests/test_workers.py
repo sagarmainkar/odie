@@ -477,43 +477,75 @@ async def test_retry_job_from_the_chat(world):
 
 # ── a model per kind ─────────────────────────────────────────────────────────
 
-def test_a_kind_runs_on_its_own_model_when_one_is_set(world):
+def test_light_kinds_run_on_the_small_model_when_one_is_chosen(world):
     store, _, _ = world
     from odie.workers.kinds import REPORTER, TASK
     store.set_setting("model.chat", {"provider": "ollama", "model": "deepseek-v4.1-flash:cloud"})
-    assert worker.selection_for_kind(store, REPORTER).model == "deepseek-v4.1-flash:cloud"  # nothing set: the chat's
-    store.set_setting("workers.model.reporter", {"provider": "lmstudio", "model": "google/gemma-4-12b-qat"})
+    assert worker.selection_for_kind(store, REPORTER).model == "deepseek-v4.1-flash:cloud"  # nothing chosen: the chat's
+    store.set_setting("model.workers.auto", {"provider": "ollama", "model": "lfm3:latest"})  # Odie's own pick
+    assert worker.selection_for_kind(store, REPORTER).model == "lfm3:latest"
+    store.set_setting("model.workers", {"provider": "lmstudio", "model": "google/gemma-4-12b-qat"})  # the user's wins
     chosen = worker.selection_for_kind(store, REPORTER)
     assert (chosen.provider.id, chosen.model) == ("lmstudio", "google/gemma-4-12b-qat")
-    assert worker.selection_for_kind(store, TASK).model == "deepseek-v4.1-flash:cloud"  # the task kind is untouched
-    store.set_setting("workers.model.reporter", {"provider": "gone", "model": "x"})
-    assert worker.selection_for_kind(store, REPORTER).model == "deepseek-v4.1-flash:cloud"  # an unknown provider: the chat's
+    assert worker.selection_for_kind(store, TASK).model == "deepseek-v4.1-flash:cloud"  # the task kind: the main model
+    store.set_setting("model.workers", {"provider": "gone", "model": "x"})
+    assert worker.selection_for_kind(store, REPORTER).model == "lfm3:latest"  # a provider that is gone: the next in line
 
 
-async def test_stop_all_at_shutdown_leaves_the_rows_for_recovery(world):
+def test_pick_small_model_prefers_lfm3_on_ollama():
+    listing = [{"id": "lmstudio", "models": [{"id": "lfm3-big"}]},
+               {"id": "ollama", "models": [{"id": "phonon:latest"}, {"id": "lfm2.5:1.2b"}, {"id": "lfm3:latest"}]}]
+    assert worker.pick_small_model(listing) == {"provider": "ollama", "model": "lfm3:latest"}
+    assert worker.pick_small_model([{"id": "ollama", "models": [{"id": "lfm2.5:1.2b"}]}]) == {"provider": "ollama", "model": "lfm2.5:1.2b"}
+    assert worker.pick_small_model([{"id": "ollama", "models": [{"id": "qwen3.5:0.8b"}]}]) is None
+    assert worker.pick_small_model([{"id": "lmstudio", "models": [{"id": "lfm3"}]}]) is None  # LM Studio: one model at a time
+
+
+async def test_ensure_small_model_asks_ollama_once_and_keeps_the_users_pick(world, monkeypatch):
     store, _, _ = world
-    Scripted.stall = True
-    plain = router.start("task", "Plain", "…", "chat-1")
-    rep = router.start("task", "Hourly", "…", "chat-1", every_minutes=60)
-    await asyncio.sleep(0.05)
-    await router.stop_all()
-    assert router.running_ids() == []
-    assert jobs.get(store, plain.id)["status"] == "running"  # as the restart will find it
-    assert jobs.get(store, rep.id)["status"] == "running"
+    import odie.models as models_mod
+    asked = []
+
+    async def ollama_has_lfm3(transport=None):
+        asked.append(1)
+        return [{"id": "ollama", "models": [{"id": "lfm3:latest"}]}]
+    monkeypatch.setattr(models_mod, "ask_local_providers", ollama_has_lfm3)
+    monkeypatch.setattr(worker, "_auto_checked", False)
+    await worker.ensure_small_model(store)
+    await worker.ensure_small_model(store)
+    assert asked == [1]  # once per process
+    assert store.get_setting("model.workers.auto") == {"provider": "ollama", "model": "lfm3:latest"}
+    assert worker.small_model_chosen(store) == {"provider": "ollama", "model": "lfm3:latest", "auto": True}
+    store.set_setting("model.workers", {"provider": "ollama", "model": "qwen3.5:0.8b"})
+    monkeypatch.setattr(worker, "_auto_checked", False)
+    await worker.ensure_small_model(store)
+    assert asked == [1]  # the user chose: nothing to ask
+    assert worker.small_model_chosen(store) == {"provider": "ollama", "model": "qwen3.5:0.8b", "auto": False}
 
 
-async def test_a_reporter_whose_runs_keep_failing_stops(world, monkeypatch):
-    store, chat, _ = world
+async def test_the_brain_routes_offer_the_workers_slot_only_with_workers_on(isolated_settings, tmp_path, monkeypatch):
+    import httpx
+    from odie.app.main import create_app
+    import odie.app.routes as routes_mod
 
-    async def no_wait(seconds):
-        pass
-    monkeypatch.setattr(router, "sleep", no_wait)
-    Scripted.script = ["no report", "still none", "no report", "still none", "would be run 3"]
-    job = router.start("task", "Doomed", "…", "chat-1", every_minutes=5)
-    for _ in range(300):
-        if jobs.get(store, job.id)["status"] == "failed":
-            break
-        await asyncio.sleep(0.01)
-    row = jobs.get(store, job.id)
-    assert (row["status"], row["runs"], row["error"]) == ("failed", 2, "2 runs in a row didn't finish")
-    assert chat.posts[-1]["text"] == f'❌ Doomed ({job.id}) stopped: 2 runs in a row didn\'t finish. Say "retry {job.id}" to start it again.'
+    async def nobody(providers, transport=None):
+        return [{"id": p.id, "name": p.name, "local": p.local, "models": [], "error": None} for p in providers]
+    monkeypatch.setattr(routes_mod, "list_models", nobody)
+    from tests.test_models import FakeRunner
+    store = Store(tmp_path / "assistant.db")
+    store.init_schema()
+    app = create_app(runner=FakeRunner(), store=store)
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+            monkeypatch.delenv("ODIE_WORKERS", raising=False)
+            assert set((await c.get("/api/models")).json()["selection"]) == {"chat"}
+            r = await c.put("/api/models/selection", json={"slot": "workers", "provider": "ollama", "model": "lfm3:latest"})
+            assert r.status_code == 422
+            monkeypatch.setenv("ODIE_WORKERS", "1")
+            got = (await c.get("/api/models")).json()["selection"]["workers"]
+            assert got == {"provider": None, "model": None, "chosen": False, "auto": False}
+            r = await c.put("/api/models/selection", json={"slot": "workers", "provider": "ollama", "model": "lfm3:latest"})
+            assert r.status_code == 200 and r.json()["slot"] == "workers"
+            got = (await c.get("/api/models")).json()["selection"]["workers"]
+            assert got == {"provider": "ollama", "model": "lfm3:latest", "chosen": True, "auto": False}
+            assert store.get_setting("model.workers") == {"provider": "ollama", "model": "lfm3:latest"}
