@@ -18,6 +18,7 @@ from sse_starlette.sse import EventSourceResponse
 from odie import config, devices, persona, qr
 from odie.models import (PRESET_BY_ID, PRESETS, Provider, all_providers, auth_headers, brain_chosen, custom_key_name,
                          list_models, preset_base_url, refresh_fallback, resolve_selection, slug)
+from odie.morning.round import hello_due, hello_for, morning_day, morning_round, round_running
 from odie.photos.library import PHOTO_UUID
 from odie.secrets import remove_secret, save_secret
 from odie.store.db import approval_dict as _approval_dict
@@ -2076,6 +2077,46 @@ async def brief_run(request: Request):
     from odie.jobs.brief import run_brief
     text = await run_brief(request.app.state.store, datetime.now(ZoneInfo(config.settings.timezone)), push=False)  # The user is looking at it
     return {"text": text}
+
+
+# --- Morning hello ---
+_morning_tasks: set[asyncio.Task] = set()  # rounds this route started; held here so they aren't garbage-collected
+
+
+def morning_now():
+    """The clock the morning route reads (tests replace it): now, in the owner's time zone."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    return datetime.now(ZoneInfo(config.settings.timezone))
+
+
+def start_morning_round(request: Request, now) -> None:
+    task = asyncio.create_task(morning_round(request.app.state.store, now, runner=request.app.state.runner, push=True))
+    _morning_tasks.add(task)
+    task.add_done_callback(_morning_tasks.discard)
+
+
+@router.get("/morning")
+async def morning_get(request: Request):
+    """Today's hello for the web card and the Mac app: {"state": "ready" | "making" | "none", "day", "card"}.
+    A saved hello -> ready, with its card (the summary is for chats, not sent). Before 05:00 with none saved, or no
+    chat model chosen -> none. Otherwise a round is running or this call starts one -> making; the page asks again.
+    Two calls while the hello is due start one round: the second sees the first's task still in `_morning_tasks`."""
+    store = request.app.state.store
+    now = morning_now()
+    day = morning_day(now)
+
+    hello = hello_for(store, day)
+    if hello is not None:
+        card = {key: value for key, value in hello["card"].items() if key != "summary"}
+        return {"state": "ready", "day": day, "card": card}
+
+    if not hello_due(store, now) or not brain_chosen(store):
+        return {"state": "none", "day": day, "card": None}
+
+    if not round_running() and not _morning_tasks:
+        start_morning_round(request, now)
+    return {"state": "making", "day": day, "card": None}
 
 
 # --- Approvals ---

@@ -73,9 +73,15 @@ def todays_brief_text(store: Store, now: datetime) -> str:
     return row["text"]
 
 
+def round_running() -> bool:
+    """Whether a morning round is running right now (the web shows "making" while it is). A round holding the lock ->
+    True; the lock free (no round, or the last one finished) -> False."""
+    return _round_lock.locked()
+
+
 async def morning_round(store: Store, now: datetime, runner=None, push: bool = True) -> None:
     """The brief when it's due, then today's hello when it's due; a second call while one runs returns at once."""
-    if _round_lock.locked():
+    if round_running():
         log.info("morning: a round is already running")
         return
     async with _round_lock:
