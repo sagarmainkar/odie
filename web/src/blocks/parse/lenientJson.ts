@@ -1,18 +1,20 @@
-// A fence's JSON as models write it. Most fences are plain JSON. When one isn't, two slips seen in real replies are
+// A fence's JSON as models write it. Most fences are plain JSON. When one isn't, three slips seen in real replies are
 // mended and the text is read again; nothing else is guessed, so a fence that still isn't JSON stays unread (and the
 // chat shows "Couldn't draw this", as before). Each mend touches only spots that can't be valid JSON, so a fence that
 // already reads is never changed.
 
 /**
  * The text read as JSON, or undefined when it isn't JSON even after mending. Tries, in order: the text as written,
- * each mend on its own, then both together.
+ * each string or number mend on its own, both together, then each of those again with stray commas dropped.
  *   '{"data": [1, 2]}'                         → {data: [1, 2]}            (as written)
  *   '{"data": [37,846,000, 27,950,000]}'       → {data: [37846000, 27950000]}
  *   '[{"text": "Jacket (warm!), "checked": false}]' → [{text: "Jacket (warm!)", checked: false}]
+ *   '{"series": [{"data": [1, 2]}, ]}'         → {series: [{data: [1, 2]}]}
  *   '[{"type": "table"'                        → undefined                  (cut off: still streaming in)
  */
 export function readJson(text: string): unknown {
-  const tries = [text, closeUnclosedStrings(text), joinThousands(text), joinThousands(closeUnclosedStrings(text))];
+  const mended = [text, closeUnclosedStrings(text), joinThousands(text), joinThousands(closeUnclosedStrings(text))];
+  const tries = [...mended, ...mended.map(dropStrayCommas)];
   for (const attempt of tries) {
     try {
       return JSON.parse(attempt);
@@ -55,17 +57,40 @@ export function joinThousands(text: string): string {
   const outside = text.split(STRING);
   const hasThousands = outside.some((part) => [...part.matchAll(THOUSANDS)].some((m) => startsAGroupWithZero(m[0])));
   if (!hasThousands) return text;
+  return outsideStrings(text, (part) => part.replace(THOUSANDS, (n) => n.replaceAll(",", "")));
+}
 
+/**
+ * The text with `mend` applied to every stretch outside its strings; the strings themselves are put back untouched.
+ *   outsideStrings('{"t": "a, ]", "n": [1, ]}', drop stray commas) → '{"t": "a, ]", "n": [1]}'
+ */
+function outsideStrings(text: string, mend: (part: string) => string): string {
+  const outside = text.split(STRING);
   const strings = text.match(STRING) ?? [];
-  const joined: string[] = [];
+  const mended: string[] = [];
   outside.forEach((part, i) => {
-    joined.push(part.replace(THOUSANDS, (n) => n.replaceAll(",", "")));
-    if (i < strings.length) joined.push(strings[i]);
+    mended.push(mend(part));
+    if (i < strings.length) mended.push(strings[i]);
   });
-  return joined.join("");
+  return mended.join("");
 }
 
 /** "37,846,000" → true (the "000" group);  "12,105,230" → false */
 function startsAGroupWithZero(number: string): boolean {
   return number.split(",").slice(1).some((group) => group.startsWith("0"));
+}
+
+// A comma, then only whitespace, then the closing bracket of a list or object. Valid JSON never ends a list or an
+// object with a comma, so this spot is always a slip.
+const STRAY_COMMA = /,\s*([\]}])/g;
+
+/**
+ * Drops a comma left before a closing bracket (DeepSeek V4.1 Flash, retyping the markets tool's chart block:
+ * "series": [{...}, ]). Text inside strings is never touched.
+ *   '{"series": [{"data": [1, 2]}, ], "unit": "pts"}' → '{"series": [{"data": [1, 2]}], "unit": "pts"}'
+ *   '{"text": "one, ] two", "n": [1, ]}'              → '{"text": "one, ] two", "n": [1]}'
+ *   '{"data": [1, 2]}'                                → unchanged
+ */
+export function dropStrayCommas(text: string): string {
+  return outsideStrings(text, (part) => part.replace(STRAY_COMMA, "$1"));
 }

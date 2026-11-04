@@ -5,9 +5,9 @@ import { describe, expect, it } from "vitest";
 import fences from "../testdata/forgive-fences.json";
 import { parseChart } from "../../components/ChartBlock";
 import { readBlocks } from "../parse";
-import { closeUnclosedStrings, joinThousands, readJson } from "./lenientJson";
+import { closeUnclosedStrings, dropStrayCommas, joinThousands, readJson } from "./lenientJson";
 
-const gemmaChat = "gemma", glmChat = "glm", opusChat = "opus", qwenChat = "qwen";
+const gemmaChat = "gemma", glmChat = "glm", opusChat = "opus", qwenChat = "qwen", deepseekChat = "deepseek";
 
 /** The k-th odie-* fence (from 0) of turn n's reply in a saved chat, exactly as the model wrote it (testdata/forgive-fences.json,
  *  cut from the saved chats, which stay private). */
@@ -126,6 +126,7 @@ describe("JSON slips (Gemma 4)", () => {
     expect(readJson(fine)).toEqual(JSON.parse(fine));
     expect(closeUnclosedStrings(fine)).toBe(fine);
     expect(joinThousands(fine)).toBe(fine);
+    expect(dropStrayCommas(fine)).toBe(fine);
   });
   it("joins thousands only outside strings, and only when a group shows it (a group starting with 0)", () => {
     expect(joinThousands('{"t": "₹1,000", "d": [1,000, 2,500]}')).toBe('{"t": "₹1,000", "d": [1000, 2500]}');
@@ -133,5 +134,21 @@ describe("JSON slips (Gemma 4)", () => {
   });
   it("leaves JSON cut off mid-stream unread", () => {
     expect(readJson('[{"type": "checklist", "items": [{"text": "Socks (wool), "checked"')).toBeUndefined();
+  });
+});
+
+describe("JSON slips (DeepSeek V4.1 Flash)", () => {
+  it("draws DeepSeek's Nifty chart, retyped from the markets tool with a comma before the series' closing bracket", () => {
+    const read = readBlocks(fence(deepseekChat, 1))!;
+    expect(read.dropped).toEqual([]);
+    const chart = read.blocks[0] as any;
+    expect(chart.type).toBe("chart");
+    expect(chart.spec.type).toBe("line");
+    expect(chart.spec.series[0].data).toHaveLength(22);
+    expect(chart.spec.series[0].data[21]).toBe(23806.85);
+  });
+  it("drops a comma before ] or } only outside strings", () => {
+    expect(dropStrayCommas('{"a": [1, 2, ], "b": {"c": 3, }, }')).toBe('{"a": [1, 2], "b": {"c": 3}}');
+    expect(dropStrayCommas('{"text": "one, ] two, }", "n": [1, ]}')).toBe('{"text": "one, ] two, }", "n": [1]}');
   });
 });
