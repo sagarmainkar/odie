@@ -121,6 +121,18 @@ class RecallIndex:
                 written += 1
         return written
 
+    def chats_read_until(self) -> float:
+        """The time the chats were last read up to (a local midnight), or 0.0 when they never were."""
+        with self._db() as c:
+            value = self._meta(c).get("recall_chats_until")
+        if value is None:
+            return 0.0
+        return float(value)
+
+    def mark_chats_read_until(self, ts: float) -> None:
+        with self._db() as c:
+            self._set(c, "recall_chats_until", repr(ts))
+
     # ── searching by words ──
     def keyword(self, query: str, k: int = 8, since: str | None = None, until: str | None = None) -> list[RecallHit]:
         """The best word matches, best first, and on equal scores the newest day first. since / until are ISO days
@@ -160,7 +172,8 @@ class RecallIndex:
           passage without a vector, same model   -> embedded (also after the notes' pass cleared every vector)
           index's model is another name          -> nothing embedded, 0: the notes' pass (VaultIndex.embed_pending)
                                                     owns a model switch and clears all vectors, then this one runs again
-          embedder fails                         -> the run stops, meta.embed_error says why, the next run tries again"""
+          embedder fails                         -> the run stops, meta.recall_embed_error says why, the next run
+                                                    tries again (the notes keep their own embed_error, never touched)"""
         with self._db() as c:
             model = self._meta(c).get("model")
             if model is not None and model != embedder.name:
@@ -178,7 +191,7 @@ class RecallIndex:
                 vecs = await embedder.embed(texts)
             except Exception as e:  # noqa: BLE001
                 with self._db() as c:
-                    self._set(c, "embed_error", f"{type(e).__name__}: {e}"[:300])
+                    self._set(c, "recall_embed_error", f"{type(e).__name__}: {e}"[:300])
                 return done
             stored = self._store_vectors([(r["kind"], r["ref"]) for r in rows], vecs)
             done += stored
@@ -187,8 +200,32 @@ class RecallIndex:
             if progress:
                 progress(min(i + batch, len(pending)), len(pending))
         with self._db() as c:
-            self._set(c, "embed_error", None)
+            self._set(c, "recall_embed_error", None)
         return done
+
+    def embed_error(self) -> str | None:
+        """Why recall's last embedding run stopped, or None when it finished (or never ran)."""
+        with self._db() as c:
+            return self._meta(c).get("recall_embed_error")
+
+    def adopt_model(self, embedder) -> bool:
+        """Whether recall had to switch to this embedder's model; when it did, its own old vectors are dropped so the
+        next embed_pending reads every chat and memory again. Only for an index with no notes or photos: with those,
+        the notes' pass (VaultIndex.embed_pending) owns a switch and clears every kind's vectors itself.
+          model "old", embedder "new"   -> True: chat/memory vectors deleted, model "new", dims cleared when no other
+                                           kind's vectors remain (a photo's would keep it)
+          model unset, embedder "new"   -> True: model "new"
+          model "new", embedder "new"   -> False: nothing changes"""
+        with self._db() as c:
+            if self._meta(c).get("model") == embedder.name:
+                return False
+            c.execute("delete from vectors where kind in ('chat', 'memory')")
+            self._set(c, "model", embedder.name)
+            others = c.execute("select count(*) from vectors").fetchone()[0]
+            if others == 0:
+                self._set(c, "dims", None)
+            _bump(c)
+        return True
 
     def _store_vectors(self, keys: list[tuple[str, str]], vecs: list[list[float]]) -> int:
         """Keep these vectors and return how many were kept. The first vector sets the index's vector size; a vector
@@ -199,7 +236,7 @@ class RecallIndex:
             dims = self._meta(c).get("dims")
             for (kind, ref), v in zip(keys, vecs):
                 if dims and int(dims) != len(v):
-                    self._set(c, "embed_error", f"vector size {len(v)} differs from the index's {dims}"[:300])
+                    self._set(c, "recall_embed_error", f"vector size {len(v)} differs from the index's {dims}"[:300])
                     break
                 if not dims:
                     dims = str(len(v))

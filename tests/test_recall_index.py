@@ -187,7 +187,7 @@ async def test_meaning_ranks_by_likeness(tmp_path):
     assert {h.title for h in hits} == {"chat 2026-11-03", "Rent day"}
     assert all(h.score == 1.0 for h in hits)
     assert meta_value(db, "model") == "fake"
-    assert meta_value(db, "embed_error") is None
+    assert meta_value(db, "recall_embed_error") is None
 
 
 async def test_meaning_respects_since_and_until(tmp_path):
@@ -233,11 +233,12 @@ async def test_a_failing_embedder_is_recorded(tmp_path):
     fill(index)
     broken = FakeEmbedder(fail=True)
     assert await index.embed_pending(broken) == 0
-    assert "embedder is down" in meta_value(db, "embed_error")
+    assert "embedder is down" in meta_value(db, "recall_embed_error")
+    assert index.embed_error() == meta_value(db, "recall_embed_error")
     assert [h.title for h in await index.search("invoice", k=3, embedder=broken)] == ["chat 2026-11-03"]
     # The next run, with the embedder back, tries again and clears the error.
     assert await index.embed_pending(FakeEmbedder()) == 4
-    assert meta_value(db, "embed_error") is None
+    assert meta_value(db, "recall_embed_error") is None
 
 
 async def test_vectors_cleared_by_another_pass_are_embedded_again(tmp_path):
@@ -253,3 +254,49 @@ async def test_vectors_cleared_by_another_pass_are_embedded_again(tmp_path):
     assert await index.search("bill payment", k=2, embedder=embedder) == index.keyword("bill payment", k=2)
     assert await index.embed_pending(embedder) == 4
     assert len(await index.search("bill payment", k=2, embedder=embedder)) == 2
+
+
+async def test_recall_never_clears_or_hides_a_notes_failure(tmp_path):
+    index, db = make_index(tmp_path)
+    fill(index)
+    c = sqlite3.connect(db)
+    c.execute("insert into meta values ('embed_error', 'RuntimeError: notes embedder down')")
+    c.commit()
+    c.close()
+    assert await index.embed_pending(FakeEmbedder()) == 4
+    assert meta_value(db, "embed_error") == "RuntimeError: notes embedder down"  # the notes' own, still there
+    assert meta_value(db, "recall_embed_error") is None and index.embed_error() is None
+
+
+async def test_adopting_a_model_drops_only_recalls_vectors(tmp_path):
+    index, db = make_index(tmp_path)
+    fill(index)
+    await index.embed_pending(FakeEmbedder(name="old"))
+    assert index.adopt_model(FakeEmbedder(name="old")) is False  # the same model: nothing to do
+    assert count(db, "select count(*) from vectors") == 4
+
+    c = sqlite3.connect(db)
+    c.execute("insert into vectors values ('photo', 'P1', x'00')")
+    c.commit()
+    c.close()
+    assert index.adopt_model(FakeEmbedder(name="new")) is True
+    assert meta_value(db, "model") == "new"
+    assert count(db, "select count(*) from vectors where kind in ('chat', 'memory')") == 0
+    assert count(db, "select count(*) from vectors where kind='photo'") == 1  # not recall's: left alone
+    assert meta_value(db, "dims") == "3"  # another kind's vectors remain, so their size stays
+
+    c = sqlite3.connect(db)
+    c.execute("delete from vectors")
+    c.commit()
+    c.close()
+    await index.embed_pending(FakeEmbedder(name="new"))
+    assert index.adopt_model(FakeEmbedder(name="newer")) is True
+    assert meta_value(db, "dims") is None  # nothing else left: the next model sets its own size
+    assert await index.embed_pending(FakeEmbedder(name="newer")) == 4
+
+
+def test_the_chats_read_until_mark(tmp_path):
+    index, _ = make_index(tmp_path)
+    assert index.chats_read_until() == 0.0
+    index.mark_chats_read_until(at(4, 0))
+    assert index.chats_read_until() == at(4, 0)
