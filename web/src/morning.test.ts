@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { accentParts, isDayStartChat, isTodaysHello, keepAsking, MORNING_ASK_FOR_MS, shouldShowMorning, weatherTitle, type ChatOnScreen } from "./morning";
+import { accentParts, isDayStartChat, isTodaysHello, keepAsking, MORNING_ASK_FOR_MS, shouldShowJumpButton, shouldShowMorning, weatherTitle, type ChatOnScreen } from "./morning";
 
 describe("the greeting's accent word", () => {
   it("splits the greeting around the word, for the serif italic", () => {
@@ -65,5 +65,22 @@ describe("whose day the hello is", () => {
   it("draws only today's hello, not yesterday's between midnight and five", () => {
     expect(isTodaysHello({ state: "ready", day: "2026-11-04", card: null }, "2026-11-04")).toBe(true);
     expect(isTodaysHello({ state: "ready", day: "2026-11-04", card: null }, "2026-11-05")).toBe(false);  // 01:30 on 5 Nov
+  });
+});
+
+describe("the jump-to-latest button over the morning card", () => {
+  it("stays hidden while the card is all there is: nothing below it to jump to", () => {
+    expect(shouldShowJumpButton(false, true, 0)).toBe(false);  // card showing, no messages, scrolled up
+  });
+
+  it("shows as usual once any message exists, card or not", () => {
+    expect(shouldShowJumpButton(false, true, 3)).toBe(true);  // card showing, 3 messages, scrolled up
+    expect(shouldShowJumpButton(false, false, 0)).toBe(true);  // no card, scrolled up
+    expect(shouldShowJumpButton(false, false, 5)).toBe(true);
+  });
+
+  it("stays hidden whenever the user is already at the latest", () => {
+    expect(shouldShowJumpButton(true, false, 5)).toBe(false);
+    expect(shouldShowJumpButton(true, true, 3)).toBe(false);
   });
 });

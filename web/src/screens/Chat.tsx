@@ -18,7 +18,7 @@ import { Icon as Glyph, Tile } from "../components/Tile";
 import { greetingParts } from "../greeting";
 import { MorningHello } from "../components/MorningCard";
 import { useMorning } from "../useMorning";
-import { chatOnScreen, shouldShowMorning, type MorningReply } from "../morning";
+import { chatOnScreen, shouldShowJumpButton, shouldShowMorning, type MorningReply } from "../morning";
 import { Steps, type Tool } from "../components/Steps";
 import { replyLine, type ReplyUsage } from "../usage";
 import { ToBody } from "../components/ToBody";
@@ -755,7 +755,7 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
             </ChatActions.Provider>
           </main>
           <AnimatePresence>
-            {!atBottom && (
+            {shouldShowJumpButton(atBottom, morningOnTop !== null, msgs.length) && (
               <motion.button initial={{ scale: 0.8, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.8, opacity: 0 }} transition={{ duration: 0.16 }}
                 onClick={jumpToLatest} aria-label="Jump to latest"
                 className="pill absolute right-5 bottom-3 w-10 h-10 px-0">
