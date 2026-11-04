@@ -386,3 +386,70 @@ async def test_mail_found_by_a_search_is_not_marked_seen(store, tmp_path):
     assert (await check.fetcher.open_mail("o1")) is not None  # found mail can still be opened
     check.fetcher.commit()
     assert "o1" not in store.get_setting(fetch.STATE)["seen"] and "g1" in store.get_setting(fetch.STATE)["seen"]
+
+
+async def test_recent_mail_reads_all_mail_not_only_bills(store, tmp_path):
+    from odie.plugins import mcp
+    bill = {"id": "b1", "from": "bills@utility.example", "subject": "Your electricity bill is due on 09-Nov-2026",
+            "date": "2026-10-08T07:00:00Z", "body_plain": "Amount Rs 4,280."}
+    lunch = {"id": "c1", "from": "friend@example.com", "subject": "Lunch tomorrow?", "date": "2026-10-08T08:00:00Z", "body_plain": "Hi"}
+    deck = {"id": "c2", "from": "dev@studio.local", "subject": "The deck", "date": "2026-10-08T08:30:00Z", "body_plain": "Attached."}
+    mcp.write_config({"mymail": spec_for("plain", tmp_path, mail=[bill, lunch, deck])})
+    await sources.detect_and_save(store)
+    f = fetch.Fetcher(store, NOW)
+    got = await f.recent_mail()
+    assert [m.id for m in got] == ["c2", "c1", "b1"]  # newest first, the bill kept among them
+    [args] = [json.loads(line)["args"] for line in (tmp_path / "calls.log").read_text().splitlines()
+              if json.loads(line)["tool"] == "search_emails"]
+    assert args["query"] == f"after:{int((NOW - timedelta(hours=24)).timestamp())}"  # a day back, no bill words
+
+
+async def test_recent_mail_keeps_at_most_the_most_asked_for(store, tmp_path):
+    from odie.plugins import mcp
+    mails = [{"id": f"m{n}", "from": "dev@studio.local", "subject": f"Note {n}", "date": f"2026-10-08T0{n}:00:00Z", "body_plain": "x"}
+             for n in range(1, 6)]
+    mcp.write_config({"mymail": spec_for("plain", tmp_path, mail=mails)})
+    await sources.detect_and_save(store)
+    got = await fetch.Fetcher(store, NOW).recent_mail(most=2)
+    assert [m.id for m in got] == ["m5", "m4"]
+
+
+async def test_recent_mail_marks_nothing_seen(store, tmp_path):
+    from odie.plugins import mcp
+    mcp.write_config({"zapier": spec_for("zapier", tmp_path, mail=ZAP_MAIL, events=EVENTS)})
+    await sources.detect_and_save(store)
+    f = fetch.Fetcher(store, NOW)
+    got = await f.recent_mail()
+    assert {m.id for m in got} == {"m1", "m0"}
+    assert f._mail == {}  # not offered to read_mail as part of a check
+    f.commit()
+    assert not (store.get_setting(fetch.STATE) or {}).get("seen")
+    assert [m.id for m in await fetch.Fetcher(store, NOW).new_mail()] == ["m1", "m0"]  # the next check still sees them as new
+
+
+async def test_recent_mail_skips_a_source_that_fails(store, tmp_path):
+    from odie.plugins import mcp
+    mcp.write_config({"mymail": spec_for("plain", tmp_path, mail=ZAP_MAIL), "gone": {"command": str(tmp_path / "missing")}})
+    await sources.detect_and_save(store)
+    good = sources.saved(store)
+    broken = sources.Source("mail", "gone", "Gone", "plain", "search_emails", {}, query_param="query")
+    store.set_setting(sources.KEY, {**store.get_setting(sources.KEY), "sources": [s.as_dict() for s in [broken, *good]]})
+    f = fetch.Fetcher(store, NOW)
+    assert [m.id for m in await f.recent_mail()] == ["m1", "m0"]
+    assert "mail:gone" not in f.statuses  # a morning read leaves the check's source statuses alone
+
+
+async def test_recent_mail_asks_apple_mail_for_a_day_and_the_most(store, monkeypatch):
+    from odie.mac import native
+    from odie.watch.calls import Result
+    asked = []
+
+    async def fake_call(tool, args):
+        asked.append((tool, args))
+        return Result("[]", False)
+    apple_mail = sources.Source("mail", "mac", "Apple Mail", "native", "mac_mail_new", {})
+    monkeypatch.setattr(fetch, "saved", lambda _store: [apple_mail])
+    monkeypatch.setattr(native, "call", fake_call)
+    await fetch.Fetcher(store, NOW).recent_mail(hours=12, most=7)
+    [(tool, args)] = asked
+    assert tool == "mac_mail_new" and args == {"since": (NOW - timedelta(hours=12)).isoformat(timespec="seconds"), "limit": 7}

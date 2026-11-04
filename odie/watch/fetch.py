@@ -492,17 +492,16 @@ class Fetcher:
         log.info("watch: %d new mails", len(got))
         return got[:MAX_MAIL]
 
-    async def catch_up_mail(self, days: int = bills.CATCH_UP_DAYS) -> list[Mail]:
-        """The last `days` of mail whose subject looks like a bill, a payment or an order, seen or not, newest first,
-        at most bills.CATCH_UP_MOST: the watch's once-only catch-up (bills that came before it knew to look). Each is
-        readable in full with read_mail, like new mail."""
-        since_dt = self.now - timedelta(days=days)
+    async def _mail_since(self, since_dt: datetime, limit: int, query_tail: str, what: str) -> list[Mail]:
+        """The mail from every mail source since `since_dt`, as each app reads it (Gmail style: `after:<ts>` plus
+        `query_tail`; Apple Mail: `since` and `limit`). A source that fails is skipped and logged as "`what` couldn't
+        read <source>". Nothing is marked seen and no status is recorded: the callers decide what to keep."""
         got: list[Mail] = []
         for src in (s for s in saved(self.store) if s.kind == "mail"):
             args = dict(src.fixed)
-            query = f"after:{int(since_dt.timestamp())} {bills.CATCH_UP_QUERY}"
+            query = f"after:{int(since_dt.timestamp())}{query_tail}"
             if src.style == "native":
-                args = {"since": since_dt.isoformat(timespec="seconds"), "limit": 100}
+                args = {"since": since_dt.isoformat(timespec="seconds"), "limit": limit}
             elif src.style == "zapier":
                 args["params"] = {**(args.get("params") or {}), src.query_param: query}
             elif src.query_param:
@@ -512,13 +511,31 @@ class Fetcher:
                 if res.is_error:
                     raise CallError(res.text[:200] or "the app said no")
             except CallError as e:
-                log.info("watch: the catch-up couldn't read %s: %s", src.id, e)
+                log.info("watch: %s couldn't read %s: %s", what, src.id, e)
                 continue
-            got += [m for m in parse_mail(res.text, src.id) if bills.looks_like_bill_or_order(m.subject)]
+            got += parse_mail(res.text, src.id)
+        return got
+
+    async def catch_up_mail(self, days: int = bills.CATCH_UP_DAYS) -> list[Mail]:
+        """The last `days` of mail whose subject looks like a bill, a payment or an order, seen or not, newest first,
+        at most bills.CATCH_UP_MOST: the watch's once-only catch-up (bills that came before it knew to look). Each is
+        readable in full with read_mail, like new mail."""
+        since_dt = self.now - timedelta(days=days)
+        every_mail = await self._mail_since(since_dt, 100, f" {bills.CATCH_UP_QUERY}", "the catch-up")
+        got = [m for m in every_mail if bills.looks_like_bill_or_order(m.subject)]
         got = newest_first(fold_mail(got))[:bills.CATCH_UP_MOST]
         for m in got:
             self._mail[m.id] = m
         return got
+
+    async def recent_mail(self, hours: int = 24, most: int = 40) -> list[Mail]:
+        """The last `hours` of mail of any kind, seen or not, newest first, at most `most`: what the morning hello
+        reads. Unlike new_mail it marks nothing seen and does not add to the check's mail, so the next check still
+        judges every message. A source that fails is skipped. 40 mails in the day -> the newest `most`; a bill and two
+        chatty mails -> all three, the bill not singled out."""
+        since_dt = self.now - timedelta(hours=hours)
+        every_mail = await self._mail_since(since_dt, most, "", "the morning read")
+        return newest_first(fold_mail(every_mail))[:most]
 
     async def upcoming_events(self, hours: int = 24) -> list[Event]:
         start, end = self.now, self.now + timedelta(hours=hours)
