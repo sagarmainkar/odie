@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from google.adk.tools import FunctionTool
+from google.adk.tools import FunctionTool, ToolContext
 
+from odie import approvals_mode
 from odie.mac import calendar, contacts, mail, permissions, reminders, scripts
 
 NOT_YET = "Odie isn't allowed to read {app} yet. Allow it in Settings → Mac apps, then ask again."
@@ -77,7 +78,8 @@ async def mac_calendar_events(start: str, end: str) -> dict:
         return _said(e)
 
 
-async def mac_calendar_add(title: str, start: str, end: str, calendar_name: str = "", where: str = "", notes: str = "") -> dict:
+async def mac_calendar_add(title: str, start: str, end: str, calendar_name: str = "", where: str = "", notes: str = "",
+                           tool_context: ToolContext | None = None) -> dict:  # tool_context: so ADK hands the chat to plain_write_asks too
     """Adds an event to the Mac's calendar (the first writable one, or `calendar_name`). Local times. Returns the
     event's id and the calendar it went into."""
     if blocked := _blocked("calendar"):
@@ -98,7 +100,7 @@ async def mac_reminders(before: str) -> dict:
         return _said(e)
 
 
-async def mac_reminder_add(title: str, due: str, list_name: str = "") -> dict:
+async def mac_reminder_add(title: str, due: str, list_name: str = "", tool_context: ToolContext | None = None) -> dict:
     """Adds a reminder to the Reminders app, due at a local time, in the default list or `list_name`."""
     if blocked := _blocked("reminders"):
         return blocked
@@ -120,7 +122,8 @@ async def mac_contacts(query: str) -> dict:
 
 TOOLS = [
     FunctionTool(mac_mail_new), FunctionTool(mac_mail_read), FunctionTool(mac_mail_save_attachment),
-    FunctionTool(mac_calendar_events), FunctionTool(mac_calendar_add, require_confirmation=True),
-    FunctionTool(mac_reminders), FunctionTool(mac_reminder_add, require_confirmation=True),
+    # The two local writes ask in Careful and run in Smart (odie.approvals_mode.plain_write_asks reads the mode per call).
+    FunctionTool(mac_calendar_events), FunctionTool(mac_calendar_add, require_confirmation=approvals_mode.plain_write_asks),
+    FunctionTool(mac_reminders), FunctionTool(mac_reminder_add, require_confirmation=approvals_mode.plain_write_asks),
     # mac_contacts is held back with Contacts (odie.mac.permissions.HELD_BACK); add it here to offer it again
 ]

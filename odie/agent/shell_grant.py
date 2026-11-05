@@ -15,6 +15,7 @@ from collections.abc import Callable
 from datetime import datetime, timedelta
 from typing import Any
 
+from odie import approvals_mode
 from odie.agent.context import session_id_of
 from odie.store.db import Store
 
@@ -27,15 +28,19 @@ _RULES: list[tuple[str, re.Pattern[str]]] = [
         r"\.env\b|\.netrc|\.ssh\b|id_rsa|id_ed25519|\.pem\b|keychain|security\s+find-|_PAT\b|_KEY\b|_TOKEN\b|SECRET|"
         r"PASSWORD|passwd|credential|auth\.json|token\.json|client_secret|\.(zshrc|zshenv|zprofile|bashrc|bash_profile|profile)\b|"
         r"\.aws\b|\.npmrc|\.pypirc|\.gnupg|\.kube\b|\.docker/config|hosts\.yml|\.gitconfig|cookies|"
+        r"\.(zsh_history|bash_history|python_history|node_repl_history|lesshst)\b|HISTFILE|"
         r"(^|[;&|(]\s*)(env|printenv)\b", re.IGNORECASE)),
+
     ("deletes or stops something", re.compile(
         r"(^|[;&|(`]\s*|\s)(rm|rmdir|kill|pkill|killall|sudo|chmod|chown|dd|mkfs|shutdown|reboot|launchctl|truncate|"
-        r"shred|mv|crontab)\b|\bgit\s+(push|reset|clean|rebase|checkout\s+--)|"
+        r"shred|mv|crontab|trash|diskutil)\b|\bgit\s+(push|reset|clean|rebase|checkout\s+--)|"
+        r"\bfind\b[^|;&\n]*\s-delete\b|\b(uninstall|prune)\b|"
         r"\bos\.(remove|unlink|rmdir|kill)\b|\bshutil\.(rmtree|move)\b|\.unlink\(|\.rmdir\(|"
         r"\.(rm|rmSync|unlinkSync|rmdirSync)\(|\bsubprocess\b|\bos\.system\b|child_process")),
     ("sends data out", re.compile(
         r"\bcurl\b[^|;]*(-X\s*(POST|PUT|PATCH|DELETE)|--data|\s-d\s|\s-F\s|--form|\s-T\s|--upload|\s-K\s|--config)|\bwget\b[^|;]*--post|"
-        r"\b(scp|ssh|ftp|sftp|nc|ncat|sendmail|telnet|socat)\b|\brsync\b[^|;]*\S+:|"
+        r"\b(scp|ssh|ftp|sftp|nc|ncat|sendmail|telnet|socat)\b|\bosascript\b[\s\S]*\bsend\b|\bshortcuts\s+run\b|\brsync\b[^|;]*\S+:|"
+        r"\bnpm\s+publish\b|\bgh\s+(pr|issue|release)\s+create\b|\bmail\s+-s\b|"
         r"\brequests\.(post|put|patch|delete)\b|\bhttpx\.(post|put|patch|delete)\b|\bsmtplib\b|"
         r"method\s*:\s*['\"](?i:post|put|patch|delete)")),  # fetch takes the method in any case
     # An address built at run time carries whatever was put into it: curl 'https://x/?d='$(cat f), wget "$URL$DATA",
@@ -75,6 +80,21 @@ _RULES: list[tuple[str, re.Pattern[str]]] = [
         r"\bcurl\b[^|;\n]*\|\s*(sh|bash|zsh)|\binstaller\s+-pkg|\bopen\s+\S+\.(dmg|pkg|app)\b")),
     ("edits files in place", re.compile(r"\b(sed|perl)\s+(-\w*\s+)*-i|\btee\b")),
 ]
+# Odie's own home (settings, chats, keys, the audit log, the live copy it runs from), except the workspace it writes
+# in anyway: ~/.odie/assistant.db -> matches; $ODIE_HOME/data/workspace/x -> not; ~/.odie/workspace -> not.
+# The workspace is excluded only as a whole word (workspace-old is not it) and only when the path doesn't climb back
+# out with `..`.
+_ODIE_HOME = re.compile(r"(\.odie\b|\{ODIE_HOME\}|ODIE_HOME\b(?!\}))(?!/(data/)?workspace(?![\w-])(?![^\s;&|]*/\.\.))|"
+                        r"\b(assistant|sessions|odie-index)\.db\b")
+
+
+def touches_odie_home(text: str) -> bool:
+    """Whether a command names Odie's own files outside its workspace: `sqlite3 ~/.odie/assistant.db ...` -> True;
+    `cat $ODIE_HOME/data/keys.json` -> True; `cat ~/.odie/workspace/../data/keys.json` -> True; `ls ~/.odie/workspace`
+    -> False; `ls ${ODIE_HOME}/data/workspace/x` -> False; `ls ~/Downloads` -> False."""
+    return bool(_ODIE_HOME.search(text))
+
+
 # A path into a hidden folder or file under the home folder (~/.ssh, $HOME/.config, /Users/me/.zshrc), as the shell
 # sees it before globbing.
 _HIDDEN_PATH = re.compile(r"(~|\$HOME|\$\{HOME\}|/Users/[^/\s'\"]+|/home/[^/\s'\"]+)/\.[^\s;&|<>]*")
@@ -248,6 +268,8 @@ def always_ask(command: str, safe_dirs: tuple[str, ...] = (), cwd: str | None = 
         return "reaches a hidden file by a pattern"
     if unsafe_write(shell, safe_dirs, cwd):
         return "writes a file outside /tmp"
+    if touches_odie_home(looked_at) or touches_odie_home(squeezed(looked_at)):
+        return "touches Odie's own files"
     return None
 
 
@@ -286,21 +308,28 @@ def make_check(store: Store, clock: Callable[[], datetime] = datetime.now) -> Ca
     """require_confirmation for run_shell: True means show the user the card."""
     def needs_tap(command: str = "", cwd: str | None = None, tool_context: Any = None, **_: Any) -> bool:
         """Does this shell command need the user's tap? Decided in three steps:
-        1. No 'Allow for 30 min' pass in this chat (or it ran out) -> ask (the card).
-        2. A pass, but the command is on the always-ask list (always_ask) -> ask anyway, and note it in the audit log.
-        3. A pass and an ordinary command -> run it without a card, and note it in the audit log.
+        1. Careful mode and no 'Allow for 30 min' pass in this chat (or it ran out) -> ask (the card). In Smart mode
+           the pass isn't needed: the mode is read from the store on every call, so a flip mid-chat counts at once.
+        2. A pass or Smart, but the command is on the always-ask list (always_ask) -> ask anyway, and note it in the
+           audit log.
+        3. A pass or Smart, and an ordinary command -> run it without a card, and note it in the audit log.
 
         Examples:
-          `ls ~/Downloads`, no pass         -> card
-          `ls ~/Downloads`, with a pass     -> runs, no card
-          `rm old.txt`, with a pass         -> card anyway ("deletes or stops something")
-          `cat ~/.env`, with a pass         -> card anyway ("reads secrets")
+          `ls ~/Downloads`, Careful, no pass -> card
+          `ls ~/Downloads`, with a pass      -> runs, no card ("allowed for 30 min")
+          `rm old.txt`, with a pass          -> card anyway ("deletes or stops something")
+          `cat ~/.env`, with a pass          -> card anyway ("reads secrets")
+          `ls ~/Downloads`, Smart, no pass   -> runs, no card ("allowed by smart mode")
+          `rm old.txt`, Smart                -> card ("deletes or stops something")
+          `brew install x`, Smart            -> card ("installs software (runs its install scripts)")
+          `ls ~/Downloads`, Smart, a mail read this turn -> card (the mail may be behind it; the card says so)
         """
         session_id = session_id_of(tool_context)
         if not session_id:
             return True  # outside a chat there is no pass to look up
-        if not active(store, session_id, clock()):
-            return True  # no pass, or it ran out
+        smart = approvals_mode.runs_free(store, session_id)  # Smart, and no mail read this turn
+        if not smart and not active(store, session_id, clock()):
+            return True  # Careful, and no pass or it ran out
 
         why = always_ask(command, safe_dirs=safe_places(store), cwd=cwd)
         audit_args = {"command": command, "cwd": cwd}
@@ -309,7 +338,10 @@ def make_check(store: Store, clock: Callable[[], datetime] = datetime.now) -> Ca
                         result_summary=why, session_id=session_id)
             return True
 
+        allowed_because = "allowed for 30 min"
+        if smart:
+            allowed_because = "allowed by smart mode"
         store.audit("agent", "shell_auto_approved", tool="run_shell", args=audit_args,
-                    result_summary="allowed for 30 min", session_id=session_id)
+                    result_summary=allowed_because, session_id=session_id)
         return False
     return needs_tap
