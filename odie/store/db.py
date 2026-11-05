@@ -181,8 +181,10 @@ class Store:
         return self.query(f"select * from approvals where session_id in ({marks}) order by id", tuple(session_ids))
 
     def approvals_for_calls(self, session_id: str) -> list[sqlite3.Row]:
-        """The approvals of one session that the person answered (yes or no), oldest first. A pending or expired one is left out."""
-        return self.query("select * from approvals where session_id=? and status in ('approved','rejected') order by id", (session_id,))
+        """The approvals of one session that the person answered (yes or no) or that lapsed untapped, oldest first. A
+        pending one is left out: its card can still be tapped."""
+        return self.query("select * from approvals where session_id=? and status in ('approved','rejected','expired') order by id",
+                          (session_id,))
 
     def get_approval(self, approval_id: int) -> sqlite3.Row | None:
         return self.one("select * from approvals where id=?", (approval_id,))

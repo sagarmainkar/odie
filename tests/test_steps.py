@@ -9,6 +9,7 @@ from odie.app.steps import (
     RESULT_CHARS,
     WAITING,
     allowed_of,
+    answer_of,
     capped_args,
     response_kind,
     result_text,
@@ -100,16 +101,35 @@ def test_an_old_approvals_table_gains_the_call_id_column(tmp_path):
     assert "call_id" in columns
 
 
-def test_approvals_for_calls_returns_only_decided_rows_of_the_session(tmp_path):
+def test_approvals_for_calls_returns_the_answered_and_lapsed_rows_of_the_session(tmp_path):
     store = _store(tmp_path)
     yes = store.create_approval("chat-1", "inv-1", "r1", "gmail_trash", {}, "Trash", {}, [], call_id="c1")
     no = store.create_approval("chat-1", "inv-1", "r2", "gmail_trash", {}, "Trash", {}, [], call_id="c2")
     store.create_approval("chat-1", "inv-1", "r3", "gmail_trash", {}, "Trash", {}, [], call_id="c3")  # still pending
     store.create_approval("chat-2", "inv-2", "r4", "gmail_trash", {}, "Trash", {}, [], call_id="c4")  # another session
+    lapsed = store.create_approval("chat-1", "inv-1", "r5", "gmail_trash", {}, "Trash", {}, [], call_id="c5")
     store.decide_approval(yes, True)
     store.decide_approval(no, False)
+    store.execute("update approvals set created_at='2026-11-01T00:00:00.000Z' where id=?", (lapsed,))
+    store.expire_approvals("2026-11-02T00:00:00.000Z")
     rows = store.approvals_for_calls("chat-1")
-    assert [row["call_id"] for row in rows] == ["c1", "c2"]
+    assert [row["call_id"] for row in rows] == ["c1", "c2", "c5"]
+
+
+def test_a_lapsed_row_says_lapsed(tmp_path):
+    store = _store(tmp_path)
+    row = store.create_approval("chat-1", "inv-1", "r1", "run_shell", {"command": "ls"}, "Run", {}, [], call_id="c1")
+    store.execute("update approvals set created_at='2026-11-01T00:00:00.000Z' where id=?", (row,))
+    store.expire_approvals("2026-11-02T00:00:00.000Z")
+    rows = store.approvals_for_calls("chat-1")
+    lapsed = allowed_of("run_shell", "c1", "inv-1", {"command": "ls"}, None, rows)
+    assert lapsed == {"by": "lapsed", "at": store.get_approval(row)["decided_at"]}
+
+
+def test_an_asked_shell_call_never_ran_under_the_pass():
+    # The history saw "requires confirmation" for this call first: it was asked, so its result is no pass.
+    assert answer_of("run_shell", "c1", "inv-1", {"result": "a.txt"}, asked=True) == ("done", "a.txt", None)
+    assert answer_of("run_shell", "c1", "inv-1", {"result": "a.txt"}) == ("done", "a.txt", {"by": "pass"})
 
 
 def test_allowed_by_call_id(tmp_path):

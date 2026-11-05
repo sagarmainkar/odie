@@ -90,6 +90,22 @@ describe("the opened receipt", () => {
     expect(step.querySelector("pre")).toBeNull();
   });
 
+  it("a step whose answer never came says No result, with no spinner and no pill", async () => {
+    const host = await openTrace([{ name: "run_shell", id: "c1", done: true, state: "lost", args: { command: "sleep 100" }, result: "" }]);
+    const [step] = stepsIn(host);
+    expect(step.textContent).toContain("No result");
+    expect(step.querySelector(".animate-spin")).toBeNull();
+    expect(step.textContent).not.toMatch(/You allowed|pass|You said no|Lapsed/);
+  });
+
+  it("a card that lapsed shows Not run and a Lapsed pill, with no spinner", async () => {
+    const host = await openTrace([{ name: "run_shell", id: "c1", done: true, state: "no", args: { command: "ls" }, result: "", allowed: { by: "lapsed", at } }]);
+    const [step] = stepsIn(host);
+    expect(step.textContent).toContain("Not run");
+    expect(step.textContent).toContain("Lapsed");
+    expect(step.querySelector(".animate-spin")).toBeNull();
+  });
+
   it("a tap on a step shows the first 12 lines of its output and Show all; that shows everything", async () => {
     const host = await openTrace(receipt);
     const step = stepsIn(host)[0];

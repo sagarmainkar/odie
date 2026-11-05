@@ -80,6 +80,18 @@ def test_sse_a_rejected_call_has_no_output():
         {"type": "tool_done", "tool": "run_shell", "id": "c1", "result": "", "allowed": {"by": "no"}}]
 
 
+def test_sse_a_shell_call_that_was_asked_is_no_pass():
+    # The stream saw the wait for c1, so its result later in the run is not a pass; another shell call still is.
+    asked: set[str] = set()
+    waiting = SimpleNamespace(name="run_shell", id="c1",
+                              response={"error": "This tool call requires confirmation, please approve or reject."})
+    assert event_to_sse(_ev([_part(fr=waiting)]), asked) == [{"type": "tool_wait", "tool": "run_shell", "id": "c1"}]
+    ran = SimpleNamespace(name="run_shell", id="c1", response={"result": "a.txt"})
+    assert event_to_sse(_ev([_part(fr=ran)]), asked) == [{"type": "tool_done", "tool": "run_shell", "id": "c1", "result": "a.txt"}]
+    other = SimpleNamespace(name="run_shell", id="c2", response={"result": "b.txt"})
+    assert event_to_sse(_ev([_part(fr=other)]), asked)[0]["allowed"] == {"by": "pass"}
+
+
 async def test_chat_stream_error_event(isolated_settings, monkeypatch, tmp_path):
     monkeypatch.setenv("LM_STUDIO_BASE_URL", "http://127.0.0.1:9")  # nothing listens
     import odie.config as c

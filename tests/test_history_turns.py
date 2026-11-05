@@ -114,7 +114,7 @@ def test_history_step_states():
                        ("c", "c3", {"error": "disk full"}), ("d", "c4", {"result": "ok"})),  # c5 has no answer yet
               _event("odie", "ok", "e-1")]
     steps = events_to_history(events)[0]["steps"]
-    assert [(s["id"], s["state"]) for s in steps] == [("c1", "wait"), ("c2", "no"), ("c3", "done"), ("c4", "done"), ("c5", "wait")]
+    assert [(s["id"], s["state"]) for s in steps] == [("c1", "wait"), ("c2", "no"), ("c3", "done"), ("c4", "done"), ("c5", "lost")]
     assert steps[1]["result"] == "" and steps[1]["allowed"] == {"by": "no"}
     assert steps[2]["result"] == "Error: disk full"
     assert steps[4]["result"] == ""
@@ -188,17 +188,72 @@ def test_history_fills_allowed_from_the_store(tmp_path):
     assert c4["allowed"] is None
 
 
-def test_a_decided_row_gives_no_pill_to_a_step_still_waiting(tmp_path):
+def _waiting_shell(start: float = 0.0) -> list[Event]:
+    """A gated `ls` that was asked and never answered after the question: the call, the "requires confirmation"
+    answer, ADK's confirmation call, and nothing more."""
+    return _gated_shell_turn(start, {"result": "unused"})[:4]
+
+
+def _the_step(lines: list[dict]) -> dict:
+    """The first step of the first Odie line."""
+    first_odie_line = next(h for h in lines if h["role"] == "odie")
+    return first_odie_line["steps"][0]
+
+
+def test_a_card_still_waiting_keeps_its_step_waiting_after_chatting_past(tmp_path):
+    from odie.app.runner import steps_with_allowed
+
+    store = _store(tmp_path)
+    store.create_approval("chat-1", "e-1", "r1", "run_shell", {"command": "ls"}, "Run", {}, [], call_id="c1")  # pending
+    events = _waiting_shell() + [_event("user", "never mind, what time is it?", "e-2"), _event("odie", "Ten.", "e-2")]
+    step = _the_step(steps_with_allowed(store, "chat-1", events_to_history(events)))
+    assert step["state"] == "wait" and step["allowed"] is None  # the card is still there to tap
+
+
+def test_a_lapsed_card_makes_its_step_not_run(tmp_path):
     from odie.app.runner import steps_with_allowed
 
     store = _store(tmp_path)
     row = store.create_approval("chat-1", "e-1", "r1", "run_shell", {"command": "ls"}, "Run", {}, [], call_id="c1")
-    store.decide_approval(row, True)  # tapped, but the real result has not landed yet
-    events = [_calls("odie", "e-1", ("run_shell", "c1", {"command": "ls"})),
-              _answers("e-1", ("run_shell", "c1", WAITING_ANSWER)),
-              _event("odie", "waiting", "e-1")]
-    step = steps_with_allowed(store, "chat-1", events_to_history(events))[0]["steps"][0]
-    assert step["state"] == "wait" and step["allowed"] is None
+    store.execute("update approvals set created_at='2026-11-01T00:00:00.000Z' where id=?", (row,))
+    store.expire_approvals("2026-11-02T00:00:00.000Z")  # nobody tapped within the day
+    step = _the_step(steps_with_allowed(store, "chat-1", events_to_history(_waiting_shell())))
+    assert step["state"] == "no"
+    assert step["allowed"] == {"by": "lapsed", "at": store.get_approval(row)["decided_at"]}
+
+
+def test_a_tap_whose_result_never_came_is_not_run_with_the_tap_pill(tmp_path):
+    # Tapped, then the resume crashed (or Odie restarted) before the tool ran: no result will come.
+    from odie.app.runner import steps_with_allowed
+
+    store = _store(tmp_path)
+    row = store.create_approval("chat-1", "e-1", "r1", "run_shell", {"command": "ls"}, "Run", {}, [], call_id="c1")
+    store.decide_approval(row, True)
+    step = _the_step(steps_with_allowed(store, "chat-1", events_to_history(_waiting_shell())))
+    assert step["state"] == "no"
+    assert step["allowed"] == {"by": "you", "at": store.get_approval(row)["decided_at"]}
+
+
+def test_a_call_with_no_answer_at_all_is_lost(tmp_path):
+    # Odie restarted while the command ran: the call is in the session, its answer never is. No spinner, no pill.
+    from odie.app.runner import steps_with_allowed
+
+    store = _store(tmp_path)
+    events = [_calls("odie", "e-1", ("run_shell", "c1", {"command": "sleep 100"})), _event("odie", "Hello again.", "e-2")]
+    step = _the_step(steps_with_allowed(store, "chat-1", events_to_history(events)))
+    assert (step["state"], step["result"], step["allowed"]) == ("lost", "", None)
+
+
+def test_an_asked_step_is_never_a_pass(tmp_path):
+    # The command got a "requires confirmation" answer first, so it was asked; with no row to name the tap (an old
+    # row that does not match) it shows no pill, never "pass".
+    from odie.app.runner import steps_with_allowed
+
+    store = _store(tmp_path)
+    lines = events_to_history(_gated_shell_turn(0.0, {"result": "a.txt"}))
+    assert _the_step(lines)["allowed"] is None
+    step = _the_step(steps_with_allowed(store, "chat-1", lines))
+    assert (step["state"], step["result"], step["allowed"]) == ("done", "a.txt", None)
 
 
 def test_an_old_approval_matches_its_step_with_empty_or_long_arguments(tmp_path):

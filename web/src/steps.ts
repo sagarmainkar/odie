@@ -2,15 +2,20 @@
 // The pure functions here change a list of steps; Chat.tsx only calls them.
 import { userLocale } from "./locale";
 
-/** Who let a step run: "you" tapped Allow, "no" tapped Don't, "pass" ran under a pass (no card). `at` is the tap time. */
-export type Allowed = { by: "you" | "no" | "pass"; at?: string };
+/** Who let a step run: "you" tapped Allow, "no" tapped Don't, "pass" ran under a pass (no card), "lapsed": nobody
+ * tapped the card in time. `at` is the tap (or lapse) time. */
+export type Allowed = { by: "you" | "no" | "pass" | "lapsed"; at?: string };
 
-/** One step. `done` is what the trace ticks; `state` is the receipt's word for it ("wait": needs your tap, "no": you
- * refused it). Old history only knows the name, so every field after `done` may be missing. */
+/** What became of a step: "done" it ran, "wait" it needs your tap, "no" it never ran (you refused it, or its card
+ * lapsed), "lost" its answer never came (Odie restarted while it ran). */
+export type StepState = "done" | "wait" | "no" | "lost";
+
+/** One step. `done` is what the trace ticks; `state` is the receipt's word for it. Old history only knows the name,
+ * so every field after `done` may be missing. */
 export type Tool = {
   name: string; done: boolean;
   id?: string; args?: Record<string, unknown>; result?: string;
-  allowed?: Allowed; state?: "done" | "wait" | "no"; gated?: boolean;
+  allowed?: Allowed; state?: StepState; gated?: boolean;
 };
 
 export type StartEvent = { tool: string; id?: string; args?: Record<string, unknown>; gated?: boolean };
@@ -19,7 +24,7 @@ export type DoneEvent = { tool: string; id?: string; result?: string; allowed?: 
 export type StepEvent = { id: string; tool: string; result: string; allowed?: Allowed };
 
 /** A step the server sent in history (`steps` on a reply): the same as Tool, with the answer already written in. */
-export type HistoryStep = { name: string; id: string; args: Record<string, unknown>; result: string; allowed: Allowed | null; state: "done" | "wait" | "no" };
+export type HistoryStep = { name: string; id: string; args: Record<string, unknown>; result: string; allowed: Allowed | null; state: StepState };
 export type HistoryItem = { tools: string[]; steps?: HistoryStep[] };
 
 /** A call begins: add it, not done yet.
@@ -105,19 +110,23 @@ export function fromHistory(item: HistoryItem): Tool[] {
 }
 
 /** The small pill on the right of a step that says who let it run, in words (the time in this device's own clock).
- *    allowed {by: "you", at: 10:42}       -> You allowed · 10:42
- *    allowed {by: "you"} (no time known)  -> You allowed
- *    allowed {by: "no"}, or state "no"    -> You said no
- *    allowed {by: "pass"}                 -> pass   (a shell command under the pass: no card)
- *    no allowed (no tap was needed)       -> ""     (no pill) */
+ *    allowed {by: "you", at: 10:42}             -> You allowed · 10:42 (also when it never ran: the resume failed)
+ *    allowed {by: "you"} (no time known)        -> You allowed
+ *    allowed {by: "lapsed"}                     -> Lapsed  (nobody tapped the card in time)
+ *    allowed {by: "no"}, or state "no" alone    -> You said no
+ *    allowed {by: "pass"}                       -> pass   (a shell command under the pass: no card)
+ *    no allowed (no tap was needed)             -> ""     (no pill) */
 export function allowedPill(t: Tool): string {
   const by = t.allowed?.by;
+  if (by === "you") {
+    const time = tapTime(t.allowed?.at);
+    if (!time) return "You allowed";
+    return `You allowed · ${time}`;
+  }
+  if (by === "lapsed") return "Lapsed";
   if (by === "no" || t.state === "no") return "You said no";
   if (by === "pass") return "pass";
-  if (by !== "you") return "";
-  const time = tapTime(t.allowed?.at);
-  if (!time) return "You allowed";
-  return `You allowed · ${time}`;
+  return "";
 }
 
 function tapTime(at: string | undefined): string {
@@ -166,12 +175,14 @@ function linesOf(result: string): string[] {
 /** The small grey line under a step's name.
  *    state "wait"                          -> Waiting for your tap
  *    state "no"                            -> Not run
+ *    state "lost"                          -> No result   (its answer never came)
  *    result ""                             -> No output
  *    result "a\nb\nc\n"                    -> 3 lines · tap to see them
  *    no result at all (old history, or still running) -> "" (nothing to say) */
 export function metaLine(t: Tool): string {
   if (t.state === "wait") return "Waiting for your tap";
   if (t.state === "no") return "Not run";
+  if (t.state === "lost") return "No result";
   if (t.result === undefined) return "";
   const count = linesOf(t.result).length;
   if (count === 0) return "No output";

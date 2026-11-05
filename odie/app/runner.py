@@ -99,21 +99,27 @@ def media_of(response: Any) -> dict[str, Any] | None:
 
 
 def _step_of(call: Any) -> dict[str, Any]:
-    """A tool call as a step that has no answer yet: it waits. The answer fills in result, state and allowed later.
+    """A tool call as a step that has no answer yet. With no answer at all it is "lost" (Odie restarted while it ran:
+    no result will come); its answer fills in result, state and allowed later.
       call web_search id c1 with {"query": "cats"} -> {"name": "web_search", "id": "c1", "args": {"query": "cats"},
-                                                      "result": "", "allowed": None, "state": "wait"}"""
+                                                      "result": "", "allowed": None, "state": "lost"}"""
     args = dict(call.args or {})
-    return {"name": call.name, "id": call.id, "args": capped_args(call.name, args), "result": "", "allowed": None, "state": "wait"}
+    return {"name": call.name, "id": call.id, "args": capped_args(call.name, args), "result": "", "allowed": None, "state": "lost"}
 
 
-def _answer_step(step: dict[str, Any], answer: Any, invocation_id: str) -> None:
+def _answer_step(step: dict[str, Any], answer: Any, invocation_id: str, asked: set[str]) -> None:
     """Write a tool's answer onto its step (the same meaning as _answer_items gives the live stream). The last answer
-    wins: a gated call is first answered "requires confirmation", and its real result arrives after the tap.
-      {"error": "This tool call requires confirmation..."} -> state "wait", nothing else
+    wins: a gated call is first answered "requires confirmation", and its real result arrives after the tap. `asked`
+    holds the calls answered "requires confirmation" so far; a call in it was asked on a card, so it is never a pass.
+      {"error": "This tool call requires confirmation..."} -> state "wait", nothing else (and c1 joins `asked`)
       {"error": "This tool call is rejected."}             -> state "no", result "", allowed {"by": "no"}
-      run_shell {"result": "a.txt"}                        -> state "done", result "a.txt", allowed {"by": "pass"}
+      run_shell {"result": "a.txt"}, never asked           -> state "done", result "a.txt", allowed {"by": "pass"}
+      run_shell {"result": "a.txt"}, asked before          -> state "done", result "a.txt", allowed None (a row may say)
       web_search {"result": "3 hits"}                      -> state "done", result "3 hits", allowed None"""
-    state, result, allowed = answer_of(step["name"], step["id"], invocation_id, answer.response)
+    was_asked = step["id"] in asked
+    state, result, allowed = answer_of(step["name"], step["id"], invocation_id, answer.response, asked=was_asked)
+    if state == "wait":
+        asked.add(step["id"])
     step["state"] = state
     step["result"] = result
     step["allowed"] = allowed
@@ -130,6 +136,7 @@ def events_to_history(events: list[Any]) -> list[dict[str, Any]]:
     time, so it sits below the card."""
     out: list[dict[str, Any]] = []
     steps_by_id: dict[str, dict[str, Any]] = {}
+    asked: set[str] = set()  # the calls a card asked about
     closed: list[dict[str, Any]] = []  # the lines an approval card was raised after
 
     def adds_to_last() -> bool:
@@ -166,7 +173,7 @@ def events_to_history(events: list[Any]) -> list[dict[str, Any]]:
         for p in ev.content.parts:  # an answer may come from any event, so pair every one by id
             answer = p.function_response
             if answer and answer.name != CONFIRM and answer.id in steps_by_id:
-                _answer_step(steps_by_id[answer.id], answer, inv)
+                _answer_step(steps_by_id[answer.id], answer, inv, asked)
         texts = [p.text for p in ev.content.parts if p.text and not getattr(p, "thought", False)]  # a model's reasoning is its own, not a reply
         tools = [call.name for call in calls]
         made = [m for p in ev.content.parts if p.function_response and (m := media_of(p.function_response.response))]
@@ -210,21 +217,25 @@ def events_to_history(events: list[Any]) -> list[dict[str, Any]]:
 
 
 def steps_with_allowed(store: Store, session_id: str, lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Fill each finished step's `allowed` from the session's decided approvals. A row for the call wins over what the
-    history alone could tell (a shell command that ran with no row stays "pass").
-      c1 approved, step done         -> allowed {"by": "you", "at": <when>}
-      c2 rejected, step "no"         -> allowed {"by": "no", "at": <when>}
-      c3 approved, step still "wait" -> allowed None (the tap is not the result yet: no pill)
-      web_search, no row             -> allowed None"""
+    """Fill each step's `allowed` from the session's approval rows, and end a wait that can no longer end. A row for the
+    call wins over what the history alone could tell (a shell command that ran with no row stays "pass"). A step still
+    waiting whose card was answered or lapsed will get no result now, so it shows as not run.
+      c1 approved, step done                -> allowed {"by": "you", "at": <when>}
+      c2 rejected, step "no"                -> allowed {"by": "no", "at": <when>}
+      c3 card pending, step "wait"          -> stays "wait", allowed None (the card can still be tapped)
+      c4 card lapsed, step "wait"           -> state "no" (Not run), allowed {"by": "lapsed", "at": <when>}
+      c5 approved, step still "wait"        -> state "no" (Not run), allowed {"by": "you", ...} (the resume never finished)
+      web_search, no row                    -> allowed None"""
     rows = store.approvals_for_calls(session_id)
     for item in lines:
         for step in item.get("steps", []):
-            if step["state"] == "wait":
-                continue
             # response None: only a row can answer here; the "pass" rule was already applied when the step was built
             decided = allowed_of(step["name"], step["id"], item.get("inv", ""), step["args"], None, rows)
-            if decided is not None:
-                step["allowed"] = decided
+            if decided is None:
+                continue
+            step["allowed"] = decided
+            if step["state"] == "wait":
+                step["state"] = "no"
     return lines
 
 
@@ -423,17 +434,22 @@ def usage_of(ev: Any) -> dict[str, int] | None:
     return {"input": u.prompt_token_count, "cached": u.cached_content_token_count or 0, "output": u.candidates_token_count or 0}
 
 
-def event_to_sse(ev: Any) -> list[dict[str, Any]]:
+def event_to_sse(ev: Any, asked: set[str] | None = None) -> list[dict[str, Any]]:
     """One ADK event as the items the chat stream carries. Every tool call is a step, gated ones too; only ADK's own
-    approval question (adk_request_confirmation) stays out, because the approval card shows it.
+    approval question (adk_request_confirmation) stays out, because the approval card shows it. `asked`: the calls
+    answered "requires confirmation" so far in this run (the caller keeps one set per run); a call in it was asked on
+    a card, so its result is never a pass.
       call run_shell id c1               -> tool_start {id c1, gated True}
       its answer "requires confirmation" -> tool_wait {id c1}
       its answer {"result": "a.txt"}     -> tool_done {id c1, result "a.txt", allowed {"by": "pass"}}
+      that answer, c1 asked before       -> tool_done {id c1, result "a.txt"} (no allowed: the card's row says)
       its answer "is rejected"           -> tool_done {id c1, result "", allowed {"by": "no"}}
     The answer is matched to its call by id, never by place: two calls in one event may be answered in either order."""
     if getattr(ev, "author", None) == "user" or not getattr(ev, "content", None) or not ev.content.parts:
         return []
     out: list[dict[str, Any]] = []
+    if asked is None:
+        asked = set()
     partial = bool(getattr(ev, "partial", False))
     gated_names = GATED_TOOLS | addons.gated_tools()
     invocation_id = getattr(ev, "invocation_id", "") or ""
@@ -449,7 +465,7 @@ def event_to_sse(ev: Any) -> list[dict[str, Any]]:
         elif p.function_response:
             answer = p.function_response
             if not partial and answer.name != CONFIRM:
-                out.extend(_answer_items(answer, invocation_id))
+                out.extend(_answer_items(answer, invocation_id, asked))
         elif p.text:
             item = {"type": "token" if ev.partial else "text", "text": p.text}
             key = reply_key(ev)
@@ -478,14 +494,18 @@ def step_after_tap(item: dict[str, Any], row: Any, approve: bool) -> dict[str, A
     return step
 
 
-def _answer_items(answer: Any, invocation_id: str) -> list[dict[str, Any]]:
+def _answer_items(answer: Any, invocation_id: str, asked: set[str]) -> list[dict[str, Any]]:
     """The stream items for one tool answer: a "wait" while it needs a tap, otherwise the finished step (plus its media).
+    A wait adds the call to `asked`, so its later result is never a pass.
       {"error": "This tool call requires confirmation..."} -> [tool_wait]
       {"error": "This tool call is rejected."}             -> [tool_done with result "" and allowed {"by": "no"}]
       run_shell {"result": "a.txt"}                        -> [tool_done with result "a.txt" and allowed {"by": "pass"}]
+      run_shell {"result": "a.txt"}, asked before          -> [tool_done with result "a.txt", no allowed]
       speak {"result": "...", "media": {...}}              -> [tool_done, media]"""
-    state, result, allowed = answer_of(answer.name, answer.id, invocation_id, answer.response)
+    was_asked = answer.id in asked
+    state, result, allowed = answer_of(answer.name, answer.id, invocation_id, answer.response, asked=was_asked)
     if state == "wait":
+        asked.add(answer.id)
         return [{"type": "tool_wait", "tool": answer.name, "id": answer.id}]
     done: dict[str, Any] = {"type": "tool_done", "tool": answer.name, "id": answer.id, "result": result}
     if allowed is not None:
@@ -851,12 +871,13 @@ class OdieRunner:
             checks = [c for c in addons.call("turn_check") if c is not None]  # each add-on's watcher for this turn
             nudge = None
             said_private = False
+            asked: set[str] = set()  # the calls a card asked about in this turn: their results are never a pass
             for attempt in range(2):
                 text_before = len(final)
                 async with aclosing(self.runner.run_async(user_id=s.user_id, session_id=session_id, new_message=message,
                                                           run_config=chat_run_config())) as events:
                     async for ev in events:
-                        for item in event_to_sse(ev):
+                        for item in event_to_sse(ev, asked):
                             if item["type"] in ("token", "text") and not said_private and turn_words.private_sites():
                                 said_private = True
                                 yield {"type": "private"}  # the app holds web images in this reply until a tap
@@ -1022,6 +1043,7 @@ class OdieRunner:
         msg = types.Content(role="user", parts=[types.Part(function_response=types.FunctionResponse(
             id=row["request_id"], name=CONFIRM, response={"confirmed": bool(approve)}))])
         final: list[str] = []
+        asked = {row["call_id"]} if row["call_id"] else set()  # the tapped call was asked: its result is no pass
         from odie.agent import turn
         async with self.lock_for(row["session_id"]):
             words = turn.USER_TEXT.set(await self._words_of(row["session_id"], row["invocation_id"]))  # the paused turn, resumed
@@ -1034,7 +1056,7 @@ class OdieRunner:
             try:
                 async for ev in self.runner.run_async(user_id=s.user_id, session_id=row["session_id"], invocation_id=row["invocation_id"],
                                                       new_message=msg, run_config=chat_run_config()):
-                    for item in event_to_sse(ev):
+                    for item in event_to_sse(ev, asked):
                         if item["type"] == "text":
                             final.append(item["text"])
                         elif item["type"] == "tool_done":

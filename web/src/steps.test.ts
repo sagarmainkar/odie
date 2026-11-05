@@ -102,6 +102,12 @@ describe("allowedPill", () => {
     expect(allowedPill({ name: "run_shell", done: true, state: "no", allowed: { by: "no", at } })).toBe("You said no");
     expect(allowedPill({ name: "run_shell", done: true, state: "no" })).toBe("You said no");
   });
+  it("says Lapsed for a card nobody tapped in time", () => {
+    expect(allowedPill({ name: "run_shell", done: true, state: "no", allowed: { by: "lapsed", at } })).toBe("Lapsed");
+  });
+  it("keeps the tap on a step that was allowed but never ran (the resume failed)", () => {
+    expect(allowedPill({ name: "run_shell", done: true, state: "no", allowed: { by: "you", at } })).toBe("You allowed · 10:42");
+  });
   it("says nothing when no tap was needed", () => {
     expect(allowedPill({ name: "web_search", done: true })).toBe("");
     expect(allowedPill({ name: "run_shell", done: true, allowed: { by: "you", at: "not a time" } })).toBe("You allowed");
@@ -119,6 +125,8 @@ describe("fromHistory", () => {
       ],
     });
     expect(got.map((t) => [t.id, t.state, t.done])).toEqual([["c1", "done", true], ["c2", "wait", false], ["c3", "no", true]]);
+    const lost = fromHistory({ tools: ["run_shell"], steps: [{ name: "run_shell", id: "c4", args: {}, result: "", allowed: null, state: "lost" }] });
+    expect(lost[0]).toMatchObject({ state: "lost", done: true });  // no answer will come: nothing to wait for
     expect(got[0]).toMatchObject({ args: { command: "ls" }, result: "a", allowed: { by: "pass" } });
     expect(got[1].allowed).toBeUndefined();
   });
@@ -160,6 +168,9 @@ describe("metaLine", () => {
   it("says what a waiting or refused step is", () => {
     expect(metaLine({ name: "run_shell", done: false, state: "wait" })).toBe("Waiting for your tap");
     expect(metaLine({ name: "run_shell", done: true, state: "no", result: "" })).toBe("Not run");
+  });
+  it("says No result for a call whose answer never came", () => {
+    expect(metaLine({ name: "run_shell", done: true, state: "lost", result: "" })).toBe("No result");
   });
   it("says No output for an empty result", () => expect(metaLine({ name: "run_shell", done: true, result: "" })).toBe("No output"));
   it("counts the lines", () => {

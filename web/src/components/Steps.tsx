@@ -44,12 +44,16 @@ export function stepsSummary(tools: Tool[]): string {
   return labels.map((l, i) => (i ? l.charAt(0).toLowerCase() + l.slice(1) : l)).join(", ");
 }
 
-/** The pill's colours by who let the step run: your tap in the brand's tint, a pass in green, a refusal in red.
- *    allowed {by: "you"} -> brand tint;  allowed {by: "pass"} -> green;  state "no" -> red */
+/** The pill's colours by who let the step run: your tap in the brand's tint, a pass in green, a refusal in red, a
+ * lapsed card muted.
+ *    allowed {by: "you"} -> brand tint (even when it never ran);  allowed {by: "pass"} -> green;
+ *    allowed {by: "lapsed"} -> muted;  allowed {by: "no"}, or state "no" alone -> red */
 function pillTone(t: Tool): string {
-  if (t.state === "no" || t.allowed?.by === "no") return "bg-bad-tint text-bad";
-  if (t.allowed?.by === "pass") return "bg-good-tint text-good";
-  return "bg-ember-tint text-ember-text";
+  const by = t.allowed?.by;
+  if (by === "you") return "bg-ember-tint text-ember-text";
+  if (by === "lapsed") return "bg-well text-muted";
+  if (by === "pass") return "bg-good-tint text-good";
+  return "bg-bad-tint text-bad";
 }
 
 /** Whether a step has output to open: it ran (not refused) and printed something.
@@ -62,12 +66,14 @@ function hasOutput(t: Tool): boolean {
   return outputHead(t.result ?? "").head !== "";
 }
 
-/** The tick, or a spinner while the step runs or waits for your tap, or a cross when you said no. */
+/** The tick, or a spinner while the step runs or waits for your tap, or a cross when it never ran, or an empty ring
+ * when its answer never came. */
 function StepMark({ t, spinning }: { t: Tool; spinning: boolean }) {
   if (spinning) {
     const waiting = t.state === "wait";
     return <span role="img" aria-label={waiting ? "Waiting" : "Running"} className="size-3.5 shrink-0 rounded-full border-[1.5px] border-line-2 border-t-ink-2 animate-spin" />;
   }
+  if (t.state === "lost") return <span role="img" aria-label="No result" className="size-3.5 shrink-0 rounded-full border-[1.5px] border-line-2" />;
   const refused = t.state === "no";
   const tone = refused ? "bg-bad-tint text-bad" : "bg-good-tint text-good";
   return <span className={`grid size-3.5 shrink-0 place-items-center rounded-full ${tone}`}><Icon name={refused ? "x" : "check"} size={9} stroke={3.2} /></span>;

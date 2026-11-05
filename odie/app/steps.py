@@ -125,10 +125,13 @@ def response_kind(response: object) -> str:
     return "done"
 
 
+_BY_STATUS = {"approved": "you", "rejected": "no", "expired": "lapsed"}
+
+
 def _by_of(row) -> dict:
-    """Who a decided approval row says: status "approved" -> "you", "rejected" -> "no". Carries when it was decided."""
-    who = "you" if row["status"] == "approved" else "no"
-    return {"by": who, "at": row["decided_at"]}
+    """Who an answered or lapsed approval row says, and when: status "approved" -> "you", "rejected" -> "no",
+    "expired" (nobody tapped within the day) -> "lapsed". `at` is when it was decided or lapsed."""
+    return {"by": _BY_STATUS[row["status"]], "at": row["decided_at"]}
 
 
 def _ran_under_the_pass(tool: str, response: object) -> bool:
@@ -163,11 +166,12 @@ def _same_args(row, tool: str, capped: dict) -> bool:
 def allowed_of(tool: str, call_id: str, invocation_id: str, args: dict, response: object, rows: list) -> dict | None:
     """Who let this tool call run: {"by": "you"|"no"|"pass", "at": ...} or None when nothing says.
 
-    `rows` are the session's decided approvals (Store.approvals_for_calls). The first row with this call's id wins; a row
+    `rows` are the session's answered and lapsed approvals (Store.approvals_for_calls). The first row with this call's id wins; a row
     saved before call ids existed (call_id empty) is found by the same invocation, tool and arguments (`args` are the
     step's capped arguments; the row's are capped the same way). With no row,
     only a shell command that ran gets "pass".
-    - an approved row for call "c1" -> {"by": "you", "at": <when>}; a rejected one -> {"by": "no", "at": <when>}
+    - an approved row for call "c1" -> {"by": "you", "at": <when>}; a rejected one -> {"by": "no", "at": <when>};
+      a lapsed one -> {"by": "lapsed", "at": <when>}
     - an old row, same invocation and tool, args {"message_id": "m1"} both sides -> {"by": "you", "at": <when>}
     - run_shell, no row, response {"result": "a.txt"} -> {"by": "pass"}
     - run_shell, no row, response {"error": "This tool call requires confirmation"} -> None (a shell "wait")
@@ -190,11 +194,14 @@ def allowed_of(tool: str, call_id: str, invocation_id: str, args: dict, response
     return None
 
 
-def answer_of(tool: str, call_id: str, invocation_id: str, response: object) -> tuple[str, str, dict | None]:
+def answer_of(tool: str, call_id: str, invocation_id: str, response: object, asked: bool = False) -> tuple[str, str, dict | None]:
     """What a tool's answer means for its step: (state, result, allowed), the one mapping the live stream and the history share.
+    `asked`: this call was answered "requires confirmation" before, so a card asked about it and it never ran under
+    the pass (only a row can say who allowed it).
       {"error": "This tool call requires confirmation..."} -> ("wait", "", None)
       {"error": "This tool call is rejected."}             -> ("no", "", {"by": "no"})
       run_shell {"result": "a.txt"}                        -> ("done", "a.txt", {"by": "pass"})
+      run_shell {"result": "a.txt"}, asked                 -> ("done", "a.txt", None)
       web_search {"result": "3 hits"}                      -> ("done", "3 hits", None)
     """
     state = response_kind(response)
@@ -202,5 +209,7 @@ def answer_of(tool: str, call_id: str, invocation_id: str, response: object) -> 
         return state, "", None
     if state == "no":
         return state, "", {"by": "no"}
+    if asked:
+        return state, result_text(response), None
     allowed = allowed_of(tool, call_id, invocation_id, {}, response, [])  # no rows: only the pass rule
     return state, result_text(response), allowed
