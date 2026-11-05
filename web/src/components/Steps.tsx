@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { Icon, Tile, toolTile } from "./Tile";
-import type { Tool } from "../steps";
+import { Icon } from "./Tile";
+import { allowedPill, argLine, metaLine, outputHead, type Tool } from "../steps";
 
 export type { Tool };
 
@@ -44,6 +44,88 @@ export function stepsSummary(tools: Tool[]): string {
   return labels.map((l, i) => (i ? l.charAt(0).toLowerCase() + l.slice(1) : l)).join(", ");
 }
 
+/** The pill's colours by who let the step run: your tap in the brand's tint, a pass in green, a refusal in red.
+ *    allowed {by: "you"} -> brand tint;  allowed {by: "pass"} -> green;  state "no" -> red */
+function pillTone(t: Tool): string {
+  if (t.state === "no" || t.allowed?.by === "no") return "bg-bad-tint text-bad";
+  if (t.allowed?.by === "pass") return "bg-good-tint text-good";
+  return "bg-ember-tint text-ember-text";
+}
+
+/** Whether a step has output to open: it ran (not refused) and printed something.
+ *    run_shell, result "a.txt\nb.txt"   -> yes (a tap shows the two lines)
+ *    run_shell, result ""                -> no  (its meta line says No output)
+ *    run_shell, state "no"               -> no  (it never ran)
+ *    now, no result (old history)        -> no */
+function hasOutput(t: Tool): boolean {
+  if (t.state === "no") return false;
+  return outputHead(t.result ?? "").head !== "";
+}
+
+/** The tick, or a spinner while the step runs or waits for your tap, or a cross when you said no. */
+function StepMark({ t, spinning }: { t: Tool; spinning: boolean }) {
+  if (spinning) {
+    const waiting = t.state === "wait";
+    return <span role="img" aria-label={waiting ? "Waiting" : "Running"} className="size-3.5 shrink-0 rounded-full border-[1.5px] border-line-2 border-t-ink-2 animate-spin" />;
+  }
+  const refused = t.state === "no";
+  const tone = refused ? "bg-bad-tint text-bad" : "bg-good-tint text-good";
+  return <span className={`grid size-3.5 shrink-0 place-items-center rounded-full ${tone}`}><Icon name={refused ? "x" : "check"} size={9} stroke={3.2} /></span>;
+}
+
+/** One step of the opened trace, as a receipt: what it was, who let it run, what it was asked, and (on a tap) what it
+ * printed. Old history knows only the name, so then it is the label alone. */
+function StepRow({ t, spinning, delay }: { t: Tool; spinning: boolean; delay: number }) {
+  const [argWhole, setArgWhole] = useState(false);
+  const [outOpen, setOutOpen] = useState(false);
+  const [showAll, setShowAll] = useState(false);
+  const arg = argLine(t);
+  const meta = metaLine(t);
+  const pill = allowedPill(t);
+  const openable = hasOutput(t);
+  const result = t.result ?? "";
+  const { head, rest } = outputHead(result);
+  const whole = outputHead(result, Number.POSITIVE_INFINITY).head;
+  const total = whole.split("\n").length;
+  const shown = showAll ? whole : head;
+  const mono = t.name === "run_shell";
+  const toggleOutput = () => setOutOpen(!outOpen);
+
+  const headline = (
+    <>
+      <StepMark t={t} spinning={spinning} />
+      <span className={`min-w-0 truncate font-semibold ${t.state === "no" ? "text-muted" : "text-ink"}`}>{toolLabel(t)}</span>
+      {pill && <span className={`ml-auto shrink-0 rounded-full px-[7px] py-[2px] text-[10.5px] font-semibold whitespace-nowrap ${pillTone(t)}`}>{pill}</span>}
+    </>
+  );
+  const headClass = "flex min-h-7 items-center gap-2 text-left text-[13px]";
+  return (
+    <div data-step className="trace-row flex flex-col gap-[3px] py-1" style={{ animationDelay: `${delay}ms` }}>
+      {openable
+        ? <button type="button" aria-expanded={outOpen} onClick={toggleOutput} className={`${headClass} w-full transition-opacity active:opacity-60`}>{headline}</button>
+        : <div className={`${headClass} w-full`}>{headline}</div>}
+      {arg && (
+        <button type="button" data-arg aria-expanded={argWhole} onClick={() => setArgWhole(!argWhole)}
+          className="block w-full rounded-[8px] bg-well px-2 py-[5px] text-left text-[12px] leading-[1.45] text-ink-2">
+          {/* the font sits on the span: the app's own rule gives every button the body font */}
+          <span className={`block ${mono ? "font-mono" : ""} ${argWhole ? "whitespace-pre-wrap break-all" : "truncate"}`}>{arg}</span>
+        </button>
+      )}
+      {meta && !outOpen && (openable
+        ? <button type="button" onClick={toggleOutput} className="w-fit text-left text-[11.5px] text-muted transition-opacity active:opacity-60">{meta}</button>
+        : <span className="text-[11.5px] text-muted">{meta}</span>)}
+      {outOpen && (
+        <div className="trace-row rounded-[10px] border border-line bg-surface-2 px-[9px] py-[7px]">
+          <pre className="m-0 overflow-x-auto font-mono text-[11.5px] leading-[1.5] text-ink-2">{shown}</pre>
+          {!showAll && rest > 0 && (
+            <button type="button" onClick={() => setShowAll(true)} className="mt-1 block text-[12px] font-semibold text-ember-text">Show all {total} lines</button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** What the assistant did, as a trace (after Beautiful UI's ThinkingState, MIT, © 2026 Shane Levine): a shimmering
  * header while it works, steps fading in along a thin line (spinner, then a tick), and once done a quiet summary that
  * opens to show them again. */
@@ -72,19 +154,10 @@ export function Steps({ tools, running }: { tools: Tool[]; running: boolean }) {
         <div className="overflow-hidden">
           <div className="relative mt-0.5 ml-[6px] pl-4">
             <span aria-hidden="true" className="absolute left-[2px] top-1 bottom-2 w-px bg-line-2" />
-            <div className="flex flex-col gap-0.5 py-1">
-              {tools.map((t, i) => {
-                const k = toolTile(t.name);
-                const spinning = running && !t.done;
-                return (
-                  <div key={i} className="trace-row flex min-h-7 items-center gap-2 text-[13px]" style={{ animationDelay: `${Math.min(i, 6) * 60}ms` }}>
-                    {spinning ? <span className="size-3 shrink-0 rounded-full border-[1.5px] border-line-2 border-t-ink-2 animate-spin" />
-                      : <span className="shrink-0 text-dim"><Icon name="check" size={13} stroke={2.6} /></span>}
-                    <span className={`min-w-0 truncate ${spinning ? "text-ink font-medium" : "text-ink-2"}`}>{toolLabel(t)}</span>
-                    <span className="shrink-0 opacity-70"><Tile icon={k.icon} color={k.color} small /></span>
-                  </div>
-                );
-              })}
+            <div className="flex flex-col py-1">
+              {tools.map((t, i) => (
+                <StepRow key={t.id ?? i} t={t} spinning={(running && !t.done) || t.state === "wait"} delay={Math.min(i, 6) * 60} />
+              ))}
             </div>
           </div>
         </div>

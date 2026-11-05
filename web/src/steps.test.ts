@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { argLine, fromHistory, metaLine, outputHead, stepFilled, toolDone, toolStarted, toolWaiting, type Tool } from "./steps";
+import { allowedPill, argLine, fromHistory, metaLine, outputHead, settled, stepFilled, toolDone, toolStarted, toolWaiting, type Tool } from "./steps";
 
 const running = (name: string, id: string): Tool => ({ name, id, done: false, args: {} });
 
@@ -52,6 +52,10 @@ describe("toolDone", () => {
     const tools = [running("a", "c1")];
     expect(toolDone(tools, { tool: "b", id: "c9", result: "x" })).toEqual(tools);
   });
+  it("keeps the allowed it had when the event carries none", () => {
+    const had: Tool[] = [{ name: "run_shell", id: "c1", done: false, allowed: { by: "pass" } }];
+    expect(toolDone(had, { tool: "run_shell", id: "c1", result: "ok" })[0].allowed).toEqual({ by: "pass" });
+  });
 });
 
 describe("stepFilled", () => {
@@ -70,6 +74,37 @@ describe("stepFilled", () => {
   });
   it("ignores an unknown id", () => {
     expect(stepFilled(waiting, { id: "nope", tool: "run_shell", result: "x" })).toEqual(waiting);
+  });
+  it("ignores an event with no id, even when a step has none either", () => {
+    const idless: Tool[] = [{ name: "now", done: false }];
+    expect(stepFilled(idless, { id: "", tool: "now", result: "x" })).toEqual(idless);
+    expect(stepFilled(idless, { tool: "now", result: "x" } as never)).toEqual(idless);
+  });
+});
+
+describe("settled", () => {
+  it("ticks every running step when the reply ends, and leaves a step waiting for a tap as it is", () => {
+    const tools: Tool[] = [
+      { name: "now", id: "c1", done: false },
+      { name: "run_shell", id: "c2", done: false, state: "wait" },
+      { name: "recall", id: "c3", done: true, state: "done" },
+    ];
+    expect(settled(tools).map((t) => [t.name, t.done, t.state])).toEqual([["now", true, undefined], ["run_shell", false, "wait"], ["recall", true, "done"]]);
+  });
+});
+
+describe("allowedPill", () => {
+  const at = new Date(2026, 10, 5, 10, 42).toISOString();  // 10:42 in this computer's own time zone
+  it("says who let it run", () => {
+    expect(allowedPill({ name: "run_shell", done: true, allowed: { by: "you", at } })).toBe("You allowed · 10:42");
+    expect(allowedPill({ name: "run_shell", done: true, allowed: { by: "you" } })).toBe("You allowed");
+    expect(allowedPill({ name: "run_shell", done: true, allowed: { by: "pass" } })).toBe("pass");
+    expect(allowedPill({ name: "run_shell", done: true, state: "no", allowed: { by: "no", at } })).toBe("You said no");
+    expect(allowedPill({ name: "run_shell", done: true, state: "no" })).toBe("You said no");
+  });
+  it("says nothing when no tap was needed", () => {
+    expect(allowedPill({ name: "web_search", done: true })).toBe("");
+    expect(allowedPill({ name: "run_shell", done: true, allowed: { by: "you", at: "not a time" } })).toBe("You allowed");
   });
 });
 

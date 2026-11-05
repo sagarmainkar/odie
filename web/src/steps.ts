@@ -1,5 +1,6 @@
 // What the chat remembers about each step (tool call) Odie takes: its arguments, its result, and who let it run.
 // The pure functions here change a list of steps; Chat.tsx only calls them.
+import { userLocale } from "./locale";
 
 /** Who let a step run: "you" tapped Allow, "no" tapped Don't, "pass" ran under a pass (no card). `at` is the tap time. */
 export type Allowed = { by: "you" | "no" | "pass"; at?: string };
@@ -53,14 +54,17 @@ export function toolWaiting(tools: Tool[], ev: WaitEvent): Tool[] {
 }
 
 /** A call finished: tick it and keep its result and who allowed it. A rejection (allowed.by "no") is state "no".
+ * It keeps the allowed it already had when the event carries none.
  *    run_shell c1 + done {result: "a.txt", allowed: {by: "pass"}} -> done, state "done", result "a.txt"
  *    run_shell c1 + done {result: "", allowed: {by: "no"}}        -> done, state "no", result ""
+ *    run_shell c1 (allowed pass) + done {result: "ok"}            -> done, still allowed pass
  *    web_search c2 of two web_search steps                        -> only c2 changes */
 export function toolDone(tools: Tool[], ev: DoneEvent): Tool[] {
   const at = indexOfStep(tools, ev);
   if (at < 0) return tools;
-  const state = ev.allowed?.by === "no" ? "no" : "done";
-  return withStep(tools, at, { done: true, state, result: ev.result, allowed: ev.allowed });
+  const allowed = ev.allowed ?? tools[at].allowed;
+  const state = allowed?.by === "no" ? "no" : "done";
+  return withStep(tools, at, { done: true, state, result: ev.result, allowed });
 }
 
 /** The answer to a step you tapped on (the bus `step` event, which can arrive after the stream ended): it finds the
@@ -68,13 +72,22 @@ export function toolDone(tools: Tool[], ev: DoneEvent): Tool[] {
  * carries none.
  *    [run_shell c1, wait] + {id: c1, result: "removed", allowed: {by: "you"}} -> done, "removed", allowed you
  *    [run_shell c1, wait] + {id: c1, result: "", allowed: {by: "no"}}         -> state "no" (Not run)
- *    an id no step has                                                        -> the list as it was */
+ *    an id no step has, or an event with no id                                -> the list as it was */
 export function stepFilled(tools: Tool[], ev: StepEvent): Tool[] {
+  if (!ev.id) return tools;  // an id-less step would match an id-less (old) step by accident
   const at = tools.findIndex((t) => t.id === ev.id);
   if (at < 0) return tools;
   const allowed = ev.allowed ?? tools[at].allowed;
   const state = allowed?.by === "no" ? "no" : "done";
   return withStep(tools, at, { done: true, state, result: ev.result, allowed });
+}
+
+/** The reply ended (done, error, or an approval card took over): tick every step still running, except one waiting
+ * for your tap, which stays waiting until the answer comes.
+ *    [now running, run_shell waiting for a tap] -> [now ticked, run_shell still waiting]
+ *    [recall done]                              -> [recall done] (unchanged) */
+export function settled(tools: Tool[]): Tool[] {
+  return tools.map((t) => (t.state === "wait" ? t : { ...t, done: true }));
 }
 
 /** A reply's steps from history: the full `steps` when the server sent them (a "wait" step is not done), else just
@@ -89,6 +102,29 @@ export function fromHistory(item: HistoryItem): Tool[] {
     }));
   }
   return item.tools.map((name) => ({ name, done: true }));
+}
+
+/** The small pill on the right of a step that says who let it run, in words (the time in this device's own clock).
+ *    allowed {by: "you", at: 10:42}       -> You allowed · 10:42
+ *    allowed {by: "you"} (no time known)  -> You allowed
+ *    allowed {by: "no"}, or state "no"    -> You said no
+ *    allowed {by: "pass"}                 -> pass   (a shell command under the pass: no card)
+ *    no allowed (no tap was needed)       -> ""     (no pill) */
+export function allowedPill(t: Tool): string {
+  const by = t.allowed?.by;
+  if (by === "no" || t.state === "no") return "You said no";
+  if (by === "pass") return "pass";
+  if (by !== "you") return "";
+  const time = tapTime(t.allowed?.at);
+  if (!time) return "You allowed";
+  return `You allowed · ${time}`;
+}
+
+function tapTime(at: string | undefined): string {
+  if (!at) return "";
+  const when = new Date(at);
+  if (Number.isNaN(when.getTime())) return "";
+  return when.toLocaleTimeString(userLocale(), { hour: "2-digit", minute: "2-digit", hour12: false });
 }
 
 function cut(text: string, max: number): string {
