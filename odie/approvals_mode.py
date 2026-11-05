@@ -11,12 +11,15 @@ CAREFUL = "careful"
 SMART = "smart"
 MODES = (CAREFUL, SMART)
 
-# Words in a tool's name that make it ask even in Smart. The first fourteen say the tool sends something out, spends
-# money or removes something. The last eight (execute ... multi) are generic executors: their arguments decide what they
-# do, so the name alone can't clear them.
-_ASK_WORDS = frozenset({"send", "reply", "post", "publish", "share", "pay", "purchase", "order", "book", "checkout",
-                        "delete", "trash", "remove", "cancel", "execute", "run", "call", "invoke", "perform", "action",
-                        "manage", "multi"})
+# Words in a tool's name that make it ask even in Smart. Most say the tool sends something out (send, reply, post,
+# publish, share, forward, upload, export, invite, submit), spends or moves money (pay, purchase, order, book, checkout,
+# transfer, refund) or removes something (delete, trash, remove, cancel). password, token and secret say it handles a
+# credential. The generic executors (execute, run, call, invoke, perform, action, manage, multi) take their meaning from
+# their arguments, so the name alone can't clear them.
+_ASK_WORDS = frozenset({"send", "reply", "post", "publish", "share", "forward", "upload", "export", "invite", "submit",
+                        "pay", "purchase", "order", "book", "checkout", "transfer", "refund",
+                        "delete", "trash", "remove", "cancel", "password", "token", "secret",
+                        "execute", "run", "call", "invoke", "perform", "action", "manage", "multi"})
 
 
 def name_words(name: str) -> set[str]:
@@ -53,6 +56,7 @@ def asks_by_name(name: str) -> bool:
     """Whether a connected tool's name alone says it sends, pays, publishes, removes or runs whatever it is told, so it
     asks even in Smart. One ask-word anywhere in the name is enough:
     GMAIL_SEND_EMAIL -> True; cancel_order -> True; shareLink -> True; COMPOSIO_MULTI_EXECUTE_TOOL -> True;
+    GMAIL_FORWARD_MESSAGE -> True; STRIPE_CREATE_REFUND -> True; set_password -> True;
     gmail_find_email -> False; calendar_create_event -> False; list_items -> False."""
     return bool(name_words(name) & _ASK_WORDS)
 

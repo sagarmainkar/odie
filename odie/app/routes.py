@@ -17,7 +17,7 @@ from fastapi.responses import JSONResponse, RedirectResponse, Response
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
-from odie import config, devices, persona, qr
+from odie import approvals_mode, config, devices, persona, qr
 from odie.models import (PRESET_BY_ID, PRESETS, Provider, all_providers, auth_headers, brain_chosen, custom_key_name,
                          list_models, preset_base_url, refresh_fallback, resolve_selection, slug)
 from odie.morning.round import add_brief_to_hello, hello_due, hello_for, morning_day, morning_round, round_running
@@ -421,16 +421,16 @@ class ConnectIn(BaseModel):
     add: bool = False  # another connection to the same service, beside the one there
 
 
-async def _check(spec: dict) -> dict:
-    """The server's tools, listed in a throwaway process, and which of them would ask for a tap. A failure's reason is
-    scrubbed of the spec's secrets."""
+async def _check(spec: dict, smart: bool = False) -> dict:
+    """The server's tools, listed in a throwaway process, and which of them would ask for a tap (under the current
+    approvals mode, smart). A failure's reason is scrubbed of the spec's secrets."""
     from odie.plugins import mcp as m
     try:
         listed = await m.probe_tools(spec, 20)
     except Exception as ex:  # noqa: BLE001 (timeouts, refused connections, bad commands, a 401)
         return {"ok": False, "reason": m.scrub(str(ex) or type(ex).__name__, spec)}
     free = bool(spec.get("readsFree"))
-    return {"ok": True, "tools": [{"name": t["name"], "read_only": bool(t.get("read_only")), "asks": m.asks(t, free)} for t in listed]}
+    return {"ok": True, "tools": [{"name": t["name"], "read_only": bool(t.get("read_only")), "asks": m.asks(t, free, smart=smart)} for t in listed]}
 
 
 @router.get("/mcp/presets")
@@ -440,7 +440,7 @@ async def mcp_presets() -> list[dict[str, Any]]:
 
 
 @router.post("/mcp/check")
-async def mcp_check(body: CheckIn) -> dict[str, Any]:
+async def mcp_check(body: CheckIn, request: Request) -> dict[str, Any]:
     """Lists a server's tools before it is saved (nothing is saved)."""
     from odie.plugins.mcp import command_problem, read_config, unmask
     if not (body.spec.get("url") or body.spec.get("command")):
@@ -452,7 +452,7 @@ async def mcp_check(body: CheckIn) -> dict[str, Any]:
     problem = command_problem(spec)  # the check runs the program: never a shell or code handed in as text
     if problem:
         raise HTTPException(422, problem)
-    return await _check(spec)
+    return await _check(spec, smart=approvals_mode.is_smart(request.app.state.store))
 
 
 @router.post("/mcp/connect")
@@ -465,7 +465,7 @@ async def mcp_connect(body: ConnectIn, request: Request) -> dict[str, Any]:
         spec = presets.spec_for(body.preset, body.url, body.key)
     except ValueError as e:
         raise HTTPException(422, str(e))
-    checked = await _check(spec)
+    checked = await _check(spec, smart=approvals_mode.is_smart(request.app.state.store))
     if not checked["ok"]:
         said = presets.plain_reason(body.preset, checked["reason"])
         raise HTTPException(422, said if said != checked["reason"] else f"{presets.PRESETS[body.preset]['title']} didn't answer: {said}")
@@ -848,14 +848,12 @@ class ApprovalsModeIn(BaseModel):
 
 @router.get("/approvals/mode")
 async def approvals_mode_get(request: Request) -> dict[str, str]:
-    from odie import approvals_mode
     return {"mode": approvals_mode.mode(request.app.state.store)}
 
 
 @router.put("/approvals/mode")
 async def approvals_mode_put(body: ApprovalsModeIn, request: Request) -> dict[str, str]:
     """Choose Careful or Smart for the whole app; anything else is a 400."""
-    from odie import approvals_mode
     try:
         saved = approvals_mode.set_mode(request.app.state.store, body.mode)
     except ValueError as err:

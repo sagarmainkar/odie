@@ -48,7 +48,9 @@ def test_set_is_audited(store):
 
 
 @pytest.mark.parametrize("name", ["GMAIL_SEND_EMAIL", "cancel_order", "shareLink", "COMPOSIO_MULTI_EXECUTE_TOOL",
-                                  "run_query", "slack-post-message", "delete_thread"])
+                                  "run_query", "slack-post-message", "delete_thread", "GMAIL_FORWARD_MESSAGE", "transfer_funds",
+                                  "STRIPE_CREATE_REFUND", "drive_upload_file", "export_contacts", "invite_user", "submit_form",
+                                  "set_password"])
 def test_names_that_ask(name):
     assert approvals_mode.asks_by_name(name)
 

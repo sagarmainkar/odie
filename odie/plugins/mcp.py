@@ -209,12 +209,25 @@ class PluginMcpToolset(McpToolset):
         self.reads_free = reads_free
         self.smart = smart
 
+    def _smart_now(self) -> bool:
+        """Whether the approvals mode is Smart right now; Careful when there is no reader or it fails (a locked database
+        must not drop the app's tools): reader says True -> True; reader raises -> False (logged)."""
+        if not self.smart:
+            return False
+        try:
+            return bool(self.smart())
+        except Exception:
+            log.warning("could not read the approvals mode; app tools ask as in Careful", exc_info=True)
+            return False
+
     async def get_tools(self, readonly_context=None):
         tools = await super().get_tools(readonly_context)
-        smart_now = bool(self.smart()) if self.smart else False
+        smart_now = self._smart_now()
         for t in tools:  # per tool; ADK's toolset option can't see annotations
             tool = {"name": t.name, "read_only": is_read_only(t), "destructive": is_destructive(t)}
             t._require_confirmation = asks(tool, self.reads_free, smart=smart_now)
+            # Background turns share these tool objects and must never get Smart's looser rule: they read this instead.
+            t._asks_in_careful = asks(tool, self.reads_free, smart=False)
         return tools
 
 

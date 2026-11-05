@@ -91,6 +91,25 @@ async def test_the_toolset_reads_the_mode_on_every_listing(monkeypatch):
     assert asked() == {"write_note": True, "delete_note": True}  # and back
 
 
+async def test_a_listed_tool_remembers_what_careful_would_do(monkeypatch):
+    fakes = _Fakes("write_note", "list_items")
+    monkeypatch.setattr(McpToolset, "get_tools", _Fakes.get_tools.__get__(fakes))
+    await toolset_for("notes", {"command": "unused", "readsFree": True}, smart=lambda: True).get_tools()
+    write, read = fakes.tools
+    assert (write._require_confirmation, write._asks_in_careful) == (False, True)  # Smart runs it; background turns still refuse
+    assert (read._require_confirmation, read._asks_in_careful) == (False, False)
+
+
+async def test_a_mode_reader_that_fails_means_careful(monkeypatch):
+    fakes = _Fakes("write_note")
+    monkeypatch.setattr(McpToolset, "get_tools", _Fakes.get_tools.__get__(fakes))
+
+    def broken():
+        raise RuntimeError("database is locked")
+    tools = await toolset_for("notes", {"command": "unused"}, smart=broken).get_tools()
+    assert tools is fakes.tools and tools[0]._require_confirmation is True
+
+
 async def test_a_toolset_with_no_mode_is_careful(monkeypatch):
     fakes = _Fakes("write_note")
     monkeypatch.setattr(McpToolset, "get_tools", _Fakes.get_tools.__get__(fakes))
@@ -114,6 +133,14 @@ async def test_smart_with_a_real_server():
         assert asked == {"list_items": False, "create_item": False, "fetch_report": True, "get_status": False}
     finally:
         await ts.close()
+
+
+async def test_check_preview_follows_the_mode(client, monkeypatch):
+    monkeypatch.setattr(mcp, "probe_tools", _probe())
+    spec = {"spec": {"url": ZAPIER}}
+    assert [t["asks"] for t in (await client.post("/api/mcp/check", json=spec)).json()["tools"]] == [True, True]
+    await client.put("/api/approvals/mode", json={"mode": "smart"})
+    assert [t["asks"] for t in (await client.post("/api/mcp/check", json=spec)).json()["tools"]] == [False, True]
 
 
 async def test_reads_free_only_skips_reads():
