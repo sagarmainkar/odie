@@ -494,7 +494,7 @@ def step_after_tap(item: dict[str, Any], row: Any, approve: bool) -> dict[str, A
       tapped call c1, rejected     -> allowed {"by": "no", "at": <decided_at>}, result "" (nothing ran)
       another call c2 run_shell    -> allowed {"by": "pass"} as the stream gave it
       another call c2 web_search   -> no allowed key at all"""
-    step: dict[str, Any] = {"type": "step", "session_id": row["session_id"], "inv": item["inv"], "id": item["id"],
+    step: dict[str, Any] = {"type": "step", "session_id": row["session_id"], "inv": item.get("inv", ""), "id": item["id"],
                             "tool": item["tool"], "result": item["result"]}
     if item["id"] == row["call_id"]:
         step["allowed"] = {"by": "you" if approve else "no", "at": row["decided_at"]}
