@@ -449,7 +449,9 @@ def event_to_sse(ev: Any, asked: set[str] | None = None) -> list[dict[str, Any]]
       its answer {"result": "a.txt"}     -> tool_done {id c1, result "a.txt", allowed {"by": "pass"}}
       that answer, c1 asked before       -> tool_done {id c1, result "a.txt"} (no allowed: the card's row says)
       its answer "is rejected"           -> tool_done {id c1, result "", allowed {"by": "no"}}
-    The answer is matched to its call by id, never by place: two calls in one event may be answered in either order."""
+    The answer is matched to its call by id, never by place: two calls in one event may be answered in either order.
+    Every item also carries "inv", the event's invocation id ("" when the event has none):
+      any item from an event of turn inv-7 -> {..., "inv": "inv-7"}"""
     if getattr(ev, "author", None) == "user" or not getattr(ev, "content", None) or not ev.content.parts:
         return []
     out: list[dict[str, Any]] = []
@@ -480,6 +482,8 @@ def event_to_sse(ev: Any, asked: set[str] | None = None) -> list[dict[str, Any]]
             if usage:
                 item["usage"] = usage  # the finished reply's counts, for the line under it
             out.append(item)
+    for item in out:
+        item["inv"] = invocation_id  # the turn this came from, so a continuation after a tap joins that turn's message
     return out
 
 
@@ -490,8 +494,8 @@ def step_after_tap(item: dict[str, Any], row: Any, approve: bool) -> dict[str, A
       tapped call c1, rejected     -> allowed {"by": "no", "at": <decided_at>}, result "" (nothing ran)
       another call c2 run_shell    -> allowed {"by": "pass"} as the stream gave it
       another call c2 web_search   -> no allowed key at all"""
-    step: dict[str, Any] = {"type": "step", "session_id": row["session_id"], "id": item["id"], "tool": item["tool"],
-                            "result": item["result"]}
+    step: dict[str, Any] = {"type": "step", "session_id": row["session_id"], "inv": item["inv"], "id": item["id"],
+                            "tool": item["tool"], "result": item["result"]}
     if item["id"] == row["call_id"]:
         step["allowed"] = {"by": "you" if approve else "no", "at": row["decided_at"]}
     elif "allowed" in item:
@@ -1064,6 +1068,12 @@ class OdieRunner:
                     for item in event_to_sse(ev, asked):
                         if item["type"] == "text":
                             final.append(item["text"])
+                        elif item["type"] == "tool_start":
+                            await self.bus.publish({"type": "step_start", "session_id": row["session_id"], "inv": item["inv"], "id": item["id"],
+                                                    "tool": item["tool"], "args": item["args"], "gated": item["gated"]})
+                        elif item["type"] == "tool_wait":
+                            await self.bus.publish({"type": "step_wait", "session_id": row["session_id"], "inv": item["inv"], "id": item["id"],
+                                                    "tool": item["tool"]})
                         elif item["type"] == "tool_done":
                             await self.bus.publish(step_after_tap(item, row, approve))
                     for card in self._approvals_in(ev, row["session_id"]):
@@ -1079,11 +1089,12 @@ class OdieRunner:
                 turn.PRIVATE.reset(private)
                 turn.READ.reset(read)
                 turn.HISTORY_LIMIT.reset(compact)
-        text = "".join(final) or ("Done." if approve else "Okay, I left it.")
-        self.store.set_approval_result(approval_id, text)
-        from odie.signin import guard as signin_guard
-        await self.bus.publish({"type": "message", "kind": "reply", "text": text, "ts": time.time(), "session_id": row["session_id"],
-                                **({"private": True} if signin_guard.private_of(self.store, row["session_id"]) else {})})
+        text = "".join(final)  # the model's own words after the tool, or "" when it said nothing: no filler is made up
+        self.store.set_approval_result(approval_id, text)  # "" still marks the card finished (never None)
+        if text.strip():
+            from odie.signin import guard as signin_guard
+            await self.bus.publish({"type": "message", "kind": "reply", "text": text, "ts": time.time(), "session_id": row["session_id"],
+                                    "inv": row["invocation_id"], **({"private": True} if signin_guard.private_of(self.store, row["session_id"]) else {})})
         await self.bus.publish({"type": "approval_done", "id": approval_id, "status": "approved" if approve else "rejected", "text": text})
         return {"text": text}
 

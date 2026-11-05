@@ -159,7 +159,7 @@ async def test_resume_publishes_the_steps_result(isolated_settings, tmp_path):
     steps = {e["id"]: e for e in got if e["type"] == "step"}
     decided_at = s.get_approval(aid)["decided_at"]
     assert decided_at
-    assert steps["c1"] == {"type": "step", "session_id": "chat-2026-10-01", "id": "c1", "tool": "gmail_send_draft", "result": "Sent.",
+    assert steps["c1"] == {"type": "step", "session_id": "chat-2026-10-01", "inv": "inv-1", "id": "c1", "tool": "gmail_send_draft", "result": "Sent.",
                            "allowed": {"by": "you", "at": decided_at}}
     assert steps["c2"]["allowed"] == {"by": "pass"}  # another call keeps what the stream said
     assert "allowed" not in steps["c3"]
@@ -177,6 +177,69 @@ async def test_rejection_publishes_no_output(isolated_settings, tmp_path):
     assert len(steps) == 1
     assert steps[0]["id"] == "c1" and steps[0]["result"] == ""
     assert steps[0]["allowed"] == {"by": "no", "at": s.get_approval(aid)["decided_at"]}
+    await r.close()
+
+
+def _words_event(text, inv="inv-1"):
+    from google.genai import types
+    return SimpleNamespace(author="odie", partial=False, invocation_id=inv, content=types.Content(role="model", parts=[types.Part(text=text)]))
+
+
+async def test_resume_posts_no_filler_when_the_model_said_nothing(isolated_settings, tmp_path):
+    # The tool ran and the model added no words: no "Done." message, but the result is "" (not None) so the card counts as finished.
+    s = _store(tmp_path)
+    r = OdieRunner(s)
+    aid = s.create_approval("chat-2026-10-01", "inv-1", "req-1", "gmail_send_draft", {"draft_id": "d1"}, summary="Send", detail={},
+                            provenance=[], call_id="c1")
+    event = _answer_event(("c1", "gmail_send_draft", {"result": "Sent."}))
+    got = await _resume_and_collect(r, aid, True, [event])
+    assert [e for e in got if e["type"] == "message"] == []
+    assert s.get_approval(aid)["result_text"] == ""
+    assert got[-1] == {"type": "approval_done", "id": aid, "status": "approved", "text": ""}
+    rejected = s.create_approval("chat-2026-10-01", "inv-2", "req-2", "gmail_send_draft", {"draft_id": "d2"}, summary="Send", detail={},
+                                 provenance=[], call_id="c9")
+    got = await _resume_and_collect(r, rejected, False, [])
+    assert [e for e in got if e["type"] == "message"] == []
+    assert s.get_approval(rejected)["result_text"] == ""
+    await r.close()
+
+
+async def test_resume_posts_the_models_words_with_their_turn(isolated_settings, tmp_path):
+    s = _store(tmp_path)
+    r = OdieRunner(s)
+    aid = s.create_approval("chat-2026-10-01", "inv-1", "req-1", "gmail_send_draft", {"draft_id": "d1"}, summary="Send", detail={},
+                            provenance=[], call_id="c1")
+    got = await _resume_and_collect(r, aid, True, [_words_event("Sent it to Asha.")])
+    messages = [e for e in got if e["type"] == "message"]
+    assert len(messages) == 1
+    assert messages[0]["text"] == "Sent it to Asha." and messages[0]["kind"] == "reply"
+    assert messages[0]["inv"] == "inv-1" and messages[0]["session_id"] == "chat-2026-10-01"
+    assert s.get_approval(aid)["result_text"] == "Sent it to Asha."
+    await r.close()
+
+
+async def test_resume_publishes_the_runs_step_starts_and_waits(isolated_settings, tmp_path):
+    # The resumed run goes on to a second gated call that raises another card: the open chat sees the step start, the wait
+    # and the new card live, and no reply message (the model said nothing yet).
+    from google.genai import types
+    s = _store(tmp_path)
+    r = OdieRunner(s)
+    aid = s.create_approval("chat-2026-10-01", "inv-1", "req-1", "gmail_send_draft", {"draft_id": "d1"}, summary="Send", detail={},
+                            provenance=[], call_id="c1")
+    call = types.FunctionCall(id="c2", name="run_shell", args={"command": "rm old.txt"})
+    start = SimpleNamespace(author="odie", partial=False, invocation_id="inv-1", content=types.Content(role="model", parts=[types.Part(function_call=call)]))
+    wait = _answer_event(("c2", "run_shell", {"error": "This tool call requires confirmation, please approve or reject."}))
+    ask = types.FunctionCall(id="req-2", name="adk_request_confirmation", args={
+        "originalFunctionCall": {"id": "c2", "name": "run_shell", "args": {"command": "rm old.txt"}}, "toolConfirmation": {"hint": ""}})
+    card = SimpleNamespace(author="odie", partial=False, invocation_id="inv-1", content=types.Content(role="model", parts=[types.Part(function_call=ask)]))
+    got = await _resume_and_collect(r, aid, True, [_answer_event(("c1", "gmail_send_draft", {"result": "Sent."})), start, wait, card])
+    kinds = [e["type"] for e in got]
+    assert kinds == ["approval", "step", "step_start", "step_wait", "approval", "approval_done"]
+    assert got[1]["inv"] == "inv-1"
+    assert got[2] == {"type": "step_start", "session_id": "chat-2026-10-01", "inv": "inv-1", "id": "c2", "tool": "run_shell",
+                      "args": {"command": "rm old.txt"}, "gated": True}
+    assert got[3] == {"type": "step_wait", "session_id": "chat-2026-10-01", "inv": "inv-1", "id": "c2", "tool": "run_shell"}
+    assert got[4]["status"] == "pending" and got[4]["tool"] == "run_shell"
     await r.close()
 
 

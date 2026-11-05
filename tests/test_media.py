@@ -85,9 +85,9 @@ def _text(author, text):
 def test_media_events_stream():
     from odie.app.runner import event_to_sse, media_of
     out = event_to_sse(_response("speak", {"result": "The memo is under your reply.", "media": MEMO}))
-    assert [i["type"] for i in out] == ["tool_done", "media"] and out[1] == {"type": "media", "media": MEMO}
+    assert [i["type"] for i in out] == ["tool_done", "media"] and out[1] == {"type": "media", "media": MEMO, "inv": ""}
     assert out[0]["tool"] == "speak"
-    assert event_to_sse(_response("now", {"result": "9:31"})) == [{"type": "tool_done", "tool": "now", "id": None, "result": "9:31"}]
+    assert event_to_sse(_response("now", {"result": "9:31"})) == [{"type": "tool_done", "tool": "now", "id": None, "result": "9:31", "inv": ""}]
     assert media_of({"media": {"id": "nope"}}) is None and media_of("text") is None and media_of({"media": MEMO}) == MEMO
 
 
