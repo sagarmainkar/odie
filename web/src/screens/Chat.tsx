@@ -714,7 +714,7 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
                   <div key={m.id} className={spacing}>
                     {showTime && <div className="mb-3"><TimeDivider ts={m.ts!} /></div>}
                     {m.role === "approval" && m.approval ? (
-                      <motion.div {...enter}><ChatApproval a={m.approval} onDecided={(id, st) => { setOrb("idle"); setMsgs((all) => all.map((x) => x.approval?.id === id ? { ...x, approval: answered(x.approval, st) } : x)); if (st === "approved") waitForTap(id); }} /></motion.div>
+                      <motion.div {...enter}><ChatApproval a={m.approval} onDecided={(id, st, until) => { setOrb("idle"); setMsgs((all) => all.map((x) => x.approval?.id === id ? { ...x, approval: answered(x.approval, st, until) } : x)); if (st === "approved") waitForTap(id); }} /></motion.div>
                     ) : m.role === "odie" && m.text === NEW_CHAT ? (
                       <NewChatDivider ts={m.ts} name={name} />
                     ) : m.role === "odie" && m.text.startsWith(ROLLOVER) ? (
