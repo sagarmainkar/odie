@@ -2,6 +2,8 @@
 before every tool call ("Let me check…") leaves a turn as several Odie lines; an app can fold the lines of one turn
 into the one answer, as the live stream already shows them, and still tell a message Odie posted on its own (a
 reminder, a job's note) from them, since a posted message is a turn of its own."""
+from datetime import UTC, datetime
+
 from google.adk.events import Event
 from google.genai import types
 
@@ -60,19 +62,50 @@ def test_history_steps_pair_call_and_response_by_id():
     assert steps[0]["allowed"] is None
 
 
-def test_history_keeps_a_gated_call_on_its_line_with_the_later_result():
-    events = [_event("user", "list files", "e-1"),
-              _calls("odie", "e-1", ("run_shell", "c1", {"command": "ls"})),
-              _answers("e-1", ("run_shell", "c1", WAITING_ANSWER)),
-              _event("odie", "I need your tap.", "e-1"),
-              _answers("e-2", ("run_shell", "c1", {"result": "a.txt"})),  # after the tap, in a later turn
-              _event("odie", "One file.", "e-2")]
-    lines = events_to_history(events)
-    odie_lines = [h for h in lines if h["role"] == "odie"]
-    assert [h["text"] for h in odie_lines] == ["I need your tap.", "One file."]
-    assert [(s["id"], s["result"], s["state"]) for s in odie_lines[0]["steps"]] == [("c1", "a.txt", "done")]
-    assert odie_lines[1]["steps"] == []
-    assert odie_lines[0]["tools"] == ["run_shell"]  # gated tools are no longer hidden
+def _timed(event: Event, ts: float) -> Event:
+    event.timestamp = ts
+    return event
+
+
+def _confirmation_request(inv: str, request_id: str, call_id: str, tool: str, args: dict) -> Event:
+    """ADK's own question for a gated call: a model event with a call to adk_request_confirmation that wraps it."""
+    original = {"id": call_id, "name": tool, "args": args}
+    return _calls("odie", inv, ("adk_request_confirmation", request_id, {"originalFunctionCall": original, "toolConfirmation": {"hint": ""}}))
+
+
+def _confirmation(inv: str, request_id: str, confirmed: bool) -> Event:
+    """The tap, as ADK stores it: a user event answering the confirmation call."""
+    answer = types.FunctionResponse(name="adk_request_confirmation", id=request_id, response={"confirmed": confirmed})
+    return Event(author="user", invocation_id=inv, content=types.Content(role="user", parts=[types.Part(function_response=answer)]))
+
+
+def _gated_shell_turn(start: float, result: dict) -> list[Event]:
+    """A gated `ls` in a resumable app, as ADK really writes it: the call, the "requires confirmation" answer, the
+    confirmation call (and the pause); a minute later the tap, the real result, and the reply."""
+    return [_timed(_event("user", "list files", "e-1"), start),
+            _timed(_calls("odie", "e-1", ("run_shell", "c1", {"command": "ls"})), start + 1),
+            _timed(_answers("e-1", ("run_shell", "c1", WAITING_ANSWER)), start + 1),
+            _timed(_confirmation_request("e-1", "r1", "c1", "run_shell", {"command": "ls"}), start + 2),
+            _timed(_confirmation("e-1", "r1", True), start + 60),
+            _timed(_answers("e-1", ("run_shell", "c1", result)), start + 61),
+            _timed(_event("odie", "One file.", "e-1"), start + 62)]
+
+
+def test_the_reply_after_a_tap_sits_below_its_card(tmp_path):
+    from odie.app.runner import merge_approvals
+
+    store = _store(tmp_path)
+    start = datetime(2026, 11, 5, 10, 0, tzinfo=UTC).timestamp()
+    row = store.create_approval("chat-1", "e-1", "r1", "run_shell", {"command": "ls"}, "Run", {}, [], call_id="c1")
+    store.execute("update approvals set created_at=? where id=?", ("2026-11-05T10:00:02.500Z", row))  # with the question
+    lines = events_to_history(_gated_shell_turn(start, {"result": "a.txt"}))
+    items = merge_approvals(lines, store.approvals_in_sessions(["chat-1"]))
+    assert [(i["role"], i["text"]) for i in items] == [("user", "list files"), ("odie", ""), ("approval", ""), ("odie", "One file.")]
+    call_line, reply = items[1], items[3]
+    assert [(s["id"], s["result"], s["state"]) for s in call_line["steps"]] == [("c1", "a.txt", "done")]  # on the call's line
+    assert call_line["tools"] == ["run_shell"]  # gated tools are no longer hidden
+    assert reply["steps"] == [] and reply["tools"] == []
+    assert reply["ts"] == start + 62  # the reply keeps its own time
 
 
 def test_history_step_states():

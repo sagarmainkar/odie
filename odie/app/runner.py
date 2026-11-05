@@ -125,9 +125,25 @@ def events_to_history(events: list[Any]) -> list[dict[str, Any]]:
     saved checklist ticks hang off it; see reply_key). inv: the turn the line came from (the event's invocation id), so
     an app can fold a turn's lines into one answer; a message Odie posted on its own is a turn of its own.
     steps (Odie lines): one per tool call, in the order called, each paired with its answer by call id, never by place.
-    An answer that lands in a later event (a gated call after the tap) still fills the step on the line of the call."""
+    An answer that lands in a later event (a gated call after the tap) still fills the step on the line of the call.
+    A line that raised an approval card is closed: what Odie does after the tap starts a line of its own, with its own
+    time, so it sits below the card."""
     out: list[dict[str, Any]] = []
     steps_by_id: dict[str, dict[str, Any]] = {}
+    closed: list[dict[str, Any]] = []  # the lines an approval card was raised after
+
+    def adds_to_last() -> bool:
+        """Whether Odie's next tool call, file or text joins the last line instead of starting one: it does when the
+        last line is Odie's, has no text yet, and no approval card was raised after it.
+          [odie "" with run_shell] + text "One file."                          -> joins: the step and its reply, one line
+          [odie "" with run_shell], approval card raised, + text "One file."    -> a new line, below the card
+          [odie "Sure."] + text "Done."                                          -> a new line"""
+        if not out:
+            return False
+        last = out[-1]
+        if last["role"] != "odie" or last["text"]:
+            return False
+        return not any(last is closed_line for closed_line in closed)
 
     def line(role: str, text: str, tools: list[str], ts: float, inv: str, **more: Any) -> dict[str, Any]:
         item: dict[str, Any] = {"role": role, "text": text, "tools": tools, "ts": ts, **more}
@@ -155,7 +171,7 @@ def events_to_history(events: list[Any]) -> list[dict[str, Any]]:
         tools = [call.name for call in calls]
         made = [m for p in ev.content.parts if p.function_response and (m := media_of(p.function_response.response))]
         if made and ev.author != "user":
-            if out and out[-1]["role"] == "odie" and not out[-1]["text"]:
+            if adds_to_last():
                 out[-1].setdefault("media", []).extend(made)
             else:
                 out.append(line("odie", "", [], ts, inv, media=made))
@@ -168,13 +184,13 @@ def events_to_history(events: list[Any]) -> list[dict[str, Any]]:
                 out.append(line("user", clean, [], ts, inv, images=imgs))
             continue
         if tools:
-            if out and out[-1]["role"] == "odie" and not out[-1]["text"]:
+            if adds_to_last():
                 out[-1]["tools"] += tools
             else:
                 out.append(line("odie", "", tools, ts, inv))
             out[-1]["steps"] += new_steps
         if texts:
-            if out and out[-1]["role"] == "odie" and not out[-1]["text"]:
+            if adds_to_last():
                 out[-1]["text"] = "".join(texts)
             else:
                 out.append(line("odie", "".join(texts), [], ts, inv))
@@ -187,6 +203,9 @@ def events_to_history(events: list[Any]) -> list[dict[str, Any]]:
             posted = [m for x in ((getattr(ev, "custom_metadata", None) or {}).get("media") or []) if (m := media_of({"media": x}))]
             if posted:  # a posted message's memo (a spoken reminder)
                 out[-1].setdefault("media", []).extend(posted)
+        asks_for_tap = any(p.function_call and p.function_call.name == CONFIRM for p in ev.content.parts)
+        if asks_for_tap and out:  # the app pauses here; whatever follows the tap goes below the card
+            closed.append(out[-1])
     return out
 
 
