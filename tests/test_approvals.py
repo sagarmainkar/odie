@@ -59,6 +59,7 @@ async def test_chat_stream_emits_approval_and_stores_row(isolated_settings, tmp_
     card = next(e for e in out if e["type"] == "approval")
     row = s.get_approval(card["id"])
     assert row["status"] == "pending" and row["invocation_id"] == "inv-1" and row["request_id"] == "req-1" and row["session_id"] == sid
+    assert row["call_id"] == "c1"  # the id of the tool call that is waiting for the tap
     await r.close()
 
 

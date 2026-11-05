@@ -873,7 +873,9 @@ class OdieRunner:
                 continue
             inv = getattr(ev, "invocation_id", "") or ""
             a = approval_from_confirmation(fc, inv, session_id, self.store)
-            aid = self.store.create_approval(session_id, inv, a["request_id"], a["tool"], a["args"], a["summary"], a["detail"], a["provenance"], a["risk"])
+            original_call = fc.args.get("originalFunctionCall", {})  # ADK wraps the call that is waiting for a tap
+            aid = self.store.create_approval(session_id, inv, a["request_id"], a["tool"], a["args"], a["summary"], a["detail"], a["provenance"], a["risk"],
+                                             call_id=original_call.get("id"))
             self.store.audit("agent", "approval_requested", tool=a["tool"], args=a["args"], result_summary=a["summary"], session_id=session_id, invocation_id=inv, approval_id=aid)
             card = {"type": "approval", "id": aid, "tool": a["tool"], "summary": a["summary"], "detail": a["detail"],
                     "provenance": a["provenance"], "risk": a["risk"], "status": "pending"}

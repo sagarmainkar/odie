@@ -123,3 +123,54 @@ def response_kind(response: object) -> str:
     if error.startswith(REJECTED):
         return "no"
     return "done"
+
+
+def _by_of(row) -> dict:
+    """Who a decided approval row says: status "approved" -> "you", "rejected" -> "no". Carries when it was decided."""
+    who = "you" if row["status"] == "approved" else "no"
+    return {"by": who, "at": row["decided_at"]}
+
+
+def _ran_under_the_pass(tool: str, response: object) -> bool:
+    """Did this shell call run without a tap, because a pass allowed it?
+
+    `{"result": "a.txt"}` from run_shell -> True (the command ran; a failed command is still a result, so
+    `{"result": "exit 1"}` -> True too); `{"error": "refused: command not allowed"}` -> False (the args check turned it
+    away, nothing ran); `{"error": "This tool call requires confirmation"}` -> False (it is waiting for a tap);
+    `{"result": "page"}` from web_fetch -> False (only the shell has a pass).
+    """
+    if tool not in _SHELL_TOOLS:
+        return False
+    if response_kind(response) != "done":
+        return False
+    return isinstance(response, dict) and "result" in response
+
+
+def allowed_of(tool: str, call_id: str, invocation_id: str, args: dict, response: object, rows: list) -> dict | None:
+    """Who let this tool call run: {"by": "you"|"no"|"pass", "at": ...} or None when nothing says.
+
+    `rows` are the session's decided approvals (Store.approvals_for_calls). The first row with this call's id wins; a row
+    saved before call ids existed (call_id empty) is found by the same invocation, tool and exact arguments. With no row,
+    only a shell command that ran gets "pass".
+    - an approved row for call "c1" -> {"by": "you", "at": <when>}; a rejected one -> {"by": "no", "at": <when>}
+    - an old row, same invocation and tool, args {"message_id": "m1"} both sides -> {"by": "you", "at": <when>}
+    - run_shell, no row, response {"result": "a.txt"} -> {"by": "pass"}
+    - run_shell, no row, response {"error": "This tool call requires confirmation"} -> None (a shell "wait")
+    - run_shell, no row, response {"error": "refused: ..."} -> None
+    - web_search, no row -> None (no pill)
+    """
+    for row in rows:
+        if row["call_id"] and row["call_id"] == call_id:
+            return _by_of(row)
+
+    args_json = json.dumps(args, default=str)  # the same rendering Store.create_approval saves
+    for row in rows:
+        if row["call_id"]:
+            continue
+        same_call = row["invocation_id"] == invocation_id and row["tool"] == tool
+        if same_call and row["args_json"] == args_json:
+            return _by_of(row)
+
+    if _ran_under_the_pass(tool, response):
+        return {"by": "pass"}
+    return None
