@@ -1,7 +1,8 @@
 # Changelog
 
-## Unreleased
+## v0.2.41 (2026-11-05)
 
+- The round "jump to latest" button stays hidden while the morning card is the only thing in the chat.
 - The step receipt: open a reply's steps and each one says what it was asked (the command, the search, the page), who let it run (a "You allowed · 10:42" pill for your tap, "pass" for a shell command under the pass, "You said no", or "Lapsed" for a card nobody tapped in time), and what came back ("No output", "3 lines · tap to see them", or "Made a file"). A tap shows the first 12 lines of the output, and Show all the rest. A step waiting for your tap says so with a spinner, and after the tap it fills in on the open chat without a reload, even when you approved it from the phone. A step that can no longer finish (its card lapsed, or Odie restarted mid-step) says "Not run" or "No result" instead of spinning.
 - Steps that need your tap, such as a shell command, now show in the reply's trace like any other step, and the blocks eval and the chat replay count them among the tools a turn called. Only Odie's own approval question stays out: the card shows it.
 
