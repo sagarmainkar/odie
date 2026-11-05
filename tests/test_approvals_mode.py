@@ -1,4 +1,6 @@
 """The approvals mode: Careful (every tap as today) or Smart (routine work runs, risky things still ask)."""
+from pathlib import Path
+
 import pytest
 
 from odie import approvals_mode
@@ -62,3 +64,33 @@ def test_plain_write_needs_a_tap_only_in_careful(store):
     assert not approvals_mode.plain_write_needs_tap(store)
     approvals_mode.set_mode(store, "careful")
     assert approvals_mode.plain_write_needs_tap(store)
+
+
+def test_install_skill_and_addon_gated_tools_still_ask_in_smart(store):
+    """Smart reads nothing in these tools' own gates: install_skill is built with require_confirmation=True, and an
+    add-on's gated tools are listed by gated_tools() (the runner and background guard read that list), whatever the mode."""
+    from google.adk.tools import FunctionTool
+
+    from odie import addons
+    from odie.addons import Addon
+    from odie.agent.agent import GATED_TOOLS
+    from odie.skills import builder
+    from odie.skills.registry import _load_tools
+
+    async def unlock_door() -> str:
+        """Unlock the door."""
+        return "unlocked"
+
+    approvals_mode.set_mode(store, "smart")
+    addons.use([Addon("bell", tool_names=frozenset({"unlock_door"}), gated=frozenset({"unlock_door"}),
+                      tools=lambda s: [FunctionTool(unlock_door, require_confirmation=True)])])
+    try:
+        skill_tools = {t.name: t for t in _load_tools(Path(builder.__file__).parent / "skill-builder", "skill-builder")}
+        assert skill_tools["install_skill"]._require_confirmation is True
+        assert {"run_shell", "install_skill"} <= GATED_TOOLS
+        assert addons.gated_tools() == frozenset({"unlock_door"})
+        built = {t.name: t for t in addons.tools_of(addons.active()[0], store)}
+        for name in addons.gated_tools():
+            assert built[name]._require_confirmation is True, name
+    finally:
+        addons.use(None)

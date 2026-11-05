@@ -22,7 +22,7 @@ from google.adk.runners import Runner
 from google.adk.sessions.sqlite_session_service import SqliteSessionService
 from google.genai import types
 
-from odie import addons, config
+from odie import addons, approvals_mode, config
 from odie.agent.agent import build_agent, chat_generate_config, memory_file
 from odie.agent.callbacks import OdiePlugin
 from odie.agent.context import parts_of
@@ -1370,7 +1370,7 @@ class OdieRunner:
                 for e in skills:
                     if e.status == "ok":
                         reserved.update({t: f"the {e.name} skill" for t in e.tools})
-                servers = await load_servers(reserved=reserved)
+                servers = await load_servers(reserved=reserved, smart=lambda: approvals_mode.is_smart(self.store))
                 ok = [e for e in servers if e.status == "ok"]
                 skill_ts = build_skill_toolset(skills, extra_skills=[e.skill for e in ok if e.skill],
                                                extra_tools=[e.toolset for e in ok if e.skill])

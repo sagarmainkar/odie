@@ -2,9 +2,11 @@
 per-server switch that lets reads run without a tap (never anything that changes something)."""
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import httpx
 import pytest
+from google.adk.tools.mcp_tool import McpToolset
 
 from odie.plugins import mcp, presets
 from odie.plugins.mcp import asks, is_read_name, toolset_for
@@ -41,6 +43,77 @@ def test_asks():
     assert asks({"name": "delete_thread", "read_only": True}, True) is True  # marked read-only, but its name says otherwise
     assert asks({"name": "send_mail", "read_only": True}, True) is True
     assert asks({"name": "fetch_report", "read_only": False, "destructive": True}, True) is True
+
+
+def test_asks_in_smart():
+    # Smart: only the ask-words in the name, or the server's destructive mark, ask. The reads_free switch no longer matters.
+    assert asks({"name": "GMAIL_SEND_EMAIL"}, False, smart=True) is True
+    assert asks({"name": "GMAIL_FETCH_EMAILS"}, False, smart=True) is False
+    assert asks({"name": "write_note", "read_only": True}, False, smart=True) is False  # an ordinary write runs
+    assert asks({"name": "delete_note"}, False, smart=True) is True
+    assert asks({"name": "list_items"}, False, smart=True) is False  # runs even with the reads switch off
+    assert asks({"name": "fetch_report", "destructive": True}, True, smart=True) is True  # innocent name, marked destructive
+    assert asks({"name": "COMPOSIO_MULTI_EXECUTE_TOOL"}, True, smart=True) is True
+
+
+def test_asks_in_careful_is_unchanged():
+    assert asks({"name": "write_note"}, False, smart=False) is True
+    assert asks({"name": "list_items"}, False, smart=False) is True
+    assert asks({"name": "list_items"}, True, smart=False) is False
+    assert asks({"name": "GMAIL_FETCH_EMAILS"}, False) is True  # smart defaults to Careful
+
+
+class _Fakes:
+    """What a server lists, without a server: tools with a name and the hints the toolset reads."""
+
+    def __init__(self, *names):
+        self.tools = [SimpleNamespace(name=n, raw_mcp_tool=None, _require_confirmation=None) for n in names]
+
+    async def get_tools(self, readonly_context=None):
+        return self.tools
+
+
+async def test_the_toolset_reads_the_mode_on_every_listing(monkeypatch):
+    fakes = _Fakes("write_note", "delete_note")
+    monkeypatch.setattr(McpToolset, "get_tools", _Fakes.get_tools.__get__(fakes))
+    mode = {"smart": False}
+    ts = toolset_for("notes", {"command": "unused"}, smart=lambda: mode["smart"])
+
+    def asked():
+        return {t.name: t._require_confirmation for t in fakes.tools}
+    await ts.get_tools()
+    assert asked() == {"write_note": True, "delete_note": True}  # Careful: everything asks
+    mode["smart"] = True
+    await ts.get_tools()
+    assert asked() == {"write_note": False, "delete_note": True}  # flipped mid-chat: the next listing sees it
+    mode["smart"] = False
+    await ts.get_tools()
+    assert asked() == {"write_note": True, "delete_note": True}  # and back
+
+
+async def test_a_toolset_with_no_mode_is_careful(monkeypatch):
+    fakes = _Fakes("write_note")
+    monkeypatch.setattr(McpToolset, "get_tools", _Fakes.get_tools.__get__(fakes))
+    await toolset_for("notes", {"command": "unused"}).get_tools()
+    assert fakes.tools[0]._require_confirmation is True
+
+
+def test_toolset_for_keeps_the_mode_reader():
+    def reader():
+        return True
+    assert toolset_for("notes", {"command": "unused"}, smart=reader).smart is reader
+    assert toolset_for("notes", {"command": "unused"}).smart is None
+
+
+async def test_smart_with_a_real_server():
+    ts = toolset_for("apps", {**APPS}, smart=lambda: True)
+    try:
+        tools = {t.name: t for t in await ts.get_tools()}
+        asked = {n: await t.check_require_confirmation({}, None) for n, t in tools.items()}
+        # create_item runs, list_items and get_status run (reads switch is off), fetch_report is marked destructive
+        assert asked == {"list_items": False, "create_item": False, "fetch_report": True, "get_status": False}
+    finally:
+        await ts.close()
 
 
 async def test_reads_free_only_skips_reads():
