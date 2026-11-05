@@ -46,9 +46,7 @@ import { splitConnect } from "../google";
 import { Star, ThreadsSheet, ThreadsSidebar } from "../components/ThreadsSheet";
 import { useWide } from "../layout";
 import { belongsHere, type Thread } from "../threads";
-import { plainMath } from "../plainMath";
-import { liftOneLineFences } from "../blocks/oneLineFence";
-import { tidyStrayBlocks } from "../blocks/strayBlocks";
+import { drawnText } from "../blocks/drawnText";
 import { replyArrived, streamStalled, tapFinished } from "../reply";
 import { ChatApproval, type Approval } from "../components/ApprovalCard";
 import { answered } from "../approvals";
@@ -120,7 +118,7 @@ const mdComponents: Components = {
 /** A finished reply drawn the way the chat draws one (Markdown, blocks, charts, photos), with nowhere to save ticks:
  *  for the #sample screen, which shows a saved conversation. */
 export function ReplyText({ text }: { text: string }) {
-  const shown = plainMath(tidyStrayBlocks(liftOneLineFences(text)));
+  const shown = drawnText(text);
   return (
     <ReplyPlace.Provider value={{ text: shown }}>
       <div className="glass rounded-[8px_26px_26px_26px] px-4 py-3.5 md @container"><ReactMarkdown remarkPlugins={[remarkGfm, remarkInline]} components={mdComponents}>{shown}</ReactMarkdown></div>
@@ -734,7 +732,7 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
                           <div className="flex items-center gap-3"><Orb state="thinking" size={28} /><span className="text-[14px] font-semibold shimmer-text">{thinking ? "Thinking longer" : "Thinking"}</span></div>
                         )}
                         {m.text && (() => {
-                          const shown = plainMath(tidyStrayBlocks(liftOneLineFences(splitConnect(m.text).text)));
+                          const shown = drawnText(splitConnect(m.text).text);
                           return (
                             <PrivateReply.Provider value={!!m.private}>
                               <ReplyPlace.Provider value={{ sessionId: m.sid, messageKey: m.key, text: shown, streaming, answers: laterAnswers[i] }}>

@@ -1,6 +1,7 @@
 // One turn is one message, however many taps it took. A turn's lines share an `inv` (the turn's id): after a reload the
 // history's lines of one turn fold into one message, and live, what a resumed run says or does joins the message of its
 // turn. The pure functions here do both; Chat.tsx only calls them.
+import { drawnText } from "./blocks/drawnText";
 import { fenceNumber } from "./blocks/SavedPlace";
 import type { Approval } from "./components/ApprovalCard";
 import type { Media } from "./media";
@@ -32,11 +33,14 @@ function isDecidedCard(item: HistoryItem): boolean {
   return item.approval.status !== "pending";
 }
 
-/** Whether a line's text holds an ```odie-blocks fence (a checklist, a form): its saved ticks and answers hang off the
- * line's key and the fence's number in its text, so nothing may be joined onto it.
- *    "Packing list\n```odie-blocks\n[…]\n```" -> true;  "Added a reminder." -> false */
+/** Whether a line's text holds an ```odie-blocks fence (a checklist, a form) as the chat draws it: its saved ticks
+ * and answers hang off the line's key and the fence's number in the drawn text, so nothing may be joined onto it.
+ *    "Packing list\n```odie-blocks\n[…]\n```"       -> true
+ *    "```odie-checklist\n{…}\n```" (a stray fence)  -> true  (the chat draws it as an odie-blocks fence)
+ *    "List ```odie-blocks: […] ```" (one line)     -> true  (lifted onto lines of its own when drawn)
+ *    "Added a reminder."                           -> false */
 function holdsBlocks(text: string): boolean {
-  return fenceNumber(text, Infinity) > 0;
+  return fenceNumber(drawnText(text), Infinity) > 0;
 }
 
 /** Which line already folded this Odie line continues: the last Odie line, when it is of the same turn, holds no
@@ -60,8 +64,8 @@ function lineToJoin(folded: HistoryItem[], item: HistoryItem): number {
 }
 
 /** Two lines of one turn as one: texts joined by a blank line (empty ones skipped), steps, tools and media in order,
- * the first line's time, the key (and its session) of the last line that has one, usage from the last; private when
- * either line is. */
+ * the first line's time, the key (and its session) of the last line that has one, usage from the last that has it;
+ * private when either line is. */
 function joined(first: HistoryItem, next: HistoryItem): HistoryItem {
   const texts = [first.text, next.text].filter((text) => text);
   const media = [...(first.media ?? []), ...(next.media ?? [])];
@@ -75,7 +79,7 @@ function joined(first: HistoryItem, next: HistoryItem): HistoryItem {
     key: named.key,
     sid: named.sid,
     private: first.private || next.private,
-    usage: next.usage,
+    usage: next.usage ?? first.usage,
   };
 }
 
@@ -128,6 +132,8 @@ export function foldTurns(items: HistoryItem[]): HistoryItem[] {
  *    step_wait or step for an id that message doesn't hold -> null (the caller falls back)
  *    message "Removed."                -> "I'll remove it." becomes "I'll remove it.\n\nRemoved."
  *    message "Removed." on a message already ending in it -> the same list (the reload after the tap was first)
+ *    message words onto a message holding blocks, or words holding blocks -> null (the caller falls back: a new
+ *                                         message, whose ticks wait for the reload to give it its key)
  *    no Odie message of that turn, or the event has no inv -> null (the caller falls back: a new message for words,
  *                                         nothing for steps; the reload after the tap sets things right) */
 export function withTurnEvent<M extends TurnMsg>(msgs: M[], e: StepStartEvent | StepWaitEvent | StepEvent | MessageEvent): M[] | null {
@@ -147,6 +153,7 @@ export function withTurnEvent<M extends TurnMsg>(msgs: M[], e: StepStartEvent | 
     changed = { ...msg, tools: stepFilled(msg.tools, e) };
   } else {
     if (msg.text.endsWith(e.text)) return msgs;
+    if (holdsBlocks(msg.text) || holdsBlocks(e.text)) return null;
     const texts = [msg.text, e.text].filter((text) => text);
     changed = { ...msg, text: texts.join("\n\n"), private: msg.private || !!e.private };
   }

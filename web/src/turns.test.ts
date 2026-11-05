@@ -58,6 +58,21 @@ describe("foldTurns", () => {
     expect(foldTurns(items)).toEqual(items);
   });
 
+  it("never joins onto a line whose blocks only become a fence as the chat draws it (a stray or one-line fence)", () => {
+    const stray = odie("A", "```odie-checklist\n{\"items\": [\"Jacket\"]}\n```", { key: "k1" });
+    const strayItems = [stray, odie("A", "Added a reminder.", { key: "k2" })];
+    expect(foldTurns(strayItems)).toEqual(strayItems);
+    const oneLine = odie("A", "Packing list ```odie-blocks: [{\"type\": \"checklist\", \"items\": [\"Jacket\"]}] ```", { key: "k1" });
+    const oneLineItems = [oneLine, odie("A", "Added a reminder.", { key: "k2" })];
+    expect(foldTurns(oneLineItems)).toEqual(oneLineItems);
+  });
+
+  it("keeps the first line's usage when the last line has none", () => {
+    const got = foldTurns([odie("A", "One.", { usage: { input: 3, cached: 0, output: 2 } }), odie("A", "", { steps: [step("c2")] })]);
+    expect(got).toHaveLength(1);
+    expect(got[0].usage).toEqual({ input: 3, cached: 0, output: 2 });
+  });
+
   it("still folds when the blocks are in the LAST line, whose key is kept", () => {
     const list = "Here's the list\n```odie-blocks\n[{\"type\": \"checklist\"}]\n```";
     const got = foldTurns([odie("A", "Sure.", { key: "k1" }), odie("A", list, { key: "k2" })]);
@@ -136,6 +151,20 @@ describe("withTurnEvent", () => {
   it("doesn't add the words twice when the reload after the tap already brought them", () => {
     const msgs = [reply("A", "I'll remove it.\n\nRemoved old.txt.")];
     expect(withTurnEvent(msgs, { type: "message", inv: "A", text: "Removed old.txt." })).toBe(msgs);
+  });
+
+  it("returns null for words when the message or the words hold blocks: their ticks need a key of their own", () => {
+    const list = "Packing list\n```odie-blocks\n[{\"type\": \"checklist\"}]\n```";
+    const stray = "```odie-checklist\n{\"items\": [\"Jacket\"]}\n```";
+    expect(withTurnEvent([reply("A", list)], { type: "message", inv: "A", text: "Added a reminder." })).toBeNull();
+    expect(withTurnEvent([reply("A", stray)], { type: "message", inv: "A", text: "Added a reminder." })).toBeNull();
+    expect(withTurnEvent([reply("A", "Sure.")], { type: "message", inv: "A", text: list })).toBeNull();
+  });
+
+  it("still skips words with blocks that the reload after the tap already folded in", () => {
+    const list = "Here's the list\n```odie-blocks\n[{\"type\": \"checklist\"}]\n```";
+    const msgs = [reply("A", `Sure.\n\n${list}`)];
+    expect(withTurnEvent(msgs, { type: "message", inv: "A", text: list })).toBe(msgs);
   });
 
   it("fills a tapped step with its answer", () => {
