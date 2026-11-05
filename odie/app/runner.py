@@ -443,6 +443,22 @@ def event_to_sse(ev: Any) -> list[dict[str, Any]]:
     return out
 
 
+def step_after_tap(item: dict[str, Any], row: Any, approve: bool) -> dict[str, Any]:
+    """The `step` bus event for a finished tool call in a resumed run, so the open chat fills the step in live.
+    The call the tap was about says who let it run; any other finished call keeps what the stream said about it.
+      tapped call c1, approved     -> allowed {"by": "you", "at": <decided_at>}
+      tapped call c1, rejected     -> allowed {"by": "no", "at": <decided_at>}, result "" (nothing ran)
+      another call c2 run_shell    -> allowed {"by": "pass"} as the stream gave it
+      another call c2 web_search   -> no allowed key at all"""
+    step: dict[str, Any] = {"type": "step", "session_id": row["session_id"], "id": item["id"], "tool": item["tool"],
+                            "result": item["result"]}
+    if item["id"] == row["call_id"]:
+        step["allowed"] = {"by": "you" if approve else "no", "at": row["decided_at"]}
+    elif "allowed" in item:
+        step["allowed"] = item["allowed"]
+    return step
+
+
 def _answer_items(answer: Any, invocation_id: str) -> list[dict[str, Any]]:
     """The stream items for one tool answer: a "wait" while it needs a tap, otherwise the finished step (plus its media).
       {"error": "This tool call requires confirmation..."} -> [tool_wait]
@@ -980,6 +996,7 @@ class OdieRunner:
             return {"error": "no such approval"}
         if not self.store.decide_approval(approval_id, approve):
             return {"error": f"already {self.store.get_approval(approval_id)['status']}"}
+        row = self.store.get_approval(approval_id)  # again, so it carries decided_at
         self.store.audit("user", "approval_" + ("approved" if approve else "rejected"), tool=row["tool"], session_id=row["session_id"],
                          invocation_id=row["invocation_id"], approval_id=approval_id)
         await self.bus.publish({"type": "approval", "id": approval_id, "status": "approved" if approve else "rejected", "summary": row["summary"], "tool": row["tool"]})
@@ -1001,6 +1018,8 @@ class OdieRunner:
                     for item in event_to_sse(ev):
                         if item["type"] == "text":
                             final.append(item["text"])
+                        elif item["type"] == "tool_done":
+                            await self.bus.publish(step_after_tap(item, row, approve))
                     for card in self._approvals_in(ev, row["session_id"]):
                         await self.bus.publish(card)
             except Exception as e:  # noqa: BLE001

@@ -95,6 +95,64 @@ async def test_resume_approval_replays_and_streams(isolated_settings, tmp_path):
     await r.close()
 
 
+async def _resume_and_collect(r, aid, approve, events):
+    """Resume the approval against a fake run that yields `events`; return everything published on the bus."""
+    async def fake_run(**kw):
+        for e in events:
+            yield e
+    r.runner.run_async = fake_run
+    got = []
+
+    async def listen():
+        async for e in r.bus.subscribe():
+            got.append(e)
+            if e["type"] == "approval_done":
+                break
+    t = asyncio.create_task(listen())
+    await asyncio.sleep(0)
+    await r.resume_approval(aid, approve)
+    await asyncio.wait_for(t, 2)
+    return got
+
+
+def _answer_event(*answers):
+    from google.genai import types
+    parts = [types.Part(function_response=types.FunctionResponse(id=i, name=n, response=resp)) for i, n, resp in answers]
+    return SimpleNamespace(author="odie", partial=False, invocation_id="inv-1", content=types.Content(role="user", parts=parts))
+
+
+async def test_resume_publishes_the_steps_result(isolated_settings, tmp_path):
+    s = _store(tmp_path)
+    r = OdieRunner(s)
+    aid = s.create_approval("chat-2026-10-01", "inv-1", "req-1", "gmail_send_draft", {"draft_id": "d1"}, summary="Send", detail={},
+                            provenance=[], call_id="c1")
+    event = _answer_event(("c1", "gmail_send_draft", {"result": "Sent."}), ("c2", "run_shell", {"result": "a.txt"}),
+                          ("c3", "web_search", {"result": "3 hits"}))
+    got = await _resume_and_collect(r, aid, True, [event])
+    steps = {e["id"]: e for e in got if e["type"] == "step"}
+    decided_at = s.get_approval(aid)["decided_at"]
+    assert decided_at
+    assert steps["c1"] == {"type": "step", "session_id": "chat-2026-10-01", "id": "c1", "tool": "gmail_send_draft", "result": "Sent.",
+                           "allowed": {"by": "you", "at": decided_at}}
+    assert steps["c2"]["allowed"] == {"by": "pass"}  # another call keeps what the stream said
+    assert "allowed" not in steps["c3"]
+    await r.close()
+
+
+async def test_rejection_publishes_no_output(isolated_settings, tmp_path):
+    s = _store(tmp_path)
+    r = OdieRunner(s)
+    aid = s.create_approval("chat-2026-10-01", "inv-1", "req-1", "gmail_send_draft", {"draft_id": "d1"}, summary="Send", detail={},
+                            provenance=[], call_id="c1")
+    event = _answer_event(("c1", "gmail_send_draft", {"error": "This tool call is rejected."}))
+    got = await _resume_and_collect(r, aid, False, [event])
+    steps = [e for e in got if e["type"] == "step"]
+    assert len(steps) == 1
+    assert steps[0]["id"] == "c1" and steps[0]["result"] == ""
+    assert steps[0]["allowed"] == {"by": "no", "at": s.get_approval(aid)["decided_at"]}
+    await r.close()
+
+
 class FakeRunner:
     bus = None
 
