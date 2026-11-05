@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- A tap carries on the reply it paused. After you approve or decline a card, what Odie does and says next (its steps and its words) joins the reply the card came from instead of arriving as a separate message, and there is no "Done." filler when the model has nothing to add. After a reload each turn is one message, however many taps it took, with checklists keeping their ticks.
+- A card you already answered shrinks to a small stamp; when the step it asked about is right beside it, the step's pill says who allowed it and the card goes.
+- Install the Mac app's matching update (odie-mac) before updating the server: without the filler message, the current Mac app takes a tap that ended with no words for a failure and says it couldn't finish.
+
 ## v0.2.41 (2026-11-05)
 
 - The round "jump to latest" button stays hidden while the morning card is the only thing in the chat.

@@ -153,6 +153,12 @@ describe("withTurnEvent", () => {
     expect(withTurnEvent(msgs, { type: "message", inv: "A", text: "Removed old.txt." })).toBe(msgs);
   });
 
+  it("adds words that only end like the message's last words, and skips words the message already is", () => {
+    const msgs = [reply("A", "Removed it.")];
+    expect(withTurnEvent(msgs, { type: "message", inv: "A", text: "it." })?.[0].text).toBe("Removed it.\n\nit.");
+    expect(withTurnEvent(msgs, { type: "message", inv: "A", text: "Removed it." })).toBe(msgs);
+  });
+
   it("returns null for words when the message or the words hold blocks: their ticks need a key of their own", () => {
     const list = "Packing list\n```odie-blocks\n[{\"type\": \"checklist\"}]\n```";
     const stray = "```odie-checklist\n{\"items\": [\"Jacket\"]}\n```";

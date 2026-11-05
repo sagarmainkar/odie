@@ -1051,7 +1051,7 @@ class OdieRunner:
         await self.bus.publish({"type": "approval", "id": approval_id, "status": "approved" if approve else "rejected", "summary": row["summary"], "tool": row["tool"]})
         msg = types.Content(role="user", parts=[types.Part(function_response=types.FunctionResponse(
             id=row["request_id"], name=CONFIRM, response={"confirmed": bool(approve)}))])
-        final: list[str] = []
+        final: list[str] = []  # each reply the model wrote after the tap (one event's text parts make one reply)
         asked = {row["call_id"]} if row["call_id"] else set()  # the tapped call was asked: its result is no pass
         from odie.agent import turn
         async with self.lock_for(row["session_id"]):
@@ -1065,10 +1065,12 @@ class OdieRunner:
             try:
                 async for ev in self.runner.run_async(user_id=s.user_id, session_id=row["session_id"], invocation_id=row["invocation_id"],
                                                       new_message=msg, run_config=chat_run_config()):
-                    for item in event_to_sse(ev, asked):
-                        if item["type"] == "text":
-                            final.append(item["text"])
-                        elif item["type"] == "tool_start":
+                    items = event_to_sse(ev, asked)
+                    reply = "".join(item["text"] for item in items if item["type"] == "text")
+                    if reply:
+                        final.append(reply)
+                    for item in items:
+                        if item["type"] == "tool_start":
                             await self.bus.publish({"type": "step_start", "session_id": row["session_id"], "inv": item["inv"], "id": item["id"],
                                                     "tool": item["tool"], "args": item["args"], "gated": item["gated"]})
                         elif item["type"] == "tool_wait":
@@ -1089,7 +1091,9 @@ class OdieRunner:
                 turn.PRIVATE.reset(private)
                 turn.READ.reset(read)
                 turn.HISTORY_LIMIT.reset(compact)
-        text = "".join(final)  # the model's own words after the tool, or "" when it said nothing: no filler is made up
+        # The model's own words after the tool, its replies a paragraph each as the history folds them on reload, or ""
+        # when it said nothing: no filler is made up.
+        text = "\n\n".join(final)
         self.store.set_approval_result(approval_id, text)  # "" still marks the card finished (never None)
         if text.strip():
             from odie.signin import guard as signin_guard

@@ -125,13 +125,21 @@ export function foldTurns(items: HistoryItem[]): HistoryItem[] {
   return folded.filter((_, at) => !toldByStep(folded, at));
 }
 
+/** Whether a message already ends with these words as a paragraph of their own: the reload after the tap brought
+ * them before the live event did.
+ *    "Sure.\n\nRemoved." + "Removed." -> true;  "Removed." + "Removed." -> true;  "Removed it." + "it." -> false */
+function alreadySaid(text: string, words: string): boolean {
+  return text === words || text.endsWith("\n\n" + words);
+}
+
 /** A live event of a resumed run joins the message of its turn: the last Odie message with the event's inv.
  *    step_start c2, turn A on screen   -> a running step c2 added (unless that message already has c2)
  *    step_wait c3                      -> c3 waits for your tap
  *    step c1 "removed"                 -> c1 filled with its answer and who allowed it
  *    step_wait or step for an id that message doesn't hold -> null (the caller falls back)
  *    message "Removed."                -> "I'll remove it." becomes "I'll remove it.\n\nRemoved."
- *    message "Removed." on a message already ending in it -> the same list (the reload after the tap was first)
+ *    message "Removed." on "Sure.\n\nRemoved." or on "Removed." -> the same list (the reload after the tap was first)
+ *    message "it." on "Removed it."     -> "Removed it.\n\nit." (only a whole paragraph counts as already there)
  *    message words onto a message holding blocks, or words holding blocks -> null (the caller falls back: a new
  *                                         message, whose ticks wait for the reload to give it its key)
  *    no Odie message of that turn, or the event has no inv -> null (the caller falls back: a new message for words,
@@ -152,7 +160,7 @@ export function withTurnEvent<M extends TurnMsg>(msgs: M[], e: StepStartEvent | 
     if (!msg.tools.some((t) => t.id === e.id)) return null;
     changed = { ...msg, tools: stepFilled(msg.tools, e) };
   } else {
-    if (msg.text.endsWith(e.text)) return msgs;
+    if (alreadySaid(msg.text, e.text)) return msgs;
     if (holdsBlocks(msg.text) || holdsBlocks(e.text)) return null;
     const texts = [msg.text, e.text].filter((text) => text);
     changed = { ...msg, text: texts.join("\n\n"), private: msg.private || !!e.private };

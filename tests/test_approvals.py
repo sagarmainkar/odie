@@ -218,6 +218,22 @@ async def test_resume_posts_the_models_words_with_their_turn(isolated_settings, 
     await r.close()
 
 
+async def test_resume_joins_the_models_replies_with_a_blank_line_as_a_reload_does(isolated_settings, tmp_path):
+    # Two replies after the tap are two history lines, folded by a blank line on reload; one reply's parts are one line.
+    from google.genai import types
+    s = _store(tmp_path)
+    r = OdieRunner(s)
+    aid = s.create_approval("chat-2026-10-01", "inv-1", "req-1", "run_shell", {"command": "rm old.txt"}, summary="Run", detail={},
+                            provenance=[], call_id="c1")
+    two_parts = SimpleNamespace(author="odie", partial=False, invocation_id="inv-1",
+                                content=types.Content(role="model", parts=[types.Part(text="All "), types.Part(text="done.")]))
+    got = await _resume_and_collect(r, aid, True, [_words_event("Removing it."), two_parts])
+    messages = [e for e in got if e["type"] == "message"]
+    assert [m["text"] for m in messages] == ["Removing it.\n\nAll done."]
+    assert s.get_approval(aid)["result_text"] == "Removing it.\n\nAll done."
+    await r.close()
+
+
 async def test_resume_publishes_the_runs_step_starts_and_waits(isolated_settings, tmp_path):
     # The resumed run goes on to a second gated call that raises another card: the open chat sees the step start, the wait
     # and the new card live, and no reply message (the model said nothing yet).
