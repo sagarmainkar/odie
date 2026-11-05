@@ -140,7 +140,7 @@ export function allowedPill(t: Tool): string {
   }
   if (by === "lapsed") return "Lapsed";
   if (by === "no" || t.state === "no") return "You said no";
-  if (by === "pass") return "pass";
+  if (by === "pass") return "ran on its own";  // a 30-minute pass or Smart mode; the activity log says which
   return "";
 }
 

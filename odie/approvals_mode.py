@@ -65,3 +65,28 @@ def plain_write_needs_tap(store) -> bool:
     """Whether an ordinary write (a note, a file in a safe place, a calendar event) asks for a tap:
     Careful -> True (as today); Smart -> False (it runs, and the activity log still shows it)."""
     return not is_smart(store)
+
+
+# Set once by the app (hooks["store"]) so tools built at import time, with no store in hand, can read the live mode.
+hooks: dict = {}
+
+
+def plain_write_asks(**_) -> bool:
+    """ADK's require_confirmation for a plain local write such as mac_calendar_add or mac_reminder_add (ADK calls it
+    with the tool's own arguments, which it ignores). It reads the mode on every call from the app's store:
+    Careful -> True (the card); Smart -> False (it runs); no store set yet (a test, a tool run outside the app) -> True."""
+    store = hooks.get("store")
+    if store is None:
+        return True
+    return plain_write_needs_tap(store)
+
+
+def context_line(store) -> str:
+    """The one line of each turn's context that tells the model which mode is on, so it never promises a tap that
+    won't come (or the reverse): Smart -> "Approvals: smart (commands and app tools run without a tap; installs,
+    deletes outside Odie's folders, sends, payments and secrets still ask)"; Careful -> "Approvals: careful (changes
+    ask first)"."""
+    if is_smart(store):
+        return ("Approvals: smart (commands and app tools run without a tap; installs, deletes outside Odie's folders, "
+                "sends, payments and secrets still ask)")
+    return "Approvals: careful (changes ask first)"

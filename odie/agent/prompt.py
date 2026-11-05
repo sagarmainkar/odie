@@ -206,10 +206,11 @@ def build_static_prompt(now: datetime, soul: str | None, memory_index: str, gate
 
 
 def build_turn_context(now: datetime, prefetch: str, ledger: str, tasks: str = "", brief: str = "",
-                       caps: frozenset = ALL_CAPS, place: str = "", seen: str = "", home: str = "") -> str:
+                       caps: frozenset = ALL_CAPS, place: str = "", seen: str = "", home: str = "", approvals: str = "") -> str:
     """The trailer appended to each message. Its first line says the time and, when known, where the user is (a place
     name, never coordinates) with when it was seen, and home: "now 14:16 Sun 25 Oct · near Northvale, Westshire (seen
-    14:12) · home: Northvale"; nothing known -> "now 14:16 Sun 25 Oct"."""
+    14:12) · home: Northvale"; nothing known -> "now 14:16 Sun 25 Oct". `approvals` is the mode line from
+    odie.approvals_mode.context_line, joined after it ("… · Approvals: careful (changes ask first)"); "" adds nothing."""
     bits = [f"now {now.strftime('%H:%M')} {now.strftime('%a %-d %b')}"]
     if place:
         near = f"near {place}"
@@ -218,6 +219,8 @@ def build_turn_context(now: datetime, prefetch: str, ledger: str, tasks: str = "
         bits.append(near)
     if home:
         bits.append(f"home: {home}")
+    if approvals.strip():
+        bits.append(approvals.strip())
     if ledger.strip():
         bits.append(ledger.strip())
     out = "[context: " + " · ".join(bits) + "]"

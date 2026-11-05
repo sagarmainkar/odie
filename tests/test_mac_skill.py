@@ -29,6 +29,25 @@ def test_the_tools_and_their_taps(store, tmp_path):
                     "mac_calendar_add": True, "mac_reminders": False, "mac_reminder_add": True}
 
 
+async def test_the_two_local_writes_ask_in_careful_and_run_in_smart(store, tmp_path, monkeypatch):
+    """The predicate reads the app's store on every call: Careful -> the card; Smart -> runs; no store -> the card."""
+    from odie import approvals_mode
+    from odie.store.db import Store
+    entry = next(e for e in discover(store, BUILTIN, tmp_path / "none", system="Darwin") if e.name == "mac-apps")
+    tools = {t.name: t for t in entry.tool_objs}
+    args = {"title": "Dentist", "start": "2026-11-06T09:00", "end": "2026-11-06T09:30"}
+    monkeypatch.setattr(approvals_mode, "hooks", {})
+    assert await tools["mac_calendar_add"].check_require_confirmation(args, None) is True
+    app_store = Store(tmp_path / "app.db")
+    app_store.init_schema()
+    approvals_mode.hooks["store"] = app_store
+    assert await tools["mac_calendar_add"].check_require_confirmation(args, None) is True
+    approvals_mode.set_mode(app_store, "smart")
+    assert await tools["mac_reminder_add"].check_require_confirmation({"title": "Call the bank"}, None) is False
+    approvals_mode.set_mode(app_store, "careful")
+    assert await tools["mac_reminder_add"].check_require_confirmation({"title": "Call the bank"}, None) is True
+
+
 async def test_a_tool_without_permission_says_where_to_allow_it(store, tmp_path, monkeypatch):
     entry = next(e for e in discover(store, BUILTIN, tmp_path / "none", system="Darwin") if e.name == "mac-apps")
     tools = {t.name: t for t in entry.tool_objs}

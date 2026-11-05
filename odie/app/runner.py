@@ -586,6 +586,8 @@ class OdieRunner:
         builder.hooks.update(store=store, reload=self.load_plugins, reserved=lambda: self._all_tool_names())
         from odie import trackers
         trackers.hooks.update(store=store, tz=self.tz)
+        from odie import approvals_mode
+        approvals_mode.hooks.update(store=store)
         from odie import about
         about.hooks.update(runner=self)
         from odie.making import jobs as making_jobs
@@ -787,8 +789,10 @@ class OdieRunner:
             brief = self.store.one("select text from briefs where date=? order by id desc limit 1", (now.strftime("%Y-%m-%d"),))
         from odie import location
         place, seen, home = location.location_bits(location.get(self.store), now)  # a place name and home, never coordinates
+        from odie import approvals_mode
         return build_turn_context(now, self.prefetch(text), threads_summary(self.store), format_open_threads(rows),
-                                  brief["text"] if brief else "", caps=getattr(self, "_caps", ALL_CAPS), place=place, seen=seen, home=home)
+                                  brief["text"] if brief else "", caps=getattr(self, "_caps", ALL_CAPS), place=place, seen=seen, home=home,
+                                  approvals=approvals_mode.context_line(self.store))
 
     def day_summary(self, now: datetime) -> str:
         """The summary of today's morning hello, or "" when there is none or it can't be read: a hello saved for this

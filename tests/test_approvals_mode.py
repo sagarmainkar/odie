@@ -96,3 +96,24 @@ def test_install_skill_and_addon_gated_tools_still_ask_in_smart(store):
             assert built[name]._require_confirmation is True, name
     finally:
         addons.use(None)
+
+
+def test_the_context_line_names_the_mode(store):
+    assert approvals_mode.context_line(store) == "Approvals: careful (changes ask first)"
+    approvals_mode.set_mode(store, "smart")
+    line = approvals_mode.context_line(store)
+    assert line.startswith("Approvals: smart (") and "secrets still ask" in line
+
+
+def test_the_trailer_carries_the_mode_line_per_turn(store):
+    """The static prompt is untouched: the line rides on each turn's context, so a flip shows on the next message."""
+    from datetime import datetime
+
+    from odie.agent.prompt import build_turn_context
+    now = datetime(2026, 11, 5, 14, 16)
+    before = build_turn_context(now, "", "", approvals=approvals_mode.context_line(store))
+    approvals_mode.set_mode(store, "smart")
+    after = build_turn_context(now, "", "", approvals=approvals_mode.context_line(store))
+    assert "now 14:16 Thu 5 Nov · Approvals: careful (changes ask first)]" in before
+    assert "· Approvals: smart (" in after
+    assert "Approvals" not in build_turn_context(now, "", "")

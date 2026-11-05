@@ -6,6 +6,7 @@ from datetime import datetime
 
 from google.adk.tools import FunctionTool
 
+from odie import approvals_mode
 from odie.mac import calendar, contacts, mail, permissions, reminders, scripts
 
 NOT_YET = "Odie isn't allowed to read {app} yet. Allow it in Settings → Mac apps, then ask again."
@@ -120,7 +121,8 @@ async def mac_contacts(query: str) -> dict:
 
 TOOLS = [
     FunctionTool(mac_mail_new), FunctionTool(mac_mail_read), FunctionTool(mac_mail_save_attachment),
-    FunctionTool(mac_calendar_events), FunctionTool(mac_calendar_add, require_confirmation=True),
-    FunctionTool(mac_reminders), FunctionTool(mac_reminder_add, require_confirmation=True),
+    # The two local writes ask in Careful and run in Smart (odie.approvals_mode.plain_write_asks reads the mode per call).
+    FunctionTool(mac_calendar_events), FunctionTool(mac_calendar_add, require_confirmation=approvals_mode.plain_write_asks),
+    FunctionTool(mac_reminders), FunctionTool(mac_reminder_add, require_confirmation=approvals_mode.plain_write_asks),
     # mac_contacts is held back with Contacts (odie.mac.permissions.HELD_BACK); add it here to offer it again
 ]

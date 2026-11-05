@@ -55,7 +55,7 @@ describe("the opened receipt", () => {
     const host = await openTrace(receipt);
     const [pass, you, search, no] = stepsIn(host);
     expect(pass.textContent).toContain("ls -la ~/Downloads");
-    expect(pass.textContent).toContain("pass");
+    expect(pass.textContent).toContain("ran on its own");
     expect(you.textContent).toContain("mkdir -p ~/Downloads/old");
     expect(you.textContent).toContain("You allowed · 10:42");
     expect(search.textContent).toContain('"clear Downloads"');
