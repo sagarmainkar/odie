@@ -20,6 +20,7 @@ from google.adk.skills.models import Frontmatter, Skill
 from mcp import StdioServerParameters
 
 from odie import config
+from odie.approvals_mode import name_words
 from odie.setup.keys import KEY_PREFIX, SECRET_NAME, secret_part
 
 MAX_EVENT_BYTES = 32 * 1024 * 1024
@@ -73,12 +74,6 @@ _CHANGE_WORDS = frozenset("""send create update delete remove add post put patch
     migrate connect disconnect login logout""".split())
 _JOINS = frozenset({"and", "or", "then", "plus"})  # two actions in one tool: never a pure read
 # Words that are mostly nouns (email, message, record, order, link, tag, comment) aren't change words: find_email reads.
-
-
-def name_words(name: str) -> set[str]:
-    """The lower-case words of a tool name, split on _ - . spaces and camelCase humps:
-    GMAIL_SEND_EMAIL -> {gmail, send, email}; shareLink -> {share, link}."""
-    return {w.lower() for w in re.split(r"[_\-\s.]+|(?<=[a-z0-9])(?=[A-Z])", name) if w}
 
 
 def is_read_name(name: str) -> bool:

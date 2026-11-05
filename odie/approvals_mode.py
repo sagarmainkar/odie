@@ -4,7 +4,7 @@ Careful: every tap asks, exactly as before. Smart: routine work runs without a t
 sending data out, secrets, sending/paying/publishing tools) still ask. An install that never chose is Careful."""
 from __future__ import annotations
 
-from odie.plugins.mcp import name_words
+import re
 
 KEY = "approvals.mode"
 CAREFUL = "careful"
@@ -17,6 +17,13 @@ MODES = (CAREFUL, SMART)
 _ASK_WORDS = frozenset({"send", "reply", "post", "publish", "share", "pay", "purchase", "order", "book", "checkout",
                         "delete", "trash", "remove", "cancel", "execute", "run", "call", "invoke", "perform", "action",
                         "manage", "multi"})
+
+
+def name_words(name: str) -> set[str]:
+    """The lower-case words of a tool name, split on _ - . spaces and camelCase humps:
+    GMAIL_SEND_EMAIL -> {gmail, send, email}; shareLink -> {share, link}. Lives here, not in odie.plugins.mcp, so this
+    module (and the shell check that reads it on every command) imports no ADK or MCP code."""
+    return {w.lower() for w in re.split(r"[_\-\s.]+|(?<=[a-z0-9])(?=[A-Z])", name) if w}
 
 
 def mode(store) -> str:
