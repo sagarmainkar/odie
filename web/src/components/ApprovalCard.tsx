@@ -8,6 +8,7 @@ import { userLocale } from "../locale";
 export type Approval = {
   id: number; tool: string; summary: string; status: string; risk?: string; created_at?: string;
   detail?: Record<string, unknown> | null; provenance?: { from: string; subject: string }[] | null; result_text?: string | null;
+  call_id?: string | null;  // the step it asked about: once decided, that step's pill in the reply tells its answer
 };
 
 const TOOL_WORD: Record<string, string> = { gmail_send_draft: "Send", gmail_trash: "Trash", calendar_create_event: "Invite", calendar_respond: "RSVP", run_shell: "Run", install_skill: "Install", update_memory: "Memory",
