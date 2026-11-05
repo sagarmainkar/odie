@@ -134,9 +134,11 @@ def test_more_real_names_that_ask(name):
 def test_mail_read_this_turn_and_runs_free(store):
     approvals_mode.set_mode(store, "smart")
     assert approvals_mode.runs_free(store, "chat-1") is True
-    assert approvals_mode.runs_free(store, None) is False or approvals_mode.mail_read_this_turn(store, None) is False
+    assert approvals_mode.runs_free(store, None) is True  # outside a chat there is no turn to have read mail in
     store.audit("user", "message", result_summary="hi", session_id="chat-1")
-    store.audit("agent", "mail_seen", args={"from": "a@example.com", "subject": "Invoice"}, session_id="chat-1")
+    store.audit("agent", "tool_call", tool="web_search", args={"q": "x"}, session_id="chat-1")
+    assert approvals_mode.mail_read_this_turn(store, "chat-1") is False  # a search isn't someone's words
+    store.audit("agent", "tool_call", tool="GMAIL_FETCH_EMAILS", args={}, session_id="chat-1")
     assert approvals_mode.mail_read_this_turn(store, "chat-1") is True
     assert approvals_mode.runs_free(store, "chat-1") is False  # Smart, but a mail was read this turn: ask again
     store.audit("user", "message", result_summary="next", session_id="chat-1")
@@ -144,3 +146,20 @@ def test_mail_read_this_turn_and_runs_free(store):
     assert approvals_mode.runs_free(store, "chat-1") is True
     approvals_mode.set_mode(store, "careful")
     assert approvals_mode.runs_free(store, "chat-1") is False
+
+
+def test_an_addons_mail_seen_row_counts_too(store):
+    store.audit("user", "message", result_summary="hi", session_id="chat-2")
+    store.audit("agent", "mail_seen", args={"from": "a@example.com", "subject": "Invoice"}, session_id="chat-2")
+    assert approvals_mode.mail_read_this_turn(store, "chat-2") is True
+
+
+def test_a_plain_write_asks_again_after_mail_this_turn(store, monkeypatch):
+    from types import SimpleNamespace
+    monkeypatch.setattr(approvals_mode, "hooks", {"store": store})
+    approvals_mode.set_mode(store, "smart")
+    ctx = SimpleNamespace(session=SimpleNamespace(id="chat-3"))
+    assert approvals_mode.plain_write_asks(title="Dentist", tool_context=ctx) is False
+    store.audit("user", "message", result_summary="hi", session_id="chat-3")
+    store.audit("agent", "tool_call", tool="mac_mail_read", args={}, session_id="chat-3")
+    assert approvals_mode.plain_write_asks(title="Dentist", tool_context=ctx) is True

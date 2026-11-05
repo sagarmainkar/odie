@@ -246,6 +246,17 @@ class Store:
         self.audit("agent", "mail_seen", tool=via, args={"from": from_[:200], "subject": subject[:200], "via": via},
                    session_id=session_id, invocation_id=invocation_id)
 
+    def tools_called_this_turn(self, session_id: str) -> list[str]:
+        """The names of the tools the model has called since the user's latest message in this chat, oldest first;
+        [] before the first message or when nothing ran yet. ("gmail_find_email", "run_shell" this turn) ->
+        ["gmail_find_email", "run_shell"]."""
+        latest = self.one("select id from audit_log where session_id=? and actor='user' and event='message' order by id desc limit 1",
+                          (session_id,))
+        if latest is None:
+            return []
+        rows = self.query("select tool from audit_log where session_id=? and event='tool_call' and id > ? order by id", (session_id, latest["id"]))
+        return [r["tool"] for r in rows if r["tool"]]
+
     def recent_mail_seen(self, session_id: str, limit: int = 10) -> list[dict]:
         """Mail the model has seen in this session, tagged by turn: 'current' (since the latest user message) or
         'previous' (the turn before). Older mail is not provenance for a new action."""

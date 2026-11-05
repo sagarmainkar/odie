@@ -66,12 +66,23 @@ def is_smart(store) -> bool:
     return mode(store) == SMART
 
 
+# What a tool's result puts into the chat that someone else wrote: mail and messages (odie.agent.confidential labels).
+_OUTSIDE_WORDS = frozenset({"your mail", "your messages"})
+
+
 def mail_read_this_turn(store, session_id: str | None) -> bool:
-    """Whether the model has read mail since the user's latest message in this chat, which is when words from a mail
-    could be steering it. In Smart that turn asks again (the card then says the mail may be behind the action):
-    mail opened this turn -> True; mail opened last turn or never -> False; no chat (session_id None) -> False."""
+    """Whether the model has read mail or messages since the user's latest message in this chat, which is when words
+    someone else wrote could be steering it. In Smart that turn asks again. Judged from the tools called this turn
+    (the audit log's tool_call rows, labelled by odie.agent.confidential) and from any mail_seen row an add-on wrote:
+    gmail_find_email this turn -> True; GMAIL_FETCH_EMAILS this turn -> True; mail read last turn -> False;
+    only web_search this turn -> False; no chat (session_id None) -> False."""
     if not session_id:
         return False
+    from odie.agent.confidential import label_for
+    called = store.tools_called_this_turn(session_id)
+    read_outside_words = any(label_for(name) in _OUTSIDE_WORDS for name in called)
+    if read_outside_words:
+        return True
     seen = store.recent_mail_seen(session_id)
     return any(m.get("turn") == "current" for m in seen)
 
@@ -109,14 +120,16 @@ def plain_write_needs_tap(store) -> bool:
 hooks: dict = {}
 
 
-def plain_write_asks(**_) -> bool:
+def plain_write_asks(tool_context=None, **_) -> bool:
     """ADK's require_confirmation for a plain local write such as mac_calendar_add or mac_reminder_add (ADK calls it
-    with the tool's own arguments, which it ignores). It reads the mode on every call from the app's store:
-    Careful -> True (the card); Smart -> False (it runs); no store set yet (a test, a tool run outside the app) -> True."""
+    with the tool's own arguments, which it ignores, and the tool_context, which names the chat). It reads the mode
+    on every call from the app's store: Careful -> True (the card); Smart -> False (it runs); Smart but a mail was
+    read this turn -> True; no store set yet (a test, a tool run outside the app) -> True."""
     store = hooks.get("store")
     if store is None:
         return True
-    return plain_write_needs_tap(store)
+    from odie.agent.context import session_id_of
+    return not runs_free(store, session_id_of(tool_context))
 
 
 def context_line(store) -> str:

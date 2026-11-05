@@ -247,6 +247,17 @@ def test_plain_reads_still_run_under_the_pass(cmd):
 
 # Smart mode: the shell runs on its own with no pass, and the always-ask list still asks. One command per rule.
 SMART_ASKS = [
+    ("find ~ -name '*.tmp' -delete", "deletes or stops something"),
+    ("trash ~/old", "deletes or stops something"),
+    ("brew uninstall cowsay", "deletes or stops something"),
+    ("docker system prune -af", "deletes or stops something"),
+    ("diskutil eraseDisk JHFS+ Spare disk2", "deletes or stops something"),
+    ("osascript -e 'tell application \"Messages\" to send \"hi\" to buddy \"Dev\"'", "sends data out"),
+    ("shortcuts run 'Send Message'", "sends data out"),
+    ("npm publish", "sends data out"),
+    ("gh pr create --fill", "sends data out"),
+    ("cat ~/.zsh_history", "reads secrets"),
+    ("sqlite3 ~/.odie/assistant.db 'select count(*) from settings'", "touches Odie's own files"),
     ("kill 35432", "deletes or stops something"),
     ("rm old.txt", "deletes or stops something"),
     ("cat ~/.env", "reads secrets"),
@@ -350,7 +361,7 @@ def test_smart_asks_again_after_the_model_read_mail_this_turn(tmp_path):
     ctx = SimpleNamespace(session=SimpleNamespace(id="chat-x"))
     check = g.make_check(s, clock=lambda: NOW)
     s.audit("user", "message", result_summary="read my mail then list downloads", session_id="chat-x")
-    s.audit("agent", "mail_seen", args={"from": "a@example.com", "subject": "Hi"}, session_id="chat-x")
+    s.audit("agent", "tool_call", tool="gmail_find_email", args={"query": "newest"}, session_id="chat-x")  # what the core logs
     assert check(command="ls ~/Downloads", tool_context=ctx) is True
     assert _shell_audit(s, "shell_auto_approved") == []
     s.audit("user", "message", result_summary="now list downloads", session_id="chat-x")

@@ -28,15 +28,19 @@ _RULES: list[tuple[str, re.Pattern[str]]] = [
         r"\.env\b|\.netrc|\.ssh\b|id_rsa|id_ed25519|\.pem\b|keychain|security\s+find-|_PAT\b|_KEY\b|_TOKEN\b|SECRET|"
         r"PASSWORD|passwd|credential|auth\.json|token\.json|client_secret|\.(zshrc|zshenv|zprofile|bashrc|bash_profile|profile)\b|"
         r"\.aws\b|\.npmrc|\.pypirc|\.gnupg|\.kube\b|\.docker/config|hosts\.yml|\.gitconfig|cookies|"
+        r"\.(zsh_history|bash_history|python_history|node_repl_history|lesshst)\b|HISTFILE|"
         r"(^|[;&|(]\s*)(env|printenv)\b", re.IGNORECASE)),
+
     ("deletes or stops something", re.compile(
         r"(^|[;&|(`]\s*|\s)(rm|rmdir|kill|pkill|killall|sudo|chmod|chown|dd|mkfs|shutdown|reboot|launchctl|truncate|"
-        r"shred|mv|crontab)\b|\bgit\s+(push|reset|clean|rebase|checkout\s+--)|"
+        r"shred|mv|crontab|trash|diskutil)\b|\bgit\s+(push|reset|clean|rebase|checkout\s+--)|"
+        r"\bfind\b[^|;&\n]*\s-delete\b|\b(uninstall|prune)\b|"
         r"\bos\.(remove|unlink|rmdir|kill)\b|\bshutil\.(rmtree|move)\b|\.unlink\(|\.rmdir\(|"
         r"\.(rm|rmSync|unlinkSync|rmdirSync)\(|\bsubprocess\b|\bos\.system\b|child_process")),
     ("sends data out", re.compile(
         r"\bcurl\b[^|;]*(-X\s*(POST|PUT|PATCH|DELETE)|--data|\s-d\s|\s-F\s|--form|\s-T\s|--upload|\s-K\s|--config)|\bwget\b[^|;]*--post|"
-        r"\b(scp|ssh|ftp|sftp|nc|ncat|sendmail|telnet|socat)\b|\brsync\b[^|;]*\S+:|"
+        r"\b(scp|ssh|ftp|sftp|nc|ncat|sendmail|telnet|socat)\b|\bosascript\b[\s\S]*\bsend\b|\bshortcuts\s+run\b|\brsync\b[^|;]*\S+:|"
+        r"\bnpm\s+publish\b|\bgh\s+(pr|issue|release)\s+create\b|\bmail\s+-s\b|"
         r"\brequests\.(post|put|patch|delete)\b|\bhttpx\.(post|put|patch|delete)\b|\bsmtplib\b|"
         r"method\s*:\s*['\"](?i:post|put|patch|delete)")),  # fetch takes the method in any case
     # An address built at run time carries whatever was put into it: curl 'https://x/?d='$(cat f), wget "$URL$DATA",
@@ -76,6 +80,17 @@ _RULES: list[tuple[str, re.Pattern[str]]] = [
         r"\bcurl\b[^|;\n]*\|\s*(sh|bash|zsh)|\binstaller\s+-pkg|\bopen\s+\S+\.(dmg|pkg|app)\b")),
     ("edits files in place", re.compile(r"\b(sed|perl)\s+(-\w*\s+)*-i|\btee\b")),
 ]
+# Odie's own home (settings, chats, keys, the audit log, the live copy it runs from), except the workspace it writes
+# in anyway: ~/.odie/assistant.db -> matches; $ODIE_HOME/data/workspace/x -> not; ~/.odie/workspace -> not.
+_ODIE_HOME = re.compile(r"(\.odie\b|\bODIE_HOME\b\}?)(?!/(data/)?workspace\b)|\b(assistant|sessions|odie-index)\.db\b")
+
+
+def touches_odie_home(shell: str) -> bool:
+    """Whether a command names Odie's own files outside its workspace: `sqlite3 ~/.odie/assistant.db ...` -> True;
+    `cat $ODIE_HOME/data/keys.json` -> True; `ls ~/.odie/workspace` -> False; `ls ~/Downloads` -> False."""
+    return bool(_ODIE_HOME.search(shell))
+
+
 # A path into a hidden folder or file under the home folder (~/.ssh, $HOME/.config, /Users/me/.zshrc), as the shell
 # sees it before globbing.
 _HIDDEN_PATH = re.compile(r"(~|\$HOME|\$\{HOME\}|/Users/[^/\s'\"]+|/home/[^/\s'\"]+)/\.[^\s;&|<>]*")
@@ -249,6 +264,8 @@ def always_ask(command: str, safe_dirs: tuple[str, ...] = (), cwd: str | None = 
         return "reaches a hidden file by a pattern"
     if unsafe_write(shell, safe_dirs, cwd):
         return "writes a file outside /tmp"
+    if touches_odie_home(shell):
+        return "touches Odie's own files"
     return None
 
 

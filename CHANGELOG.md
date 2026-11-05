@@ -4,6 +4,8 @@
 
 - Settings → Approvals: Careful (today's behaviour, the default) or Smart. In Smart, shell commands and connected apps' tools run on their own and show in each reply's steps; installing software, deleting or moving files outside Odie's folders, sending anything, paying or ordering, and reading secrets always ask. The Mac's calendar and reminders writes run in Smart too. The activity log says "allowed by smart mode" for a command that ran without a card, and the step's pill reads "ran on its own" (it used to say "pass").
 - In Smart the shell card loses its 30-minute button and says "Smart mode: this one always asks." The model is told which mode is on with each message, so it never promises a tap that won't come.
+- After Odie reads a mail or a message in a turn, the rest of that turn asks as in Careful, whatever the mode: words someone else wrote could be steering it.
+- The shell's always-ask list gains a few things it missed: `find … -delete`, `trash`, `uninstall`, `prune`, `diskutil`, an `osascript` that sends, `shortcuts run`, `npm publish`, `gh … create`, your shell history, and Odie's own folder outside its workspace.
 - Background work (the watch, trackers) stays as careful as before whatever the mode: a connected app's write tool that Smart frees in a chat is still refused in a background check.
 
 ## v0.2.42 (2026-11-05)
