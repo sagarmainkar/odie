@@ -20,6 +20,7 @@ import { MorningHello } from "../components/MorningCard";
 import { useMorning } from "../useMorning";
 import { chatOnScreen, shouldShowMorning, type MorningReply } from "../morning";
 import { Steps, type Tool } from "../components/Steps";
+import { fromHistory, stepFilled, toolDone, toolStarted, toolWaiting, type DoneEvent, type HistoryStep, type StartEvent, type StepEvent, type WaitEvent } from "../steps";
 import { replyLine, type ReplyUsage } from "../usage";
 import { ToBody } from "../components/ToBody";
 import { CodeBlock } from "../components/CodeBlock";
@@ -263,8 +264,8 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
   const [atBottom, setAtBottom] = useState(true);
   const [unseen, setUnseen] = useState(false);
   const mainRef = useRef<HTMLElement>(null);
-  type H = { items: { key?: string; sid?: string; role: "user" | "odie" | "approval"; text: string; tools: string[]; ts?: number; images?: string[]; approval?: Approval; media?: Media[]; private?: boolean; usage?: ReplyUsage }[]; total: number; start: number };
-  const toMsgs = (items: H["items"]): Msg[] => items.filter((m) => m.text || m.tools.length || m.images?.length || m.approval || m.media?.length).map((m) => ({ id: nextId++, key: m.key, sid: m.sid, role: m.role, text: m.text, ts: m.ts, images: m.images, approval: m.approval, media: m.media, private: m.private, usage: m.usage, tools: m.tools.map((n) => ({ name: n, done: true })) }));
+  type H = { items: { key?: string; sid?: string; role: "user" | "odie" | "approval"; text: string; tools: string[]; steps?: HistoryStep[]; ts?: number; images?: string[]; approval?: Approval; media?: Media[]; private?: boolean; usage?: ReplyUsage }[]; total: number; start: number };
+  const toMsgs = (items: H["items"]): Msg[] => items.filter((m) => m.text || m.tools.length || m.images?.length || m.approval || m.media?.length).map((m) => ({ id: nextId++, key: m.key, sid: m.sid, role: m.role, text: m.text, ts: m.ts, images: m.images, approval: m.approval, media: m.media, private: m.private, usage: m.usage, tools: fromHistory(m) }));
   const [pending, setPending] = useState<Pending[]>([]);
   const [uploading, setUploading] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -379,6 +380,8 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
       setMsgs((m) => [...(e.kind === "reply" ? m.filter((x) => !x.awaiting) : m), { id: nextId++, role: "odie", text: e.text, tools: [], ts: e.ts, live: e.kind !== "reply", media: e.media, autoplay, private: !!e.private }]);
       setUnseen(true);
     }
+    // A tapped step finished in a resumed run: fill its receipt in on the reply that holds it.
+    if (e.type === "step" && belongsHere(e.session_id, threadRef.current?.id ?? null, todayISO())) setMsgs((m) => m.map((x) => x.tools.some((t) => t.id === e.id) ? { ...x, tools: stepFilled(x.tools, e as StepEvent) } : x));
     if (e.type === "thinking") setThink((shown) => thinkingAfter(shown, e));  // flipped in another app or browser
     if (e.type === "google" && e.status === "connected") window.dispatchEvent(new Event("odie:google-connected"));
     if (e.type === "approval" && e.status === "pending") setMsgs((m) => m.some((x) => x.approval?.id === e.id) ? m : [...m, { id: nextId++, role: "approval", text: "", tools: [], ts: Date.now() / 1000, approval: e as Approval }]);
@@ -451,15 +454,16 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
     let streamed = "";
     let askedApproval = false;
     let ended = false;  // the server said done or error; otherwise the stream was cut (app backgrounded)
-    const settle = () => patch((l) => ({ ...l, tools: l.tools.map((x) => ({ ...x, done: true })), ts: Date.now() / 1000 }));
+    const settle = () => patch((l) => ({ ...l, tools: l.tools.map((x) => x.state === "wait" ? x : { ...x, done: true }), ts: Date.now() / 1000 }));
     const ac = new AbortController();
     streamAbort.current = ac;
     lastEventAt.current = Date.now();
     try {
       for await (const ev of streamChat(t, imgs, thread?.id, ac.signal)) {
         lastEventAt.current = Date.now();
-        if (ev.type === "tool_start") patch((l) => ({ ...l, tools: [...l.tools, { name: String(ev.tool), done: false }] }));
-        else if (ev.type === "tool_done") patch((l) => { const i = l.tools.findIndex((x) => x.name === ev.tool && !x.done); if (i < 0) return l; const tools = [...l.tools]; tools[i] = { ...tools[i], done: true }; return { ...l, tools }; });
+        if (ev.type === "tool_start") patch((l) => ({ ...l, tools: toolStarted(l.tools, ev as StartEvent) }));
+        else if (ev.type === "tool_wait") patch((l) => ({ ...l, tools: toolWaiting(l.tools, ev as WaitEvent) }));
+        else if (ev.type === "tool_done") patch((l) => ({ ...l, tools: toolDone(l.tools, ev as DoneEvent) }));
         else if (ev.type === "media") setMsgs((m) => withMedia(m, (ev as unknown as { media: Media }).media, (x) => x.id === replyId));
         else if (ev.type === "private") patch((l) => ({ ...l, private: true }));  // web images in it wait for a tap
         else if (ev.type === "token") { streamed += String(ev.text); patch((l) => ({ ...l, text: streamed, ...replyName(ev) })); }

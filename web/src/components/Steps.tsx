@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { Icon, Tile, toolTile } from "./Tile";
+import type { Tool } from "../steps";
 
-export type Tool = { name: string; done: boolean };
+export type { Tool };
 
 // Past tense once a tool finished, present tense while it runs.
 const TOOL_LABEL: Record<string, [string, string]> = {
