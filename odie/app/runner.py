@@ -34,6 +34,7 @@ from odie.agent.prompt import ALL_CAPS, Who, build_static_prompt, build_turn_con
 from odie.agent.agent import GATED_TOOLS
 from odie.agent.tools.local import threads_summary
 from odie.app.events import EventBus
+from odie.app.steps import allowed_of, capped_args, response_kind, result_text
 from odie.memory.index import build_index, render_prefetch
 from odie.memory.review import run_review
 from odie.memory.search import prefetch_hits
@@ -350,23 +351,32 @@ def usage_of(ev: Any) -> dict[str, int] | None:
 
 
 def event_to_sse(ev: Any) -> list[dict[str, Any]]:
+    """One ADK event as the items the chat stream carries. Every tool call is a step, gated ones too; only ADK's own
+    approval question (adk_request_confirmation) stays out, because the approval card shows it.
+      call run_shell id c1               -> tool_start {id c1, gated True}
+      its answer "requires confirmation" -> tool_wait {id c1}
+      its answer {"result": "a.txt"}     -> tool_done {id c1, result "a.txt", allowed {"by": "pass"}}
+      its answer "is rejected"           -> tool_done {id c1, result "", allowed {"by": "no"}}
+    The answer is matched to its call by id, never by place: two calls in one event may be answered in either order."""
     if getattr(ev, "author", None) == "user" or not getattr(ev, "content", None) or not ev.content.parts:
         return []
     out: list[dict[str, Any]] = []
     partial = bool(getattr(ev, "partial", False))
-    hidden = GATED_TOOLS | addons.gated_tools()
+    gated_names = GATED_TOOLS | addons.gated_tools()
+    invocation_id = getattr(ev, "invocation_id", "") or ""
     for p in ev.content.parts:
         if getattr(p, "thought", False):  # the model's reasoning (DeepSeek's, Gemma's, Claude's summary): never shown as the reply
             continue
         if p.function_call:
-            if not partial and p.function_call.name not in hidden:  # gated calls are shown by their approval card
-                out.append({"type": "tool_start", "tool": p.function_call.name, "args": dict(p.function_call.args or {})})
+            call = p.function_call
+            if not partial and call.name != CONFIRM:
+                args = dict(call.args or {})
+                out.append({"type": "tool_start", "tool": call.name, "id": call.id, "args": capped_args(call.name, args),
+                            "gated": call.name in gated_names})
         elif p.function_response:
-            if not partial and p.function_response.name not in hidden:
-                out.append({"type": "tool_done", "tool": p.function_response.name})
-                m = media_of(p.function_response.response)
-                if m:
-                    out.append({"type": "media", "media": m})
+            answer = p.function_response
+            if not partial and answer.name != CONFIRM:
+                out.extend(_answer_items(answer, invocation_id))
         elif p.text:
             item = {"type": "token" if ev.partial else "text", "text": p.text}
             key = reply_key(ev)
@@ -377,6 +387,31 @@ def event_to_sse(ev: Any) -> list[dict[str, Any]]:
                 item["usage"] = usage  # the finished reply's counts, for the line under it
             out.append(item)
     return out
+
+
+def _answer_items(answer: Any, invocation_id: str) -> list[dict[str, Any]]:
+    """The stream items for one tool answer: a "wait" while it needs a tap, otherwise the finished step (plus its media).
+      {"error": "This tool call requires confirmation..."} -> [tool_wait]
+      {"error": "This tool call is rejected."}             -> [tool_done with result "" and allowed {"by": "no"}]
+      run_shell {"result": "a.txt"}                        -> [tool_done with result "a.txt" and allowed {"by": "pass"}]
+      speak {"result": "...", "media": {...}}              -> [tool_done, media]"""
+    kind = response_kind(answer.response)
+    if kind == "wait":
+        return [{"type": "tool_wait", "tool": answer.name, "id": answer.id}]
+    done: dict[str, Any] = {"type": "tool_done", "tool": answer.name, "id": answer.id}
+    if kind == "no":
+        done["result"] = ""
+        done["allowed"] = {"by": "no"}
+    else:
+        done["result"] = result_text(answer.response)
+        allowed = allowed_of(answer.name, answer.id, invocation_id, {}, answer.response, [])  # no rows: only the pass rule
+        if allowed is not None:
+            done["allowed"] = allowed
+    items = [done]
+    media = media_of(answer.response)
+    if media:
+        items.append({"type": "media", "media": media})
+    return items
 
 
 def reply_key(ev: Any) -> str | None:
@@ -748,8 +783,6 @@ class OdieRunner:
                                 item["session_id"] = session_id  # with its key, where the reply's checklist ticks are saved
                             if item["type"] == "tool_start":
                                 called.add(item["tool"])
-                                if item["tool"] == CONFIRM:
-                                    continue  # surfaced as an approval card below, not as a tool chip
                             yield item
                         for card in self._approvals_in(ev, session_id):
                             called.add(card.get("tool", ""))

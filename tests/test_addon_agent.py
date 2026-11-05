@@ -60,10 +60,11 @@ def test_a_raising_tools_hook_leaves_the_agent_whole(store):
     assert any(getattr(t, "name", "") == "web_search" for t in build_agent(store).tools)
 
 
-def test_gated_addon_tools_have_no_step_chip():
+def test_gated_addon_tools_show_as_gated_steps():
     addons.use([Addon("bell", tool_names=frozenset({"ring_doorbell", "unlock_door"}), gated=frozenset({"unlock_door"}))])
-    assert event_to_sse(_call("unlock_door")) == []
-    assert event_to_sse(_call("ring_doorbell"))[0]["type"] == "tool_start"
+    assert event_to_sse(_call("unlock_door"))[0]["gated"] is True
+    ring = event_to_sse(_call("ring_doorbell"))[0]
+    assert ring["type"] == "tool_start" and ring["gated"] is False
 
 
 def test_gated_addon_tools_are_left_out_of_history():

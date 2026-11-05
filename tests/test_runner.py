@@ -26,9 +26,10 @@ def _part(text=None, fc=None, fr=None):
 def test_event_to_sse_maps_kinds():
     assert event_to_sse(_ev([_part(text="Hel")], partial=True)) == [{"type": "token", "text": "Hel"}]
     fc = SimpleNamespace(name="gmail_search", args={"query": "x"}, id="1")
-    assert event_to_sse(_ev([_part(fc=fc)])) == [{"type": "tool_start", "tool": "gmail_search", "args": {"query": "x"}}]
+    assert event_to_sse(_ev([_part(fc=fc)])) == [
+        {"type": "tool_start", "tool": "gmail_search", "id": "1", "args": {"query": "x"}, "gated": False}]
     fr = SimpleNamespace(name="gmail_search", response={"result": "3 hits"}, id="1")
-    assert event_to_sse(_ev([_part(fr=fr)])) == [{"type": "tool_done", "tool": "gmail_search"}]
+    assert event_to_sse(_ev([_part(fr=fr)])) == [{"type": "tool_done", "tool": "gmail_search", "id": "1", "result": "3 hits"}]
     assert event_to_sse(_ev([_part(text="Final")])) == [{"type": "text", "text": "Final"}]
     assert event_to_sse(_ev([_part(text="you")], author="user")) == []
 
@@ -38,6 +39,45 @@ def test_event_to_sse_ignores_partial_tool_chunks():
     assert event_to_sse(_ev([_part(fc=fc)], partial=True)) == []
     fr = SimpleNamespace(name="gmail_search", response={"result": "ok"}, id="1")
     assert event_to_sse(_ev([_part(fr=fr)], partial=True)) == []
+
+
+def test_sse_shows_a_gated_call_and_its_wait():
+    call = SimpleNamespace(name="run_shell", args={"command": "rm old.txt"}, id="c1")
+    assert event_to_sse(_ev([_part(fc=call)])) == [
+        {"type": "tool_start", "tool": "run_shell", "id": "c1", "args": {"command": "rm old.txt"}, "gated": True}]
+    waiting = SimpleNamespace(name="run_shell", id="c1",
+                              response={"error": "This tool call requires confirmation, please approve or reject."})
+    assert event_to_sse(_ev([_part(fr=waiting)])) == [{"type": "tool_wait", "tool": "run_shell", "id": "c1"}]
+    ask = SimpleNamespace(name="adk_request_confirmation", args={"toolConfirmation": {}}, id="q1")
+    assert event_to_sse(_ev([_part(fc=ask)])) == []  # ADK's own question is shown as the approval card, never as a step
+
+
+def test_sse_tool_done_carries_the_result_and_id():
+    web = SimpleNamespace(name="web_fetch", id="c2", response={"result": "page text"})
+    assert event_to_sse(_ev([_part(fr=web)])) == [{"type": "tool_done", "tool": "web_fetch", "id": "c2", "result": "page text"}]
+    shell = SimpleNamespace(name="run_shell", id="c3", response={"result": "a.txt"})
+    assert event_to_sse(_ev([_part(fr=shell)])) == [
+        {"type": "tool_done", "tool": "run_shell", "id": "c3", "result": "a.txt", "allowed": {"by": "pass"}}]
+    nothing = SimpleNamespace(name="now", id="c4", response=None)
+    assert event_to_sse(_ev([_part(fr=nothing)])) == [{"type": "tool_done", "tool": "now", "id": "c4", "result": ""}]
+
+
+def test_sse_two_calls_in_one_event_keep_their_ids():
+    first = SimpleNamespace(name="web_search", args={"query": "a"}, id="c1")
+    second = SimpleNamespace(name="web_search", args={"query": "b"}, id="c2")
+    started = event_to_sse(_ev([_part(fc=first), _part(fc=second)]))
+    assert [(i["type"], i["id"], i["args"]["query"]) for i in started] == [("tool_start", "c1", "a"), ("tool_start", "c2", "b")]
+    # the answers arrive in the other order: each is told apart by its id, not its place
+    late = SimpleNamespace(name="web_search", id="c2", response={"result": "B"})
+    early = SimpleNamespace(name="web_search", id="c1", response={"result": "A"})
+    done = event_to_sse(_ev([_part(fr=late), _part(fr=early)]))
+    assert [(i["id"], i["result"]) for i in done] == [("c2", "B"), ("c1", "A")]
+
+
+def test_sse_a_rejected_call_has_no_output():
+    no = SimpleNamespace(name="run_shell", id="c1", response={"error": "This tool call is rejected."})
+    assert event_to_sse(_ev([_part(fr=no)])) == [
+        {"type": "tool_done", "tool": "run_shell", "id": "c1", "result": "", "allowed": {"by": "no"}}]
 
 
 async def test_chat_stream_error_event(isolated_settings, monkeypatch, tmp_path):
