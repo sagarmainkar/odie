@@ -47,6 +47,24 @@ describe("foldTurns", () => {
     expect(got[0]).toMatchObject({ private: true, usage: { input: 9, cached: 0, output: 9 } });
   });
 
+  it("stays private when only an earlier line read a signed-in page", () => {
+    const got = foldTurns([odie("A", "One.", { private: true }), odie("A", "Two.")]);
+    expect(got[0].private).toBe(true);
+  });
+
+  it("never joins a line onto one holding blocks: its saved ticks keep their key and fence number", () => {
+    const fenced = odie("A", "Packing list\n```odie-blocks\n[{\"type\": \"checklist\"}]\n```", { key: "k1" });
+    const items = [fenced, odie("A", "Added a reminder.", { key: "k2" })];
+    expect(foldTurns(items)).toEqual(items);
+  });
+
+  it("still folds when the blocks are in the LAST line, whose key is kept", () => {
+    const list = "Here's the list\n```odie-blocks\n[{\"type\": \"checklist\"}]\n```";
+    const got = foldTurns([odie("A", "Sure.", { key: "k1" }), odie("A", list, { key: "k2" })]);
+    expect(got).toHaveLength(1);
+    expect(got[0]).toMatchObject({ text: `Sure.\n\n${list}`, key: "k2" });
+  });
+
   it("never folds across a pending card: the card keeps its buttons in place (focus 1)", () => {
     const items = [odie("A", "I'll remove it.", { steps: [step("c1")] }), card(1, "pending", "c1"), odie("A", "Removed.")];
     expect(foldTurns(items)).toEqual(items);
@@ -107,6 +125,17 @@ describe("withTurnEvent", () => {
     const msgs = [reply("A", "", [{ name: "run_shell", id: "c3", done: false }])];
     const got = withTurnEvent(msgs, { type: "step_wait", inv: "A", id: "c3", tool: "run_shell" });
     expect(got?.[0].tools[0]).toMatchObject({ state: "wait", done: false });
+  });
+
+  it("returns null for a wait or an answer whose step the turn's message doesn't hold (the caller falls back)", () => {
+    const msgs = [reply("A", "", [{ name: "run_shell", id: "c3", done: false }])];
+    expect(withTurnEvent(msgs, { type: "step_wait", inv: "A", id: "c9", tool: "run_shell" })).toBeNull();
+    expect(withTurnEvent(msgs, { type: "step", inv: "A", id: "c9", tool: "run_shell", result: "ok" })).toBeNull();
+  });
+
+  it("doesn't add the words twice when the reload after the tap already brought them", () => {
+    const msgs = [reply("A", "I'll remove it.\n\nRemoved old.txt.")];
+    expect(withTurnEvent(msgs, { type: "message", inv: "A", text: "Removed old.txt." })).toBe(msgs);
   });
 
   it("fills a tapped step with its answer", () => {
