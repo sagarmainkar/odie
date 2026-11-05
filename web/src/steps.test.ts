@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { allowedPill, argLine, fromHistory, metaLine, outputHead, settled, stepFilled, toolDone, toolStarted, toolWaiting, type Tool } from "./steps";
+import { allowedPill, argLine, fromHistory, metaLine, outputHead, settled, stepFilled, toolDone, toolStarted, toolWaiting, withStepEvent, type Tool } from "./steps";
 
 const running = (name: string, id: string): Tool => ({ name, id, done: false, args: {} });
 
@@ -56,6 +56,11 @@ describe("toolDone", () => {
     const had: Tool[] = [{ name: "run_shell", id: "c1", done: false, allowed: { by: "pass" } }];
     expect(toolDone(had, { tool: "run_shell", id: "c1", result: "ok" })[0].allowed).toEqual({ by: "pass" });
   });
+  it("keeps that the step made a file", () => {
+    const got = toolDone([running("speak", "c1")], { tool: "speak", id: "c1", result: "The memo is under your reply.", made: true });
+    expect(got[0]).toMatchObject({ done: true, made: true });
+    expect(toolDone([running("now", "c2")], { tool: "now", id: "c2", result: "9:31" })[0].made).toBeUndefined();
+  });
 });
 
 describe("stepFilled", () => {
@@ -79,6 +84,29 @@ describe("stepFilled", () => {
     const idless: Tool[] = [{ name: "now", done: false }];
     expect(stepFilled(idless, { id: "", tool: "now", result: "x" })).toEqual(idless);
     expect(stepFilled(idless, { tool: "now", result: "x" } as never)).toEqual(idless);
+  });
+});
+
+describe("withStepEvent", () => {
+  type M = { id: number; tools: Tool[] };
+  const wait = (id: string): Tool => ({ name: "run_shell", id, done: false, state: "wait" });
+  const event = { id: "c1", tool: "run_shell", result: "removed", allowed: { by: "you" as const } };
+  it("fills the step on the message that holds its id", () => {
+    const msgs: M[] = [{ id: 1, tools: [] }, { id: 2, tools: [wait("c1")] }];
+    const got = withStepEvent(msgs, event);
+    expect(got[1].tools[0]).toMatchObject({ done: true, result: "removed", allowed: { by: "you" } });
+    expect(got[0]).toBe(msgs[0]);
+  });
+  it("fills only the last message that holds the id", () => {
+    const msgs: M[] = [{ id: 1, tools: [wait("c1")] }, { id: 2, tools: [wait("c1")] }];
+    const got = withStepEvent(msgs, event);
+    expect(got[0]).toBe(msgs[0]);
+    expect(got[1].tools[0].result).toBe("removed");
+  });
+  it("returns the same list when no message holds the id, or the event has none", () => {
+    const msgs: M[] = [{ id: 1, tools: [wait("c1")] }, { id: 2, tools: [{ name: "now", done: false }] }];
+    expect(withStepEvent(msgs, { ...event, id: "c9" })).toBe(msgs);
+    expect(withStepEvent(msgs, { ...event, id: "" })).toBe(msgs);
   });
 });
 
@@ -127,6 +155,8 @@ describe("fromHistory", () => {
     expect(got.map((t) => [t.id, t.state, t.done])).toEqual([["c1", "done", true], ["c2", "wait", false], ["c3", "no", true]]);
     const lost = fromHistory({ tools: ["run_shell"], steps: [{ name: "run_shell", id: "c4", args: {}, result: "", allowed: null, state: "lost" }] });
     expect(lost[0]).toMatchObject({ state: "lost", done: true });  // no answer will come: nothing to wait for
+    const made = fromHistory({ tools: ["speak"], steps: [{ name: "speak", id: "c5", args: {}, result: "ok", allowed: null, state: "done", made: true }] });
+    expect(made[0].made).toBe(true);
     expect(got[0]).toMatchObject({ args: { command: "ls" }, result: "a", allowed: { by: "pass" } });
     expect(got[1].allowed).toBeUndefined();
   });
@@ -153,7 +183,7 @@ describe("argLine", () => {
     expect(argLine(t("fetch_memory", { title: "Dentist" }))).toBe("Dentist");
   });
   it("lists key: value pairs for any other tool, cutting long strings at 80", () => {
-    expect(argLine(t("task_add", { title: "Call Dev", due: "Fri", urgent: true }))).toBe("title: Call Dev · due: Fri · urgent: true");
+    expect(argLine(t("task_add", { title: "Call the dentist", due: "Fri", urgent: true }))).toBe("title: Call the dentist · due: Fri · urgent: true");
     const long = argLine(t("task_add", { title: "x".repeat(200) }));
     expect(long).toBe(`title: ${"x".repeat(80)}…`);
   });
@@ -171,6 +201,9 @@ describe("metaLine", () => {
   });
   it("says No result for a call whose answer never came", () => {
     expect(metaLine({ name: "run_shell", done: true, state: "lost", result: "" })).toBe("No result");
+  });
+  it("says Made a file for a step that made one", () => {
+    expect(metaLine({ name: "speak", done: true, state: "done", result: "The memo is under your reply.", made: true })).toBe("Made a file");
   });
   it("says No output for an empty result", () => expect(metaLine({ name: "run_shell", done: true, result: "" })).toBe("No output"));
   it("counts the lines", () => {

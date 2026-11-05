@@ -106,6 +106,14 @@ describe("the opened receipt", () => {
     expect(step.querySelector(".animate-spin")).toBeNull();
   });
 
+  it("a step that made a file says so and offers no output (the card it made shows below)", async () => {
+    const host = await openTrace([{ name: "speak", id: "c1", done: true, state: "done", args: { text: "good morning" }, result: "The memo is under your reply.", made: true }]);
+    const [step] = stepsIn(host);
+    expect(step.textContent).toContain("Made a file");
+    expect(step.textContent).not.toContain("tap to see");
+    expect(step.querySelector("[aria-expanded]:not([data-arg])")).toBeNull();  // nothing to open
+  });
+
   it("a tap on a step shows the first 12 lines of its output and Show all; that shows everything", async () => {
     const host = await openTrace(receipt);
     const step = stepsIn(host)[0];

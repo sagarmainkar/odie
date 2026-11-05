@@ -20,7 +20,7 @@ import { MorningHello } from "../components/MorningCard";
 import { useMorning } from "../useMorning";
 import { chatOnScreen, shouldShowMorning, type MorningReply } from "../morning";
 import { Steps, type Tool } from "../components/Steps";
-import { fromHistory, settled, stepFilled, toolDone, toolStarted, toolWaiting, type DoneEvent, type HistoryStep, type StartEvent, type StepEvent, type WaitEvent } from "../steps";
+import { fromHistory, settled, toolDone, toolStarted, toolWaiting, withStepEvent, type DoneEvent, type HistoryStep, type StartEvent, type StepEvent, type WaitEvent } from "../steps";
 import { replyLine, type ReplyUsage } from "../usage";
 import { ToBody } from "../components/ToBody";
 import { CodeBlock } from "../components/CodeBlock";
@@ -381,7 +381,7 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
       setUnseen(true);
     }
     // A tapped step finished in a resumed run: fill its receipt in on the reply that holds it.
-    if (e.type === "step" && e.id && belongsHere(e.session_id, threadRef.current?.id ?? null, todayISO())) setMsgs((m) => m.map((x) => x.tools.some((t) => t.id === e.id) ? { ...x, tools: stepFilled(x.tools, e as StepEvent) } : x));
+    if (e.type === "step" && belongsHere(e.session_id, threadRef.current?.id ?? null, todayISO())) setMsgs((m) => withStepEvent(m, e as StepEvent));
     if (e.type === "thinking") setThink((shown) => thinkingAfter(shown, e));  // flipped in another app or browser
     if (e.type === "google" && e.status === "connected") window.dispatchEvent(new Event("odie:google-connected"));
     if (e.type === "approval" && e.status === "pending") setMsgs((m) => m.some((x) => x.approval?.id === e.id) ? m : [...m, { id: nextId++, role: "approval", text: "", tools: [], ts: Date.now() / 1000, approval: e as Approval }]);

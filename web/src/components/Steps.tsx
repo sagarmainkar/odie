@@ -56,13 +56,15 @@ function pillTone(t: Tool): string {
   return "bg-bad-tint text-bad";
 }
 
-/** Whether a step has output to open: it ran (not refused) and printed something.
+/** Whether a step has output to open: it ran (not refused), printed something, and made no file.
  *    run_shell, result "a.txt\nb.txt"   -> yes (a tap shows the two lines)
  *    run_shell, result ""                -> no  (its meta line says No output)
  *    run_shell, state "no"               -> no  (it never ran)
+ *    speak, made a file                  -> no  (the file's own card shows what it made)
  *    now, no result (old history)        -> no */
 function hasOutput(t: Tool): boolean {
   if (t.state === "no") return false;
+  if (t.made) return false;
   return outputHead(t.result ?? "").head !== "";
 }
 

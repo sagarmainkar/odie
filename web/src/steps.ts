@@ -10,21 +10,21 @@ export type Allowed = { by: "you" | "no" | "pass" | "lapsed"; at?: string };
  * lapsed), "lost" its answer never came (Odie restarted while it ran). */
 export type StepState = "done" | "wait" | "no" | "lost";
 
-/** One step. `done` is what the trace ticks; `state` is the receipt's word for it. Old history only knows the name,
- * so every field after `done` may be missing. */
+/** One step. `done` is what the trace ticks; `state` is the receipt's word for it; `made`: it made a file for the
+ * chat (the file's own card shows it). Old history only knows the name, so every field after `done` may be missing. */
 export type Tool = {
   name: string; done: boolean;
   id?: string; args?: Record<string, unknown>; result?: string;
-  allowed?: Allowed; state?: StepState; gated?: boolean;
+  allowed?: Allowed; state?: StepState; gated?: boolean; made?: boolean;
 };
 
 export type StartEvent = { tool: string; id?: string; args?: Record<string, unknown>; gated?: boolean };
 export type WaitEvent = { tool: string; id?: string };
-export type DoneEvent = { tool: string; id?: string; result?: string; allowed?: Allowed };
+export type DoneEvent = { tool: string; id?: string; result?: string; allowed?: Allowed; made?: boolean };
 export type StepEvent = { id: string; tool: string; result: string; allowed?: Allowed };
 
 /** A step the server sent in history (`steps` on a reply): the same as Tool, with the answer already written in. */
-export type HistoryStep = { name: string; id: string; args: Record<string, unknown>; result: string; allowed: Allowed | null; state: StepState };
+export type HistoryStep = { name: string; id: string; args: Record<string, unknown>; result: string; allowed: Allowed | null; state: StepState; made?: boolean };
 export type HistoryItem = { tools: string[]; steps?: HistoryStep[] };
 
 /** A call begins: add it, not done yet.
@@ -58,18 +58,19 @@ export function toolWaiting(tools: Tool[], ev: WaitEvent): Tool[] {
   return withStep(tools, at, { state: "wait", done: false });
 }
 
-/** A call finished: tick it and keep its result and who allowed it. A rejection (allowed.by "no") is state "no".
- * It keeps the allowed it already had when the event carries none.
+/** A call finished: tick it and keep its result, who allowed it, and whether it made a file. A rejection
+ * (allowed.by "no") is state "no". It keeps the allowed it already had when the event carries none.
  *    run_shell c1 + done {result: "a.txt", allowed: {by: "pass"}} -> done, state "done", result "a.txt"
  *    run_shell c1 + done {result: "", allowed: {by: "no"}}        -> done, state "no", result ""
  *    run_shell c1 (allowed pass) + done {result: "ok"}            -> done, still allowed pass
+ *    speak c3 + done {result: "...", made: true}                  -> done, made true
  *    web_search c2 of two web_search steps                        -> only c2 changes */
 export function toolDone(tools: Tool[], ev: DoneEvent): Tool[] {
   const at = indexOfStep(tools, ev);
   if (at < 0) return tools;
   const allowed = ev.allowed ?? tools[at].allowed;
   const state = allowed?.by === "no" ? "no" : "done";
-  return withStep(tools, at, { done: true, state, result: ev.result, allowed });
+  return withStep(tools, at, { done: true, state, result: ev.result, allowed, made: ev.made });
 }
 
 /** The answer to a step you tapped on (the bus `step` event, which can arrive after the stream ended): it finds the
@@ -85,6 +86,20 @@ export function stepFilled(tools: Tool[], ev: StepEvent): Tool[] {
   const allowed = ev.allowed ?? tools[at].allowed;
   const state = allowed?.by === "no" ? "no" : "done";
   return withStep(tools, at, { done: true, state, result: ev.result, allowed });
+}
+
+/** The bus `step` event across the whole chat: fill the step on the last message that holds its id (the newest reply
+ * with that call), and leave every other message as it was.
+ *    [reply 1 with c1 waiting] + step c1 "removed"           -> reply 1's c1 done, "removed"
+ *    [reply 1 with c1, reply 2 with c1] + step c1            -> only reply 2 changes
+ *    no message holds the id, or the event has no id        -> the same list (nothing re-renders) */
+export function withStepEvent<M extends { tools: Tool[] }>(msgs: M[], ev: StepEvent): M[] {
+  if (!ev.id) return msgs;
+  const at = msgs.findLastIndex((m) => m.tools.some((t) => t.id === ev.id));
+  if (at < 0) return msgs;
+  const next = [...msgs];
+  next[at] = { ...msgs[at], tools: stepFilled(msgs[at].tools, ev) };
+  return next;
 }
 
 /** The reply ended (done, error, or an approval card took over): tick every step still running, except one waiting
@@ -103,7 +118,7 @@ export function fromHistory(item: HistoryItem): Tool[] {
   if (item.steps?.length) {
     return item.steps.map((s) => ({
       name: s.name, id: s.id, args: s.args, result: s.result, state: s.state,
-      allowed: s.allowed ?? undefined, done: s.state !== "wait",
+      allowed: s.allowed ?? undefined, done: s.state !== "wait", made: s.made,
     }));
   }
   return item.tools.map((name) => ({ name, done: true }));
@@ -148,7 +163,7 @@ function valueText(value: unknown): string {
  *    run_shell {command: "ls ~/Downloads"}      -> ls ~/Downloads
  *    web_search {query: "cats"}                 -> "cats"   (with the quotes)
  *    web_fetch {url: "https://a.test"}          -> https://a.test
- *    task_add {title: "Call Dev", due: "Fri"}   -> title: Call Dev · due: Fri   (strings cut at 80 characters)
+ *    task_add {title: "Call the dentist", due: "Fri"} -> title: Call the dentist · due: Fri   (strings cut at 80 characters)
  *    now {}                                     -> ""
  *    run_shell {cwd: "/tmp"} (no command)       -> cwd: /tmp */
 export function argLine(t: Tool): string {
@@ -176,6 +191,7 @@ function linesOf(result: string): string[] {
  *    state "wait"                          -> Waiting for your tap
  *    state "no"                            -> Not run
  *    state "lost"                          -> No result   (its answer never came)
+ *    made a file                           -> Made a file (the file's card shows it)
  *    result ""                             -> No output
  *    result "a\nb\nc\n"                    -> 3 lines · tap to see them
  *    no result at all (old history, or still running) -> "" (nothing to say) */
@@ -183,6 +199,7 @@ export function metaLine(t: Tool): string {
   if (t.state === "wait") return "Waiting for your tap";
   if (t.state === "no") return "Not run";
   if (t.state === "lost") return "No result";
+  if (t.made) return "Made a file";
   if (t.result === undefined) return "";
   const count = linesOf(t.result).length;
   if (count === 0) return "No output";

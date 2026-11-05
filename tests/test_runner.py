@@ -92,6 +92,14 @@ def test_sse_a_shell_call_that_was_asked_is_no_pass():
     assert event_to_sse(_ev([_part(fr=other)]), asked)[0]["allowed"] == {"by": "pass"}
 
 
+def test_sse_a_step_that_made_a_file_says_so(isolated_settings):
+    memo = {"id": "0123456789abcdef", "kind": "memo", "title": "Good morning", "mime": "audio/wav", "size": 10, "created": 1.0}
+    spoke = SimpleNamespace(name="speak", id="c1", response={"result": "The memo is under your reply.", "media": memo})
+    done, media = event_to_sse(_ev([_part(fr=spoke)]))
+    assert done == {"type": "tool_done", "tool": "speak", "id": "c1", "result": "The memo is under your reply.", "made": True}
+    assert media["type"] == "media"
+
+
 async def test_chat_stream_error_event(isolated_settings, monkeypatch, tmp_path):
     monkeypatch.setenv("LM_STUDIO_BASE_URL", "http://127.0.0.1:9")  # nothing listens
     import odie.config as c

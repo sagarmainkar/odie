@@ -163,7 +163,7 @@ def test_allowed_by_old_row_args_match(tmp_path):
 
 
 def test_no_match_is_no_pill_not_pass():
-    assert allowed_of("web_fetch", "c1", "inv-1", {"url": "https://studio.local"}, {"result": "page"}, []) is None
+    assert allowed_of("web_fetch", "c1", "inv-1", {"url": "https://example.com"}, {"result": "page"}, []) is None
     assert allowed_of("run_shell", "c1", "inv-1", {"command": "rm x"}, {"error": WAITING}, []) is None
     assert allowed_of("web_search", "c1", "inv-1", {"query": "q"}, {"result": "hits"}, []) is None
 

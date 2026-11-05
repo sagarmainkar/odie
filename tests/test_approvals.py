@@ -63,6 +63,33 @@ async def test_chat_stream_emits_approval_and_stores_row(isolated_settings, tmp_
     await r.close()
 
 
+def test_a_confirmation_names_the_call_it_waits_for(isolated_settings, tmp_path):
+    from google.genai import types
+
+    from odie.app.runner import approval_from_confirmation
+    s = _store(tmp_path)
+    wrapped = types.FunctionCall(id="req-1", name="adk_request_confirmation", args={
+        "originalFunctionCall": {"id": "c1", "name": "run_shell", "args": {"command": "ls"}}})
+    assert approval_from_confirmation(wrapped, "inv-1", "chat-1", s)["call_id"] == "c1"
+    no_args = types.FunctionCall(id="req-2", name="adk_request_confirmation", args=None)
+    assert approval_from_confirmation(no_args, "inv-1", "chat-1", s)["call_id"] is None
+    empty = types.FunctionCall(id="req-3", name="adk_request_confirmation", args={"originalFunctionCall": None})
+    assert approval_from_confirmation(empty, "inv-1", "chat-1", s)["call_id"] is None
+
+
+async def test_a_confirmation_with_no_args_still_makes_a_card(isolated_settings, tmp_path):
+    # Inside the chat stream: odd args from a provider must never raise there.
+    from google.genai import types
+    s = _store(tmp_path)
+    r = OdieRunner(s)
+    fc = types.FunctionCall(id="req-1", name="adk_request_confirmation", args=None)
+    ev = SimpleNamespace(author="odie", partial=False, invocation_id="inv-1", content=types.Content(role="model", parts=[types.Part(function_call=fc)]))
+    cards = r._approvals_in(ev, "chat-1")
+    assert len(cards) == 1
+    assert s.get_approval(cards[0]["id"])["call_id"] is None
+    await r.close()
+
+
 async def test_resume_approval_replays_and_streams(isolated_settings, tmp_path):
     from google.genai import types
     s = _store(tmp_path)

@@ -115,7 +115,8 @@ def _answer_step(step: dict[str, Any], answer: Any, invocation_id: str, asked: s
       {"error": "This tool call is rejected."}             -> state "no", result "", allowed {"by": "no"}
       run_shell {"result": "a.txt"}, never asked           -> state "done", result "a.txt", allowed {"by": "pass"}
       run_shell {"result": "a.txt"}, asked before          -> state "done", result "a.txt", allowed None (a row may say)
-      web_search {"result": "3 hits"}                      -> state "done", result "3 hits", allowed None"""
+      web_search {"result": "3 hits"}                      -> state "done", result "3 hits", allowed None
+      speak {"result": "...", "media": {...}}              -> state "done", and made True (it made a file for the chat)"""
     was_asked = step["id"] in asked
     state, result, allowed = answer_of(step["name"], step["id"], invocation_id, answer.response, asked=was_asked)
     if state == "wait":
@@ -123,6 +124,8 @@ def _answer_step(step: dict[str, Any], answer: Any, invocation_id: str, asked: s
     step["state"] = state
     step["result"] = result
     step["allowed"] = allowed
+    if media_of(answer.response):
+        step["made"] = True
 
 
 def events_to_history(events: list[Any]) -> list[dict[str, Any]]:
@@ -349,7 +352,9 @@ def _safely(fn, *args):
 
 def approval_from_confirmation(fc: Any, invocation_id: str, session_id: str, store: Store) -> dict[str, Any]:
     """Code, not the model, writes what the card says: the summary comes from the tool arguments (an add-on writes the
-    card for its own tools, from its audit log), provenance from the mail the model has seen recently in this session."""
+    card for its own tools, from its audit log), provenance from the mail the model has seen recently in this session.
+    call_id: the id of the tool call waiting for the tap (ADK wraps it as originalFunctionCall); None when the
+    confirmation does not say."""
     from odie.signin import guard as signin_guard
     args = dict(fc.args or {})
     orig = args.get("originalFunctionCall") or {}
@@ -396,8 +401,8 @@ def approval_from_confirmation(fc: Any, invocation_id: str, session_id: str, sto
     mails = store.recent_mail_seen(session_id)
     if risk == "normal" and mails:
         risk = "from_email" if any(m.get("turn") == "current" for m in mails) else "mail_earlier"
-    return {"tool": tool, "args": targs, "request_id": fc.id, "invocation_id": invocation_id, "session_id": session_id,
-            "summary": summary, "detail": detail, "provenance": mails, "risk": risk}
+    return {"tool": tool, "args": targs, "request_id": fc.id, "call_id": orig.get("id"), "invocation_id": invocation_id,
+            "session_id": session_id, "summary": summary, "detail": detail, "provenance": mails, "risk": risk}
 
 
 def push_body(a: dict) -> str:
@@ -501,7 +506,7 @@ def _answer_items(answer: Any, invocation_id: str, asked: set[str]) -> list[dict
       {"error": "This tool call is rejected."}             -> [tool_done with result "" and allowed {"by": "no"}]
       run_shell {"result": "a.txt"}                        -> [tool_done with result "a.txt" and allowed {"by": "pass"}]
       run_shell {"result": "a.txt"}, asked before          -> [tool_done with result "a.txt", no allowed]
-      speak {"result": "...", "media": {...}}              -> [tool_done, media]"""
+      speak {"result": "...", "media": {...}}              -> [tool_done with made True, media]"""
     was_asked = answer.id in asked
     state, result, allowed = answer_of(answer.name, answer.id, invocation_id, answer.response, asked=was_asked)
     if state == "wait":
@@ -513,6 +518,7 @@ def _answer_items(answer: Any, invocation_id: str, asked: set[str]) -> list[dict
     items = [done]
     media = media_of(answer.response)
     if media:
+        done["made"] = True
         items.append({"type": "media", "media": media})
     return items
 
@@ -1013,9 +1019,8 @@ class OdieRunner:
                 continue
             inv = getattr(ev, "invocation_id", "") or ""
             a = approval_from_confirmation(fc, inv, session_id, self.store)
-            original_call = fc.args.get("originalFunctionCall", {})  # ADK wraps the call that is waiting for a tap
             aid = self.store.create_approval(session_id, inv, a["request_id"], a["tool"], a["args"], a["summary"], a["detail"], a["provenance"], a["risk"],
-                                             call_id=original_call.get("id"))
+                                             call_id=a["call_id"])
             self.store.audit("agent", "approval_requested", tool=a["tool"], args=a["args"], result_summary=a["summary"], session_id=session_id, invocation_id=inv, approval_id=aid)
             card = {"type": "approval", "id": aid, "tool": a["tool"], "summary": a["summary"], "detail": a["detail"],
                     "provenance": a["provenance"], "risk": a["risk"], "status": "pending"}

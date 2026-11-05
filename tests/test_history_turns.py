@@ -275,3 +275,16 @@ def test_an_old_approval_matches_its_step_with_empty_or_long_arguments(tmp_path)
               _event("odie", "two", "e-2")]
     lines = [h for h in steps_with_allowed(store, "chat-1", events_to_history(events)) if h["role"] == "odie"]
     assert [h["steps"][0]["allowed"]["by"] for h in lines] == ["you", "you"]
+
+
+MEMO = {"id": "0123456789abcdef", "kind": "memo", "title": "Good morning", "mime": "audio/wav", "size": 10, "created": 1.0, "duration": 1.5}
+
+
+def test_a_step_that_made_a_file_says_so(isolated_settings):
+    events = [_calls("odie", "e-1", ("speak", "c1", {"text": "good morning"}), ("now", "c2", {})),
+              _answers("e-1", ("speak", "c1", {"result": "The memo is under your reply.", "media": MEMO}), ("now", "c2", {"result": "9:31"})),
+              _event("odie", "Here you go.", "e-1")]
+    made_line = next(h for h in events_to_history(events) if h["steps"])
+    speak, now = made_line["steps"]
+    assert speak["made"] is True
+    assert "made" not in now
