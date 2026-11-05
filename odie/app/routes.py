@@ -841,6 +841,28 @@ async def vault_put(body: VaultIn, request: Request) -> dict[str, Any]:
     return _vault_view(request)
 
 
+# --- Approvals: Careful (every tap asks) or Smart (routine work runs, risky things still ask) ---
+class ApprovalsModeIn(BaseModel):
+    mode: str
+
+
+@router.get("/approvals/mode")
+async def approvals_mode_get(request: Request) -> dict[str, str]:
+    from odie import approvals_mode
+    return {"mode": approvals_mode.mode(request.app.state.store)}
+
+
+@router.put("/approvals/mode")
+async def approvals_mode_put(body: ApprovalsModeIn, request: Request) -> dict[str, str]:
+    """Choose Careful or Smart for the whole app; anything else is a 400."""
+    from odie import approvals_mode
+    try:
+        saved = approvals_mode.set_mode(request.app.state.store, body.mode)
+    except ValueError as err:
+        raise HTTPException(400, str(err))
+    return {"mode": saved}
+
+
 @router.post("/vault/reindex")
 async def vault_reindex(request: Request) -> dict[str, Any]:
     worker = getattr(request.app.state, "vault_worker", None)

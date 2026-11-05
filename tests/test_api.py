@@ -275,3 +275,20 @@ async def test_the_voice_route_hides_the_local_voice_where_it_cannot_run(client,
     assert [e["id"] for e in j["engines"]] == ["openai", "phonon"]
     assert next(e for e in j["engines"] if e["id"] == "phonon")["available"] is False
     assert (await c.get("/api/voice/preview/kokoro/af_heart")).status_code == 404  # not an engine here
+
+
+async def test_approvals_mode_route_round_trip(client):
+    r = await client.get("/api/approvals/mode")
+    assert r.status_code == 200 and r.json() == {"mode": "careful"}
+    r = await client.put("/api/approvals/mode", json={"mode": "smart"})
+    assert r.status_code == 200 and r.json() == {"mode": "smart"}
+    assert (await client.get("/api/approvals/mode")).json() == {"mode": "smart"}
+    r = await client.put("/api/approvals/mode", json={"mode": "careful"})
+    assert r.json() == {"mode": "careful"}
+
+
+async def test_approvals_mode_route_refuses_an_unknown_value(client):
+    await client.put("/api/approvals/mode", json={"mode": "smart"})
+    r = await client.put("/api/approvals/mode", json={"mode": "yolo"})
+    assert r.status_code == 400
+    assert (await client.get("/api/approvals/mode")).json() == {"mode": "smart"}

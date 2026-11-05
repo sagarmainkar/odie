@@ -75,10 +75,16 @@ _JOINS = frozenset({"and", "or", "then", "plus"})  # two actions in one tool: ne
 # Words that are mostly nouns (email, message, record, order, link, tag, comment) aren't change words: find_email reads.
 
 
+def name_words(name: str) -> set[str]:
+    """The lower-case words of a tool name, split on _ - . spaces and camelCase humps:
+    GMAIL_SEND_EMAIL -> {gmail, send, email}; shareLink -> {share, link}."""
+    return {w.lower() for w in re.split(r"[_\-\s.]+|(?<=[a-z0-9])(?=[A-Z])", name) if w}
+
+
 def is_read_name(name: str) -> bool:
     """A tool whose name says it reads (find, get, list, search, fetch) and says nothing about changing anything:
     gmail_find_email and GMAIL_FETCH_EMAILS are reads; get_or_create_contact and COMPOSIO_MULTI_EXECUTE_TOOL aren't."""
-    words = {w.lower() for w in re.split(r"[_\-\s.]+|(?<=[a-z0-9])(?=[A-Z])", name) if w}
+    words = name_words(name)
     return bool(words & _READ_WORDS) and not words & (_CHANGE_WORDS | _JOINS)
 
 

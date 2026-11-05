@@ -202,3 +202,8 @@ def test_zapiers_stale_link_reason_says_what_to_do():
     said = presets.plain_reason("zapier", "MCPError: Invalid OAuth token - please re-authenticate")
     assert "code" in said and "doesn't accept" in said
     assert presets.plain_reason("zapier", "ConnectTimeout") == "ConnectTimeout"  # anything else as it was
+
+
+def test_name_words():
+    assert mcp.name_words("GMAIL_SEND_EMAIL") == {"gmail", "send", "email"}
+    assert mcp.name_words("shareLink") == {"share", "link"}
