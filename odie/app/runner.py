@@ -98,16 +98,45 @@ def media_of(response: Any) -> dict[str, Any] | None:
     return got[1] if got else m
 
 
+def _step_of(call: Any) -> dict[str, Any]:
+    """A tool call as a step that has no answer yet: it waits. The answer fills in result, state and allowed later.
+      call web_search id c1 with {"query": "cats"} -> {"name": "web_search", "id": "c1", "args": {"query": "cats"},
+                                                      "result": "", "allowed": None, "state": "wait"}"""
+    args = dict(call.args or {})
+    return {"name": call.name, "id": call.id, "args": capped_args(call.name, args), "result": "", "allowed": None, "state": "wait"}
+
+
+def _answer_step(step: dict[str, Any], answer: Any, invocation_id: str) -> None:
+    """Write a tool's answer onto its step (the same meaning as _answer_items gives the live stream). The last answer
+    wins: a gated call is first answered "requires confirmation", and its real result arrives after the tap.
+      {"error": "This tool call requires confirmation..."} -> state "wait", nothing else
+      {"error": "This tool call is rejected."}             -> state "no", result "", allowed {"by": "no"}
+      run_shell {"result": "a.txt"}                        -> state "done", result "a.txt", allowed {"by": "pass"}
+      web_search {"result": "3 hits"}                      -> state "done", result "3 hits", allowed None"""
+    kind = response_kind(answer.response)
+    step["state"] = kind
+    step["result"] = result_text(answer.response) if kind == "done" else ""
+    step["allowed"] = None
+    if kind == "no":
+        step["allowed"] = {"by": "no"}
+    elif kind == "done":
+        step["allowed"] = allowed_of(step["name"], step["id"], invocation_id, {}, answer.response, [])  # no rows: only the pass rule
+
+
 def events_to_history(events: list[Any]) -> list[dict[str, Any]]:
-    """Session events -> [{role, text, tools, ts, inv?, media?, key?}], tool calls (and what they made) folded into the
-    following Odie text. key: the id of the event an Odie text came from, which names that reply for good (its saved
-    checklist ticks hang off it; see reply_key). inv: the turn the line came from (the event's invocation id), so an
-    app can fold a turn's lines into one answer; a message Odie posted on its own is a turn of its own."""
+    """Session events -> [{role, text, tools, ts, inv?, media?, key?, steps?}], tool calls (and what they made) folded
+    into the following Odie text. key: the id of the event an Odie text came from, which names that reply for good (its
+    saved checklist ticks hang off it; see reply_key). inv: the turn the line came from (the event's invocation id), so
+    an app can fold a turn's lines into one answer; a message Odie posted on its own is a turn of its own.
+    steps (Odie lines): one per tool call, in the order called, each paired with its answer by call id, never by place.
+    An answer that lands in a later event (a gated call after the tap) still fills the step on the line of the call."""
     out: list[dict[str, Any]] = []
-    hidden = GATED_TOOLS | addons.gated_tools()  # gated calls are shown by their approval card
+    steps_by_id: dict[str, dict[str, Any]] = {}
 
     def line(role: str, text: str, tools: list[str], ts: float, inv: str, **more: Any) -> dict[str, Any]:
         item: dict[str, Any] = {"role": role, "text": text, "tools": tools, "ts": ts, **more}
+        if role == "odie":
+            item["steps"] = []
         if inv:
             item["inv"] = inv
         return item
@@ -117,8 +146,17 @@ def events_to_history(events: list[Any]) -> list[dict[str, Any]]:
             continue
         ts = float(getattr(ev, "timestamp", 0) or 0)
         inv = str(getattr(ev, "invocation_id", "") or "")
+        calls = [p.function_call for p in ev.content.parts if p.function_call and p.function_call.name != CONFIRM]
+        new_steps = [_step_of(call) for call in calls]
+        for step in new_steps:
+            if step["id"]:
+                steps_by_id[step["id"]] = step
+        for p in ev.content.parts:  # an answer may come from any event, so pair every one by id
+            answer = p.function_response
+            if answer and answer.name != CONFIRM and answer.id in steps_by_id:
+                _answer_step(steps_by_id[answer.id], answer, inv)
         texts = [p.text for p in ev.content.parts if p.text and not getattr(p, "thought", False)]  # a model's reasoning is its own, not a reply
-        tools = [p.function_call.name for p in ev.content.parts if p.function_call and p.function_call.name != CONFIRM and p.function_call.name not in hidden]
+        tools = [call.name for call in calls]
         made = [m for p in ev.content.parts if p.function_response and (m := media_of(p.function_response.response))]
         if made and ev.author != "user":
             if out and out[-1]["role"] == "odie" and not out[-1]["text"]:
@@ -138,6 +176,7 @@ def events_to_history(events: list[Any]) -> list[dict[str, Any]]:
                 out[-1]["tools"] += tools
             else:
                 out.append(line("odie", "", tools, ts, inv))
+            out[-1]["steps"] += new_steps
         if texts:
             if out and out[-1]["role"] == "odie" and not out[-1]["text"]:
                 out[-1]["text"] = "".join(texts)
@@ -153,6 +192,25 @@ def events_to_history(events: list[Any]) -> list[dict[str, Any]]:
             if posted:  # a posted message's memo (a spoken reminder)
                 out[-1].setdefault("media", []).extend(posted)
     return out
+
+
+def steps_with_allowed(store: Store, session_id: str, lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Fill each finished step's `allowed` from the session's decided approvals. A row for the call wins over what the
+    history alone could tell (a shell command that ran with no row stays "pass").
+      c1 approved, step done         -> allowed {"by": "you", "at": <when>}
+      c2 rejected, step "no"         -> allowed {"by": "no", "at": <when>}
+      c3 approved, step still "wait" -> allowed None (the tap is not the result yet: no pill)
+      web_search, no row             -> allowed None"""
+    rows = store.approvals_for_calls(session_id)
+    for item in lines:
+        for step in item.get("steps", []):
+            if step["state"] == "wait":
+                continue
+            # response None: only a row can answer here; the "pass" rule was already applied when the step was built
+            decided = allowed_of(step["name"], step["id"], item.get("inv", ""), step["args"], None, rows)
+            if decided is not None:
+                step["allowed"] = decided
+    return lines
 
 
 CONFIRM = "adk_request_confirmation"
@@ -859,7 +917,8 @@ class OdieRunner:
         """One thread's messages, oldest first, paged like history()."""
         s = config.settings
         sess = await self.session_service.get_session(app_name=s.app_name, user_id=s.user_id, session_id=sid)
-        items = merge_approvals(self._marked(sid, events_to_history(sess.events if sess else [])), self.store.approvals_in_sessions([sid]))
+        lines = steps_with_allowed(self.store, sid, self._marked(sid, events_to_history(sess.events if sess else [])))
+        items = merge_approvals(lines, self.store.approvals_in_sessions([sid]))
         items = with_session(sid, items)
         total = len(items)
         end = min(before, total) if before is not None else total
@@ -877,7 +936,7 @@ class OdieRunner:
             sess = await self.session_service.get_session(app_name=s.app_name, user_id=s.user_id, session_id=sid)
             if sess is None:
                 break
-            items += with_session(sid, self._marked(sid, events_to_history(sess.events)))
+            items += with_session(sid, steps_with_allowed(self.store, sid, self._marked(sid, events_to_history(sess.events))))
             sids.append(sid)
             n += 1
         items = merge_approvals(items, self.store.approvals_in_sessions(sids))
