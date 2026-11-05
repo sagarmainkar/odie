@@ -34,7 +34,7 @@ from odie.agent.prompt import ALL_CAPS, Who, build_static_prompt, build_turn_con
 from odie.agent.agent import GATED_TOOLS
 from odie.agent.tools.local import threads_summary
 from odie.app.events import EventBus
-from odie.app.steps import allowed_of, capped_args, response_kind, result_text
+from odie.app.steps import allowed_of, answer_of, capped_args
 from odie.memory.index import build_index, render_prefetch
 from odie.memory.review import run_review
 from odie.memory.search import prefetch_hits
@@ -113,14 +113,10 @@ def _answer_step(step: dict[str, Any], answer: Any, invocation_id: str) -> None:
       {"error": "This tool call is rejected."}             -> state "no", result "", allowed {"by": "no"}
       run_shell {"result": "a.txt"}                        -> state "done", result "a.txt", allowed {"by": "pass"}
       web_search {"result": "3 hits"}                      -> state "done", result "3 hits", allowed None"""
-    kind = response_kind(answer.response)
-    step["state"] = kind
-    step["result"] = result_text(answer.response) if kind == "done" else ""
-    step["allowed"] = None
-    if kind == "no":
-        step["allowed"] = {"by": "no"}
-    elif kind == "done":
-        step["allowed"] = allowed_of(step["name"], step["id"], invocation_id, {}, answer.response, [])  # no rows: only the pass rule
+    state, result, allowed = answer_of(step["name"], step["id"], invocation_id, answer.response)
+    step["state"] = state
+    step["result"] = result
+    step["allowed"] = allowed
 
 
 def events_to_history(events: list[Any]) -> list[dict[str, Any]]:
@@ -453,18 +449,12 @@ def _answer_items(answer: Any, invocation_id: str) -> list[dict[str, Any]]:
       {"error": "This tool call is rejected."}             -> [tool_done with result "" and allowed {"by": "no"}]
       run_shell {"result": "a.txt"}                        -> [tool_done with result "a.txt" and allowed {"by": "pass"}]
       speak {"result": "...", "media": {...}}              -> [tool_done, media]"""
-    kind = response_kind(answer.response)
-    if kind == "wait":
+    state, result, allowed = answer_of(answer.name, answer.id, invocation_id, answer.response)
+    if state == "wait":
         return [{"type": "tool_wait", "tool": answer.name, "id": answer.id}]
-    done: dict[str, Any] = {"type": "tool_done", "tool": answer.name, "id": answer.id}
-    if kind == "no":
-        done["result"] = ""
-        done["allowed"] = {"by": "no"}
-    else:
-        done["result"] = result_text(answer.response)
-        allowed = allowed_of(answer.name, answer.id, invocation_id, {}, answer.response, [])  # no rows: only the pass rule
-        if allowed is not None:
-            done["allowed"] = allowed
+    done: dict[str, Any] = {"type": "tool_done", "tool": answer.name, "id": answer.id, "result": result}
+    if allowed is not None:
+        done["allowed"] = allowed
     items = [done]
     media = media_of(answer.response)
     if media:
@@ -936,7 +926,9 @@ class OdieRunner:
             sess = await self.session_service.get_session(app_name=s.app_name, user_id=s.user_id, session_id=sid)
             if sess is None:
                 break
-            items += with_session(sid, steps_with_allowed(self.store, sid, self._marked(sid, events_to_history(sess.events))))
+            lines = events_to_history(sess.events)
+            lines = steps_with_allowed(self.store, sid, self._marked(sid, lines))
+            items += with_session(sid, lines)
             sids.append(sid)
             n += 1
         items = merge_approvals(items, self.store.approvals_in_sessions(sids))

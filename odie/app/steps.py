@@ -146,11 +146,26 @@ def _ran_under_the_pass(tool: str, response: object) -> bool:
     return isinstance(response, dict) and "result" in response
 
 
+def _same_args(row, tool: str, capped: dict) -> bool:
+    """Does an old approval row hold the same arguments as a step? `capped` is the step's arguments as capped_args made
+    them; the row keeps the full arguments, so they are capped the same way before comparing.
+    row {"cwd": <600 chars>} vs step cwd cut at 500 + "…" -> True; row {"cwd": None} vs step {"cwd": "None"} -> True;
+    row {"a": 1} vs step {"a": 2} -> False; a row whose saved arguments cannot be read -> False."""
+    try:
+        saved = json.loads(row["args_json"])
+    except (TypeError, ValueError):
+        return False
+    if not isinstance(saved, dict):
+        return False
+    return capped_args(tool, saved) == capped
+
+
 def allowed_of(tool: str, call_id: str, invocation_id: str, args: dict, response: object, rows: list) -> dict | None:
     """Who let this tool call run: {"by": "you"|"no"|"pass", "at": ...} or None when nothing says.
 
     `rows` are the session's decided approvals (Store.approvals_for_calls). The first row with this call's id wins; a row
-    saved before call ids existed (call_id empty) is found by the same invocation, tool and exact arguments. With no row,
+    saved before call ids existed (call_id empty) is found by the same invocation, tool and arguments (`args` are the
+    step's capped arguments; the row's are capped the same way). With no row,
     only a shell command that ran gets "pass".
     - an approved row for call "c1" -> {"by": "you", "at": <when>}; a rejected one -> {"by": "no", "at": <when>}
     - an old row, same invocation and tool, args {"message_id": "m1"} both sides -> {"by": "you", "at": <when>}
@@ -163,14 +178,29 @@ def allowed_of(tool: str, call_id: str, invocation_id: str, args: dict, response
         if row["call_id"] and row["call_id"] == call_id:
             return _by_of(row)
 
-    args_json = json.dumps(args, default=str)  # the same rendering Store.create_approval saves
     for row in rows:
         if row["call_id"]:
             continue
         same_call = row["invocation_id"] == invocation_id and row["tool"] == tool
-        if same_call and row["args_json"] == args_json:
+        if same_call and _same_args(row, tool, args):
             return _by_of(row)
 
     if _ran_under_the_pass(tool, response):
         return {"by": "pass"}
     return None
+
+
+def answer_of(tool: str, call_id: str, invocation_id: str, response: object) -> tuple[str, str, dict | None]:
+    """What a tool's answer means for its step: (state, result, allowed), the one mapping the live stream and the history share.
+      {"error": "This tool call requires confirmation..."} -> ("wait", "", None)
+      {"error": "This tool call is rejected."}             -> ("no", "", {"by": "no"})
+      run_shell {"result": "a.txt"}                        -> ("done", "a.txt", {"by": "pass"})
+      web_search {"result": "3 hits"}                      -> ("done", "3 hits", None)
+    """
+    state = response_kind(response)
+    if state == "wait":
+        return state, "", None
+    if state == "no":
+        return state, "", {"by": "no"}
+    allowed = allowed_of(tool, call_id, invocation_id, {}, response, [])  # no rows: only the pass rule
+    return state, result_text(response), allowed

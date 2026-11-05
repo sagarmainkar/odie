@@ -49,7 +49,7 @@ REJECTED_ANSWER = {"error": "This tool call is rejected."}
 def test_history_steps_pair_call_and_response_by_id():
     # Two calls in one event; the answers come back in the other order, in one event. Each call keeps its own.
     events = [_event("user", "look both up", "e-1"),
-              _calls("odie", "e-1", ("web_search", "c1", {"query": "cats"}), ("web_fetch", "c2", {"url": "http://studio.local"})),
+              _calls("odie", "e-1", ("web_search", "c1", {"query": "cats"}), ("web_fetch", "c2", {"url": "http://example.com"})),
               _answers("e-1", ("web_fetch", "c2", {"result": "page"}), ("web_search", "c1", {"result": "3 hits"})),
               _event("odie", "Done.", "e-1")]
     lines = events_to_history(events)
@@ -166,3 +166,24 @@ def test_a_decided_row_gives_no_pill_to_a_step_still_waiting(tmp_path):
               _event("odie", "waiting", "e-1")]
     step = steps_with_allowed(store, "chat-1", events_to_history(events))[0]["steps"][0]
     assert step["state"] == "wait" and step["allowed"] is None
+
+
+def test_an_old_approval_matches_its_step_with_empty_or_long_arguments(tmp_path):
+    # Old rows (no call_id) keep the full arguments; the step keeps capped ones. A None value or a value over 500
+    # characters must still match, so a shell command the person approved is not shown as a pass.
+    from odie.app.runner import steps_with_allowed
+
+    store = _store(tmp_path)
+    none_args = {"command": "ls", "cwd": None}
+    long_args = {"command": "ls", "cwd": "d" * 600}
+    for number, args in enumerate([none_args, long_args], start=1):
+        row = store.create_approval("chat-1", f"e-{number}", f"r{number}", "run_shell", args, "Run", {}, [])
+        store.decide_approval(row, True)
+    events = [_calls("odie", "e-1", ("run_shell", "c1", none_args)),
+              _answers("e-1", ("run_shell", "c1", {"result": "a.txt"})),
+              _event("odie", "one", "e-1"),
+              _calls("odie", "e-2", ("run_shell", "c2", long_args)),
+              _answers("e-2", ("run_shell", "c2", {"result": "a.txt"})),
+              _event("odie", "two", "e-2")]
+    lines = [h for h in steps_with_allowed(store, "chat-1", events_to_history(events)) if h["role"] == "odie"]
+    assert [h["steps"][0]["allowed"]["by"] for h in lines] == ["you", "you"]
