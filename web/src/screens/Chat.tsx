@@ -50,7 +50,8 @@ import { plainMath } from "../plainMath";
 import { liftOneLineFences } from "../blocks/oneLineFence";
 import { tidyStrayBlocks } from "../blocks/strayBlocks";
 import { replyArrived, streamStalled, tapFinished } from "../reply";
-import { ApprovalCard, type Approval } from "../components/ApprovalCard";
+import { ChatApproval, type Approval } from "../components/ApprovalCard";
+import { answered } from "../approvals";
 import { ChartBlock, ChartPending } from "../components/ChartBlock";
 import { Diagram } from "../components/Diagram";
 import { ImageStrip, SafeImage } from "../components/ImageStrip";
@@ -396,7 +397,7 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
     if (e.type === "thinking") setThink((shown) => thinkingAfter(shown, e));  // flipped in another app or browser
     if (e.type === "google" && e.status === "connected") window.dispatchEvent(new Event("odie:google-connected"));
     if (e.type === "approval" && e.status === "pending") setMsgs((m) => m.some((x) => x.approval?.id === e.id) ? m : [...m, { id: nextId++, role: "approval", text: "", tools: [], ts: Date.now() / 1000, approval: e as Approval }]);
-    if ((e.type === "approval" && e.status !== "pending") || e.type === "approval_done") setMsgs((m) => m.map((x) => x.approval?.id === e.id ? { ...x, approval: { ...x.approval!, status: e.status ?? x.approval!.status, result_text: e.text ?? x.approval!.result_text } } : x));
+    if ((e.type === "approval" && e.status !== "pending") || e.type === "approval_done") setMsgs((m) => m.map((x) => x.approval?.id === e.id ? { ...x, approval: { ...answered(x.approval!, e.status), result_text: e.text ?? x.approval!.result_text } } : x));
   }, []), useCallback(() => { loadThink(); if (!busy) loadHistory(); }, [busy, loadHistory, loadThink]));
 
   const tapTimers = useRef<number[]>([]);
@@ -713,7 +714,7 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
                   <div key={m.id} className={spacing}>
                     {showTime && <div className="mb-3"><TimeDivider ts={m.ts!} /></div>}
                     {m.role === "approval" && m.approval ? (
-                      <motion.div {...enter}><ApprovalCard a={m.approval} showResult={false} onDecided={(id, st) => { setOrb("idle"); if (st === "approved") waitForTap(id); }} /></motion.div>
+                      <motion.div {...enter}><ChatApproval a={m.approval} onDecided={(id, st) => { setOrb("idle"); setMsgs((all) => all.map((x) => x.approval?.id === id ? { ...x, approval: answered(x.approval, st) } : x)); if (st === "approved") waitForTap(id); }} /></motion.div>
                     ) : m.role === "odie" && m.text === NEW_CHAT ? (
                       <NewChatDivider ts={m.ts} name={name} />
                     ) : m.role === "odie" && m.text.startsWith(ROLLOVER) ? (
