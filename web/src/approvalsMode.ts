@@ -47,6 +47,14 @@ export function forgetMode(): void {
   known = null;
 }
 
+/** Read the mode again (the page came back into view: it may have been switched on another device) and tell
+ * everyone when it changed. */
+export async function refreshMode(): Promise<void> {
+  known = null;
+  const mode = await readMode();
+  listeners.forEach((f) => f(mode));
+}
+
 /** The live mode for a component: null until it is known, then every change made through setMode. */
 export function useApprovalsMode(): ApprovalsMode | null {
   const [mode, setLocal] = useState<ApprovalsMode | null>(known);
@@ -55,7 +63,9 @@ export function useApprovalsMode(): ApprovalsMode | null {
     const follow = (m: ApprovalsMode) => { if (mounted) setLocal(m); };
     listeners.add(follow);
     readMode().then(follow).catch(() => {});  // unreachable server: the card keeps its Careful look
-    return () => { mounted = false; listeners.delete(follow); };
+    const onShow = () => { if (document.visibilityState === "visible") void refreshMode().catch(() => {}); };
+    document.addEventListener("visibilitychange", onShow);
+    return () => { mounted = false; listeners.delete(follow); document.removeEventListener("visibilitychange", onShow); };
   }, []);
   return mode;
 }

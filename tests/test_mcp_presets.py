@@ -77,7 +77,7 @@ async def test_the_toolset_reads_the_mode_on_every_listing(monkeypatch):
     fakes = _Fakes("write_note", "delete_note")
     monkeypatch.setattr(McpToolset, "get_tools", _Fakes.get_tools.__get__(fakes))
     mode = {"smart": False}
-    ts = toolset_for("notes", {"command": "unused"}, smart=lambda: mode["smart"])
+    ts = toolset_for("notes", {"command": "unused"}, smart=lambda _sid: mode["smart"])
 
     def asked():
         return {t.name: t._require_confirmation for t in fakes.tools}
@@ -94,7 +94,7 @@ async def test_the_toolset_reads_the_mode_on_every_listing(monkeypatch):
 async def test_a_listed_tool_remembers_what_careful_would_do(monkeypatch):
     fakes = _Fakes("write_note", "list_items")
     monkeypatch.setattr(McpToolset, "get_tools", _Fakes.get_tools.__get__(fakes))
-    await toolset_for("notes", {"command": "unused", "readsFree": True}, smart=lambda: True).get_tools()
+    await toolset_for("notes", {"command": "unused", "readsFree": True}, smart=lambda _sid: True).get_tools()
     write, read = fakes.tools
     assert (write._require_confirmation, write._asks_in_careful) == (False, True)  # Smart runs it; background turns still refuse
     assert (read._require_confirmation, read._asks_in_careful) == (False, False)
@@ -104,7 +104,7 @@ async def test_a_mode_reader_that_fails_means_careful(monkeypatch):
     fakes = _Fakes("write_note")
     monkeypatch.setattr(McpToolset, "get_tools", _Fakes.get_tools.__get__(fakes))
 
-    def broken():
+    def broken(_sid):
         raise RuntimeError("database is locked")
     tools = await toolset_for("notes", {"command": "unused"}, smart=broken).get_tools()
     assert tools is fakes.tools and tools[0]._require_confirmation is True
@@ -125,7 +125,7 @@ def test_toolset_for_keeps_the_mode_reader():
 
 
 async def test_smart_with_a_real_server():
-    ts = toolset_for("apps", {**APPS}, smart=lambda: True)
+    ts = toolset_for("apps", {**APPS}, smart=lambda _sid: True)
     try:
         tools = {t.name: t for t in await ts.get_tools()}
         asked = {n: await t.check_require_confirmation({}, None) for n, t in tools.items()}
@@ -307,3 +307,22 @@ def test_zapiers_stale_link_reason_says_what_to_do():
 def test_name_words():
     assert mcp.name_words("GMAIL_SEND_EMAIL") == {"gmail", "send", "email"}
     assert mcp.name_words("shareLink") == {"share", "link"}
+
+
+async def test_the_listing_hands_the_reader_its_chat(monkeypatch):
+    """The reader gets the chat's session id (so it can see mail read this turn), or None outside a chat."""
+    from types import SimpleNamespace
+    fakes = _Fakes("write_note")
+    monkeypatch.setattr(McpToolset, "get_tools", _Fakes.get_tools.__get__(fakes))
+    seen = []
+
+    def reader(session_id):
+        seen.append(session_id)
+        return session_id == "chat-free"
+    ts = toolset_for("notes", {"command": "unused"}, smart=reader)
+    await ts.get_tools(SimpleNamespace(session=SimpleNamespace(id="chat-free")))
+    assert fakes.tools[0]._require_confirmation is False
+    await ts.get_tools(SimpleNamespace(session=SimpleNamespace(id="chat-mail")))
+    assert fakes.tools[0]._require_confirmation is True
+    await ts.get_tools()
+    assert seen == ["chat-free", "chat-mail", None]

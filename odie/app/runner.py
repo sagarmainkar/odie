@@ -586,7 +586,6 @@ class OdieRunner:
         builder.hooks.update(store=store, reload=self.load_plugins, reserved=lambda: self._all_tool_names())
         from odie import trackers
         trackers.hooks.update(store=store, tz=self.tz)
-        from odie import approvals_mode
         approvals_mode.hooks.update(store=store)
         from odie import about
         about.hooks.update(runner=self)
@@ -789,7 +788,6 @@ class OdieRunner:
             brief = self.store.one("select text from briefs where date=? order by id desc limit 1", (now.strftime("%Y-%m-%d"),))
         from odie import location
         place, seen, home = location.location_bits(location.get(self.store), now)  # a place name and home, never coordinates
-        from odie import approvals_mode
         return build_turn_context(now, self.prefetch(text), threads_summary(self.store), format_open_threads(rows),
                                   brief["text"] if brief else "", caps=getattr(self, "_caps", ALL_CAPS), place=place, seen=seen, home=home,
                                   approvals=approvals_mode.context_line(self.store))
@@ -1374,7 +1372,7 @@ class OdieRunner:
                 for e in skills:
                     if e.status == "ok":
                         reserved.update({t: f"the {e.name} skill" for t in e.tools})
-                servers = await load_servers(reserved=reserved, smart=lambda: approvals_mode.is_smart(self.store))
+                servers = await load_servers(reserved=reserved, smart=lambda session_id: approvals_mode.runs_free(self.store, session_id))
                 ok = [e for e in servers if e.status == "ok"]
                 skill_ts = build_skill_toolset(skills, extra_skills=[e.skill for e in ok if e.skill],
                                                extra_tools=[e.toolset for e in ok if e.skill])

@@ -301,11 +301,12 @@ def make_check(store: Store, clock: Callable[[], datetime] = datetime.now) -> Ca
           `ls ~/Downloads`, Smart, no pass   -> runs, no card ("allowed by smart mode")
           `rm old.txt`, Smart                -> card ("deletes or stops something")
           `brew install x`, Smart            -> card ("installs software (runs its install scripts)")
+          `ls ~/Downloads`, Smart, a mail read this turn -> card (the mail may be behind it; the card says so)
         """
         session_id = session_id_of(tool_context)
         if not session_id:
             return True  # outside a chat there is no pass to look up
-        smart = approvals_mode.is_smart(store)
+        smart = approvals_mode.runs_free(store, session_id)  # Smart, and no mail read this turn
         if not smart and not active(store, session_id, clock()):
             return True  # Careful, and no pass or it ran out
 

@@ -197,6 +197,17 @@ def command_problem(spec: dict) -> str | None:
     return None
 
 
+def _session_id_of(readonly_context) -> str | None:
+    """The chat a tool listing is for, from ADK's readonly context: a context with a session -> its id; None (a probe,
+    a test) or a context without one -> None."""
+    if readonly_context is None:
+        return None
+    session = getattr(readonly_context, "session", None)
+    if session is None:
+        return None
+    return getattr(session, "id", None)
+
+
 class PluginMcpToolset(McpToolset):
     """An MCP toolset whose tools need the user's tap, unless the user switched "Reading doesn't need a tap" on for
     the server (reads_free) and the tool's name says it reads (asks); the server's own read-only hint frees nothing.
@@ -204,25 +215,26 @@ class PluginMcpToolset(McpToolset):
     It is called on every listing, and ADK lists the tools again at each step of a turn, so switching the mode mid-chat
     shows on the next step."""
 
-    def __init__(self, *args, reads_free: bool = False, smart: Callable[[], bool] | None = None, **kwargs):
+    def __init__(self, *args, reads_free: bool = False, smart: Callable[[str | None], bool] | None = None, **kwargs):
+        # smart: reads the live mode for a chat (the session id, or None outside one) on every listing; see runs_free.
         super().__init__(*args, **kwargs)
         self.reads_free = reads_free
         self.smart = smart
 
-    def _smart_now(self) -> bool:
+    def _smart_now(self, session_id: str | None) -> bool:
         """Whether the approvals mode is Smart right now; Careful when there is no reader or it fails (a locked database
         must not drop the app's tools): reader says True -> True; reader raises -> False (logged)."""
         if not self.smart:
             return False
         try:
-            return bool(self.smart())
+            return bool(self.smart(session_id))
         except Exception:
             log.warning("could not read the approvals mode; app tools ask as in Careful", exc_info=True)
             return False
 
     async def get_tools(self, readonly_context=None):
         tools = await super().get_tools(readonly_context)
-        smart_now = self._smart_now()
+        smart_now = self._smart_now(_session_id_of(readonly_context))
         for t in tools:  # per tool; ADK's toolset option can't see annotations
             tool = {"name": t.name, "read_only": is_read_only(t), "destructive": is_destructive(t)}
             t._require_confirmation = asks(tool, self.reads_free, smart=smart_now)
@@ -231,7 +243,7 @@ class PluginMcpToolset(McpToolset):
         return tools
 
 
-def toolset_for(name: str, spec: dict, timeout: float = 30, smart: Callable[[], bool] | None = None) -> PluginMcpToolset:
+def toolset_for(name: str, spec: dict, timeout: float = 30, smart: Callable[[str | None], bool] | None = None) -> PluginMcpToolset:
     if spec.get("url"):
         params = StreamableHTTPConnectionParams(url=spec["url"], headers=dict(spec.get("headers") or {}), timeout=timeout)
     else:
@@ -575,7 +587,7 @@ async def probe_tools(spec: dict, timeout: float) -> list[dict]:
 
 
 async def load_servers(timeout: float = 15, reserved: dict[str, str] | None = None,
-                       smart: Callable[[], bool] | None = None) -> list[ServerEntry]:
+                       smart: Callable[[str | None], bool] | None = None) -> list[ServerEntry]:
     """Every server in mcp.json with its status. `reserved` maps tool names Odie already has (built-ins, skill
     tools) to their owner, so a server can't shadow them. `smart` reads the live approvals mode for each server's toolset."""
     servers, err = read_config()

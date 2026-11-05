@@ -46,6 +46,15 @@ describe("Settings → Approvals", () => {
     await view.done();
   });
 
+  it("says so when the setting can't be read, and still lets a tap save", async () => {
+    vi.mocked(getJSON).mockRejectedValue(new Error("offline"));
+    const view = await mount(<ApprovalsSection />);
+    expect(view.host.textContent).toContain("Couldn't read this setting");
+    const smart = [...view.host.querySelectorAll("[role=radio]")].find((b) => b.textContent === "Smart") as HTMLButtonElement;
+    expect(smart.disabled).toBe(false);
+    await view.done();
+  });
+
   it("reads an odd answer as Careful", async () => {
     vi.mocked(getJSON).mockResolvedValue({ mode: "yolo" });
     const view = await mount(<ApprovalsSection />);

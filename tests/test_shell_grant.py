@@ -341,3 +341,17 @@ def test_the_mode_flipped_between_two_calls_takes_effect_on_the_next_call(tmp_pa
     assert check(command="ls ~", tool_context=ctx) is False
     approvals_mode.set_mode(s, approvals_mode.CAREFUL)
     assert check(command="ls ~", tool_context=ctx) is True
+
+
+def test_smart_asks_again_after_the_model_read_mail_this_turn(tmp_path):
+    """Words from a mail could be steering the model: the turn's commands show a card, as in Careful."""
+    from types import SimpleNamespace
+    s = _smart_store(tmp_path)
+    ctx = SimpleNamespace(session=SimpleNamespace(id="chat-x"))
+    check = g.make_check(s, clock=lambda: NOW)
+    s.audit("user", "message", result_summary="read my mail then list downloads", session_id="chat-x")
+    s.audit("agent", "mail_seen", args={"from": "a@example.com", "subject": "Hi"}, session_id="chat-x")
+    assert check(command="ls ~/Downloads", tool_context=ctx) is True
+    assert _shell_audit(s, "shell_auto_approved") == []
+    s.audit("user", "message", result_summary="now list downloads", session_id="chat-x")
+    assert check(command="ls ~/Downloads", tool_context=ctx) is False  # the next turn runs free again

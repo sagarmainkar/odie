@@ -55,7 +55,7 @@ def test_names_that_ask(name):
     assert approvals_mode.asks_by_name(name)
 
 
-@pytest.mark.parametrize("name", ["gmail_find_email", "calendar_create_event", "list_items", "GMAIL_FETCH_EMAILS"])
+@pytest.mark.parametrize("name", ["gmail_find_email", "list_events", "list_items", "GMAIL_FETCH_EMAILS", "get_weather", "search_notes"])
 def test_names_that_do_not_ask(name):
     assert not approvals_mode.asks_by_name(name)
 
@@ -117,3 +117,30 @@ def test_the_trailer_carries_the_mode_line_per_turn(store):
     assert "now 14:16 Thu 5 Nov · Approvals: careful (changes ask first)]" in before
     assert "· Approvals: smart (" in after
     assert "Approvals" not in build_turn_context(now, "", "")
+
+
+@pytest.mark.parametrize("name", [
+    "SLACK_SENDS_A_MESSAGE_TO_A_SLACK_CHANNEL", "SLACK_SCHEDULE_MESSAGE", "DISCORD_CREATE_MESSAGE", "GITHUB_CREATE_AN_ISSUE_COMMENT",
+    "GITHUB_CREATE_A_PULL_REQUEST", "GOOGLEDRIVE_ADD_FILE_SHARING_PREFERENCE", "GOOGLEDRIVE_CREATE_PERMISSION",
+    "STRIPE_CREATE_PAYMENT_INTENT", "STRIPE_CREATE_CHARGE", "PAYPAL_CREATE_PAYOUT", "UBER_REQUEST_RIDE", "DOORDASH_CREATE_DELIVERY",
+    "OPENTABLE_CREATE_RESERVATION", "reserve_table", "COMPOSIO_REMOTE_WORKBENCH", "COMPOSIO_REMOTE_BASH_TOOL", "python_exec",
+    "exec_command", "eval_code", "bash", "shell", "HTTP_REQUEST", "GOOGLECALENDAR_CREATE_EVENT", "GOOGLECALENDAR_UPDATE_EVENT",
+    "calendar_create_event", "add_meeting",
+])
+def test_more_real_names_that_ask(name):
+    assert approvals_mode.asks_by_name(name), name
+
+
+def test_mail_read_this_turn_and_runs_free(store):
+    approvals_mode.set_mode(store, "smart")
+    assert approvals_mode.runs_free(store, "chat-1") is True
+    assert approvals_mode.runs_free(store, None) is False or approvals_mode.mail_read_this_turn(store, None) is False
+    store.audit("user", "message", result_summary="hi", session_id="chat-1")
+    store.audit("agent", "mail_seen", args={"from": "a@example.com", "subject": "Invoice"}, session_id="chat-1")
+    assert approvals_mode.mail_read_this_turn(store, "chat-1") is True
+    assert approvals_mode.runs_free(store, "chat-1") is False  # Smart, but a mail was read this turn: ask again
+    store.audit("user", "message", result_summary="next", session_id="chat-1")
+    assert approvals_mode.mail_read_this_turn(store, "chat-1") is False  # the mail was last turn
+    assert approvals_mode.runs_free(store, "chat-1") is True
+    approvals_mode.set_mode(store, "careful")
+    assert approvals_mode.runs_free(store, "chat-1") is False
