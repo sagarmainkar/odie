@@ -1,10 +1,12 @@
+import type { DoneEvent, StartEvent, WaitEvent } from "./steps";
 import type { ReplyUsage } from "./usage";
 
 export type ChatEvent =
   | { type: "token"; text: string; key?: string; session_id?: string }  // key, session_id: the reply's name (see Chat's Msg)
   | { type: "text"; text: string; key?: string; session_id?: string; usage?: ReplyUsage }  // usage: the finished reply's counts
-  | { type: "tool_start"; tool: string; args: Record<string, unknown> }
-  | { type: "tool_done"; tool: string }
+  | ({ type: "tool_start" } & StartEvent)  // id, args, gated: the step's receipt (see steps.ts)
+  | ({ type: "tool_wait" } & WaitEvent)  // a gated call waiting for your tap
+  | ({ type: "tool_done" } & DoneEvent)  // result, allowed: what it gave and who let it run
   | { type: "done"; text: string }
   | { type: "error"; message: string }
   | { type: string; [k: string]: unknown };

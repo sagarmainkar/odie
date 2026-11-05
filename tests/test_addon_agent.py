@@ -60,17 +60,19 @@ def test_a_raising_tools_hook_leaves_the_agent_whole(store):
     assert any(getattr(t, "name", "") == "web_search" for t in build_agent(store).tools)
 
 
-def test_gated_addon_tools_have_no_step_chip():
+def test_gated_addon_tools_show_as_gated_steps():
     addons.use([Addon("bell", tool_names=frozenset({"ring_doorbell", "unlock_door"}), gated=frozenset({"unlock_door"}))])
-    assert event_to_sse(_call("unlock_door")) == []
-    assert event_to_sse(_call("ring_doorbell"))[0]["type"] == "tool_start"
+    assert event_to_sse(_call("unlock_door"))[0]["gated"] is True
+    ring = event_to_sse(_call("ring_doorbell"))[0]
+    assert ring["type"] == "tool_start" and ring["gated"] is False
 
 
-def test_gated_addon_tools_are_left_out_of_history():
+def test_gated_addon_tools_are_shown_in_history():
+    # A gated call is a step like any other now; only ADK's own approval question stays out.
     from odie.app.runner import events_to_history
     addons.use([Addon("bell", gated=frozenset({"unlock_door"}))])
     items = events_to_history([_call("unlock_door"), _call("ring_doorbell"), _text("Done.")])
-    assert items[-1]["tools"] == ["ring_doorbell"]
+    assert items[-1]["tools"] == ["unlock_door", "ring_doorbell"]
 
 
 def test_addon_card_writes_the_summary(store):

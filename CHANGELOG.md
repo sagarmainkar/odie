@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- The step receipt: open a reply's steps and each one says what it was asked (the command, the search, the page), who let it run (a "You allowed · 10:42" pill for your tap, "pass" for a shell command under the pass, "You said no", or "Lapsed" for a card nobody tapped in time), and what came back ("No output", "3 lines · tap to see them", or "Made a file"). A tap shows the first 12 lines of the output, and Show all the rest. A step waiting for your tap says so with a spinner, and after the tap it fills in on the open chat without a reload, even when you approved it from the phone. A step that can no longer finish (its card lapsed, or Odie restarted mid-step) says "Not run" or "No result" instead of spinning.
+- Steps that need your tap, such as a shell command, now show in the reply's trace like any other step, and the blocks eval and the chat replay count them among the tools a turn called. Only Odie's own approval question stays out: the card shows it.
+
 ## v0.2.40 (2026-11-04)
 
 - A morning hello: each day opens with a card from Odie at the top of today's chat. It greets you for the time of day, asks how yesterday's events went (and asks, rather than guesses, how things turned out), says what got done and what stayed open in the last few days' chats, and shows the weather, up to four tiles (today, due soon, arriving, a trip), one nudge for something that needs a decision, the mail worth knowing about, and chips you can tap to send. It is written once a day by your chat model, from 05:00, at the 07:30 morning round or when you first open the day, and a plain card stands in when the model's answer can't be used. Every new chat that day starts from Odie's short notes about the day, including the morning brief, so you don't have to explain where you left off.

@@ -2,7 +2,7 @@ CREATE TABLE IF NOT EXISTS approvals(
   id INTEGER PRIMARY KEY, session_id TEXT NOT NULL, invocation_id TEXT NOT NULL, request_id TEXT NOT NULL,
   tool TEXT NOT NULL, args_json TEXT NOT NULL, summary TEXT NOT NULL, detail_json TEXT, provenance_json TEXT,
   status TEXT NOT NULL CHECK(status IN ('pending','approved','rejected','expired')) DEFAULT 'pending',
-  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')), decided_at TEXT, result_text TEXT);
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')), decided_at TEXT, result_text TEXT, call_id TEXT);
 CREATE TABLE IF NOT EXISTS tasks(
   id INTEGER PRIMARY KEY, title TEXT NOT NULL,
   kind TEXT NOT NULL CHECK(kind IN ('waiting','followup','reminder','todo')),
