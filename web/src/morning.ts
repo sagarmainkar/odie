@@ -87,6 +87,16 @@ export function shouldShowMorning(chat: ChatOnScreen, today: string, state: Morn
   return state === "ready" || state === "making";
 }
 
+/** Whether the round "jump to latest" button is drawn: when the user has scrolled up, except over a morning card with no
+ * messages under it (the card is the only thing in the chat, so there is nothing below to jump to).
+ * Card showing, 0 messages, scrolled up -> hidden; card showing, 3 messages, scrolled up -> shown;
+ * no card, scrolled up -> shown; at the bottom -> hidden. */
+export function shouldShowJumpButton(atBottom: boolean, morningShowing: boolean, messageCount: number): boolean {
+  if (atBottom) return false;
+  if (morningShowing && messageCount === 0) return false;
+  return true;
+}
+
 /** Whether to ask for the hello again: only while it's being made, and for three minutes at most.
  * "making" 30 s after the first ask -> true; "making" after 3 minutes -> false (give up); "ready" or "none" -> false. */
 export function keepAsking(state: MorningState, startedAt: number, now: number): boolean {
