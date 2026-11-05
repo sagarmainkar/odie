@@ -27,6 +27,7 @@ import { LocationRowView } from "../components/LocationRow";
 import { LABEL, type Panel, type Step, type Turn } from "../setup";
 import { PhoneBlock, StepPanel } from "./Setup";
 import { MacAppsBlock } from "../components/MacAppsBlock";
+import { ApprovalsSection } from "../components/ApprovalsSection";
 import type { MacApps } from "../mac";
 
 type Health = { status: string; version?: string; model: string; provider?: string; leaves_mini?: boolean; lm_studio: boolean; connections: { gmail: boolean; vault: boolean }; brain_chosen?: boolean; brain_reachable?: boolean };
@@ -619,6 +620,8 @@ export function Settings() {
             <LocationRow />
             <MemoryRow />
           </Section>
+
+          <ApprovalsSection />
 
           {has(caps, "update") && <UpdateSection version={h?.version} />}
 

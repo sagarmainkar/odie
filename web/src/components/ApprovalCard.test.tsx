@@ -2,11 +2,12 @@
 import { act, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
-import { postJSON } from "../api";
+import { getJSON, postJSON } from "../api";
+import { forgetMode } from "../approvalsMode";
 import { answered } from "../approvals";
 import { ChatApproval, type Approval } from "./ApprovalCard";
 
-vi.mock("../api", async (real) => ({ ...(await real<typeof import("../api")>()), postJSON: vi.fn() }));
+vi.mock("../api", async (real) => ({ ...(await real<typeof import("../api")>()), postJSON: vi.fn(), getJSON: vi.fn() }));
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const decidedAt = new Date(2026, 10, 5, 12, 1).toISOString();  // 12:01 in this computer's own time zone
@@ -59,6 +60,33 @@ describe("a card in the chat", () => {
     const buttons = [...view.host.querySelectorAll("button")].map((b) => b.textContent);
     expect(buttons).toContain("Run it");
     expect(buttons).toContain("Not now");
+    await view.done();
+  });
+
+  it("in Smart, says this one always asks and offers no 30-minute pass", async () => {
+    forgetMode();
+    vi.mocked(getJSON).mockResolvedValue({ mode: "smart" });
+    const view = await mount(<ChatApproval a={card} />);
+    await act(async () => { await Promise.resolve(); });
+    const buttons = [...view.host.querySelectorAll("button")].map((b) => b.textContent);
+    expect(buttons).toContain("Run it");
+    expect(buttons.some((b) => b?.includes("30 min"))).toBe(false);
+    expect(view.host.textContent).toContain("Smart mode: this one always asks.");
+    forgetMode();
+    vi.mocked(getJSON).mockReset();
+    await view.done();
+  });
+
+  it("in Careful, keeps the 30-minute pass and the usual line", async () => {
+    forgetMode();
+    vi.mocked(getJSON).mockResolvedValue({ mode: "careful" });
+    const view = await mount(<ChatApproval a={card} />);
+    await act(async () => { await Promise.resolve(); });
+    const buttons = [...view.host.querySelectorAll("button")].map((b) => b.textContent);
+    expect(buttons.some((b) => b?.includes("30 min"))).toBe(true);
+    expect(view.host.textContent).toContain("always ask first");
+    forgetMode();
+    vi.mocked(getJSON).mockReset();
     await view.done();
   });
 

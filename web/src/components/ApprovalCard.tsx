@@ -5,6 +5,7 @@ import { mediaUrl } from "../media";
 import { Tile, type IconName, type TileColor } from "./Tile";
 import { userLocale } from "../locale";
 import { tapTime } from "../steps";
+import { useApprovalsMode } from "../approvalsMode";
 
 export type Approval = {
   id: number; tool: string; summary: string; status: string; risk?: string; created_at?: string;
@@ -57,6 +58,7 @@ export function ApprovalCard({ a, onDecided, showResult = true }: { a: Approval;
   useEffect(() => { if (a.result_text) setResult(a.result_text); }, [a.result_text]);
   const [showAll, setShowAll] = useState(false);
   const [allowedUntil, setAllowedUntil] = useState<string | null>(null);
+  const smart = useApprovalsMode() === "smart";  // in Smart this card is one of the few that always ask: no pass to offer
   const fromMail = a.risk === "from_email" && (a.provenance?.length ?? 0) > 0;
   const unknown = a.risk === "unknown";
   const careful = fromMail || unknown;
@@ -142,13 +144,13 @@ export function ApprovalCard({ a, onDecided, showResult = true }: { a: Approval;
           {careful ? "Don't do this" : "Not now"}
         </button>
       </div>
-      {a.tool === "run_shell" && !careful && (
+      {a.tool === "run_shell" && !careful && !smart && (
         <button onClick={() => decide(true, 30)} disabled={busy} className="w-full text-center text-[13.5px] font-semibold text-muted py-1.5 disabled:opacity-50">
           Run it, and allow commands for 30 min
         </button>
       )}
       <div className="text-[12px] leading-4 text-dim -mt-1">
-        Sending, deleting, invites, commands, app actions and new code always ask first; reading your own notes and mail doesn't. Every action is logged.
+        {smart ? "Smart mode: this one always asks." : "Sending, deleting, invites, commands, app actions and new code always ask first; reading your own notes and mail doesn't. Every action is logged."}
         {expiresIn(a.created_at) && <> · {expiresIn(a.created_at)}</>}
       </div>
     </motion.div>
