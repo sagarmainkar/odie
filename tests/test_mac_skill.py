@@ -87,3 +87,22 @@ def test_apple_mail_tools_point_to_the_other_mail_apps():
     assert "another connected mail app" in new_doc and "load its skill" in new_doc
     assert "never search the disk for mail" in new_doc.lower()
     assert "another mail app" in module.mac_mail_read.__doc__  # an id without "mac:" isn't Apple Mail's
+
+
+async def test_the_real_tool_hands_the_chat_to_the_write_check(store, tmp_path, monkeypatch):
+    """Through ADK's own FunctionTool: the confirmation callable only sees the chat when the tool's function declares
+    tool_context, so a mail read this turn makes the write ask again in Smart."""
+    from types import SimpleNamespace
+
+    from odie import approvals_mode
+    entry = next(e for e in discover(store, BUILTIN, tmp_path / "none", system="Darwin") if e.name == "mac-apps")
+    tools = {t.name: t for t in entry.tool_objs}
+    monkeypatch.setattr(approvals_mode, "hooks", {"store": store})
+    approvals_mode.set_mode(store, "smart")
+    ctx = SimpleNamespace(session=SimpleNamespace(id="chat-m"), state={})
+    args = {"title": "Dentist", "start": "2026-11-06T09:00", "end": "2026-11-06T09:30"}
+    assert await tools["mac_calendar_add"].check_require_confirmation(args, ctx) is False
+    store.audit("user", "message", result_summary="read my mail and add the dentist", session_id="chat-m")
+    store.audit("agent", "tool_call", tool="mac_mail_read", args={}, session_id="chat-m")
+    assert await tools["mac_calendar_add"].check_require_confirmation(args, ctx) is True
+    assert await tools["mac_reminder_add"].check_require_confirmation({"title": "Call the bank", "due": "2026-11-06T10:00"}, ctx) is True

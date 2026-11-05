@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from google.adk.tools import FunctionTool
+from google.adk.tools import FunctionTool, ToolContext
 
 from odie import approvals_mode
 from odie.mac import calendar, contacts, mail, permissions, reminders, scripts
@@ -78,7 +78,8 @@ async def mac_calendar_events(start: str, end: str) -> dict:
         return _said(e)
 
 
-async def mac_calendar_add(title: str, start: str, end: str, calendar_name: str = "", where: str = "", notes: str = "") -> dict:
+async def mac_calendar_add(title: str, start: str, end: str, calendar_name: str = "", where: str = "", notes: str = "",
+                           tool_context: ToolContext | None = None) -> dict:  # tool_context: so ADK hands the chat to plain_write_asks too
     """Adds an event to the Mac's calendar (the first writable one, or `calendar_name`). Local times. Returns the
     event's id and the calendar it went into."""
     if blocked := _blocked("calendar"):
@@ -99,7 +100,7 @@ async def mac_reminders(before: str) -> dict:
         return _said(e)
 
 
-async def mac_reminder_add(title: str, due: str, list_name: str = "") -> dict:
+async def mac_reminder_add(title: str, due: str, list_name: str = "", tool_context: ToolContext | None = None) -> dict:
     """Adds a reminder to the Reminders app, due at a local time, in the default list or `list_name`."""
     if blocked := _blocked("reminders"):
         return blocked

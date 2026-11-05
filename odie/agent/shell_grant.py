@@ -82,13 +82,17 @@ _RULES: list[tuple[str, re.Pattern[str]]] = [
 ]
 # Odie's own home (settings, chats, keys, the audit log, the live copy it runs from), except the workspace it writes
 # in anyway: ~/.odie/assistant.db -> matches; $ODIE_HOME/data/workspace/x -> not; ~/.odie/workspace -> not.
-_ODIE_HOME = re.compile(r"(\.odie\b|\bODIE_HOME\b\}?)(?!/(data/)?workspace\b)|\b(assistant|sessions|odie-index)\.db\b")
+# The workspace is excluded only as a whole word (workspace-old is not it) and only when the path doesn't climb back
+# out with `..`.
+_ODIE_HOME = re.compile(r"(\.odie\b|\{ODIE_HOME\}|ODIE_HOME\b(?!\}))(?!/(data/)?workspace(?![\w-])(?![^\s;&|]*/\.\.))|"
+                        r"\b(assistant|sessions|odie-index)\.db\b")
 
 
-def touches_odie_home(shell: str) -> bool:
+def touches_odie_home(text: str) -> bool:
     """Whether a command names Odie's own files outside its workspace: `sqlite3 ~/.odie/assistant.db ...` -> True;
-    `cat $ODIE_HOME/data/keys.json` -> True; `ls ~/.odie/workspace` -> False; `ls ~/Downloads` -> False."""
-    return bool(_ODIE_HOME.search(shell))
+    `cat $ODIE_HOME/data/keys.json` -> True; `cat ~/.odie/workspace/../data/keys.json` -> True; `ls ~/.odie/workspace`
+    -> False; `ls ${ODIE_HOME}/data/workspace/x` -> False; `ls ~/Downloads` -> False."""
+    return bool(_ODIE_HOME.search(text))
 
 
 # A path into a hidden folder or file under the home folder (~/.ssh, $HOME/.config, /Users/me/.zshrc), as the shell
@@ -264,7 +268,7 @@ def always_ask(command: str, safe_dirs: tuple[str, ...] = (), cwd: str | None = 
         return "reaches a hidden file by a pattern"
     if unsafe_write(shell, safe_dirs, cwd):
         return "writes a file outside /tmp"
-    if touches_odie_home(shell):
+    if touches_odie_home(looked_at) or touches_odie_home(squeezed(looked_at)):
         return "touches Odie's own files"
     return None
 

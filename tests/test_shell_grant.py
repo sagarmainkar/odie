@@ -258,6 +258,11 @@ SMART_ASKS = [
     ("gh pr create --fill", "sends data out"),
     ("cat ~/.zsh_history", "reads secrets"),
     ("sqlite3 ~/.odie/assistant.db 'select count(*) from settings'", "touches Odie's own files"),
+    ("cat ~/.o''die/data/keys.json", "touches Odie's own files"),
+    ("cat ~/.odie/workspace/../data/keys.json", "touches Odie's own files"),
+    ("python3 - <<'EOF'\nprint(open('/Users/me/.odie/data/keys.json').read())\nEOF", "touches Odie's own files"),
+    ("mail -s hi dev@example.com < note.txt", "sends data out"),
+    ("cat $HISTFILE", "reads secrets"),
     ("kill 35432", "deletes or stops something"),
     ("rm old.txt", "deletes or stops something"),
     ("cat ~/.env", "reads secrets"),
@@ -366,3 +371,9 @@ def test_smart_asks_again_after_the_model_read_mail_this_turn(tmp_path):
     assert _shell_audit(s, "shell_auto_approved") == []
     s.audit("user", "message", result_summary="now list downloads", session_id="chat-x")
     assert check(command="ls ~/Downloads", tool_context=ctx) is False  # the next turn runs free again
+
+
+@pytest.mark.parametrize("cmd", ["ls ~/.odie/workspace", "ls ${ODIE_HOME}/data/workspace/x", "cat $ODIE_HOME/workspace/notes.md",
+                                 "ls ~/Downloads", "echo my.odiefile"])
+def test_odies_workspace_and_ordinary_paths_are_not_its_own_files(cmd):
+    assert not g.touches_odie_home(cmd), cmd
