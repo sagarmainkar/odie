@@ -144,7 +144,9 @@ export function allowedPill(t: Tool): string {
   return "";
 }
 
-function tapTime(at: string | undefined): string {
+/** A tap's time as the owner reads a clock: 12:01. Empty when there is no time or it can't be read.
+ *    2026-11-05T12:01:00Z read in UTC -> 12:01     undefined -> "" */
+export function tapTime(at: string | undefined | null): string {
   if (!at) return "";
   const when = new Date(at);
   if (Number.isNaN(when.getTime())) return "";

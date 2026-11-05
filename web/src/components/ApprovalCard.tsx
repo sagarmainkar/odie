@@ -4,10 +4,14 @@ import { postJSON } from "../api";
 import { mediaUrl } from "../media";
 import { Tile, type IconName, type TileColor } from "./Tile";
 import { userLocale } from "../locale";
+import { tapTime } from "../steps";
 
 export type Approval = {
   id: number; tool: string; summary: string; status: string; risk?: string; created_at?: string;
   detail?: Record<string, unknown> | null; provenance?: { from: string; subject: string }[] | null; result_text?: string | null;
+  allowed_until?: string | null;  // a shell pass this tap granted (ISO time), so the stamp can say until when
+  decided_at?: string | null;  // when it was answered (or lapsed); a card flipped live carries the browser's own clock
+  call_id?: string | null;  // the step it asked about: once decided, that step's pill in the reply tells its answer
 };
 
 const TOOL_WORD: Record<string, string> = { gmail_send_draft: "Send", gmail_trash: "Trash", calendar_create_event: "Invite", calendar_respond: "RSVP", run_shell: "Run", install_skill: "Install", update_memory: "Memory",
@@ -44,7 +48,7 @@ const STATUS: Record<string, { label: string; text: string; tint: string }> = {
 
 const EASE = [0.2, 0.8, 0.2, 1] as const;
 
-export function ApprovalCard({ a, onDecided, showResult = true }: { a: Approval; onDecided?: (id: number, status: string) => void; compact?: boolean; showResult?: boolean }) {
+export function ApprovalCard({ a, onDecided, showResult = true }: { a: Approval; onDecided?: (id: number, status: string, allowedUntil?: string) => void; compact?: boolean; showResult?: boolean }) {
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState(a.status);
   const [result, setResult] = useState<string | null>(a.result_text ?? null);
@@ -71,7 +75,7 @@ export function ApprovalCard({ a, onDecided, showResult = true }: { a: Approval;
       const r = await postJSON<{ status?: string; allowed_until?: string }>(`/api/approvals/${a.id}/decide`, { approve, allow_minutes: allowMinutes });
       const s = r.status ?? (approve ? "approved" : "rejected");
       if (r.allowed_until) setAllowedUntil(new Date(r.allowed_until).toLocaleTimeString(userLocale(), { hour: "numeric", minute: "2-digit" }));
-      setStatus(s); onDecided?.(a.id, s);
+      setStatus(s); onDecided?.(a.id, s, r.allowed_until);
     } catch (e) { setResult((e as Error).message); } finally { setBusy(false); }
   }
 
@@ -149,4 +153,46 @@ export function ApprovalCard({ a, onDecided, showResult = true }: { a: Approval;
       </div>
     </motion.div>
   );
+}
+
+/** What a decided card says in the chat, in words. The tap time is the owner's own clock.
+ *    approved at 12:01                    -> "You allowed · 12:01"    (no time known -> "You allowed")
+ *    rejected at 12:01                    -> "You said no · 12:01"
+ *    expired                              -> "Lapsed"                  (nobody tapped, so there is no time to give)
+ *    approved with a pass until 12:31     -> "You allowed · 12:01 · commands run without asking until 12:31" */
+function stampWords(a: Approval): string {
+  if (a.status === "expired") return "Lapsed";
+  const time = tapTime(a.decided_at);
+  const words = a.status === "approved" ? "You allowed" : "You said no";
+  const tapped = time ? `${words} · ${time}` : words;
+  if (a.status !== "approved" || !a.allowed_until) return tapped;
+  const until = new Date(a.allowed_until).toLocaleTimeString(userLocale(), { hour: "numeric", minute: "2-digit" });
+  return `${tapped} · commands run without asking until ${until}`;
+}
+
+// How each decided status looks on its stamp: its colour, and the mark before the words.
+const STAMP_LOOK: Record<string, { tone: string; mark: string }> = {
+  approved: { tone: "text-good", mark: "✓" },
+  rejected: { tone: "text-bad", mark: "✕" },
+  expired: { tone: "text-muted", mark: "" },
+};
+
+/** A decided card shrunk to one quiet line: a tick or cross and the words. No command text, and nothing to tap. */
+export function ApprovalStamp({ a }: { a: Approval }) {
+  const look = STAMP_LOOK[a.status] ?? STAMP_LOOK.expired;
+  return (
+    <div className={`flex items-center gap-1.5 px-1 text-[13px] leading-[18px] font-semibold ${look.tone}`}>
+      {look.mark && <span aria-hidden="true">{look.mark}</span>}
+      <span>{stampWords(a)}</span>
+    </div>
+  );
+}
+
+/** The chat's version of a card: a pending one is the full card with its buttons; once it is answered (or lapsed)
+ * it becomes the stamp, and it flips the moment its status does. Today's Needs-you list keeps using ApprovalCard.
+ *    status "pending"   -> the full card
+ *    status "approved"  -> the stamp "You allowed · 12:01" */
+export function ChatApproval({ a, onDecided }: { a: Approval; onDecided?: (id: number, status: string, allowedUntil?: string) => void }) {
+  if (a.status === "pending") return <ApprovalCard a={a} showResult={false} onDecided={onDecided} />;
+  return <ApprovalStamp a={a} />;
 }

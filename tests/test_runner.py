@@ -24,14 +24,30 @@ def _part(text=None, fc=None, fr=None):
 
 
 def test_event_to_sse_maps_kinds():
-    assert event_to_sse(_ev([_part(text="Hel")], partial=True)) == [{"type": "token", "text": "Hel"}]
+    assert event_to_sse(_ev([_part(text="Hel")], partial=True)) == [{"type": "token", "text": "Hel", "inv": ""}]
     fc = SimpleNamespace(name="gmail_search", args={"query": "x"}, id="1")
     assert event_to_sse(_ev([_part(fc=fc)])) == [
-        {"type": "tool_start", "tool": "gmail_search", "id": "1", "args": {"query": "x"}, "gated": False}]
+        {"type": "tool_start", "tool": "gmail_search", "id": "1", "args": {"query": "x"}, "gated": False, "inv": ""}]
     fr = SimpleNamespace(name="gmail_search", response={"result": "3 hits"}, id="1")
-    assert event_to_sse(_ev([_part(fr=fr)])) == [{"type": "tool_done", "tool": "gmail_search", "id": "1", "result": "3 hits"}]
-    assert event_to_sse(_ev([_part(text="Final")])) == [{"type": "text", "text": "Final"}]
+    assert event_to_sse(_ev([_part(fr=fr)])) == [{"type": "tool_done", "tool": "gmail_search", "id": "1", "result": "3 hits", "inv": ""}]
+    assert event_to_sse(_ev([_part(text="Final")])) == [{"type": "text", "text": "Final", "inv": ""}]
     assert event_to_sse(_ev([_part(text="you")], author="user")) == []
+
+
+def test_sse_items_carry_their_turn():
+    # Every item names the turn (invocation) it came from, so a continuation can join the message it belongs to.
+    #   text from inv-7 -> {"type": "text", "text": "Hi", "inv": "inv-7"}; an event with no id -> inv ""
+    call = SimpleNamespace(name="web_search", args={"query": "a"}, id="c1")
+    answer = SimpleNamespace(name="web_search", id="c1", response={"result": "3 hits"})
+    ev = _ev([_part(text="Hi"), _part(fc=call), _part(fr=answer)])
+    ev.invocation_id = "inv-7"
+    items = event_to_sse(ev)
+    assert [i["type"] for i in items] == ["text", "tool_start", "tool_done"]
+    assert [i["inv"] for i in items] == ["inv-7", "inv-7", "inv-7"]
+    streaming = _ev([_part(text="Hel")], partial=True)
+    streaming.invocation_id = "inv-7"
+    assert event_to_sse(streaming)[0]["inv"] == "inv-7"
+    assert event_to_sse(_ev([_part(text="Hi")]))[0]["inv"] == ""  # a test double with no id
 
 
 def test_event_to_sse_ignores_partial_tool_chunks():
@@ -44,22 +60,22 @@ def test_event_to_sse_ignores_partial_tool_chunks():
 def test_sse_shows_a_gated_call_and_its_wait():
     call = SimpleNamespace(name="run_shell", args={"command": "rm old.txt"}, id="c1")
     assert event_to_sse(_ev([_part(fc=call)])) == [
-        {"type": "tool_start", "tool": "run_shell", "id": "c1", "args": {"command": "rm old.txt"}, "gated": True}]
+        {"type": "tool_start", "tool": "run_shell", "id": "c1", "args": {"command": "rm old.txt"}, "gated": True, "inv": ""}]
     waiting = SimpleNamespace(name="run_shell", id="c1",
                               response={"error": "This tool call requires confirmation, please approve or reject."})
-    assert event_to_sse(_ev([_part(fr=waiting)])) == [{"type": "tool_wait", "tool": "run_shell", "id": "c1"}]
+    assert event_to_sse(_ev([_part(fr=waiting)])) == [{"type": "tool_wait", "tool": "run_shell", "id": "c1", "inv": ""}]
     ask = SimpleNamespace(name="adk_request_confirmation", args={"toolConfirmation": {}}, id="q1")
     assert event_to_sse(_ev([_part(fc=ask)])) == []  # ADK's own question is shown as the approval card, never as a step
 
 
 def test_sse_tool_done_carries_the_result_and_id():
     web = SimpleNamespace(name="web_fetch", id="c2", response={"result": "page text"})
-    assert event_to_sse(_ev([_part(fr=web)])) == [{"type": "tool_done", "tool": "web_fetch", "id": "c2", "result": "page text"}]
+    assert event_to_sse(_ev([_part(fr=web)])) == [{"type": "tool_done", "tool": "web_fetch", "id": "c2", "result": "page text", "inv": ""}]
     shell = SimpleNamespace(name="run_shell", id="c3", response={"result": "a.txt"})
     assert event_to_sse(_ev([_part(fr=shell)])) == [
-        {"type": "tool_done", "tool": "run_shell", "id": "c3", "result": "a.txt", "allowed": {"by": "pass"}}]
+        {"type": "tool_done", "tool": "run_shell", "id": "c3", "result": "a.txt", "allowed": {"by": "pass"}, "inv": ""}]
     nothing = SimpleNamespace(name="now", id="c4", response=None)
-    assert event_to_sse(_ev([_part(fr=nothing)])) == [{"type": "tool_done", "tool": "now", "id": "c4", "result": ""}]
+    assert event_to_sse(_ev([_part(fr=nothing)])) == [{"type": "tool_done", "tool": "now", "id": "c4", "result": "", "inv": ""}]
 
 
 def test_sse_two_calls_in_one_event_keep_their_ids():
@@ -77,7 +93,7 @@ def test_sse_two_calls_in_one_event_keep_their_ids():
 def test_sse_a_rejected_call_has_no_output():
     no = SimpleNamespace(name="run_shell", id="c1", response={"error": "This tool call is rejected."})
     assert event_to_sse(_ev([_part(fr=no)])) == [
-        {"type": "tool_done", "tool": "run_shell", "id": "c1", "result": "", "allowed": {"by": "no"}}]
+        {"type": "tool_done", "tool": "run_shell", "id": "c1", "result": "", "allowed": {"by": "no"}, "inv": ""}]
 
 
 def test_sse_a_shell_call_that_was_asked_is_no_pass():
@@ -85,9 +101,9 @@ def test_sse_a_shell_call_that_was_asked_is_no_pass():
     asked: set[str] = set()
     waiting = SimpleNamespace(name="run_shell", id="c1",
                               response={"error": "This tool call requires confirmation, please approve or reject."})
-    assert event_to_sse(_ev([_part(fr=waiting)]), asked) == [{"type": "tool_wait", "tool": "run_shell", "id": "c1"}]
+    assert event_to_sse(_ev([_part(fr=waiting)]), asked) == [{"type": "tool_wait", "tool": "run_shell", "id": "c1", "inv": ""}]
     ran = SimpleNamespace(name="run_shell", id="c1", response={"result": "a.txt"})
-    assert event_to_sse(_ev([_part(fr=ran)]), asked) == [{"type": "tool_done", "tool": "run_shell", "id": "c1", "result": "a.txt"}]
+    assert event_to_sse(_ev([_part(fr=ran)]), asked) == [{"type": "tool_done", "tool": "run_shell", "id": "c1", "result": "a.txt", "inv": ""}]
     other = SimpleNamespace(name="run_shell", id="c2", response={"result": "b.txt"})
     assert event_to_sse(_ev([_part(fr=other)]), asked)[0]["allowed"] == {"by": "pass"}
 
@@ -96,7 +112,7 @@ def test_sse_a_step_that_made_a_file_says_so(isolated_settings):
     memo = {"id": "0123456789abcdef", "kind": "memo", "title": "Good morning", "mime": "audio/wav", "size": 10, "created": 1.0}
     spoke = SimpleNamespace(name="speak", id="c1", response={"result": "The memo is under your reply.", "media": memo})
     done, media = event_to_sse(_ev([_part(fr=spoke)]))
-    assert done == {"type": "tool_done", "tool": "speak", "id": "c1", "result": "The memo is under your reply.", "made": True}
+    assert done == {"type": "tool_done", "tool": "speak", "id": "c1", "result": "The memo is under your reply.", "made": True, "inv": ""}
     assert media["type"] == "media"
 
 

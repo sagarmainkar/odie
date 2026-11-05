@@ -20,7 +20,8 @@ import { MorningHello } from "../components/MorningCard";
 import { useMorning } from "../useMorning";
 import { chatOnScreen, shouldShowJumpButton, shouldShowMorning, type MorningReply } from "../morning";
 import { Steps, type Tool } from "../components/Steps";
-import { fromHistory, settled, toolDone, toolStarted, toolWaiting, withStepEvent, type DoneEvent, type HistoryStep, type StartEvent, type StepEvent, type WaitEvent } from "../steps";
+import { fromHistory, settled, toolDone, toolStarted, toolWaiting, withStepEvent, type DoneEvent, type StartEvent, type StepEvent, type WaitEvent } from "../steps";
+import { foldTurns, turnSoFar, withTurnEvent, type HistoryItem } from "../turns";
 import { replyLine, type ReplyUsage } from "../usage";
 import { ToBody } from "../components/ToBody";
 import { CodeBlock } from "../components/CodeBlock";
@@ -45,11 +46,10 @@ import { splitConnect } from "../google";
 import { Star, ThreadsSheet, ThreadsSidebar } from "../components/ThreadsSheet";
 import { useWide } from "../layout";
 import { belongsHere, type Thread } from "../threads";
-import { plainMath } from "../plainMath";
-import { liftOneLineFences } from "../blocks/oneLineFence";
-import { tidyStrayBlocks } from "../blocks/strayBlocks";
+import { drawnText } from "../blocks/drawnText";
 import { replyArrived, streamStalled, tapFinished } from "../reply";
-import { ApprovalCard, type Approval } from "../components/ApprovalCard";
+import { ChatApproval, type Approval } from "../components/ApprovalCard";
+import { answered } from "../approvals";
 import { ChartBlock, ChartPending } from "../components/ChartBlock";
 import { Diagram } from "../components/Diagram";
 import { ImageStrip, SafeImage } from "../components/ImageStrip";
@@ -68,7 +68,8 @@ import { composerWith, phoneSpeech, pickMode, startDictation } from "../dictatio
 import { shrinkPhoto } from "../shrinkPhoto";
 
 // key and sid: the name the server gave a reply (its ADK event id) and the session it is in; its saved ticks hang off them.
-type Msg = { id: number; key?: string; sid?: string; role: "user" | "odie" | "approval"; text: string; tools: Tool[]; error?: string; awaiting?: boolean; ts?: number; live?: boolean; approval?: Approval; images?: string[]; asked?: string; media?: Media[]; autoplay?: string; private?: boolean; usage?: ReplyUsage };  // private: its chat read a signed-in page; usage: the reply's own token counts
+// inv: the turn it belongs to; what Odie does after a tap joins the message of its turn (turns.ts).
+type Msg = { id: number; key?: string; sid?: string; inv?: string; role: "user" | "odie" | "approval"; text: string; tools: Tool[]; error?: string; awaiting?: boolean; ts?: number; live?: boolean; approval?: Approval; images?: string[]; asked?: string; media?: Media[]; autoplay?: string; private?: boolean; usage?: ReplyUsage };  // private: its chat read a signed-in page; usage: the reply's own token counts
 type Pending = { id: string; url: string; w: number; h: number };
 let nextId = 1;
 const EASE = [0.2, 0.8, 0.2, 1] as const;
@@ -117,7 +118,7 @@ const mdComponents: Components = {
 /** A finished reply drawn the way the chat draws one (Markdown, blocks, charts, photos), with nowhere to save ticks:
  *  for the #sample screen, which shows a saved conversation. */
 export function ReplyText({ text }: { text: string }) {
-  const shown = plainMath(tidyStrayBlocks(liftOneLineFences(text)));
+  const shown = drawnText(text);
   return (
     <ReplyPlace.Provider value={{ text: shown }}>
       <div className="glass rounded-[8px_26px_26px_26px] px-4 py-3.5 md @container"><ReactMarkdown remarkPlugins={[remarkGfm, remarkInline]} components={mdComponents}>{shown}</ReactMarkdown></div>
@@ -264,8 +265,9 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
   const [atBottom, setAtBottom] = useState(true);
   const [unseen, setUnseen] = useState(false);
   const mainRef = useRef<HTMLElement>(null);
-  type H = { items: { key?: string; sid?: string; role: "user" | "odie" | "approval"; text: string; tools: string[]; steps?: HistoryStep[]; ts?: number; images?: string[]; approval?: Approval; media?: Media[]; private?: boolean; usage?: ReplyUsage }[]; total: number; start: number };
-  const toMsgs = (items: H["items"]): Msg[] => items.filter((m) => m.text || m.tools.length || m.images?.length || m.approval || m.media?.length).map((m) => ({ id: nextId++, key: m.key, sid: m.sid, role: m.role, text: m.text, ts: m.ts, images: m.images, approval: m.approval, media: m.media, private: m.private, usage: m.usage, tools: fromHistory(m) }));
+  type H = { items: HistoryItem[]; total: number; start: number };
+  // One turn, one message: a turn's lines fold into one first (turns.ts), however many taps it took.
+  const toMsgs = (items: H["items"]): Msg[] => foldTurns(items).filter((m) => m.text || m.tools.length || m.images?.length || m.approval || m.media?.length).map((m) => ({ id: nextId++, key: m.key, sid: m.sid, inv: m.inv, role: m.role, text: m.text, ts: m.ts, images: m.images, approval: m.approval, media: m.media, private: m.private, usage: m.usage, tools: fromHistory(m) }));
   const [pending, setPending] = useState<Pending[]>([]);
   const [uploading, setUploading] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -376,16 +378,24 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
     if (e.type === "message" && e.text !== NEW_CHAT && belongsHere(e.session_id, threadRef.current?.id ?? null, todayISO())) {
       // A reply after a tap is her answer, not a reminder: show it like any other reply.
       // A reply after a tap replaces the "still working" row that waitForTap put up.
+      // Words after a tap join the message of their turn; with none on screen (opened later) they come as a new one.
       const autoplay = autoplayFor(e, document.visibilityState === "visible", somethingPlaying()) ?? undefined;  // a spoken reminder
-      setMsgs((m) => [...(e.kind === "reply" ? m.filter((x) => !x.awaiting) : m), { id: nextId++, role: "odie", text: e.text, tools: [], ts: e.ts, live: e.kind !== "reply", media: e.media, autoplay, private: !!e.private }]);
+      setMsgs((m) => {
+        const shown = e.kind === "reply" ? m.filter((x) => !x.awaiting) : m;
+        const joined = withTurnEvent(shown, e);
+        if (joined) return joined;
+        return [...shown, { id: nextId++, role: "odie", text: e.text, tools: [], ts: e.ts, live: e.kind !== "reply", media: e.media, autoplay, private: !!e.private }];
+      });
       setUnseen(true);
     }
-    // A tapped step finished in a resumed run: fill its receipt in on the reply that holds it.
-    if (e.type === "step" && belongsHere(e.session_id, threadRef.current?.id ?? null, todayISO())) setMsgs((m) => withStepEvent(m, e as StepEvent));
+    // A resumed run's steps join the message of their turn; a finished one falls back to the reply holding its id.
+    const stepHere = belongsHere(e.session_id, threadRef.current?.id ?? null, todayISO());
+    if ((e.type === "step_start" || e.type === "step_wait") && stepHere) setMsgs((m) => withTurnEvent(m, e) ?? m);
+    if (e.type === "step" && stepHere) setMsgs((m) => withTurnEvent(m, e) ?? withStepEvent(m, e as StepEvent));
     if (e.type === "thinking") setThink((shown) => thinkingAfter(shown, e));  // flipped in another app or browser
     if (e.type === "google" && e.status === "connected") window.dispatchEvent(new Event("odie:google-connected"));
     if (e.type === "approval" && e.status === "pending") setMsgs((m) => m.some((x) => x.approval?.id === e.id) ? m : [...m, { id: nextId++, role: "approval", text: "", tools: [], ts: Date.now() / 1000, approval: e as Approval }]);
-    if ((e.type === "approval" && e.status !== "pending") || e.type === "approval_done") setMsgs((m) => m.map((x) => x.approval?.id === e.id ? { ...x, approval: { ...x.approval!, status: e.status ?? x.approval!.status, result_text: e.text ?? x.approval!.result_text } } : x));
+    if ((e.type === "approval" && e.status !== "pending") || e.type === "approval_done") setMsgs((m) => m.map((x) => x.approval?.id === e.id ? { ...x, approval: { ...answered(x.approval!, e.status), result_text: e.text ?? x.approval!.result_text } } : x));
   }, []), useCallback(() => { loadThink(); if (!busy) loadHistory(); }, [busy, loadHistory, loadThink]));
 
   const tapTimers = useRef<number[]>([]);
@@ -452,6 +462,7 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
     // Patch the streaming reply by id: a live Odie message (reminder) may be appended while tokens arrive.
     const patch = (f: (last: Msg) => Msg) => setMsgs((m) => m.map((x) => (x.id === replyId ? f(x) : x)));
     let streamed = "";
+    let turn = "";  // the turn this reply is (inv): what a tap continues later joins this message
     let askedApproval = false;
     let ended = false;  // the server said done or error; otherwise the stream was cut (app backgrounded)
     const settle = () => patch((l) => ({ ...l, tools: settled(l.tools), ts: Date.now() / 1000 }));
@@ -461,6 +472,8 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
     try {
       for await (const ev of streamChat(t, imgs, thread?.id, ac.signal)) {
         lastEventAt.current = Date.now();
+        const turnNow = turnSoFar(turn, ev);
+        if (turnNow !== turn) { turn = turnNow; patch((l) => ({ ...l, inv: turnNow })); }
         if (ev.type === "tool_start") patch((l) => ({ ...l, tools: toolStarted(l.tools, ev as StartEvent) }));
         else if (ev.type === "tool_wait") patch((l) => ({ ...l, tools: toolWaiting(l.tools, ev as WaitEvent) }));
         else if (ev.type === "tool_done") patch((l) => ({ ...l, tools: toolDone(l.tools, ev as DoneEvent) }));
@@ -699,7 +712,7 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
                   <div key={m.id} className={spacing}>
                     {showTime && <div className="mb-3"><TimeDivider ts={m.ts!} /></div>}
                     {m.role === "approval" && m.approval ? (
-                      <motion.div {...enter}><ApprovalCard a={m.approval} showResult={false} onDecided={(id, st) => { setOrb("idle"); if (st === "approved") waitForTap(id); }} /></motion.div>
+                      <motion.div {...enter}><ChatApproval a={m.approval} onDecided={(id, st, until) => { setOrb("idle"); setMsgs((all) => all.map((x) => x.approval?.id === id ? { ...x, approval: answered(x.approval, st, until) } : x)); if (st === "approved") waitForTap(id); }} /></motion.div>
                     ) : m.role === "odie" && m.text === NEW_CHAT ? (
                       <NewChatDivider ts={m.ts} name={name} />
                     ) : m.role === "odie" && m.text.startsWith(ROLLOVER) ? (
@@ -719,7 +732,7 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
                           <div className="flex items-center gap-3"><Orb state="thinking" size={28} /><span className="text-[14px] font-semibold shimmer-text">{thinking ? "Thinking longer" : "Thinking"}</span></div>
                         )}
                         {m.text && (() => {
-                          const shown = plainMath(tidyStrayBlocks(liftOneLineFences(splitConnect(m.text).text)));
+                          const shown = drawnText(splitConnect(m.text).text);
                           return (
                             <PrivateReply.Provider value={!!m.private}>
                               <ReplyPlace.Provider value={{ sessionId: m.sid, messageKey: m.key, text: shown, streaming, answers: laterAnswers[i] }}>
