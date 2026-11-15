@@ -217,7 +217,11 @@ async def jobs_list(request: Request) -> dict[str, Any]:
     store = request.app.state.store
     running = [_job_view(j) for j in jobs_store.running(store)]
     going = {j["id"] for j in running}
-    recent = [_job_view(j) for j in jobs_store.recent(store, 8) if j["id"] not in going]
+    # The last 8 jobs you or Odie started, and their teammates (a chief's row counts them; they don't push it out).
+    ended = [j for j in jobs_store.recent(store, 60) if j["id"] not in going]
+    leads = [j for j in ended if not j.get("parent_id")][:8]
+    lead_ids = {j["id"] for j in leads}
+    recent = [_job_view(j) for j in ended if j["id"] in lead_ids or j.get("parent_id") in lead_ids]
     from odie.workers import asks
     return {"running": running, "recent": recent, "asks": [_ask_view(a) for a in asks.open_for(store)]}
 

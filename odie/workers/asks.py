@@ -82,14 +82,9 @@ async def ask(store: Store, runner, job, kind: str, text: str, detail: dict | No
                   (ask_id, job.id, kind, text, json.dumps(detail or {}), "open", now_iso()))
     future: asyncio.Future = asyncio.get_running_loop().create_future()
     _waiting[ask_id] = future
-    who = job.bot or "A Worker"
-    if kind == "sign_in":
-        line = f"🔑 {who} needs you to sign in ({job.id}): {text}. Open the Sign in card, sign in, then tap Done on Today."
-    else:
-        line = f"✋ {who} waits for your tap ({job.id}): {text}. Allow or Deny it on Today."
-    media = (detail or {}).get("card")
+    line = ask_line(job, kind, text)
     try:
-        await runner.post_message(line, job.session_id, media=[media] if media else None, kind="job")
+        await runner.post_message(line, job.session_id, kind="job")
         _push(store, line, job.id)
         return await asyncio.wait_for(future, wait_seconds)
     except TimeoutError:
@@ -102,6 +97,17 @@ async def ask(store: Store, runner, job, kind: str, text: str, detail: dict | No
         raise
     finally:
         _waiting.pop(ask_id, None)
+
+
+def ask_line(job, kind: str, text: str) -> str:
+    """The chat's message for a question; the buttons are on Today (the chat's own Sign in card would tell the chat,
+    not the bot). A tap -> "✋ shopper waits for your tap (job-…): Click "Buy" on amazon.in. Allow or Deny it on Today.";
+    a sign-in -> "🔑 shopper needs you to sign in (job-…): amazon.in: …. Sign in from Today, then tap Done."
+    """
+    who = job.bot or "A Worker"
+    if kind == "sign_in":
+        return f"🔑 {who} needs you to sign in ({job.id}): {text}. Sign in from Today, then tap Done."
+    return f"✋ {who} waits for your tap ({job.id}): {text}. Allow or Deny it on Today."
 
 
 def _push(store: Store, text: str, tag: str) -> None:

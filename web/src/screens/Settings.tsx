@@ -15,6 +15,7 @@ import { Switch } from "../components/Switch";
 import { DevicesSection } from "../components/DevicesSection";
 import { UpdateSection } from "../components/UpdateSection";
 import { BrowserSection } from "../components/BrowserSection";
+import { BotsSection } from "../components/BotsSection";
 import { personaChanged, usePersona } from "../persona";
 import { profileChanged, useProfile } from "../profile";
 import { has, useCaps } from "../capabilities";
@@ -571,6 +572,8 @@ export function Settings() {
         </div>
         <div className="contents lg:flex lg:flex-col lg:gap-6 lg:min-w-0">
           {has(caps, "browser") && <BrowserSection />}
+
+          <BotsSection />
 
           <PluginsSection />
           <a href="#sample" className="-mt-3 px-1.5 py-2.5 self-start text-[13px] text-ember-text font-medium">See a sample chat →</a>

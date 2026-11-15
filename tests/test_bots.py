@@ -327,7 +327,8 @@ async def test_an_answer_must_be_yes_or_no_and_a_restart_expires_what_was_open(w
     task = asyncio.create_task(asks.ask(store, chat, job, "sign_in", "amazon.in: sign in", {"card": {"id": "m1"}}))
     await asyncio.sleep(0.01)
     [ask] = asks.open_for(store)
-    assert chat.posts[-1]["media"] == [{"id": "m1"}] and chat.posts[-1]["text"].startswith("🔑 chief needs you to sign in")
+    assert chat.posts[-1]["text"].startswith("🔑 chief needs you to sign in") and "Sign in from Today" in chat.posts[-1]["text"]
+    assert ask["detail"] == {"card": {"id": "m1"}}
     assert not asks.answer(store, ask["id"], "approve")
     assert not asks.answer(store, "ask-nothere", "yes")
     assert asks.expire_all(store) == 1

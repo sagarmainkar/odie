@@ -1,5 +1,6 @@
 export type JobRow = { id: string; kind: string; title: string; status: string; runs: number; outcome: string | null; error: string | null;
-  every_minutes: number; next_run_at: string | null; report: string; started_at: string | null; ended_at: string | null };
+  every_minutes: number; next_run_at: string | null; report: string; started_at: string | null; ended_at: string | null;
+  bot?: string; parent_id?: string };
 
 /** One line under a job's title: its state in words.
  *    running, run 1          -> "working"
