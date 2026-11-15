@@ -100,9 +100,36 @@ after that waited forever (an Allow tap went through only when the tab closed). 
 (`shareLive` in `web/src/live.ts`). Main has five components that listen (App, Today, Chat, TrackingSection,
 ReminderCurtain), so it sits close to the same limit: worth taking to main on its own.
 
+
+## Since the first version (15 November, evening and night)
+
+Built on Fable's design (`docs/bots-design.md`) and the OpenBot comparison:
+
+- **Bots you talk to.** Each bot has its own conversations (`odie/workers/convs.py`). A message is answered by one of
+  the bot's jobs whose brief carries the conversation so far; the reply lands as the bot's message, with a push. The
+  Bots list (Odie pinned, the team with furry creatures in colour, live lines, a chip when a bot waits on you), a
+  bot's chat (team card while it works, a pill above each answer with what it took, questions with their buttons), a
+  drawer to switch bot and conversation (a swipe from the left edge on a phone, pinned open on a Mac), and a Bots card
+  on Today. "@chief …" in Odie's chat also lands in the chief's history.
+- **Starter team.** chief, researcher, checker, contrarian, made once.
+- **Routines** (`odie/workers/routines.py`): a bot that runs by itself, daily or on chosen weekdays at a time, or every
+  few hours, for good until paused. Each has its own conversation; each run sees the earlier ones and says what changed.
+  Set them in a bot's details or from Odie's chat ("every weekday at 9:15, @markets …": make_routine).
+- **Details** for each bot: role, instructions, model, powers, Runs by itself, Recent work, memory notes, Shuffle look.
+- **Notes & photos power**: search the user's notes, photos and videos by meaning. Reading them marks the run, so its
+  web steps ask, as Odie's chat does; a bot with no web or browser never asks.
+- **Odie's visual blocks** in a bot's answers (charts, tables, figures, badges), as in Odie's own replies.
+- **Browser like OpenBot's**: Watch a bot's page live (nothing changes for the bot), Take control (its next browser step
+  waits, checked live), back, forward, reload, address; Hand back. A code or PIN a bot needs is typed by the user
+  straight into the page (`ask_user_to_type`, `engine.type_secret`): kept, logged and shown nowhere. A bot at a bot
+  check hands it to the user. Watch also works on Odie's own browser in the main chat.
+- **Privacy, one tap**: a job that starts private (its chat looked at your memory or a signed-in page) asks once at the
+  start; Allow covers the bot and its teammates; anything new they read still asks.
+
 ## Not built
 
 - Workflows saved as chains (researcher → writer → reviewer): you chose the lead-bot design first.
+- Teaching a bot by recording yourself (OpenBot's Learning): parked by you.
 - A per-bot browser profile: every bot shares Odie's one signed-in profile, each in its own tab.
 - Nested teams: a specialist can't ask others.
 

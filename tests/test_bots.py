@@ -1294,3 +1294,13 @@ async def test_a_bots_activity_lists_its_jobs_with_their_steps(isolated_settings
         assert [(a["id"], a["calls"], a["for_chief"]) for a in got] == [(own.id, 1, False)]
         assert (await c.post("/api/bots/ghost/look")).status_code == 404
         assert (await c.post("/api/bots/chief/look")).json()["look"] == bots.CHIEF_LOOK
+
+
+
+def test_a_bots_notes_are_not_handed_over_as_a_result(world):
+    store, _ = world
+    job = a_bot_job(store, "numbers")
+    (job.folder / "notes.md").write_text("memory")
+    (job.folder / "loan.py").write_text("print(1)")
+    got = worker.media_for(job, ["notes.md", "loan.py"])
+    assert [m["title"] for m in got] == ["loan.py"]

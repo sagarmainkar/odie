@@ -236,12 +236,14 @@ def budget_words(seconds: int) -> str:
 
 def media_for(job: Job, files: list[str]) -> list[dict]:
     """The report's files as cards under the message: only files that exist under the job's folder or the workspace
-    are handed over; anything else is left out."""
+    are handed over; anything else is left out, and so is a bot's notes.md (its memory, not a result)."""
     from odie.agent.tools.files import hand_over, workspace
     ws = workspace().resolve()
     out = []
     for name in files:
         f = Path(name)
+        if job.bot and f.name == "notes.md":  # a bot's own memory, not something it made for the user
+            continue
         if not f.is_absolute():
             f = job.folder / f
         f = f.resolve()
