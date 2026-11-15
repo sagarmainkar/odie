@@ -24,6 +24,11 @@ you: "@chief should I buy X or Y?"            (or Odie decides: ask_bot(bot="chi
 - The chief makes bots; you change any bot's role, prompt, powers and model in Settings → Bots. A bot you changed is
   yours: the chief can use it but no longer change it. The chief can't be deleted.
 - `@name …` at the start of a message adds a one-line nudge so the chat calls ask_bot (`odie.workers.nudge`).
+- A bot on a schedule: "every morning, @researcher …" gives ask_bot `every_minutes` (and `until`, `notify`,
+  `condition`, as for a Workers reporter). Each run starts fresh, told its last report, with 15 minutes; it stops
+  after 24 hours unless told otherwise, 7 days at most.
+- Today: a chief's row says how many teammates are done ("2 of 3 teammates done"); More shows each teammate's
+  report.
 
 ## The browser, and what waits for you
 
@@ -76,7 +81,6 @@ ReminderCurtain), so it sits close to the same limit: worth taking to main on it
 
 ## Not built
 
-- A bot on a schedule (a reporter bot): the Workers reporter does it for plain jobs; bots don't take `every_minutes` yet.
 - Workflows saved as chains (researcher → writer → reviewer): you chose the lead-bot design first.
 - A per-bot browser profile: every bot shares Odie's one signed-in profile, each in its own tab.
 - Nested teams: a specialist can't ask others.

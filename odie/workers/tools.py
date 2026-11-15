@@ -17,23 +17,30 @@ def job_line(j: dict) -> str:
     return f"{j['id']} · {j['status']} · {j['title']}{tail}"
 
 
+def until_in_users_time(until: str) -> str | None:
+    """The model's `until`, a local date-time, with the user's time zone on it; empty or unreadable -> None (the
+    Router's default end). "2026-11-04T18:00" in Asia/Kolkata -> "2026-11-04T18:00:00+05:30"; "tomorrow" -> None."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from odie import config
+    text = (until or "").strip()
+    if not text:
+        return None
+    try:
+        asked = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if asked.tzinfo is None:
+        asked = asked.replace(tzinfo=ZoneInfo(config.settings.timezone))
+    return asked.isoformat(timespec="seconds")
+
+
 def make_worker_tools(store: Store) -> list[FunctionTool]:
     async def start_job(title: str, brief: str, every_minutes: int = 0, until: str = "", notify: str = "always",
                         condition: str = "", tool_context: ToolContext = None) -> dict:
         """Hand a long job to a background Worker and answer the user now. A job is: code to write and run, a test to run, a check that takes more than one shell command, anything that repeats, or anything that would take you over a minute. Coding, testing, a system check, a report that takes digging. One read or one command: do it here yourself, as before; a question (today's market, a sum, a note, a picture): answer here. If unsure, start the job. The Worker runs alone with the shell, files and the web, never asks the user anything, and posts its report into this chat when done or stuck. title: a few words the user will recognise. brief: everything the Worker needs, in full: the goal, where things are, what done looks like, what to leave alone. The Worker has a folder of its own for what it makes: name no paths for that unless the user did. every_minutes: for something to check again and again ("track X and report every hour" -> 60): the same Worker runs that often and posts a report each time, until `until` (a local date-time like 2026-11-04T18:00; left out: 24 hours) or stop_job. notify, for a repeating check: "always" (every run posts), "change" (the first run, then only when the facts changed: an order's status, a score), or "condition" (only when `condition` holds: "price below 3000"; put the condition in the brief too). Tell the user it started and that the result will come here."""
-        until_at = until.strip() or None
-        if until_at:
-            from datetime import datetime
-            from zoneinfo import ZoneInfo
-
-            from odie import config
-            try:
-                asked = datetime.fromisoformat(until_at)
-                if asked.tzinfo is None:
-                    asked = asked.replace(tzinfo=ZoneInfo(config.settings.timezone))
-                until_at = asked.isoformat(timespec="seconds")
-            except ValueError:
-                until_at = None
+        until_at = until_in_users_time(until)
         job = router.start("task", title.strip()[:80] or "Job", brief.strip(), session_id_of(tool_context),
                            every_minutes=int(every_minutes or 0), until_at=until_at, notify=notify.strip().lower(),
                            condition=condition.strip())
@@ -71,16 +78,22 @@ def make_worker_tools(store: Store) -> list[FunctionTool]:
         store.set_setting(watch_report.CARD, card)
         return {"forgotten": job_id} if len(card["needs_you"]) < before else {"error": f"{job_id} has no card on Today."}
 
-    async def ask_bot(bot: str, title: str, request: str, tool_context: ToolContext = None) -> dict:
-        """Hand the user's request to one of their bots, which works on it in the background and reports into this chat. Use it when the user names a bot ("@chief …", "ask the researcher to …"), or asks for the team or the chief. The chief leads the team: it splits a big question among specialists it makes, runs them side by side and gives one answer; send it anything that needs research from several sides, a comparison, or checking. bot: its name, without the @. title: a few words the user will recognise. request: the user's request in full, with everything the bot needs (it sees nothing else of this chat). Tell the user it started and that the answer will come here."""
+    async def ask_bot(bot: str, title: str, request: str, every_minutes: int = 0, until: str = "", notify: str = "always",
+                      condition: str = "", tool_context: ToolContext = None) -> dict:
+        """Hand the user's request to one of their bots, which works on it in the background and reports into this chat. Use it when the user names a bot ("@chief …", "ask the researcher to …"), or asks for the team or the chief. The chief leads the team: it splits a big question among specialists it makes, runs them side by side and gives one answer; send it anything that needs research from several sides, a comparison, or checking. bot: its name, without the @. title: a few words the user will recognise. request: the user's request in full, with everything the bot needs (it sees nothing else of this chat). For a request that repeats ("every morning", "every hour"): every_minutes (a morning digest -> 1440), until (a local date-time; left out: 24 hours, at most 7 days), notify ("always", "change": only when the facts changed, or "condition": only when `condition` holds). Tell the user it started and that the answer will come here."""
         from odie.workers import bots
         name = bots.clean_name(bot)
         found = bots.get(store, name) if name else None
         if found is None:
             names = ", ".join(b.name for b in bots.all_bots(store))
             return {"error": f"There's no bot called {bot}. The bots: {names}."}
-        job = router.start_bot(found.name, title.strip()[:80] or found.name, request.strip(), session_id_of(tool_context))
-        return {"job_id": job.id, "bot": found.name, "status": "started"}
+        job = router.start_bot(found.name, title.strip()[:80] or found.name, request.strip(), session_id_of(tool_context),
+                               every_minutes=int(every_minutes or 0), until_at=until_in_users_time(until),
+                               notify=notify.strip().lower(), condition=condition.strip())
+        out = {"job_id": job.id, "bot": found.name, "status": "started"}
+        if job.repeats:
+            out["repeats"] = f"every {job.every_minutes} minutes until {job.until_at}, telling you: {job.notify}"
+        return out
 
     return [FunctionTool(start_job), FunctionTool(jobs_status), FunctionTool(stop_job), FunctionTool(retry_job),
             FunctionTool(forget_job), FunctionTool(ask_bot)]

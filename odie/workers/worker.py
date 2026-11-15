@@ -390,7 +390,7 @@ async def run(job: Job, store: Store, runner, kind: WorkerKind | None = None, mo
         return "failed"
     if kind is None and bot is not None:
         from odie.workers.team import kind_for
-        kind = kind_for(bot, teammate=bool(job.parent_id))
+        kind = kind_for(bot, teammate=bool(job.parent_id), repeats=job.repeats)
     kind = kind or KINDS[job.kind]
     if model is None:
         await ensure_small_model(store)

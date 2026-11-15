@@ -48,6 +48,11 @@ page says. A step that may order, pay, book or send, or that carries what you re
 user's tap; if the answer is no, don't try it another way. When a page asks to sign in, call browser_sign_in and wait. \
 Never type a password, card number, CVV, UPI PIN or one-time code."""
 
+REPEAT_RULES = """
+- This job runs again on a schedule, each run a fresh start: compare with your last report (given before the brief) \
+and say what changed. In report, give `state`: the few facts that matter, written the same way every run so runs \
+compare; set `met` when the brief's condition holds now, and `done` when there is nothing left to watch."""
+
 CHIEF_RULES = """
 - You lead the team: list_bots shows it, make_bot adds a specialist, ask_bots runs several at once and returns their \
 reports. Teammates don't see this job or each other: each brief must stand alone."""
@@ -60,12 +65,15 @@ def team_slots() -> asyncio.Semaphore:
     return _team_slots
 
 
-def instruction_for(bot: Bot) -> str:
+def instruction_for(bot: Bot, repeats: bool = False) -> str:
     """A bot's whole system prompt: the Worker rules with its name, role and folder, the browser rules when it has the
-    browser, the team rules for the chief, then its own prompt. {folder} stays a placeholder: the Worker fills it."""
+    browser, the schedule's rules when its job repeats, the team rules for the chief, then its own prompt. {folder}
+    stays a placeholder: the Worker fills it."""
     text = BOT_RULES.replace("{name}", bot.name).replace("{role}", bot.role)
     if "browser" in bot.powers:
         text += BROWSER_RULES
+    if repeats:
+        text += REPEAT_RULES
     if bot.is_chief:
         text += CHIEF_RULES
     if bot.prompt:
@@ -73,15 +81,22 @@ def instruction_for(bot: Bot) -> str:
     return text
 
 
-def kind_for(bot: Bot, teammate: bool = False) -> WorkerKind:
-    """The WorkerKind a bot's job runs as: kind "bot", named by the bot, its tools from its powers (tools_for), a
-    teammate's shorter budget. A chief asked as a teammate is not possible (ask_bots refuses it)."""
-    budget = TEAMMATE_BUDGET if teammate else BOT_BUDGET
+def budget_for(teammate: bool, repeats: bool) -> int:
+    """A bot job's wall time: a teammate's part -> 15 minutes; one run of a scheduled bot -> 15 minutes (it runs again
+    later); a bot's own job -> 30 minutes."""
+    if teammate or repeats:
+        return TEAMMATE_BUDGET
+    return BOT_BUDGET
+
+
+def kind_for(bot: Bot, teammate: bool = False, repeats: bool = False) -> WorkerKind:
+    """The WorkerKind a bot's job runs as: kind "bot", named by the bot, its tools from its powers (tools_for), its
+    budget (budget_for). A chief asked as a teammate is not possible (ask_bots refuses it)."""
 
     def tools(store: Store, job: Job) -> list:
         return tools_for(bot, store, job)
-    return WorkerKind(name="bot", word=bot.name, instruction=instruction_for(bot), tools=tools,
-                      budget_seconds=budget, max_llm_calls=BOT_MAX_CALLS)
+    return WorkerKind(name="bot", word=bot.name, instruction=instruction_for(bot, repeats), tools=tools,
+                      budget_seconds=budget_for(teammate, repeats), max_llm_calls=BOT_MAX_CALLS)
 
 
 def asking(tool):

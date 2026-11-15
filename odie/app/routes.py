@@ -220,7 +220,7 @@ async def jobs_list(request: Request) -> dict[str, Any]:
     # The last 8 jobs you or Odie started, and their teammates (a chief's row counts them; they don't push it out).
     ended = [j for j in jobs_store.recent(store, 60) if j["id"] not in going]
     leads = [j for j in ended if not j.get("parent_id")][:8]
-    lead_ids = {j["id"] for j in leads}
+    lead_ids = {j["id"] for j in leads} | going  # a chief still at work: its finished teammates count too
     recent = [_job_view(j) for j in ended if j["id"] in lead_ids or j.get("parent_id") in lead_ids]
     from odie.workers import asks
     return {"running": running, "recent": recent, "asks": [_ask_view(a) for a in asks.open_for(store)]}
@@ -317,7 +317,11 @@ async def job_get(job_id: str, request: Request) -> dict[str, Any]:
         raise HTTPException(404, "no such job")
     acts = [{"ts": a["ts"], "tool": a["tool"], "args": (a.get("args_json") or "")[:200], "result_chars": a.get("result_chars"),
              "refused": a.get("refused"), "error": a.get("error")} for a in jobs_store.actions(store, job_id)]
-    return {**_job_view(row), "report": row.get("report") or "", "brief": row.get("brief") or "", "actions": acts}
+    team = [{"id": t["id"], "bot": t["bot"], "title": t["title"], "status": t["status"], "outcome": t["outcome"],
+             "report": (t["report"] or t["error"] or "")[:600]}
+            for t in store.query("select * from jobs where parent_id=? order by created_at", (job_id,))]
+    return {**_job_view(row), "report": row.get("report") or "", "brief": row.get("brief") or "", "actions": acts,
+            "teammates": team}
 
 
 @router.post("/jobs/{job_id}/stop")

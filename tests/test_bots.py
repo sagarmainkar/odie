@@ -473,3 +473,64 @@ async def test_through_adk_a_bot_pauses_at_a_tap_and_goes_on_after_yes(world, mo
     asks.answer(store, ask["id"], "yes")
     await asyncio.wait_for(router._tasks[job.id], 5)
     assert ran == ["kettle"] and jobs.get(store, job.id)["report"] == "Ordered."
+
+
+# ── a bot on a schedule, and the team on Today ───────────────────────────────
+
+async def test_a_bot_on_a_schedule_runs_again_told_its_last_report(world, monkeypatch):
+    from odie.workers.tools import make_worker_tools
+    store, chat = world
+    bots.make(store, "watcher", "watches prices", "", [])
+    naps: list[float] = []
+
+    async def no_sleep(seconds):
+        naps.append(seconds)
+        if len(naps) >= 2:
+            router.stop(job_id)
+            await asyncio.sleep(3600)
+    monkeypatch.setattr(router, "sleep", no_sleep)
+    Team.scripts = {"watcher": [("report", {"outcome": "ready", "text": "₹2.44L", "state": "2.44L"}),
+                                ("report", {"outcome": "ready", "text": "₹2.40L, down", "state": "2.40L"})]}
+    tools = {t.name: t for t in make_worker_tools(store)}
+    got = await tools["ask_bot"].func(bot="watcher", title="CB350 price", request="Check the CB350 price.",
+                                      every_minutes=60, notify="change")
+    job_id = got["job_id"]
+    assert "every 60 minutes" in got["repeats"]
+    await asyncio.wait_for(asyncio.gather(router._tasks[job_id], return_exceptions=True), 5)
+    row = jobs.get(store, job_id)
+    assert (row["every_minutes"], row["notify"], row["runs"], row["budget_seconds"]) == (60, "change", 2, team.TEAMMATE_BUDGET)
+    assert [p["text"].split("\n")[0] for p in chat.posts] == [f"🔁 Report 1: CB350 price ({job_id})",
+                                                              f"🔁 Report 2: CB350 price ({job_id})"]
+    second = Team.seen["watcher"][-1]
+    first_message = second.contents[0].parts[0].text
+    assert "This is run 2. Your last report:\n₹2.44L" in first_message
+    assert "runs again on a schedule" in str(second.config.system_instruction)
+
+
+def test_budget_for():
+    assert team.budget_for(teammate=True, repeats=False) == team.TEAMMATE_BUDGET
+    assert team.budget_for(teammate=False, repeats=True) == team.TEAMMATE_BUDGET
+    assert team.budget_for(teammate=False, repeats=False) == team.BOT_BUDGET
+
+
+async def test_a_chiefs_card_on_today_shows_its_team(isolated_settings, tmp_path, monkeypatch):
+    from odie.app.main import create_app
+    from tests.test_models import FakeRunner
+    monkeypatch.setenv("ODIE_WORKERS", "1")
+    store = Store(tmp_path / "assistant.db")
+    store.init_schema()
+    jobs.ensure(store)
+    bots.ensure_chief(store)
+    app = create_app(runner=FakeRunner(), store=store)
+    chief_job = a_bot_job(store, "chief")
+    done_kid = a_bot_job(store, "chief", parent_id=chief_job.id)
+    busy_kid = a_bot_job(store, "chief", parent_id=chief_job.id)
+    store.execute("update jobs set status='running' where id in (?,?)", (chief_job.id, busy_kid.id))
+    jobs.ended(store, done_kid.id, "done", outcome="ready", report="found it")
+    async with app.router.lifespan_context(app), httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+        listed = (await c.get("/api/jobs")).json()
+        assert {j["id"] for j in listed["running"]} == {chief_job.id, busy_kid.id}
+        assert [j["id"] for j in listed["recent"]] == [done_kid.id]  # a running chief's finished teammate is listed
+        one = (await c.get(f"/api/jobs/{chief_job.id}")).json()
+        assert [(t["id"], t["status"], t["report"]) for t in one["teammates"]] == [(done_kid.id, "done", "found it"),
+                                                                                    (busy_kid.id, "running", "")]
