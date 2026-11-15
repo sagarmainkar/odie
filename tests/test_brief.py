@@ -152,3 +152,53 @@ def test_a_missed_morning_round_runs_when_odie_starts_before_noon(tmp_path):
     assert missed_today(s, datetime(2026, 10, 23, 12, 30, tzinfo=IST)) is False  # too late to be a morning round
     s.execute("insert into briefs(date, text, items_json) values(?,?,?)", ("2026-10-23", "x", "{}"))
     assert missed_today(s, datetime(2026, 10, 23, 11, 21, tzinfo=IST)) is False  # it ran
+
+
+def watch_card_with_a_held_item(store):
+    from odie.watch import report
+    store.set_setting(report.CARD, {"needs_you": [{"title": "Invoice due Friday", "why": "from Dev"}], "events": []})
+    store.set_setting(report.HELD, [{"ref": "mail:m9", "title": "Passport email came", "why": "at 23:10"}])
+
+
+def test_watch_part_can_leave_the_held_list(tmp_path):
+    from odie.jobs.brief import watch_part
+    from odie.watch import report
+    s = Store(tmp_path / "a.db")
+    s.init_schema()
+    watch_card_with_a_held_item(s)
+    part = watch_part(s, clear_held=False)
+    assert "Passport email came" in part.text and "Invoice due Friday" in part.text
+    assert [i["ref"] for i in s.get_setting(report.HELD)] == ["mail:m9"]  # read, not emptied
+    watch_part(s)  # the default still says it once
+    assert s.get_setting(report.HELD) == []
+
+
+async def test_gather_inputs_can_leave_the_held_list(tmp_path):
+    from odie.watch import report
+    s = Store(tmp_path / "a.db")
+    s.init_schema()
+    watch_card_with_a_held_item(s)
+    inp = await gather_inputs(s, NOW, clear_held=False)
+    [watch] = [p for p in inp.parts if p.key == "watch"]
+    assert "Passport email came" in watch.text
+    assert [i["ref"] for i in s.get_setting(report.HELD)] == ["mail:m9"]
+
+
+async def test_run_brief_writes_from_the_inputs_it_is_given(monkeypatch, tmp_path):
+    """The morning round gathers once and hands the inputs over: run_brief doesn't gather again."""
+    import odie.jobs.brief as b
+    s = Store(tmp_path / "a.db")
+    s.init_schema()
+
+    async def no_gathering(store, now, **kw):
+        raise AssertionError("gathered twice")
+    prompts = []
+
+    async def fake_write(prompt, store=None):
+        prompts.append(prompt)
+        return "Answer Asha today."
+    monkeypatch.setattr(b, "gather_inputs", no_gathering)
+    monkeypatch.setattr(b, "write_with_model", fake_write)
+    await run_brief(s, NOW, push=False, inputs=BriefInputs(tasks="#1 [todo] Answer Asha"))
+    assert "Answer Asha" in prompts[0]
+    assert s.one("select text from briefs")["text"] == "Answer Asha today."

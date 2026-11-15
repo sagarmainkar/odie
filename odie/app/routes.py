@@ -6,8 +6,10 @@ import json
 import logging
 import os
 import re
+from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
+from zoneinfo import ZoneInfo
 
 import httpx
 from fastapi import APIRouter, File, HTTPException, Request, UploadFile, WebSocket
@@ -15,9 +17,10 @@ from fastapi.responses import JSONResponse, RedirectResponse, Response
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
-from odie import config, devices, persona, qr
+from odie import approvals_mode, config, devices, persona, qr
 from odie.models import (PRESET_BY_ID, PRESETS, Provider, all_providers, auth_headers, brain_chosen, custom_key_name,
                          list_models, preset_base_url, refresh_fallback, resolve_selection, slug)
+from odie.morning.round import add_brief_to_hello, hello_due, hello_for, morning_day, morning_round, round_running
 from odie.photos.library import PHOTO_UUID
 from odie.secrets import remove_secret, save_secret
 from odie.store.db import approval_dict as _approval_dict
@@ -33,6 +36,7 @@ class ChatIn(BaseModel):
     thinking: bool | None = None  # left out: the chat's own Think harder (odie.thinking); given (an older web app): saved first
     images: list[str] = []
     session_id: str | None = None  # continue an older thread; None = today's
+    via: Literal["terminal"] | None = None  # who typed it: "terminal" is the odie command (odie chat), for an agent or script
 
 
 class Keys(BaseModel):
@@ -127,7 +131,11 @@ async def chat(body: ChatIn, request: Request):
         raise HTTPException(422, "not a chat thread")
     if body.thinking is not None:  # an app that still sends it: the same as choosing it in the menu, then the turn
         await _set_chat_thinking(request, _chat_meant(request, body.session_id), body.thinking)
-    kw = {"session_id": body.session_id} if body.session_id else {}
+    kw: dict[str, Any] = {}
+    if body.session_id:
+        kw["session_id"] = body.session_id
+    if body.via:
+        kw["via"] = body.via
     turn = request.app.state.runner.chat(body.text, thinking=body.thinking, images=body.images or None, **kw)
     return _sse(detached(turn, on_orphaned_done=answered_while_away))
 
@@ -492,16 +500,16 @@ class ConnectIn(BaseModel):
     add: bool = False  # another connection to the same service, beside the one there
 
 
-async def _check(spec: dict) -> dict:
-    """The server's tools, listed in a throwaway process, and which of them would ask for a tap. A failure's reason is
-    scrubbed of the spec's secrets."""
+async def _check(spec: dict, smart: bool = False) -> dict:
+    """The server's tools, listed in a throwaway process, and which of them would ask for a tap (under the current
+    approvals mode, smart). A failure's reason is scrubbed of the spec's secrets."""
     from odie.plugins import mcp as m
     try:
         listed = await m.probe_tools(spec, 20)
     except Exception as ex:  # noqa: BLE001 (timeouts, refused connections, bad commands, a 401)
         return {"ok": False, "reason": m.scrub(str(ex) or type(ex).__name__, spec)}
     free = bool(spec.get("readsFree"))
-    return {"ok": True, "tools": [{"name": t["name"], "read_only": bool(t.get("read_only")), "asks": m.asks(t, free)} for t in listed]}
+    return {"ok": True, "tools": [{"name": t["name"], "read_only": bool(t.get("read_only")), "asks": m.asks(t, free, smart=smart)} for t in listed]}
 
 
 @router.get("/mcp/presets")
@@ -511,7 +519,7 @@ async def mcp_presets() -> list[dict[str, Any]]:
 
 
 @router.post("/mcp/check")
-async def mcp_check(body: CheckIn) -> dict[str, Any]:
+async def mcp_check(body: CheckIn, request: Request) -> dict[str, Any]:
     """Lists a server's tools before it is saved (nothing is saved)."""
     from odie.plugins.mcp import command_problem, read_config, unmask
     if not (body.spec.get("url") or body.spec.get("command")):
@@ -523,7 +531,7 @@ async def mcp_check(body: CheckIn) -> dict[str, Any]:
     problem = command_problem(spec)  # the check runs the program: never a shell or code handed in as text
     if problem:
         raise HTTPException(422, problem)
-    return await _check(spec)
+    return await _check(spec, smart=approvals_mode.is_smart(request.app.state.store))
 
 
 @router.post("/mcp/connect")
@@ -536,7 +544,7 @@ async def mcp_connect(body: ConnectIn, request: Request) -> dict[str, Any]:
         spec = presets.spec_for(body.preset, body.url, body.key)
     except ValueError as e:
         raise HTTPException(422, str(e))
-    checked = await _check(spec)
+    checked = await _check(spec, smart=approvals_mode.is_smart(request.app.state.store))
     if not checked["ok"]:
         said = presets.plain_reason(body.preset, checked["reason"])
         raise HTTPException(422, said if said != checked["reason"] else f"{presets.PRESETS[body.preset]['title']} didn't answer: {said}")
@@ -910,6 +918,26 @@ async def vault_put(body: VaultIn, request: Request) -> dict[str, Any]:
     if worker:
         worker.kick()
     return _vault_view(request)
+
+
+# --- Approvals: Careful (every tap asks) or Smart (routine work runs, risky things still ask) ---
+class ApprovalsModeIn(BaseModel):
+    mode: str
+
+
+@router.get("/approvals/mode")
+async def approvals_mode_get(request: Request) -> dict[str, str]:
+    return {"mode": approvals_mode.mode(request.app.state.store)}
+
+
+@router.put("/approvals/mode")
+async def approvals_mode_put(body: ApprovalsModeIn, request: Request) -> dict[str, str]:
+    """Choose Careful or Smart for the whole app; anything else is a 400."""
+    try:
+        saved = approvals_mode.set_mode(request.app.state.store, body.mode)
+    except ValueError as err:
+        raise HTTPException(400, str(err))
+    return {"mode": saved}
 
 
 @router.post("/vault/reindex")
@@ -2144,12 +2172,96 @@ async def brief_get(request: Request):
 
 @router.post("/brief/run")
 async def brief_run(request: Request):
-    from datetime import datetime
-    from zoneinfo import ZoneInfo
-
+    """A brief run by hand (the user is looking at it, so no push). When the day's hello is already made, the brief
+    joins its summary and open chats rebuild their prompt to read it."""
     from odie.jobs.brief import run_brief
-    text = await run_brief(request.app.state.store, datetime.now(ZoneInfo(config.settings.timezone)), push=False)  # The user is looking at it
+    store = request.app.state.store
+    now = morning_now()
+    text = await run_brief(store, now, push=False)
+    if add_brief_to_hello(store, now, text):
+        request.app.state.runner.invalidate_prompt()
     return {"text": text}
+
+
+# --- Morning hello ---
+_morning_tasks: set[asyncio.Task] = set()  # rounds this route started; held here so they aren't garbage-collected
+_round_failed_at: datetime | None = None  # when the last round this route started ended with no hello saved
+ROUND_COOL_OFF = timedelta(minutes=10)
+
+
+def morning_now() -> datetime:
+    """The clock the morning route reads (tests replace it): now, in the owner's time zone."""
+    return datetime.now(ZoneInfo(config.settings.timezone))
+
+
+def retry_allowed(failed_at: datetime | None, now: datetime) -> bool:
+    """Whether the web may start another round after one failed: only once the cool-off has passed, so a page that
+    keeps asking doesn't re-run the gathering and the model call every few seconds. No failure yet -> True; failed
+    3 minutes ago -> False; failed 11 minutes ago -> True."""
+    if failed_at is None:
+        return True
+    return now - failed_at >= ROUND_COOL_OFF
+
+
+async def run_web_round(request: Request, now: datetime) -> None:
+    """The morning round started from the web, run as the cron's is: beside no running tick, and stopped after
+    BRIEF_LIMIT seconds. A round that raised, ran out of time, or ended with no hello saved is logged and starts the
+    cool-off."""
+    # main imports this module, so these come in when the round starts
+    from odie.app.main import BRIEF_LIMIT
+    from odie.background import Part
+
+    store = request.app.state.store
+    background = request.app.state.background
+
+    async def go() -> None:
+        await morning_round(store, now, runner=request.app.state.runner, push=True)
+
+    try:
+        if background is None:
+            await asyncio.wait_for(go(), BRIEF_LIMIT)
+        else:
+            await background.exclusive(Part("brief", go, limit=BRIEF_LIMIT))  # never beside a running tick
+    except Exception:
+        log.warning("morning: the round the web started failed", exc_info=True)
+
+    if hello_for(store, morning_day(now)) is None:
+        global _round_failed_at
+        _round_failed_at = morning_now()
+        log.warning("morning: the round the web started saved no hello; trying again in %s", ROUND_COOL_OFF)
+
+
+def start_morning_round(request: Request, now: datetime) -> None:
+    task = asyncio.create_task(run_web_round(request, now))
+    _morning_tasks.add(task)
+    task.add_done_callback(_morning_tasks.discard)
+
+
+@router.get("/morning")
+async def morning_get(request: Request):
+    """Today's hello for the web card and the Mac app: {"state": "ready" | "making" | "none", "day", "card"}.
+    A saved hello -> ready, with its card (the summary is for chats, not sent). Before 05:00 with none saved, or no
+    chat model chosen -> none. Otherwise a round is running or this call starts one -> making; the page asks again.
+    Two calls while the hello is due start one round: the second sees the first's task still in `_morning_tasks`.
+    Within 10 minutes of a failed round -> none, so the page doesn't start another on every poll."""
+    store = request.app.state.store
+    now = morning_now()
+    day = morning_day(now)
+
+    hello = hello_for(store, day)
+    if hello is not None:
+        card = {key: value for key, value in hello["card"].items() if key != "summary"}
+        return {"state": "ready", "day": day, "card": card}
+
+    if not hello_due(store, now) or not brain_chosen(store):
+        return {"state": "none", "day": day, "card": None}
+
+    if round_running() or _morning_tasks:
+        return {"state": "making", "day": day, "card": None}
+    if not retry_allowed(_round_failed_at, now):
+        return {"state": "none", "day": day, "card": None}
+    start_morning_round(request, now)
+    return {"state": "making", "day": day, "card": None}
 
 
 # --- Approvals ---
@@ -2619,7 +2731,9 @@ async def devices_remove(device_id: int, request: Request, confirm: bool = False
     known = devices.list_devices(store)
     if not any(d["id"] == device_id for d in known):
         raise HTTPException(404, "No such device.")
-    if len(known) == 1 and devices.pairing_on(store) and not confirm:
+    browsers = [d for d in known if not devices.is_terminal(d)]  # the terminal can't open the app, so it doesn't count
+    removing_last_browser = len(browsers) == 1 and browsers[0]["id"] == device_id
+    if removing_last_browser and devices.pairing_on(store) and not confirm:
         raise HTTPException(409, "This is the last paired device. Without it, only the recovery passcode lets a browser in.")
     devices.remove_device(store, device_id)
     devices.offer_setup(store)

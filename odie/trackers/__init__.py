@@ -250,14 +250,18 @@ async def run_due(store: Store, turn: Turn, notify: Notify, now: datetime, tz: t
 def guard(tool, args, tool_context) -> dict | None:
     """before_tool_callback for background checks: refuse anything that would need the user's tap (nobody is there
     to tap). A tool is refused when it is always gated (run_shell, install_skill, an add-on's gated tools such as
-    sending mail), or when its own require_confirmation says it would ask (background_asks).
-    Example: a price tracker calls web_search -> None (runs); run_shell -> refused; gmail_send_draft -> refused."""
+    sending mail), when an app tool would ask in Careful (Smart never reaches a background check), or when its own
+    require_confirmation says it would ask (background_asks).
+    Example: a price tracker calls web_search -> None (runs); run_shell -> refused; gmail_send_draft -> refused;
+    gmail_create_draft from an app with Smart on -> refused; list_items with the server's reads switch on -> runs."""
     from odie import addons
     from odie.agent.agent import GATED_TOOLS
     from odie.signin.guard import background_asks
     always_gated = tool.name in GATED_TOOLS | addons.gated_tools()
     is_skill_install = tool.name == "install_skill"
     is_the_users_item = tool.name == "watch_close"  # only the user takes a watch item off Today
-    if always_gated or is_skill_install or is_the_users_item or background_asks(tool, args, tool_context):
+    careful_asks = getattr(tool, "_asks_in_careful", None)  # set on app tools only; None for every other tool
+    asks_in_careful = careful_asks is True
+    if always_gated or is_skill_install or is_the_users_item or asks_in_careful or background_asks(tool, args, tool_context):
         return {"error": "Not allowed in a background check: this needs the user's tap. Skip it and report what you found."}
     return None

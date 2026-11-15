@@ -22,7 +22,7 @@ from google.adk.runners import Runner
 from google.adk.sessions.sqlite_session_service import SqliteSessionService
 from google.genai import types
 
-from odie import addons, config
+from odie import addons, approvals_mode, config
 from odie.agent.agent import build_agent, chat_generate_config, memory_file
 from odie.agent.callbacks import OdiePlugin
 from odie.agent.context import parts_of
@@ -34,6 +34,7 @@ from odie.agent.prompt import ALL_CAPS, Who, build_static_prompt, build_turn_con
 from odie.agent.agent import GATED_TOOLS
 from odie.agent.tools.local import threads_summary
 from odie.app.events import EventBus
+from odie.app.steps import allowed_of, answer_of, capped_args
 from odie.memory.index import build_index, render_prefetch
 from odie.memory.review import run_review
 from odie.memory.search import prefetch_hits
@@ -54,6 +55,18 @@ def strip_trailer(text: str) -> str:
     if i >= 0:
         cuts.append(i)
     return text[:min(cuts)] if cuts else text
+
+
+# Added to the hidden context of a message the odie command sent (odie chat), so the model knows a program typed it,
+# and history can label it "via Terminal". It sits after "[context: ", so strip_trailer removes it with the rest.
+VIA_TERMINAL = "\n[sent from the terminal: a program on this Mac (an AI agent or a script) typed this for the user]"
+
+
+def came_via_terminal(text: str) -> bool:
+    """Whether a stored user message was sent by the odie command: its hidden context carries VIA_TERMINAL.
+      "hi\n\n[context: now 09:30 …]"                                -> False (typed in the app)
+      "hi\n\n[context: now 09:30 …]\n[sent from the terminal: …]"  -> True"""
+    return VIA_TERMINAL in text
 
 
 def split_images(text: str) -> tuple[str, list[str]]:
@@ -97,16 +110,67 @@ def media_of(response: Any) -> dict[str, Any] | None:
     return got[1] if got else m
 
 
+def _step_of(call: Any) -> dict[str, Any]:
+    """A tool call as a step that has no answer yet. With no answer at all it is "lost" (Odie restarted while it ran:
+    no result will come); its answer fills in result, state and allowed later.
+      call web_search id c1 with {"query": "cats"} -> {"name": "web_search", "id": "c1", "args": {"query": "cats"},
+                                                      "result": "", "allowed": None, "state": "lost"}"""
+    args = dict(call.args or {})
+    return {"name": call.name, "id": call.id, "args": capped_args(call.name, args), "result": "", "allowed": None, "state": "lost"}
+
+
+def _answer_step(step: dict[str, Any], answer: Any, invocation_id: str, asked: set[str]) -> None:
+    """Write a tool's answer onto its step (the same meaning as _answer_items gives the live stream). The last answer
+    wins: a gated call is first answered "requires confirmation", and its real result arrives after the tap. `asked`
+    holds the calls answered "requires confirmation" so far; a call in it was asked on a card, so it is never a pass.
+      {"error": "This tool call requires confirmation..."} -> state "wait", nothing else (and c1 joins `asked`)
+      {"error": "This tool call is rejected."}             -> state "no", result "", allowed {"by": "no"}
+      run_shell {"result": "a.txt"}, never asked           -> state "done", result "a.txt", allowed {"by": "pass"}
+      run_shell {"result": "a.txt"}, asked before          -> state "done", result "a.txt", allowed None (a row may say)
+      web_search {"result": "3 hits"}                      -> state "done", result "3 hits", allowed None
+      speak {"result": "...", "media": {...}}              -> state "done", and made True (it made a file for the chat)"""
+    was_asked = step["id"] in asked
+    state, result, allowed = answer_of(step["name"], step["id"], invocation_id, answer.response, asked=was_asked)
+    if state == "wait":
+        asked.add(step["id"])
+    step["state"] = state
+    step["result"] = result
+    step["allowed"] = allowed
+    if media_of(answer.response):
+        step["made"] = True
+
+
 def events_to_history(events: list[Any]) -> list[dict[str, Any]]:
-    """Session events -> [{role, text, tools, ts, inv?, media?, key?}], tool calls (and what they made) folded into the
-    following Odie text. key: the id of the event an Odie text came from, which names that reply for good (its saved
-    checklist ticks hang off it; see reply_key). inv: the turn the line came from (the event's invocation id), so an
-    app can fold a turn's lines into one answer; a message Odie posted on its own is a turn of its own."""
+    """Session events -> [{role, text, tools, ts, inv?, media?, key?, steps?}], tool calls (and what they made) folded
+    into the following Odie text. key: the id of the event an Odie text came from, which names that reply for good (its
+    saved checklist ticks hang off it; see reply_key). inv: the turn the line came from (the event's invocation id), so
+    an app can fold a turn's lines into one answer; a message Odie posted on its own is a turn of its own.
+    steps (Odie lines): one per tool call, in the order called, each paired with its answer by call id, never by place.
+    An answer that lands in a later event (a gated call after the tap) still fills the step on the line of the call.
+    A line that raised an approval card is closed: what Odie does after the tap starts a line of its own, with its own
+    time, so it sits below the card."""
     out: list[dict[str, Any]] = []
-    hidden = GATED_TOOLS | addons.gated_tools()  # gated calls are shown by their approval card
+    steps_by_id: dict[str, dict[str, Any]] = {}
+    asked: set[str] = set()  # the calls a card asked about
+    closed: list[dict[str, Any]] = []  # the lines an approval card was raised after
+
+    def adds_to_last() -> bool:
+        """Whether Odie's next tool call, file or text joins the last line instead of starting one: it does when the
+        last line is Odie's, has no text yet, and no approval card was raised after it.
+          [odie "" with run_shell] + text "One file."                          -> joins: the step and its reply, one line
+          [odie "" with run_shell], approval card raised, + text "One file."    -> a new line, below the card
+          [odie "Sure."] + text "Done."                                          -> a new line"""
+        if not out:
+            return False
+        last = out[-1]
+        if last["role"] != "odie" or last["text"]:
+            return False
+        return not any(last is closed_line for closed_line in closed)
 
     def line(role: str, text: str, tools: list[str], ts: float, inv: str, **more: Any) -> dict[str, Any]:
         item: dict[str, Any] = {"role": role, "text": text, "tools": tools, "ts": ts, **more}
+        if role == "odie":
+            item["steps"] = []
         if inv:
             item["inv"] = inv
         return item
@@ -116,11 +180,20 @@ def events_to_history(events: list[Any]) -> list[dict[str, Any]]:
             continue
         ts = float(getattr(ev, "timestamp", 0) or 0)
         inv = str(getattr(ev, "invocation_id", "") or "")
+        calls = [p.function_call for p in ev.content.parts if p.function_call and p.function_call.name != CONFIRM]
+        new_steps = [_step_of(call) for call in calls]
+        for step in new_steps:
+            if step["id"]:
+                steps_by_id[step["id"]] = step
+        for p in ev.content.parts:  # an answer may come from any event, so pair every one by id
+            answer = p.function_response
+            if answer and answer.name != CONFIRM and answer.id in steps_by_id:
+                _answer_step(steps_by_id[answer.id], answer, inv, asked)
         texts = [p.text for p in ev.content.parts if p.text and not getattr(p, "thought", False)]  # a model's reasoning is its own, not a reply
-        tools = [p.function_call.name for p in ev.content.parts if p.function_call and p.function_call.name != CONFIRM and p.function_call.name not in hidden]
+        tools = [call.name for call in calls]
         made = [m for p in ev.content.parts if p.function_response and (m := media_of(p.function_response.response))]
         if made and ev.author != "user":
-            if out and out[-1]["role"] == "odie" and not out[-1]["text"]:
+            if adds_to_last():
                 out[-1].setdefault("media", []).extend(made)
             else:
                 out.append(line("odie", "", [], ts, inv, media=made))
@@ -129,16 +202,21 @@ def events_to_history(events: list[Any]) -> list[dict[str, Any]]:
             if texts and "".join(texts).startswith(CHECK_PREFIX):
                 continue  # a code-made nudge, not something the user said
             if texts:
-                clean, imgs = split_images(strip_trailer("".join(texts)))
-                out.append(line("user", clean, [], ts, inv, images=imgs))
+                sent = "".join(texts)
+                clean, imgs = split_images(strip_trailer(sent))
+                if came_via_terminal(sent):
+                    out.append(line("user", clean, [], ts, inv, images=imgs, via="terminal"))
+                else:
+                    out.append(line("user", clean, [], ts, inv, images=imgs))
             continue
         if tools:
-            if out and out[-1]["role"] == "odie" and not out[-1]["text"]:
+            if adds_to_last():
                 out[-1]["tools"] += tools
             else:
                 out.append(line("odie", "", tools, ts, inv))
+            out[-1]["steps"] += new_steps
         if texts:
-            if out and out[-1]["role"] == "odie" and not out[-1]["text"]:
+            if adds_to_last():
                 out[-1]["text"] = "".join(texts)
             else:
                 out.append(line("odie", "".join(texts), [], ts, inv))
@@ -151,7 +229,33 @@ def events_to_history(events: list[Any]) -> list[dict[str, Any]]:
             posted = [m for x in ((getattr(ev, "custom_metadata", None) or {}).get("media") or []) if (m := media_of({"media": x}))]
             if posted:  # a posted message's memo (a spoken reminder)
                 out[-1].setdefault("media", []).extend(posted)
+        asks_for_tap = any(p.function_call and p.function_call.name == CONFIRM for p in ev.content.parts)
+        if asks_for_tap and out:  # the app pauses here; whatever follows the tap goes below the card
+            closed.append(out[-1])
     return out
+
+
+def steps_with_allowed(store: Store, session_id: str, lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Fill each step's `allowed` from the session's approval rows, and end a wait that can no longer end. A row for the
+    call wins over what the history alone could tell (a shell command that ran with no row stays "pass"). A step still
+    waiting whose card was answered or lapsed will get no result now, so it shows as not run.
+      c1 approved, step done                -> allowed {"by": "you", "at": <when>}
+      c2 rejected, step "no"                -> allowed {"by": "no", "at": <when>}
+      c3 card pending, step "wait"          -> stays "wait", allowed None (the card can still be tapped)
+      c4 card lapsed, step "wait"           -> state "no" (Not run), allowed {"by": "lapsed", "at": <when>}
+      c5 approved, step still "wait"        -> state "no" (Not run), allowed {"by": "you", ...} (the resume never finished)
+      web_search, no row                    -> allowed None"""
+    rows = store.approvals_for_calls(session_id)
+    for item in lines:
+        for step in item.get("steps", []):
+            # response None: only a row can answer here; the "pass" rule was already applied when the step was built
+            decided = allowed_of(step["name"], step["id"], item.get("inv", ""), step["args"], None, rows)
+            if decided is None:
+                continue
+            step["allowed"] = decided
+            if step["state"] == "wait":
+                step["state"] = "no"
+    return lines
 
 
 CONFIRM = "adk_request_confirmation"
@@ -264,7 +368,9 @@ def _safely(fn, *args):
 
 def approval_from_confirmation(fc: Any, invocation_id: str, session_id: str, store: Store) -> dict[str, Any]:
     """Code, not the model, writes what the card says: the summary comes from the tool arguments (an add-on writes the
-    card for its own tools, from its audit log), provenance from the mail the model has seen recently in this session."""
+    card for its own tools, from its audit log), provenance from the mail the model has seen recently in this session.
+    call_id: the id of the tool call waiting for the tap (ADK wraps it as originalFunctionCall); None when the
+    confirmation does not say."""
     from odie.signin import guard as signin_guard
     args = dict(fc.args or {})
     orig = args.get("originalFunctionCall") or {}
@@ -311,8 +417,8 @@ def approval_from_confirmation(fc: Any, invocation_id: str, session_id: str, sto
     mails = store.recent_mail_seen(session_id)
     if risk == "normal" and mails:
         risk = "from_email" if any(m.get("turn") == "current" for m in mails) else "mail_earlier"
-    return {"tool": tool, "args": targs, "request_id": fc.id, "invocation_id": invocation_id, "session_id": session_id,
-            "summary": summary, "detail": detail, "provenance": mails, "risk": risk}
+    return {"tool": tool, "args": targs, "request_id": fc.id, "call_id": orig.get("id"), "invocation_id": invocation_id,
+            "session_id": session_id, "summary": summary, "detail": detail, "provenance": mails, "risk": risk}
 
 
 def push_body(a: dict) -> str:
@@ -349,24 +455,40 @@ def usage_of(ev: Any) -> dict[str, int] | None:
     return {"input": u.prompt_token_count, "cached": u.cached_content_token_count or 0, "output": u.candidates_token_count or 0}
 
 
-def event_to_sse(ev: Any) -> list[dict[str, Any]]:
+def event_to_sse(ev: Any, asked: set[str] | None = None) -> list[dict[str, Any]]:
+    """One ADK event as the items the chat stream carries. Every tool call is a step, gated ones too; only ADK's own
+    approval question (adk_request_confirmation) stays out, because the approval card shows it. `asked`: the calls
+    answered "requires confirmation" so far in this run (the caller keeps one set per run); a call in it was asked on
+    a card, so its result is never a pass.
+      call run_shell id c1               -> tool_start {id c1, gated True}
+      its answer "requires confirmation" -> tool_wait {id c1}
+      its answer {"result": "a.txt"}     -> tool_done {id c1, result "a.txt", allowed {"by": "pass"}}
+      that answer, c1 asked before       -> tool_done {id c1, result "a.txt"} (no allowed: the card's row says)
+      its answer "is rejected"           -> tool_done {id c1, result "", allowed {"by": "no"}}
+    The answer is matched to its call by id, never by place: two calls in one event may be answered in either order.
+    Every item also carries "inv", the event's invocation id ("" when the event has none):
+      any item from an event of turn inv-7 -> {..., "inv": "inv-7"}"""
     if getattr(ev, "author", None) == "user" or not getattr(ev, "content", None) or not ev.content.parts:
         return []
     out: list[dict[str, Any]] = []
+    if asked is None:
+        asked = set()
     partial = bool(getattr(ev, "partial", False))
-    hidden = GATED_TOOLS | addons.gated_tools()
+    gated_names = GATED_TOOLS | addons.gated_tools()
+    invocation_id = getattr(ev, "invocation_id", "") or ""
     for p in ev.content.parts:
         if getattr(p, "thought", False):  # the model's reasoning (DeepSeek's, Gemma's, Claude's summary): never shown as the reply
             continue
         if p.function_call:
-            if not partial and p.function_call.name not in hidden:  # gated calls are shown by their approval card
-                out.append({"type": "tool_start", "tool": p.function_call.name, "args": dict(p.function_call.args or {})})
+            call = p.function_call
+            if not partial and call.name != CONFIRM:
+                args = dict(call.args or {})
+                out.append({"type": "tool_start", "tool": call.name, "id": call.id, "args": capped_args(call.name, args),
+                            "gated": call.name in gated_names})
         elif p.function_response:
-            if not partial and p.function_response.name not in hidden:
-                out.append({"type": "tool_done", "tool": p.function_response.name})
-                m = media_of(p.function_response.response)
-                if m:
-                    out.append({"type": "media", "media": m})
+            answer = p.function_response
+            if not partial and answer.name != CONFIRM:
+                out.extend(_answer_items(answer, invocation_id, asked))
         elif p.text:
             item = {"type": "token" if ev.partial else "text", "text": p.text}
             key = reply_key(ev)
@@ -376,7 +498,49 @@ def event_to_sse(ev: Any) -> list[dict[str, Any]]:
             if usage:
                 item["usage"] = usage  # the finished reply's counts, for the line under it
             out.append(item)
+    for item in out:
+        item["inv"] = invocation_id  # the turn this came from, so a continuation after a tap joins that turn's message
     return out
+
+
+def step_after_tap(item: dict[str, Any], row: Any, approve: bool) -> dict[str, Any]:
+    """The `step` bus event for a finished tool call in a resumed run, so the open chat fills the step in live.
+    The call the tap was about says who let it run; any other finished call keeps what the stream said about it.
+      tapped call c1, approved     -> allowed {"by": "you", "at": <decided_at>}
+      tapped call c1, rejected     -> allowed {"by": "no", "at": <decided_at>}, result "" (nothing ran)
+      another call c2 run_shell    -> allowed {"by": "pass"} as the stream gave it
+      another call c2 web_search   -> no allowed key at all"""
+    step: dict[str, Any] = {"type": "step", "session_id": row["session_id"], "inv": item.get("inv", ""), "id": item["id"],
+                            "tool": item["tool"], "result": item["result"]}
+    if item["id"] == row["call_id"]:
+        step["allowed"] = {"by": "you" if approve else "no", "at": row["decided_at"]}
+    elif "allowed" in item:
+        step["allowed"] = item["allowed"]
+    return step
+
+
+def _answer_items(answer: Any, invocation_id: str, asked: set[str]) -> list[dict[str, Any]]:
+    """The stream items for one tool answer: a "wait" while it needs a tap, otherwise the finished step (plus its media).
+    A wait adds the call to `asked`, so its later result is never a pass.
+      {"error": "This tool call requires confirmation..."} -> [tool_wait]
+      {"error": "This tool call is rejected."}             -> [tool_done with result "" and allowed {"by": "no"}]
+      run_shell {"result": "a.txt"}                        -> [tool_done with result "a.txt" and allowed {"by": "pass"}]
+      run_shell {"result": "a.txt"}, asked before          -> [tool_done with result "a.txt", no allowed]
+      speak {"result": "...", "media": {...}}              -> [tool_done with made True, media]"""
+    was_asked = answer.id in asked
+    state, result, allowed = answer_of(answer.name, answer.id, invocation_id, answer.response, asked=was_asked)
+    if state == "wait":
+        asked.add(answer.id)
+        return [{"type": "tool_wait", "tool": answer.name, "id": answer.id}]
+    done: dict[str, Any] = {"type": "tool_done", "tool": answer.name, "id": answer.id, "result": result}
+    if allowed is not None:
+        done["allowed"] = allowed
+    items = [done]
+    media = media_of(answer.response)
+    if media:
+        done["made"] = True
+        items.append({"type": "media", "media": media})
+    return items
 
 
 def reply_key(ev: Any) -> str | None:
@@ -420,6 +584,7 @@ class OdieRunner:
         self.tz = ZoneInfo(s.timezone)
         self._current_prompt = ""
         self._prompt_session = ""
+        self._day_summary = ""  # the summary the current static prompt carries
         self._model_key: tuple | None = None
         self.gated = True  # approval-gated tools are loaded (send, trash, invites, shell)
         self.memory = memory_file()
@@ -437,6 +602,7 @@ class OdieRunner:
         builder.hooks.update(store=store, reload=self.load_plugins, reserved=lambda: self._all_tool_names())
         from odie import trackers
         trackers.hooks.update(store=store, tz=self.tz)
+        approvals_mode.hooks.update(store=store)
         from odie import about
         about.hooks.update(runner=self)
         from odie.making import jobs as making_jobs
@@ -590,9 +756,9 @@ class OdieRunner:
         """The memory file changed (update_memory, the review): when it's in the vault, the notes index re-reads it.
         The system prompt keeps the memory titles it started the chat with: rebuilding it mid-chat would change the
         very start of every later request, so the model would read the whole conversation again (and Claude would drop
-        its kept thoughts). The change still reaches the model: each message's [memories] block searches the memory
-        as it is now, search_memories and fetch_memory read it live, and the next chat (tomorrow, or a new chat) lists
-        the new titles.
+        its kept thoughts). The change still reaches the model: each message's [memories] block finds it at once,
+        fetch_memory reads it live, recall finds it once the index worker re-syncs, and the next chat (tomorrow, or a
+        new chat) lists the new titles.
           "Remember I prefer aisle seats" at 10:00 -> saved; this chat's system prompt is unchanged
           "Which seat do I like?" at 10:05         -> the [memories] block finds the new entry"""
         worker = getattr(self, "vault_worker", None)
@@ -644,15 +810,35 @@ class OdieRunner:
             from odie import persona
             who = self.who()
             self._caps = who.caps
-            self._current_prompt = persona.apply_name(build_static_prompt(now, self.load_soul(), self.memory_index(), gated=self.gated,
-                                                                          who=who), persona.get(self.store)["name"])
+            from odie.morning.round import morning_day
+            self._day_summary = self.day_summary(now)
+            static = build_static_prompt(now, self.load_soul(), self.memory_index(), gated=self.gated, who=who,
+                                         day_summary=self._day_summary, summary_day=morning_day(now))
+            self._current_prompt = persona.apply_name(static, persona.get(self.store)["name"])
             self._prompt_session = session_id
         rows = self.store.open_tasks(now.isoformat(timespec="minutes"))[:10]
-        brief = self.store.one("select text from briefs where date=? order by id desc limit 1", (now.strftime("%Y-%m-%d"),))
+        # The day summary already carries the brief's news, so a chat that has the summary doesn't get the brief too.
+        brief = None
+        if not self._day_summary:
+            brief = self.store.one("select text from briefs where date=? order by id desc limit 1", (now.strftime("%Y-%m-%d"),))
         from odie import location
         place, seen, home = location.location_bits(location.get(self.store), now)  # a place name and home, never coordinates
         return build_turn_context(now, self.prefetch(text), threads_summary(self.store), format_open_threads(rows),
-                                  brief["text"] if brief else "", caps=getattr(self, "_caps", ALL_CAPS), place=place, seen=seen, home=home)
+                                  brief["text"] if brief else "", caps=getattr(self, "_caps", ALL_CAPS), place=place, seen=seen, home=home,
+                                  approvals=approvals_mode.context_line(self.store))
+
+    def day_summary(self, now: datetime) -> str:
+        """The summary of today's morning hello, or "" when there is none or it can't be read: a hello saved for this
+        morning day -> its summary; no hello yet, or a row that fails to load -> "" (the chat starts without it)."""
+        from odie.morning.round import hello_for, morning_day
+        try:
+            hello = hello_for(self.store, morning_day(now))
+        except Exception:
+            log.warning("could not read today's hello summary", exc_info=True)
+            return ""
+        if hello is None:
+            return ""
+        return hello["summary"]
 
     def who(self) -> Who:
         """Who the prompt is for: the profile's name, this computer, the local currency, what this install can do, and
@@ -663,10 +849,11 @@ class OdieRunner:
                    assistant=persona.get(self.store)["name"])
 
     async def chat(self, text: str, thinking: bool | None = None, session_id: str | None = None,
-                   images: list[str] | None = None) -> AsyncIterator[dict[str, Any]]:
+                   images: list[str] | None = None, via: str | None = None) -> AsyncIterator[dict[str, Any]]:
         """One user turn. session_id defaults to today's chat session; pass one to start elsewhere (eval, new thread).
         thinking: Think harder for this turn; None (every app now) uses the chat's own (odie.thinking).
-        images: upload ids; each becomes an inline image part the vision model sees, and an [image:id] marker in the text."""
+        images: upload ids; each becomes an inline image part the vision model sees, and an [image:id] marker in the text.
+        via: "terminal" when the odie command sent it (odie chat): VIA_TERMINAL joins the hidden context."""
         s = config.settings
         today = datetime.now(self.tz).strftime("%Y-%m-%d")
         session_id = session_id or self.current_session_id(today)
@@ -687,6 +874,8 @@ class OdieRunner:
             # Think harder on a local server: words at the very end, after everything its cache holds (the effort stays).
             # They stay in the history as sent, so later turns replay the same text.
             trailer += think_harder_words(selection, thinking)
+            if via == "terminal":
+                trailer += VIA_TERMINAL
             parts: list[types.Part] = []
             markers = ""
             for iid in images or []:
@@ -733,12 +922,13 @@ class OdieRunner:
             checks = [c for c in addons.call("turn_check") if c is not None]  # each add-on's watcher for this turn
             nudge = None
             said_private = False
+            asked: set[str] = set()  # the calls a card asked about in this turn: their results are never a pass
             for attempt in range(2):
                 text_before = len(final)
                 async with aclosing(self.runner.run_async(user_id=s.user_id, session_id=session_id, new_message=message,
                                                           run_config=chat_run_config())) as events:
                     async for ev in events:
-                        for item in event_to_sse(ev):
+                        for item in event_to_sse(ev, asked):
                             if item["type"] in ("token", "text") and not said_private and turn_words.private_sites():
                                 said_private = True
                                 yield {"type": "private"}  # the app holds web images in this reply until a tap
@@ -748,8 +938,6 @@ class OdieRunner:
                                 item["session_id"] = session_id  # with its key, where the reply's checklist ticks are saved
                             if item["type"] == "tool_start":
                                 called.add(item["tool"])
-                                if item["tool"] == CONFIRM:
-                                    continue  # surfaced as an approval card below, not as a tool chip
                             yield item
                         for card in self._approvals_in(ev, session_id):
                             called.add(card.get("tool", ""))
@@ -816,7 +1004,7 @@ class OdieRunner:
             await self.post_message(unsaved_note, session_id=session_id)
         if not was_private:  # a turn that read a signed-in page never feeds the memory review
             self._note_turn(text, "".join(final))
-        yield {"type": "done", "text": "".join(final)}
+        yield {"type": "done", "text": "".join(final), "session_id": session_id}  # the thread, also when a card ended it
 
     def request_stop(self, session_id: str) -> None:
         """The user tapped Stop: the turn in this session ends at its next safe point."""
@@ -826,7 +1014,8 @@ class OdieRunner:
         """One thread's messages, oldest first, paged like history()."""
         s = config.settings
         sess = await self.session_service.get_session(app_name=s.app_name, user_id=s.user_id, session_id=sid)
-        items = merge_approvals(self._marked(sid, events_to_history(sess.events if sess else [])), self.store.approvals_in_sessions([sid]))
+        lines = steps_with_allowed(self.store, sid, self._marked(sid, events_to_history(sess.events if sess else [])))
+        items = merge_approvals(lines, self.store.approvals_in_sessions([sid]))
         items = with_session(sid, items)
         total = len(items)
         end = min(before, total) if before is not None else total
@@ -844,7 +1033,9 @@ class OdieRunner:
             sess = await self.session_service.get_session(app_name=s.app_name, user_id=s.user_id, session_id=sid)
             if sess is None:
                 break
-            items += with_session(sid, self._marked(sid, events_to_history(sess.events)))
+            lines = events_to_history(sess.events)
+            lines = steps_with_allowed(self.store, sid, self._marked(sid, lines))
+            items += with_session(sid, lines)
             sids.append(sid)
             n += 1
         items = merge_approvals(items, self.store.approvals_in_sessions(sids))
@@ -873,7 +1064,8 @@ class OdieRunner:
                 continue
             inv = getattr(ev, "invocation_id", "") or ""
             a = approval_from_confirmation(fc, inv, session_id, self.store)
-            aid = self.store.create_approval(session_id, inv, a["request_id"], a["tool"], a["args"], a["summary"], a["detail"], a["provenance"], a["risk"])
+            aid = self.store.create_approval(session_id, inv, a["request_id"], a["tool"], a["args"], a["summary"], a["detail"], a["provenance"], a["risk"],
+                                             call_id=a["call_id"])
             self.store.audit("agent", "approval_requested", tool=a["tool"], args=a["args"], result_summary=a["summary"], session_id=session_id, invocation_id=inv, approval_id=aid)
             card = {"type": "approval", "id": aid, "tool": a["tool"], "summary": a["summary"], "detail": a["detail"],
                     "provenance": a["provenance"], "risk": a["risk"], "status": "pending"}
@@ -894,12 +1086,14 @@ class OdieRunner:
             return {"error": "no such approval"}
         if not self.store.decide_approval(approval_id, approve):
             return {"error": f"already {self.store.get_approval(approval_id)['status']}"}
+        row = self.store.get_approval(approval_id)  # again, so it carries decided_at
         self.store.audit("user", "approval_" + ("approved" if approve else "rejected"), tool=row["tool"], session_id=row["session_id"],
                          invocation_id=row["invocation_id"], approval_id=approval_id)
         await self.bus.publish({"type": "approval", "id": approval_id, "status": "approved" if approve else "rejected", "summary": row["summary"], "tool": row["tool"]})
         msg = types.Content(role="user", parts=[types.Part(function_response=types.FunctionResponse(
             id=row["request_id"], name=CONFIRM, response={"confirmed": bool(approve)}))])
-        final: list[str] = []
+        final: list[str] = []  # each reply the model wrote after the tap (one event's text parts make one reply)
+        asked = {row["call_id"]} if row["call_id"] else set()  # the tapped call was asked: its result is no pass
         from odie.agent import turn
         async with self.lock_for(row["session_id"]):
             words = turn.USER_TEXT.set(await self._words_of(row["session_id"], row["invocation_id"]))  # the paused turn, resumed
@@ -912,9 +1106,19 @@ class OdieRunner:
             try:
                 async for ev in self.runner.run_async(user_id=s.user_id, session_id=row["session_id"], invocation_id=row["invocation_id"],
                                                       new_message=msg, run_config=chat_run_config()):
-                    for item in event_to_sse(ev):
-                        if item["type"] == "text":
-                            final.append(item["text"])
+                    items = event_to_sse(ev, asked)
+                    reply = "".join(item["text"] for item in items if item["type"] == "text")
+                    if reply:
+                        final.append(reply)
+                    for item in items:
+                        if item["type"] == "tool_start":
+                            await self.bus.publish({"type": "step_start", "session_id": row["session_id"], "inv": item["inv"], "id": item["id"],
+                                                    "tool": item["tool"], "args": item["args"], "gated": item["gated"]})
+                        elif item["type"] == "tool_wait":
+                            await self.bus.publish({"type": "step_wait", "session_id": row["session_id"], "inv": item["inv"], "id": item["id"],
+                                                    "tool": item["tool"]})
+                        elif item["type"] == "tool_done":
+                            await self.bus.publish(step_after_tap(item, row, approve))
                     for card in self._approvals_in(ev, row["session_id"]):
                         await self.bus.publish(card)
             except Exception as e:  # noqa: BLE001
@@ -928,11 +1132,14 @@ class OdieRunner:
                 turn.PRIVATE.reset(private)
                 turn.READ.reset(read)
                 turn.HISTORY_LIMIT.reset(compact)
-        text = "".join(final) or ("Done." if approve else "Okay, I left it.")
-        self.store.set_approval_result(approval_id, text)
-        from odie.signin import guard as signin_guard
-        await self.bus.publish({"type": "message", "kind": "reply", "text": text, "ts": time.time(), "session_id": row["session_id"],
-                                **({"private": True} if signin_guard.private_of(self.store, row["session_id"]) else {})})
+        # The model's own words after the tool, its replies a paragraph each as the history folds them on reload, or ""
+        # when it said nothing: no filler is made up.
+        text = "\n\n".join(final)
+        self.store.set_approval_result(approval_id, text)  # "" still marks the card finished (never None)
+        if text.strip():
+            from odie.signin import guard as signin_guard
+            await self.bus.publish({"type": "message", "kind": "reply", "text": text, "ts": time.time(), "session_id": row["session_id"],
+                                    "inv": row["invocation_id"], **({"private": True} if signin_guard.private_of(self.store, row["session_id"]) else {})})
         await self.bus.publish({"type": "approval_done", "id": approval_id, "status": "approved" if approve else "rejected", "text": text})
         return {"text": text}
 
@@ -1204,7 +1411,7 @@ class OdieRunner:
                 for e in skills:
                     if e.status == "ok":
                         reserved.update({t: f"the {e.name} skill" for t in e.tools})
-                servers = await load_servers(reserved=reserved)
+                servers = await load_servers(reserved=reserved, smart=lambda session_id: approvals_mode.runs_free(self.store, session_id))
                 ok = [e for e in servers if e.status == "ok"]
                 skill_ts = build_skill_toolset(skills, extra_skills=[e.skill for e in ok if e.skill],
                                                extra_tools=[e.toolset for e in ok if e.skill])

@@ -24,6 +24,13 @@ describe("notesRow", () => {
     expect(r.sub).toBe("Reading by meaning: 120 of 900 passages");
   });
 
+  it("counts past chats while recall reads them by meaning", () => {
+    const r = notesRow({ ...base, settings: { ...base.settings, embeddings: { provider: "ollama", model: "nomic-embed-text" } },
+                         progress: { running: true, done: 40, total: 1200, phase: "recall", error: "" } })!;
+    expect(r.sub).toBe("Recall: past chats by meaning, 40 of 1,200 passages");
+    expect(r.state).toBe("busy");
+  });
+
   it("says keyword only, or keyword and meaning, when idle", () => {
     expect(notesRow(base)!.sub).toBe("1,280 notes · keyword search");
     const meaning = notesRow({ ...base, status: { ...base.status!, vectors: 4000, model: "ollama:nomic-embed-text" } })!;

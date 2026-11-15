@@ -149,8 +149,8 @@ async def test_a_streamed_reply_says_which_session_it_is_in(isolated_settings, t
     r.runner.run_async = fake_run
     events = [e async for e in r.chat("hi", session_id="chat-2099-01-01-2")]
     texts = [e for e in events if e["type"] in ("token", "text")]
-    assert texts == [{"type": "token", "text": "Pack ", "key": "ev-1", "session_id": "chat-2099-01-01-2"},
-                     {"type": "text", "text": "Pack these.", "key": "ev-1", "session_id": "chat-2099-01-01-2"}]
+    assert texts == [{"type": "token", "text": "Pack ", "key": "ev-1", "inv": "", "session_id": "chat-2099-01-01-2"},
+                     {"type": "text", "text": "Pack these.", "key": "ev-1", "inv": "", "session_id": "chat-2099-01-01-2"}]
     await r.close()
 
 

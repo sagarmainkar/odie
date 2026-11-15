@@ -141,6 +141,6 @@ def test_each_due_tracker_gets_its_own_five_minutes(isolated_settings, tmp_path)
     assert part.name == "trackers" and part.limit >= trackers.PER_RUN * 300  # one run checks up to PER_RUN trackers
 
 
-def test_the_brief_gets_ten_minutes():
+def test_the_morning_round_gets_fifteen_minutes():
     from odie.app.main import BRIEF_LIMIT
-    assert BRIEF_LIMIT >= 600  # gathering plus a 3-minute completion on a slow local model
+    assert BRIEF_LIMIT >= 900  # the brief and the hello: two model calls, each after its own gathering

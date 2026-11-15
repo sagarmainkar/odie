@@ -34,7 +34,7 @@ class Store:
 
     TASK_COLUMNS = {"delivered_at": "TEXT", "snoozed_until": "TEXT", "last_seen_at": "TEXT", "detail": "TEXT",
                     "seen_at": "TEXT", "notice_media": "TEXT"}  # the curtain: when the user acted or dismissed; a spoken memo, as JSON
-    APPROVAL_COLUMNS = {"risk": "TEXT"}
+    APPROVAL_COLUMNS = {"risk": "TEXT", "call_id": "TEXT"}  # call_id: the tool call this approval answered
     PUSH_COLUMNS = {"device_id": "INTEGER"}  # the paired device that subscribed (none before pairing)
     TRACKER_COLUMNS = {"page_url": "TEXT", "signin_allowed": "INTEGER NOT NULL DEFAULT 0"}  # a signed-in tracker's page and the user's Allow
 
@@ -164,11 +164,12 @@ class Store:
 
     # approvals: the index over ADK's pending tool confirmations
     def create_approval(self, session_id: str, invocation_id: str, request_id: str, tool: str, args: dict, summary: str,
-                        detail: dict | None, provenance: list | None, risk: str = "normal") -> int:
+                        detail: dict | None, provenance: list | None, risk: str = "normal",
+                        call_id: str | None = None) -> int:
         return self.execute(
-            "insert into approvals(session_id,invocation_id,request_id,tool,args_json,summary,detail_json,provenance_json,risk) values(?,?,?,?,?,?,?,?,?)",
+            "insert into approvals(session_id,invocation_id,request_id,tool,args_json,summary,detail_json,provenance_json,risk,call_id) values(?,?,?,?,?,?,?,?,?,?)",
             (session_id, invocation_id, request_id, tool, json.dumps(args, default=str), summary,
-             json.dumps(detail or {}, default=str), json.dumps(provenance or [], default=str), risk)).lastrowid
+             json.dumps(detail or {}, default=str), json.dumps(provenance or [], default=str), risk, call_id)).lastrowid
 
     def pending_approvals(self) -> list[sqlite3.Row]:
         return self.query("select * from approvals where status='pending' order by id")
@@ -178,6 +179,12 @@ class Store:
             return []
         marks = ",".join("?" * len(session_ids))
         return self.query(f"select * from approvals where session_id in ({marks}) order by id", tuple(session_ids))
+
+    def approvals_for_calls(self, session_id: str) -> list[sqlite3.Row]:
+        """The approvals of one session that the person answered (yes or no) or that lapsed untapped, oldest first. A
+        pending one is left out: its card can still be tapped."""
+        return self.query("select * from approvals where session_id=? and status in ('approved','rejected','expired') order by id",
+                          (session_id,))
 
     def get_approval(self, approval_id: int) -> sqlite3.Row | None:
         return self.one("select * from approvals where id=?", (approval_id,))
@@ -238,6 +245,17 @@ class Store:
     def log_mail_seen(self, session_id: str | None, invocation_id: str | None, from_: str, subject: str, via: str) -> None:
         self.audit("agent", "mail_seen", tool=via, args={"from": from_[:200], "subject": subject[:200], "via": via},
                    session_id=session_id, invocation_id=invocation_id)
+
+    def tools_called_this_turn(self, session_id: str) -> list[str]:
+        """The names of the tools the model has called since the user's latest message in this chat, oldest first;
+        [] before the first message or when nothing ran yet. ("gmail_find_email", "run_shell" this turn) ->
+        ["gmail_find_email", "run_shell"]."""
+        latest = self.one("select id from audit_log where session_id=? and actor='user' and event='message' order by id desc limit 1",
+                          (session_id,))
+        if latest is None:
+            return []
+        rows = self.query("select tool from audit_log where session_id=? and event='tool_call' and id > ? order by id", (session_id, latest["id"]))
+        return [r["tool"] for r in rows if r["tool"]]
 
     def recent_mail_seen(self, session_id: str, limit: int = 10) -> list[dict]:
         """Mail the model has seen in this session, tagged by turn: 'current' (since the latest user message) or

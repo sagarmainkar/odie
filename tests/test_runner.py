@@ -24,13 +24,30 @@ def _part(text=None, fc=None, fr=None):
 
 
 def test_event_to_sse_maps_kinds():
-    assert event_to_sse(_ev([_part(text="Hel")], partial=True)) == [{"type": "token", "text": "Hel"}]
+    assert event_to_sse(_ev([_part(text="Hel")], partial=True)) == [{"type": "token", "text": "Hel", "inv": ""}]
     fc = SimpleNamespace(name="gmail_search", args={"query": "x"}, id="1")
-    assert event_to_sse(_ev([_part(fc=fc)])) == [{"type": "tool_start", "tool": "gmail_search", "args": {"query": "x"}}]
+    assert event_to_sse(_ev([_part(fc=fc)])) == [
+        {"type": "tool_start", "tool": "gmail_search", "id": "1", "args": {"query": "x"}, "gated": False, "inv": ""}]
     fr = SimpleNamespace(name="gmail_search", response={"result": "3 hits"}, id="1")
-    assert event_to_sse(_ev([_part(fr=fr)])) == [{"type": "tool_done", "tool": "gmail_search"}]
-    assert event_to_sse(_ev([_part(text="Final")])) == [{"type": "text", "text": "Final"}]
+    assert event_to_sse(_ev([_part(fr=fr)])) == [{"type": "tool_done", "tool": "gmail_search", "id": "1", "result": "3 hits", "inv": ""}]
+    assert event_to_sse(_ev([_part(text="Final")])) == [{"type": "text", "text": "Final", "inv": ""}]
     assert event_to_sse(_ev([_part(text="you")], author="user")) == []
+
+
+def test_sse_items_carry_their_turn():
+    # Every item names the turn (invocation) it came from, so a continuation can join the message it belongs to.
+    #   text from inv-7 -> {"type": "text", "text": "Hi", "inv": "inv-7"}; an event with no id -> inv ""
+    call = SimpleNamespace(name="web_search", args={"query": "a"}, id="c1")
+    answer = SimpleNamespace(name="web_search", id="c1", response={"result": "3 hits"})
+    ev = _ev([_part(text="Hi"), _part(fc=call), _part(fr=answer)])
+    ev.invocation_id = "inv-7"
+    items = event_to_sse(ev)
+    assert [i["type"] for i in items] == ["text", "tool_start", "tool_done"]
+    assert [i["inv"] for i in items] == ["inv-7", "inv-7", "inv-7"]
+    streaming = _ev([_part(text="Hel")], partial=True)
+    streaming.invocation_id = "inv-7"
+    assert event_to_sse(streaming)[0]["inv"] == "inv-7"
+    assert event_to_sse(_ev([_part(text="Hi")]))[0]["inv"] == ""  # a test double with no id
 
 
 def test_event_to_sse_ignores_partial_tool_chunks():
@@ -38,6 +55,65 @@ def test_event_to_sse_ignores_partial_tool_chunks():
     assert event_to_sse(_ev([_part(fc=fc)], partial=True)) == []
     fr = SimpleNamespace(name="gmail_search", response={"result": "ok"}, id="1")
     assert event_to_sse(_ev([_part(fr=fr)], partial=True)) == []
+
+
+def test_sse_shows_a_gated_call_and_its_wait():
+    call = SimpleNamespace(name="run_shell", args={"command": "rm old.txt"}, id="c1")
+    assert event_to_sse(_ev([_part(fc=call)])) == [
+        {"type": "tool_start", "tool": "run_shell", "id": "c1", "args": {"command": "rm old.txt"}, "gated": True, "inv": ""}]
+    waiting = SimpleNamespace(name="run_shell", id="c1",
+                              response={"error": "This tool call requires confirmation, please approve or reject."})
+    assert event_to_sse(_ev([_part(fr=waiting)])) == [{"type": "tool_wait", "tool": "run_shell", "id": "c1", "inv": ""}]
+    ask = SimpleNamespace(name="adk_request_confirmation", args={"toolConfirmation": {}}, id="q1")
+    assert event_to_sse(_ev([_part(fc=ask)])) == []  # ADK's own question is shown as the approval card, never as a step
+
+
+def test_sse_tool_done_carries_the_result_and_id():
+    web = SimpleNamespace(name="web_fetch", id="c2", response={"result": "page text"})
+    assert event_to_sse(_ev([_part(fr=web)])) == [{"type": "tool_done", "tool": "web_fetch", "id": "c2", "result": "page text", "inv": ""}]
+    shell = SimpleNamespace(name="run_shell", id="c3", response={"result": "a.txt"})
+    assert event_to_sse(_ev([_part(fr=shell)])) == [
+        {"type": "tool_done", "tool": "run_shell", "id": "c3", "result": "a.txt", "allowed": {"by": "pass"}, "inv": ""}]
+    nothing = SimpleNamespace(name="now", id="c4", response=None)
+    assert event_to_sse(_ev([_part(fr=nothing)])) == [{"type": "tool_done", "tool": "now", "id": "c4", "result": "", "inv": ""}]
+
+
+def test_sse_two_calls_in_one_event_keep_their_ids():
+    first = SimpleNamespace(name="web_search", args={"query": "a"}, id="c1")
+    second = SimpleNamespace(name="web_search", args={"query": "b"}, id="c2")
+    started = event_to_sse(_ev([_part(fc=first), _part(fc=second)]))
+    assert [(i["type"], i["id"], i["args"]["query"]) for i in started] == [("tool_start", "c1", "a"), ("tool_start", "c2", "b")]
+    # the answers arrive in the other order: each is told apart by its id, not its place
+    late = SimpleNamespace(name="web_search", id="c2", response={"result": "B"})
+    early = SimpleNamespace(name="web_search", id="c1", response={"result": "A"})
+    done = event_to_sse(_ev([_part(fr=late), _part(fr=early)]))
+    assert [(i["id"], i["result"]) for i in done] == [("c2", "B"), ("c1", "A")]
+
+
+def test_sse_a_rejected_call_has_no_output():
+    no = SimpleNamespace(name="run_shell", id="c1", response={"error": "This tool call is rejected."})
+    assert event_to_sse(_ev([_part(fr=no)])) == [
+        {"type": "tool_done", "tool": "run_shell", "id": "c1", "result": "", "allowed": {"by": "no"}, "inv": ""}]
+
+
+def test_sse_a_shell_call_that_was_asked_is_no_pass():
+    # The stream saw the wait for c1, so its result later in the run is not a pass; another shell call still is.
+    asked: set[str] = set()
+    waiting = SimpleNamespace(name="run_shell", id="c1",
+                              response={"error": "This tool call requires confirmation, please approve or reject."})
+    assert event_to_sse(_ev([_part(fr=waiting)]), asked) == [{"type": "tool_wait", "tool": "run_shell", "id": "c1", "inv": ""}]
+    ran = SimpleNamespace(name="run_shell", id="c1", response={"result": "a.txt"})
+    assert event_to_sse(_ev([_part(fr=ran)]), asked) == [{"type": "tool_done", "tool": "run_shell", "id": "c1", "result": "a.txt", "inv": ""}]
+    other = SimpleNamespace(name="run_shell", id="c2", response={"result": "b.txt"})
+    assert event_to_sse(_ev([_part(fr=other)]), asked)[0]["allowed"] == {"by": "pass"}
+
+
+def test_sse_a_step_that_made_a_file_says_so(isolated_settings):
+    memo = {"id": "0123456789abcdef", "kind": "memo", "title": "Good morning", "mime": "audio/wav", "size": 10, "created": 1.0}
+    spoke = SimpleNamespace(name="speak", id="c1", response={"result": "The memo is under your reply.", "media": memo})
+    done, media = event_to_sse(_ev([_part(fr=spoke)]))
+    assert done == {"type": "tool_done", "tool": "speak", "id": "c1", "result": "The memo is under your reply.", "made": True, "inv": ""}
+    assert media["type"] == "media"
 
 
 async def test_chat_stream_error_event(isolated_settings, monkeypatch, tmp_path):
@@ -388,3 +464,72 @@ async def test_a_failed_server_is_retried_in_the_background(isolated_settings, t
         assert len(calls) >= 1  # it tried again by itself
     finally:
         await r.close()
+
+
+def _save_hello(store, runner, summary: str) -> None:
+    """Save a hello for the morning day the runner is in now (whatever the clock says)."""
+    from odie.morning.round import morning_day
+    day = morning_day(datetime.now(runner.tz))
+    store.execute("insert into mornings(day, card_json, summary, made_at) values(?,?,?,?)", (day, "{}", summary, "2026-11-04T07:30:00"))
+
+
+def _save_brief(store, runner, text: str) -> None:
+    store.execute("insert into briefs(date, text) values(?,?)", (datetime.now(runner.tz).strftime("%Y-%m-%d"), text))
+
+
+async def test_a_chat_starts_from_the_days_summary_and_drops_the_brief_block(isolated_settings, tmp_path):
+    s = Store(tmp_path / "assistant.db")
+    assert str(s.path).startswith(str(tmp_path))
+    s.init_schema()
+    r = OdieRunner(s)
+    _save_hello(s, r, "Dev wrote about the studio lease; nothing on the calendar before noon.")
+    _save_brief(s, r, "Brief: sunny, two mails.")
+    trailer = r._prepare_prompt("chat-2026-11-04", "hello")
+    assert r._current_prompt.endswith("Dev wrote about the studio lease; nothing on the calendar before noon.")
+    assert "today's brief" not in trailer
+    await r.close()
+
+
+async def test_with_no_hello_the_brief_stays_in_the_turn(isolated_settings, tmp_path):
+    s = Store(tmp_path / "assistant.db")
+    assert str(s.path).startswith(str(tmp_path))
+    s.init_schema()
+    r = OdieRunner(s)
+    _save_brief(s, r, "Brief: sunny, two mails.")
+    trailer = r._prepare_prompt("chat-2026-11-04", "hello")
+    assert "summary of the user's day" not in r._current_prompt
+    assert "[today's brief" in trailer and "sunny, two mails" in trailer
+    await r.close()
+
+
+async def test_the_prompt_stays_byte_identical_within_a_chat(isolated_settings, tmp_path):
+    s = Store(tmp_path / "assistant.db")
+    assert str(s.path).startswith(str(tmp_path))
+    s.init_schema()
+    r = OdieRunner(s)
+    _save_hello(s, r, "A quiet day.")
+    r._prepare_prompt("chat-2026-11-04", "first")
+    first = r._current_prompt
+    s.execute("update mornings set summary = ?", ("Changed behind the chat's back.",))
+    r._prepare_prompt("chat-2026-11-04", "second")
+    assert r._current_prompt == first and first.endswith("A quiet day.")
+    r.invalidate_prompt()  # what the morning round does after saving a hello
+    r._prepare_prompt("chat-2026-11-04", "third")
+    assert r._current_prompt.endswith("Changed behind the chat's back.")
+    await r.close()
+
+
+async def test_a_broken_hello_lookup_means_no_summary(isolated_settings, tmp_path, monkeypatch):
+    import odie.morning.round as morning_round
+    s = Store(tmp_path / "assistant.db")
+    assert str(s.path).startswith(str(tmp_path))
+    s.init_schema()
+    r = OdieRunner(s)
+
+    def boom(store, day):
+        raise RuntimeError("bad row")
+    monkeypatch.setattr(morning_round, "hello_for", boom)
+    _save_brief(s, r, "Brief: sunny.")
+    trailer = r._prepare_prompt("chat-2026-11-04", "hello")
+    assert "summary of the user's day" not in r._current_prompt and "[today's brief" in trailer
+    await r.close()

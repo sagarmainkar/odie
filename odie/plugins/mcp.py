@@ -12,6 +12,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -20,6 +21,7 @@ from google.adk.skills.models import Frontmatter, Skill
 from mcp import StdioServerParameters
 
 from odie import config
+from odie.approvals_mode import asks_by_name, name_words
 from odie.setup.keys import KEY_PREFIX, SECRET_NAME, secret_part
 
 MAX_EVENT_BYTES = 32 * 1024 * 1024
@@ -78,23 +80,31 @@ _JOINS = frozenset({"and", "or", "then", "plus"})  # two actions in one tool: ne
 def is_read_name(name: str) -> bool:
     """A tool whose name says it reads (find, get, list, search, fetch) and says nothing about changing anything:
     gmail_find_email and GMAIL_FETCH_EMAILS are reads; get_or_create_contact and COMPOSIO_MULTI_EXECUTE_TOOL aren't."""
-    words = {w.lower() for w in re.split(r"[_\-\s.]+|(?<=[a-z0-9])(?=[A-Z])", name) if w}
+    words = name_words(name)
     return bool(words & _READ_WORDS) and not words & (_CHANGE_WORDS | _JOINS)
 
 
-def asks(tool: dict, reads_free: bool) -> bool:
-    """Whether a tool ({name, read_only, destructive}) needs the user's tap. Only the user's own switch frees a tool:
-    with the server's "Reading doesn't need a tap" switch (reads_free) on, a tool whose name says it reads
-    (is_read_name) and that the server doesn't mark destructive runs without a tap; everything else asks. The server's
-    readOnlyHint on its own frees nothing: it's the server's word about itself, and a server (or whoever controls it)
-    can write it on any tool.
-    Examples: write_note marked read-only, switch off -> True (asks); list_items, switch off -> True; list_items, switch
-    on -> False; delete_thread marked read-only, switch on -> True (its name says it changes something); fetch_report
-    marked destructive, switch on -> True."""
+def asks(tool: dict, reads_free: bool, smart: bool = False) -> bool:
+    """Whether a tool ({name, read_only, destructive}) needs the user's tap.
+    Careful (smart off, today's rule): only the user's own switch frees a tool. With the server's "Reading doesn't need
+    a tap" switch (reads_free) on, a tool whose name says it reads (is_read_name) and that the server doesn't mark
+    destructive runs without a tap; everything else asks. The server's readOnlyHint on its own frees nothing: it's the
+    server's word about itself, and a server (or whoever controls it) can write it on any tool.
+    Smart: a tool runs unless its name has an ask-word (send, pay, delete, execute ...: approvals_mode.asks_by_name) or
+    the server marks it destructive. The reads_free switch no longer matters, and the server's read-only hint still frees
+    nothing.
+    Examples, Careful: write_note marked read-only, switch off -> True (asks); list_items, switch off -> True; list_items,
+    switch on -> False; delete_thread marked read-only, switch on -> True (its name says it changes something);
+    fetch_report marked destructive, switch on -> True.
+    Examples, Smart: GMAIL_SEND_EMAIL -> True; GMAIL_FETCH_EMAILS -> False; write_note -> False; delete_note -> True;
+    list_items, switch off -> False; fetch_report marked destructive -> True; COMPOSIO_MULTI_EXECUTE_TOOL -> True."""
+    name = str(tool.get("name", ""))
+    marked_destructive = bool(tool.get("destructive"))
+    if smart:
+        return asks_by_name(name) or marked_destructive
     if not reads_free:
         return True
-    name_reads = is_read_name(str(tool.get("name", "")))
-    marked_destructive = bool(tool.get("destructive"))
+    name_reads = is_read_name(name)
     return not (name_reads and not marked_destructive)
 
 
@@ -187,29 +197,60 @@ def command_problem(spec: dict) -> str | None:
     return None
 
 
+def _session_id_of(readonly_context) -> str | None:
+    """The chat a tool listing is for, from ADK's readonly context: a context with a session -> its id; None (a probe,
+    a test) or a context without one -> None."""
+    if readonly_context is None:
+        return None
+    session = getattr(readonly_context, "session", None)
+    if session is None:
+        return None
+    return getattr(session, "id", None)
+
+
 class PluginMcpToolset(McpToolset):
     """An MCP toolset whose tools need the user's tap, unless the user switched "Reading doesn't need a tap" on for
-    the server (reads_free) and the tool's name says it reads (asks); the server's own read-only hint frees nothing."""
+    the server (reads_free) and the tool's name says it reads (asks); the server's own read-only hint frees nothing.
+    `smart` is a zero-argument function that says whether the approvals mode is Smart right now (None: always Careful).
+    It is called on every listing, and ADK lists the tools again at each step of a turn, so switching the mode mid-chat
+    shows on the next step."""
 
-    def __init__(self, *args, reads_free: bool = False, **kwargs):
+    def __init__(self, *args, reads_free: bool = False, smart: Callable[[str | None], bool] | None = None, **kwargs):
+        # smart: reads the live mode for a chat (the session id, or None outside one) on every listing; see runs_free.
         super().__init__(*args, **kwargs)
         self.reads_free = reads_free
+        self.smart = smart
+
+    def _smart_now(self, session_id: str | None) -> bool:
+        """Whether the approvals mode is Smart right now; Careful when there is no reader or it fails (a locked database
+        must not drop the app's tools): reader says True -> True; reader raises -> False (logged)."""
+        if not self.smart:
+            return False
+        try:
+            return bool(self.smart(session_id))
+        except Exception:
+            log.warning("could not read the approvals mode; app tools ask as in Careful", exc_info=True)
+            return False
 
     async def get_tools(self, readonly_context=None):
         tools = await super().get_tools(readonly_context)
+        smart_now = self._smart_now(_session_id_of(readonly_context))
         for t in tools:  # per tool; ADK's toolset option can't see annotations
-            t._require_confirmation = asks({"name": t.name, "read_only": is_read_only(t), "destructive": is_destructive(t)}, self.reads_free)
+            tool = {"name": t.name, "read_only": is_read_only(t), "destructive": is_destructive(t)}
+            t._require_confirmation = asks(tool, self.reads_free, smart=smart_now)
+            # Background turns share these tool objects and must never get Smart's looser rule: they read this instead.
+            t._asks_in_careful = asks(tool, self.reads_free, smart=False)
         return tools
 
 
-def toolset_for(name: str, spec: dict, timeout: float = 30) -> PluginMcpToolset:
+def toolset_for(name: str, spec: dict, timeout: float = 30, smart: Callable[[str | None], bool] | None = None) -> PluginMcpToolset:
     if spec.get("url"):
         params = StreamableHTTPConnectionParams(url=spec["url"], headers=dict(spec.get("headers") or {}), timeout=timeout)
     else:
         env = {**server_env(), **(spec.get("env") or {})}
         params = StdioConnectionParams(server_params=StdioServerParameters(command=spec["command"], args=list(spec.get("args") or []), env=env),
                                        timeout=timeout)
-    return PluginMcpToolset(connection_params=params, reads_free=bool(spec.get("readsFree")))
+    return PluginMcpToolset(connection_params=params, reads_free=bool(spec.get("readsFree")), smart=smart)
 
 
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
@@ -545,9 +586,10 @@ async def probe_tools(spec: dict, timeout: float) -> list[dict]:
     return json.loads(out.decode().strip().splitlines()[-1])
 
 
-async def load_servers(timeout: float = 15, reserved: dict[str, str] | None = None) -> list[ServerEntry]:
+async def load_servers(timeout: float = 15, reserved: dict[str, str] | None = None,
+                       smart: Callable[[str | None], bool] | None = None) -> list[ServerEntry]:
     """Every server in mcp.json with its status. `reserved` maps tool names Odie already has (built-ins, skill
-    tools) to their owner, so a server can't shadow them."""
+    tools) to their owner, so a server can't shadow them. `smart` reads the live approvals mode for each server's toolset."""
     servers, err = read_config()
     if err:
         log.warning(err)
@@ -580,7 +622,7 @@ async def load_servers(timeout: float = 15, reserved: dict[str, str] | None = No
             continue
         for t in e.tools:
             seen[t] = name
-        e.toolset = toolset_for(name, spec)  # connects lazily, the first time a tool is needed
+        e.toolset = toolset_for(name, spec, smart=smart)  # connects lazily, the first time a tool is needed
         if not e.description:
             e.description = f"Tools from {name}: {', '.join(e.tools[:8])}"
         if not e.always_on:

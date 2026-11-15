@@ -1,5 +1,45 @@
 # Changelog
 
+## v0.2.46 (2026-11-15)
+
+- `odie threads` lists the most recently active threads first, pinned or not (★ still marks a pin), so `odie threads -n 10` gives the ten newest. The app keeps pins on top.
+
+## v0.2.45 (2026-11-15)
+
+- `odie threads` shows when each thread was last active, and `-n 20` lists only the first 20 (pinned first, then the most recent).
+
+## v0.2.44 (2026-11-15)
+
+- Odie from the terminal, for you, Claude Code or a script: `odie chat "…"` sends to today's chat and prints the reply as it comes (`--thread <id>` continues another thread, `--new` starts a new chat, `-` reads the message from stdin), `odie threads [-q words]` lists the threads, and `odie show <id>` prints one. `--json` gives a program one answer: the thread, the reply, what needs a tap, and any errors.
+- Only this Mac can use it. The first command pairs the terminal as a device, "Terminal (odie chat)" in Settings → Devices, and its key reaches only chat and the threads: never approvals, settings or pairing. Nothing is approved from the terminal: a turn that needs a tap names it and ends with exit code 3, and you tap the card in the app.
+- Messages sent from the terminal say "via Terminal" under the bubble, and Odie is told a program typed them.
+
+## v0.2.43 (2026-11-05)
+
+- Settings → Approvals: Careful (today's behaviour, the default) or Smart. In Smart, shell commands and connected apps' tools run on their own and show in each reply's steps; installing software, deleting or moving files outside Odie's folders, sending anything, paying or ordering, and reading secrets always ask. The Mac's calendar and reminders writes run in Smart too. The activity log says "allowed by smart mode" for a command that ran without a card, and the step's pill reads "ran on its own" (it used to say "pass").
+- In Smart the shell card loses its 30-minute button and says "Smart mode: this one always asks." The model is told which mode is on with each message, so it never promises a tap that won't come.
+- After Odie reads a mail or a message in a turn, the rest of that turn asks as in Careful, whatever the mode: words someone else wrote could be steering it.
+- The shell's always-ask list gains a few things it missed: `find … -delete`, `trash`, `uninstall`, `prune`, `diskutil`, an `osascript` that sends, `shortcuts run`, `npm publish`, `gh … create`, your shell history, and Odie's own folder outside its workspace.
+- Background work (the watch, trackers) stays as careful as before whatever the mode: a connected app's write tool that Smart frees in a chat is still refused in a background check.
+
+## v0.2.42 (2026-11-05)
+
+- A tap carries on the reply it paused. After you approve or decline a card, what Odie does and says next (its steps and its words) joins the reply the card came from instead of arriving as a separate message, and there is no "Done." filler when the model has nothing to add. After a reload each turn is one message, however many taps it took, with checklists keeping their ticks.
+- A card you already answered shrinks to a small stamp; when the step it asked about is right beside it, the step's pill says who allowed it and the card goes.
+- Install the Mac app's matching update (odie-mac) before updating the server: without the filler message, the current Mac app takes a tap that ended with no words for a failure and says it couldn't finish.
+
+## v0.2.41 (2026-11-05)
+
+- The round "jump to latest" button stays hidden while the morning card is the only thing in the chat.
+- The step receipt: open a reply's steps and each one says what it was asked (the command, the search, the page), who let it run (a "You allowed · 10:42" pill for your tap, "pass" for a shell command under the pass, "You said no", or "Lapsed" for a card nobody tapped in time), and what came back ("No output", "3 lines · tap to see them", or "Made a file"). A tap shows the first 12 lines of the output, and Show all the rest. A step waiting for your tap says so with a spinner, and after the tap it fills in on the open chat without a reload, even when you approved it from the phone. A step that can no longer finish (its card lapsed, or Odie restarted mid-step) says "Not run" or "No result" instead of spinning.
+- Steps that need your tap, such as a shell command, now show in the reply's trace like any other step, and the blocks eval and the chat replay count them among the tools a turn called. Only Odie's own approval question stays out: the card shows it.
+
+## v0.2.40 (2026-11-04)
+
+- A morning hello: each day opens with a card from Odie at the top of today's chat. It greets you for the time of day, asks how yesterday's events went (and asks, rather than guesses, how things turned out), says what got done and what stayed open in the last few days' chats, and shows the weather, up to four tiles (today, due soon, arriving, a trip), one nudge for something that needs a decision, the mail worth knowing about, and chips you can tap to send. It is written once a day by your chat model, from 05:00, at the 07:30 morning round or when you first open the day, and a plain card stands in when the model's answer can't be used. Every new chat that day starts from Odie's short notes about the day, including the morning brief, so you don't have to explain where you left off.
+- Recall: Odie can search its own past chats and everything it remembers by meaning, mid-chat ("what did we decide about the lease?"), with each line saying when it was said. It replaces the keyword-only memory search, and falls back to words when there is no embedding model or the index can't be read. Settings → Notes says when past chats are being read by meaning.
+- The 07:30 morning round skips the brief when one was already written that day.
+
 ## v0.2.39 (2026-11-04)
 
 - A block that a model wrote with a comma left before a closing bracket (`"series": [{...}, ]`) now draws instead of showing "Couldn't draw this". It is the third slip Odie forgives in a block, beside strings left unclosed and numbers written with thousands commas; a block that already reads is never changed.

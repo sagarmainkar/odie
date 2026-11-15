@@ -16,7 +16,12 @@ import { Avatar } from "../components/Avatar";
 import { Orb } from "../components/Orb";
 import { Icon as Glyph, Tile } from "../components/Tile";
 import { greetingParts } from "../greeting";
+import { MorningHello } from "../components/MorningCard";
+import { useMorning } from "../useMorning";
+import { chatOnScreen, shouldShowJumpButton, shouldShowMorning, type MorningReply } from "../morning";
 import { Steps, type Tool } from "../components/Steps";
+import { fromHistory, settled, toolDone, toolStarted, toolWaiting, withStepEvent, type DoneEvent, type StartEvent, type StepEvent, type WaitEvent } from "../steps";
+import { foldTurns, turnSoFar, withTurnEvent, type HistoryItem } from "../turns";
 import { replyLine, type ReplyUsage } from "../usage";
 import { ToBody } from "../components/ToBody";
 import { CodeBlock } from "../components/CodeBlock";
@@ -41,11 +46,10 @@ import { splitConnect } from "../google";
 import { Star, ThreadsSheet, ThreadsSidebar } from "../components/ThreadsSheet";
 import { useWide } from "../layout";
 import { belongsHere, type Thread } from "../threads";
-import { plainMath } from "../plainMath";
-import { liftOneLineFences } from "../blocks/oneLineFence";
-import { tidyStrayBlocks } from "../blocks/strayBlocks";
+import { drawnText } from "../blocks/drawnText";
 import { replyArrived, streamStalled, tapFinished } from "../reply";
-import { ApprovalCard, type Approval } from "../components/ApprovalCard";
+import { ChatApproval, type Approval } from "../components/ApprovalCard";
+import { answered } from "../approvals";
 import { ChartBlock, ChartPending } from "../components/ChartBlock";
 import { Diagram } from "../components/Diagram";
 import { ImageStrip, SafeImage } from "../components/ImageStrip";
@@ -64,7 +68,8 @@ import { composerWith, phoneSpeech, pickMode, startDictation } from "../dictatio
 import { shrinkPhoto } from "../shrinkPhoto";
 
 // key and sid: the name the server gave a reply (its ADK event id) and the session it is in; its saved ticks hang off them.
-type Msg = { id: number; key?: string; sid?: string; role: "user" | "odie" | "approval"; text: string; tools: Tool[]; error?: string; awaiting?: boolean; ts?: number; live?: boolean; label?: string; approval?: Approval; images?: string[]; asked?: string; media?: Media[]; autoplay?: string; private?: boolean; usage?: ReplyUsage };  // private: its chat read a signed-in page; usage: the reply's own token counts
+// inv: the turn it belongs to; what Odie does after a tap joins the message of its turn (turns.ts).
+type Msg = { id: number; key?: string; sid?: string; inv?: string; role: "user" | "odie" | "approval"; text: string; tools: Tool[]; error?: string; awaiting?: boolean; ts?: number; live?: boolean; label?: string; approval?: Approval; images?: string[]; asked?: string; media?: Media[]; autoplay?: string; private?: boolean; usage?: ReplyUsage; via?: "terminal" };  // private: its chat read a signed-in page; usage: the reply's own token counts
 type Pending = { id: string; url: string; w: number; h: number };
 let nextId = 1;
 const EASE = [0.2, 0.8, 0.2, 1] as const;
@@ -113,7 +118,7 @@ const mdComponents: Components = {
 /** A finished reply drawn the way the chat draws one (Markdown, blocks, charts, photos), with nowhere to save ticks:
  *  for the #sample screen, which shows a saved conversation. */
 export function ReplyText({ text }: { text: string }) {
-  const shown = plainMath(tidyStrayBlocks(liftOneLineFences(text)));
+  const shown = drawnText(text);
   return (
     <ReplyPlace.Provider value={{ text: shown }}>
       <div className="glass rounded-[8px_26px_26px_26px] px-4 py-3.5 md @container"><ReactMarkdown remarkPlugins={[remarkGfm, remarkInline]} components={mdComponents}>{shown}</ReactMarkdown></div>
@@ -255,12 +260,14 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
   threadRef.current = thread;
   const historyUrl = (q: string) => (thread ? `/api/threads/${thread.id}/history?${q}` : `/api/history?date=${todayISO()}&${q}`);
   const [earlier, setEarlier] = useState(0);  // index of the first loaded history item; >0 means more exists
+  const [historyCut, setHistoryCut] = useState<{ threadId: string | null; cut: boolean } | null>(null);  // the last history that answered
   const [loadingEarlier, setLoadingEarlier] = useState(false);
   const [atBottom, setAtBottom] = useState(true);
   const [unseen, setUnseen] = useState(false);
   const mainRef = useRef<HTMLElement>(null);
-  type H = { items: { key?: string; sid?: string; role: "user" | "odie" | "approval"; text: string; tools: string[]; ts?: number; images?: string[]; approval?: Approval; media?: Media[]; private?: boolean; usage?: ReplyUsage }[]; total: number; start: number };
-  const toMsgs = (items: H["items"]): Msg[] => items.filter((m) => m.text || m.tools.length || m.images?.length || m.approval || m.media?.length).map((m) => ({ id: nextId++, key: m.key, sid: m.sid, role: m.role, text: m.text, ts: m.ts, images: m.images, approval: m.approval, media: m.media, private: m.private, usage: m.usage, tools: m.tools.map((n) => ({ name: n, done: true })) }));
+  type H = { items: HistoryItem[]; total: number; start: number };
+  // One turn, one message: a turn's lines fold into one first (turns.ts), however many taps it took.
+  const toMsgs = (items: H["items"]): Msg[] => foldTurns(items).filter((m) => m.text || m.tools.length || m.images?.length || m.approval || m.media?.length).map((m) => ({ id: nextId++, key: m.key, sid: m.sid, inv: m.inv, role: m.role, text: m.text, ts: m.ts, images: m.images, approval: m.approval, media: m.media, private: m.private, usage: m.usage, via: m.via, tools: fromHistory(m) }));
   const [pending, setPending] = useState<Pending[]>([]);
   const [uploading, setUploading] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -301,6 +308,7 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
       const h = await getJSON<H>(historyUrl("limit=30"));
       const fresh = afterLastNewChat(h.items);
       setEarlier(fresh.cut ? 0 : h.start);  // nothing above a "/new" is shown here
+      setHistoryCut({ threadId: thread?.id ?? null, cut: fresh.cut });
       const base: Msg[] = toMsgs(fresh.items);
       let waiting: Approval[] = [];
       try { waiting = await getJSON<Approval[]>("/api/approvals"); } catch { /* fine */ }
@@ -322,6 +330,7 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
       const el = mainRef.current; const h0 = el?.scrollHeight ?? 0;
       const fresh = afterLastNewChat(h.items);
       setEarlier(fresh.cut ? 0 : h.start);
+      if (fresh.cut) setHistoryCut({ threadId: thread?.id ?? null, cut: true });  // a "/new" further up: not the day's top
       setMsgs((m) => [...toMsgs(fresh.items), ...m]);
       requestAnimationFrame(() => { if (el) el.scrollTop += el.scrollHeight - h0; });  // keep the viewport where it was
     } catch { /* ignore */ } finally { setLoadingEarlier(false); }
@@ -369,14 +378,24 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
     if (e.type === "message" && e.text !== NEW_CHAT && belongsHere(e.session_id, threadRef.current?.id ?? null, todayISO())) {
       // A reply after a tap is her answer, not a reminder: show it like any other reply.
       // A reply after a tap replaces the "still working" row that waitForTap put up.
+      // Words after a tap join the message of their turn; with none on screen (opened later) they come as a new one.
       const autoplay = autoplayFor(e, document.visibilityState === "visible", somethingPlaying()) ?? undefined;  // a spoken reminder
-      setMsgs((m) => [...(e.kind === "reply" ? m.filter((x) => !x.awaiting) : m), { id: nextId++, role: "odie", text: e.text, tools: [], ts: e.ts, live: e.kind !== "reply", label: liveLabel(e.kind), media: e.media, autoplay, private: !!e.private }]);
+      setMsgs((m) => {
+        const shown = e.kind === "reply" ? m.filter((x) => !x.awaiting) : m;
+        const joined = withTurnEvent(shown, e);
+        if (joined) return joined;
+        return [...shown, { id: nextId++, role: "odie", text: e.text, tools: [], ts: e.ts, live: e.kind !== "reply", label: liveLabel(e.kind), media: e.media, autoplay, private: !!e.private }];
+      });
       setUnseen(true);
     }
+    // A resumed run's steps join the message of their turn; a finished one falls back to the reply holding its id.
+    const stepHere = belongsHere(e.session_id, threadRef.current?.id ?? null, todayISO());
+    if ((e.type === "step_start" || e.type === "step_wait") && stepHere) setMsgs((m) => withTurnEvent(m, e) ?? m);
+    if (e.type === "step" && stepHere) setMsgs((m) => withTurnEvent(m, e) ?? withStepEvent(m, e as StepEvent));
     if (e.type === "thinking") setThink((shown) => thinkingAfter(shown, e));  // flipped in another app or browser
     if (e.type === "google" && e.status === "connected") window.dispatchEvent(new Event("odie:google-connected"));
     if (e.type === "approval" && e.status === "pending") setMsgs((m) => m.some((x) => x.approval?.id === e.id) ? m : [...m, { id: nextId++, role: "approval", text: "", tools: [], ts: Date.now() / 1000, approval: e as Approval }]);
-    if ((e.type === "approval" && e.status !== "pending") || e.type === "approval_done") setMsgs((m) => m.map((x) => x.approval?.id === e.id ? { ...x, approval: { ...x.approval!, status: e.status ?? x.approval!.status, result_text: e.text ?? x.approval!.result_text } } : x));
+    if ((e.type === "approval" && e.status !== "pending") || e.type === "approval_done") setMsgs((m) => m.map((x) => x.approval?.id === e.id ? { ...x, approval: { ...answered(x.approval!, e.status), result_text: e.text ?? x.approval!.result_text } } : x));
   }, []), useCallback(() => { loadThink(); if (!busy) loadHistory(); }, [busy, loadHistory, loadThink]));
 
   const tapTimers = useRef<number[]>([]);
@@ -443,17 +462,21 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
     // Patch the streaming reply by id: a live Odie message (reminder) may be appended while tokens arrive.
     const patch = (f: (last: Msg) => Msg) => setMsgs((m) => m.map((x) => (x.id === replyId ? f(x) : x)));
     let streamed = "";
+    let turn = "";  // the turn this reply is (inv): what a tap continues later joins this message
     let askedApproval = false;
     let ended = false;  // the server said done or error; otherwise the stream was cut (app backgrounded)
-    const settle = () => patch((l) => ({ ...l, tools: l.tools.map((x) => ({ ...x, done: true })), ts: Date.now() / 1000 }));
+    const settle = () => patch((l) => ({ ...l, tools: settled(l.tools), ts: Date.now() / 1000 }));
     const ac = new AbortController();
     streamAbort.current = ac;
     lastEventAt.current = Date.now();
     try {
       for await (const ev of streamChat(t, imgs, thread?.id, ac.signal)) {
         lastEventAt.current = Date.now();
-        if (ev.type === "tool_start") patch((l) => ({ ...l, tools: [...l.tools, { name: String(ev.tool), done: false }] }));
-        else if (ev.type === "tool_done") patch((l) => { const i = l.tools.findIndex((x) => x.name === ev.tool && !x.done); if (i < 0) return l; const tools = [...l.tools]; tools[i] = { ...tools[i], done: true }; return { ...l, tools }; });
+        const turnNow = turnSoFar(turn, ev);
+        if (turnNow !== turn) { turn = turnNow; patch((l) => ({ ...l, inv: turnNow })); }
+        if (ev.type === "tool_start") patch((l) => ({ ...l, tools: toolStarted(l.tools, ev as StartEvent) }));
+        else if (ev.type === "tool_wait") patch((l) => ({ ...l, tools: toolWaiting(l.tools, ev as WaitEvent) }));
+        else if (ev.type === "tool_done") patch((l) => ({ ...l, tools: toolDone(l.tools, ev as DoneEvent) }));
         else if (ev.type === "media") setMsgs((m) => withMedia(m, (ev as unknown as { media: Media }).media, (x) => x.id === replyId));
         else if (ev.type === "private") patch((l) => ({ ...l, private: true }));  // web images in it wait for a tap
         else if (ev.type === "token") { streamed += String(ev.text); patch((l) => ({ ...l, text: streamed, ...replyName(ev) })); }
@@ -584,6 +607,16 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
   if (listening) micPlaceholder = "Listening… tap the mic to finish";
   if (transcribing) micPlaceholder = "Writing it down…";
   const lastOdie = [...msgs].reverse().find((m) => m.role === "odie");
+  // Today's morning hello sits only at the true top of the day: above the day's first message, with no "/new" above it,
+  // once the history has said so. Once its card is ready it takes the empty chat's greeting's place.
+  const morning = useMorning(thread?.id ?? null);
+  const onScreen = chatOnScreen(thread?.id ?? null, historyCut, earlier);
+  let morningOnTop: MorningReply | null = null;
+  if (morning && shouldShowMorning(onScreen, todayISO(), morning.state)) morningOnTop = morning;
+  const morningReady = morningOnTop?.card != null;
+  // In an empty chat the hello is the latest thing, so "to the latest" (opening the chat, a reload) lands on its top,
+  // not under its chips.
+  const latestIsHello = msgs.length === 0 && morningReady;
   const laterAnswers = useMemo(() => answersAfterEach(msgs), [msgs]);  // a form finds its answer in a later message
 
   return (
@@ -651,7 +684,9 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
                 )}
               </div>
             )}
-            {msgs.length === 0 && (() => { const g = greetingParts(); return (
+            {latestIsHello && <div ref={bottom} />}
+            {morningOnTop && <MorningHello reply={morningOnTop} onChip={(t) => void send(t)} />}
+            {msgs.length === 0 && !morningReady && (() => { const g = greetingParts(); return (
               <div className="min-h-[60dvh] flex flex-col items-center justify-center text-center pt-5">
                 <Orb size={150} halo />
                 <h2 className="text-[28px] font-bold tracking-[-0.02em] mt-7">{g.lead} <span className="serif text-[32px]">{g.accent}</span>{you ? `, ${you}` : ""}</h2>
@@ -677,13 +712,13 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
                   <div key={m.id} className={spacing}>
                     {showTime && <div className="mb-3"><TimeDivider ts={m.ts!} /></div>}
                     {m.role === "approval" && m.approval ? (
-                      <motion.div {...enter}><ApprovalCard a={m.approval} showResult={false} onDecided={(id, st) => { setOrb("idle"); if (st === "approved") waitForTap(id); }} /></motion.div>
+                      <motion.div {...enter}><ChatApproval a={m.approval} onDecided={(id, st, until) => { setOrb("idle"); setMsgs((all) => all.map((x) => x.approval?.id === id ? { ...x, approval: answered(x.approval, st, until) } : x)); if (st === "approved") waitForTap(id); }} /></motion.div>
                     ) : m.role === "odie" && m.text === NEW_CHAT ? (
                       <NewChatDivider ts={m.ts} name={name} />
                     ) : m.role === "odie" && m.text.startsWith(ROLLOVER) ? (
                       <SegmentDivider text={m.text.slice(ROLLOVER.length).trim()} ts={m.ts} />
                     ) : m.role === "user" ? (
-                      <motion.div {...enter} className="flex flex-col"><YourMessage text={m.text} images={m.images} /></motion.div>
+                      <motion.div {...enter} className="flex flex-col"><YourMessage text={m.text} images={m.images} via={m.via} /></motion.div>
                     ) : (
                       <motion.div {...enter} className="flex flex-col gap-2.5">
                         <div className="flex items-center gap-2 text-[12.5px] text-muted font-semibold">
@@ -697,7 +732,7 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
                           <div className="flex items-center gap-3"><Orb state="thinking" size={28} /><span className="text-[14px] font-semibold shimmer-text">{thinking ? "Thinking longer" : "Thinking"}</span></div>
                         )}
                         {m.text && (() => {
-                          const shown = plainMath(tidyStrayBlocks(liftOneLineFences(splitConnect(m.text).text)));
+                          const shown = drawnText(splitConnect(m.text).text);
                           return (
                             <PrivateReply.Provider value={!!m.private}>
                               <ReplyPlace.Provider value={{ sessionId: m.sid, messageKey: m.key, text: shown, streaming, answers: laterAnswers[i] }}>
@@ -732,12 +767,12 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
                 );
               })}
             </AnimatePresence>
-            <div ref={bottom} />
+            {!latestIsHello && <div ref={bottom} />}
             <div className="fade-bottom" />
             </ChatActions.Provider>
           </main>
           <AnimatePresence>
-            {!atBottom && (
+            {shouldShowJumpButton(atBottom, morningOnTop !== null, msgs.length) && (
               <motion.button initial={{ scale: 0.8, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.8, opacity: 0 }} transition={{ duration: 0.16 }}
                 onClick={jumpToLatest} aria-label="Jump to latest"
                 className="pill absolute right-5 bottom-3 w-10 h-10 px-0">

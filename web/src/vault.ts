@@ -3,7 +3,7 @@ export type VaultInfo = {
   // embed_every: minutes between background passes that read new notes and pictures by meaning; 0 is off (5 when absent)
   settings: { dir: string | null; ignore: string[]; embeddings: { provider: string; model: string } | null; embed_every?: number };
   status: { notes: number; chunks: number; vectors: number; model: string | null; scanned_at: string | null; embed_error: string | null } | null;
-  progress: { running: boolean; done: number; total: number; phase: "keywords" | "meaning" | "idle"; error: string };
+  progress: { running: boolean; done: number; total: number; phase: "keywords" | "meaning" | "recall" | "idle"; error: string };
   memory_file?: string;  // where long-term memory really is
   meaning?: { every: number; on: boolean; embedded_at: string | null };  // the background embedding schedule
 };
@@ -38,6 +38,7 @@ export function notesRow(v: VaultInfo): NotesRow | null {
   const p = v.progress;
   if (p.running && p.phase === "keywords" && p.total) return { sub: `Indexing ${n(p.done)} of ${n(p.total)} notes`, meta, state: "busy" };
   if (p.running && p.phase === "meaning" && p.total) return { sub: `Reading by meaning: ${n(p.done)} of ${n(p.total)} passages`, meta, state: "busy" };
+  if (p.running && p.phase === "recall" && p.total) return { sub: `Recall: past chats by meaning, ${n(p.done)} of ${n(p.total)} passages`, meta, state: "busy" };
   if (p.running) return { sub: "Indexing…", meta, state: "busy" };
   const notes = v.status ? `${n(v.status.notes)} notes` : "Not indexed yet";
   if (meaningPaused(v)) {

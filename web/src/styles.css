@@ -29,6 +29,8 @@
   --color-good-tint: var(--t-good-tint);
   --color-warn-ink: var(--t-warn-ink);
   --color-warn-tint: var(--t-warn-tint);
+  --color-bad: var(--t-bad);
+  --color-bad-tint: var(--t-bad-tint);
   --color-solid: var(--t-solid);
   --color-on-solid: var(--t-on-solid);
   --color-bubble: var(--t-bubble);
@@ -51,6 +53,7 @@
   --t-bubble: linear-gradient(150deg, #EEF0FF, #F4EAFF);
   --t-good: #22B07D; --t-good-tint: rgba(34,176,125,.12);
   --t-warn: #E79217; --t-warn-ink: #8A560A; --t-warn-tint: rgba(255,178,63,.16);
+  --t-bad: #C2456A; --t-bad-tint: rgba(238,127,154,.16);
   --t-overlay: rgba(247,243,238,.72);
   --t-shadow-card: 0 1px 1px rgba(60,40,20,.03), 0 22px 44px -26px rgba(80,50,25,.30);
   --t-iris: linear-gradient(135deg, #7D8CFF, #B08BFF 55%, #FF9CC8);
@@ -83,6 +86,7 @@
   --t-bubble: linear-gradient(150deg, #2E2F5E, #3B2B5C);
   --t-good: #4FD6A2; --t-good-tint: rgba(79,214,162,.14);
   --t-warn: #FFB54A; --t-warn-ink: #FFCF85; --t-warn-tint: rgba(255,181,74,.14);
+  --t-bad: #FFA3B8; --t-bad-tint: rgba(238,127,154,.18);
   --t-overlay: rgba(17,15,24,.72);
   --t-shadow-card: 0 1px 0 rgba(255,255,255,.03) inset, 0 24px 48px -26px rgba(0,0,0,.7);
   color-scheme: dark;
@@ -271,6 +275,13 @@ input, button, textarea { font-family: inherit; }
 :root[data-tod="night"] .band-m { background-image: linear-gradient(160deg, rgba(60,140,110,.28), rgba(60,140,110,.08)); }
 :root[data-tod="night"] .band-a { background-image: linear-gradient(160deg, rgba(70,110,200,.3), rgba(70,110,200,.08)); }
 :root[data-tod="night"] .band-e { background-image: linear-gradient(160deg, rgba(120,90,210,.3), rgba(120,90,210,.08)); }
+
+/* The morning hello above today's chat (MorningCard.tsx): a sky for the weather and a warm wash for the nudge, by day;
+   deep, quiet tones of the same at night. */
+.morning-sky { background: linear-gradient(135deg, #CFE4FF 0%, #E6EEFF 45%, #FFF0B8 100%); border: 1px solid var(--t-edge); }
+.morning-nudge { background: linear-gradient(135deg, rgba(249,198,214,.62), rgba(255,231,163,.62)); border: 1px solid var(--t-edge); }
+:root[data-tod="night"] .morning-sky { background: linear-gradient(135deg, rgba(70,110,200,.34) 0%, rgba(120,90,210,.2) 60%, rgba(255,181,74,.1) 100%); }
+:root[data-tod="night"] .morning-nudge { background: linear-gradient(135deg, rgba(238,127,154,.2), rgba(255,181,74,.12)); }
 
 /* Chart card: the line draws itself, the last point breathes */
 .chart-draw { animation: chart-draw 1.2s cubic-bezier(.2,.8,.2,1) forwards; }

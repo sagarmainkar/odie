@@ -119,7 +119,8 @@ class DeviceGate:
     async def __call__(self, scope, receive, send):
         if scope["type"] in ("http", "websocket") and devices.gated(scope["path"]) and devices.pairing_on(self.store):
             from starlette.requests import HTTPConnection
-            if devices.device_for(self.store, HTTPConnection(scope).cookies.get(devices.COOKIE)) is None:
+            device = devices.device_for(self.store, HTTPConnection(scope).cookies.get(devices.COOKIE))
+            if device is None:
                 if scope["type"] == "websocket":
                     from starlette.websockets import WebSocketClose
                     await WebSocketClose(code=4401)(scope, receive, send)
@@ -127,7 +128,26 @@ class DeviceGate:
                     from fastapi.responses import JSONResponse
                     await JSONResponse(devices.PRIVATE, status_code=401)(scope, receive, send)
                 return
+            if devices.is_terminal(device) and not self.terminal_allowed(scope):
+                await self.refuse_terminal(scope, receive, send)
+                return
         await self.app(scope, receive, send)
+
+    @staticmethod
+    def terminal_allowed(scope) -> bool:
+        """The odie command's key: only its own calls (devices.terminal_may), never a websocket."""
+        if scope["type"] != "http":
+            return False
+        return devices.terminal_may(scope["method"], scope["path"])
+
+    @staticmethod
+    async def refuse_terminal(scope, receive, send) -> None:
+        if scope["type"] == "websocket":
+            from starlette.websockets import WebSocketClose
+            await WebSocketClose(code=4403)(scope, receive, send)
+            return
+        from fastapi.responses import JSONResponse
+        await JSONResponse({"detail": "The terminal may only chat and read threads."}, status_code=403)(scope, receive, send)
 
 
 def scheduler_enabled() -> bool:
@@ -136,7 +156,7 @@ def scheduler_enabled() -> bool:
     return os.environ.get("ODIE_SCHEDULER", "1") != "0"
 
 
-BRIEF_LIMIT = 600  # seconds: gathering, then up to a 3-minute completion on a slow local model
+BRIEF_LIMIT = 900  # seconds: the morning round makes the brief and the hello, two model calls, each gathering first
 
 
 def watch_pushed(store: Store, runner, title: str, body: str) -> None:
@@ -195,7 +215,7 @@ def background_for(store: Store, runner):
 
 
 def start_scheduler(store: Store, runner=None, background=None):
-    """Background jobs in the user's timezone: brief 07:30, reminders every minute,
+    """Background jobs in the user's timezone: the morning round (brief and hello) 07:30, reminders every minute,
     news at 06/10/14/18/22 (and right away if the stored batch is stale).
     Jobs are coroutine FUNCTIONS: APScheduler awaits those; a lambda would run in a thread and never be awaited."""
     from datetime import UTC, datetime
@@ -205,14 +225,14 @@ def start_scheduler(store: Store, runner=None, background=None):
     from apscheduler.triggers.cron import CronTrigger
     from apscheduler.triggers.interval import IntervalTrigger
 
-    from odie.jobs.brief import run_brief
     from odie.jobs.reminders import run_due
+    from odie.morning import round as morning
     tz = ZoneInfo(config.settings.timezone)
     sched = AsyncIOScheduler(timezone=tz)
 
     async def brief_job() -> None:
         async def go() -> None:
-            await run_brief(store, datetime.now(tz), post_message=runner.post_message if runner is not None else None)
+            await morning.morning_round(store, datetime.now(tz), runner=runner)
         if background is None:
             await go()
         else:
@@ -231,7 +251,10 @@ def start_scheduler(store: Store, runner=None, background=None):
 
     sched.add_job(brief_job, CronTrigger(hour=7, minute=30, timezone=tz), id="brief", misfire_grace_time=3600, coalesce=True)
     from odie.jobs.brief import missed_today
-    if missed_today(store, datetime.now(tz)):  # the computer was off at 07:30: send it now, after the first watch check
+    started_at = datetime.now(tz)
+    # The computer was off at 07:30 (the brief is owed), or Odie starts with no hello yet today (the hello is owed):
+    # run the round soon, after the first watch check.
+    if missed_today(store, started_at) or morning.hello_due(store, started_at):
         from datetime import timedelta
 
         from apscheduler.triggers.date import DateTrigger

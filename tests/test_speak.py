@@ -116,7 +116,7 @@ async def test_the_model_sees_a_short_result(store):
     full = media.get(out["media"]["id"])[1]
     assert len(full["peaks"]) == 48 and full["transcript"] == "Good morning!"
     ev = _response("speak", out)
-    assert event_to_sse(ev)[1] == {"type": "media", "media": full}  # the chat gets it all, from the sidecar
+    assert event_to_sse(ev)[1] == {"type": "media", "media": full, "inv": ""}  # the chat gets it all, from the sidecar
     events = [_text("user", "memo please"), _call("speak"), ev, _text("odie", "Here.")]
     [reply] = [i for i in events_to_history(events) if i["role"] == "odie"]
     assert reply["media"] == [full]
