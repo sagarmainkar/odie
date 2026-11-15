@@ -319,6 +319,34 @@ class RoutineIn(BaseModel):
     paused: bool | None = None
 
 
+@router.post("/bots/{name}/look")
+async def bot_shuffle_look(name: str, request: Request) -> dict[str, Any]:
+    """Shuffle look: a new creature for the bot."""
+    _jobs_on()
+    from odie.workers import bots
+    look = bots.shuffle_look(request.app.state.store, name)
+    if look is None:
+        raise HTTPException(404, "no such bot")
+    return {"look": look}
+
+
+@router.get("/bots/{name}/activity")
+async def bot_activity(name: str, request: Request) -> dict[str, Any]:
+    """What a bot did lately (its details): its last 15 jobs, its own and those it did for the chief, with how many
+    steps each took and the conversation it answered in."""
+    _jobs_on()
+    store = request.app.state.store
+    rows = store.query("select j.*, (select count(*) from job_actions a where a.job_id=j.id) as calls from jobs j "
+                       "where j.bot=? order by j.created_at desc limit 15", (name,))
+    out = []
+    for r in rows:
+        row = dict(r)
+        out.append({"id": row["id"], "title": row["title"], "status": row["status"], "outcome": row["outcome"],
+                    "started_at": row["started_at"], "ended_at": row["ended_at"], "calls": row["calls"],
+                    "conv": row["conv_id"] or None, "for_chief": bool(row["parent_id"]), "error": row["error"]})
+    return {"activity": out}
+
+
 @router.get("/bots/{name}/routines")
 async def bot_routines(name: str, request: Request) -> dict[str, Any]:
     """A bot's routines (Runs by itself in its details)."""

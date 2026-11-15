@@ -83,3 +83,26 @@ export function TeamCard({ job }: { job: string }) {
 function hostOf(url: string | null | undefined): string {
   try { return new URL(url ?? "").host.replace(/^www\./, ""); } catch { return ""; }
 }
+
+/** What a finished answer took, as one pill above it (Fable's design): "3 bots · 5:02 · 83 steps", or for one bot
+ * "0:14 · 6 steps". Tapping it opens the team card as it ended: who did what, each report. Nothing to say -> nothing. */
+export function TurnPill({ job }: { job: string }) {
+  const [view, setView] = useState<TeamView | null>(null);
+  const [open, setOpen] = useState(false);
+  useEffect(() => { getJSON<TeamView>(`/api/jobs/${job}/team`).then(setView).catch(() => setView(null)); }, [job]);
+  if (!view || going(view.lead)) return null;
+  const steps = [view.lead, ...view.team].reduce((n, m) => n + m.calls, 0);
+  if (!steps) return null;
+  const time = elapsed(view.lead, Date.now());
+  const words = `${view.team.length ? `${view.team.length} bot${view.team.length === 1 ? "" : "s"} · ` : ""}${time ? `${time} · ` : ""}${steps} steps`;
+  return (
+    <div className="flex flex-col gap-2">
+      <button onClick={() => setOpen((o) => !o)} aria-expanded={open}
+        className="self-start h-7 px-2.5 rounded-full bg-well text-[12px] text-muted font-semibold inline-flex items-center gap-1.5">
+        {view.team.length > 0 && <span className="inline-flex -space-x-1.5">{view.team.slice(0, 4).map((m) => m.look ? <Creature key={m.job} look={m.look} size={16} /> : null)}</span>}
+        {words} <span aria-hidden="true">{open ? "▴" : "▾"}</span>
+      </button>
+      {open && <TeamCard job={job} />}
+    </div>
+  );
+}

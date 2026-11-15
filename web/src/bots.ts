@@ -5,7 +5,7 @@ export type BotModel = { provider: string; model: string } | null;
 export type Bot = { name: string; role: string; prompt: string; model: BotModel; powers: string[]; made_by: string; edited_by_user: boolean; chief: boolean;
   look?: { shape: string; color: string; eyes: string };
   // How it stands now (odie/workers/convs.py list_row): its latest conversation, at work, waiting on your tap, unread.
-  conversation?: string | null; preview?: string; updated_at?: string | null; working?: boolean; live?: string; needs_you?: boolean; ask?: string; unread?: boolean };
+  conversation?: string | null; preview?: string; updated_at?: string | null; working?: boolean; live?: string; needs_you?: boolean; ask?: string; unread?: boolean; routines?: number };
 export type Conversation = { id: string; bot: string; title: string; origin: string; preview: string; unread: number; created_at: string; updated_at: string };
 export type ConvMessage = { id: number; role: "user" | "bot" | "ask" | "note"; text: string; job_id: string; ts: string;
   media: null | { ask?: string; kind?: "tap" | "sign_in"; why?: string | null; status?: string; card?: { tab?: string; site?: string; url?: string } | null } | Record<string, unknown>[] };
@@ -109,4 +109,33 @@ export function botFromHash(hash: string): { bot: string; conv: string | null } 
   const m = /^#?bot\/([a-z][a-z0-9-]{1,23})(?:\/(conv-[0-9a-f]+))?$/.exec(hash.split("?")[0]);
   if (!m) return null;
   return { bot: m[1], conv: m[2] ?? null };
+}
+
+export type Schedule = { kind: "daily"; at: string; days: number[] } | { kind: "every"; hours: number };
+export type Routine = { id: string; bot: string; title: string; brief: string; schedule: Schedule; when: string; paused: boolean;
+  conv_id: string; last_run_at: string | null; next_run_at: string | null };
+export type Activity = { id: string; title: string; status: string; outcome: string | null; started_at: string | null; ended_at: string | null;
+  calls: number; conv: string | null; for_chief: boolean; error: string | null };
+
+export const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+/** When a routine runs next, in words: today -> "today 8:30 AM"; tomorrow -> "tomorrow 8:30 AM"; later -> "Mon 8:30 AM";
+ * paused or none -> "paused". */
+export function nextWords(iso: string | null, now: Date = new Date(), locale?: string): string {
+  if (!iso) return "paused";
+  const t = new Date(iso);
+  if (Number.isNaN(t.getTime())) return "";
+  const time = t.toLocaleTimeString(locale, { hour: "numeric", minute: "2-digit" });
+  const day = (d: Date) => `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+  if (day(t) === day(now)) return `today ${time}`;
+  const tomorrow = new Date(now);
+  tomorrow.setDate(now.getDate() + 1);
+  if (day(t) === day(tomorrow)) return `tomorrow ${time}`;
+  return `${t.toLocaleDateString(locale, { weekday: "short" })} ${time}`;
+}
+
+/** A finished job's line in Recent work: "done · 12 steps"; failed -> "didn't finish · 3 steps"; for the chief -> "for chief · …". */
+export function activityLine(a: Activity): string {
+  const state = a.status === "done" ? (a.outcome === "blocked" ? "stuck" : "done") : a.status === "failed" ? "didn't finish" : a.status;
+  return `${a.for_chief ? "for chief · " : ""}${state} · ${a.calls} step${a.calls === 1 ? "" : "s"}`;
 }

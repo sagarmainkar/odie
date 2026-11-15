@@ -1263,3 +1263,34 @@ async def test_the_routine_routes_and_the_chat_tool(isolated_settings, tmp_path,
     assert got["when"] == "Weekdays at 09:15"
     assert "no bot" in (await tools["make_routine"].func(bot="ghost", title="x", request="y", every_hours=2))["error"]
     assert not devices.terminal_may("POST", "/api/routines/rt-1/run")
+
+
+
+def test_shuffle_look_changes_the_creature_but_never_the_chiefs(world):
+    store, _ = world
+    bots.ensure_starters(store)
+    bots.ensure_looks(store)
+    before = bots.get(store, "researcher").look
+    after = bots.shuffle_look(store, "researcher", pick=lambda xs: xs[-1])
+    assert after == bots.get(store, "researcher").look and after["color"] != before["color"]
+    assert after["color"] not in {bots.get(store, n).look["color"] for n in ("checker", "contrarian")}
+    assert bots.shuffle_look(store, "chief") == bots.CHIEF_LOOK
+    assert bots.shuffle_look(store, "ghost") is None
+
+
+async def test_a_bots_activity_lists_its_jobs_with_their_steps(isolated_settings, tmp_path, monkeypatch):
+    from odie.app.main import create_app
+    from tests.test_models import FakeRunner
+    monkeypatch.setenv("ODIE_WORKERS", "1")
+    store = Store(tmp_path / "assistant.db")
+    store.init_schema()
+    jobs.ensure(store)
+    bots.ensure_chief(store)
+    own = a_bot_job(store, "chief")
+    jobs.record_action(store, own.id, "web_search", {"query": "x"})
+    app = create_app(runner=FakeRunner(), store=store)
+    async with app.router.lifespan_context(app), httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+        got = (await c.get("/api/bots/chief/activity")).json()["activity"]
+        assert [(a["id"], a["calls"], a["for_chief"]) for a in got] == [(own.id, 1, False)]
+        assert (await c.post("/api/bots/ghost/look")).status_code == 404
+        assert (await c.post("/api/bots/chief/look")).json()["look"] == bots.CHIEF_LOOK

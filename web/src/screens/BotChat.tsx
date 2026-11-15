@@ -7,7 +7,7 @@ import { BotDrawer } from "../components/BotDrawer";
 import { Creature, FuzzFilter } from "../components/Creature";
 import { LiveView } from "../components/LiveView";
 import { MediaList } from "../components/MediaList";
-import { TeamCard } from "../components/TeamCard";
+import { TeamCard, TurnPill } from "../components/TeamCard";
 import { Icon } from "../components/Tile";
 import { YourMessage } from "../components/YourMessage";
 import type { Media } from "../media";
@@ -29,6 +29,7 @@ export function BotChat() {
   const [error, setError] = useState("");
   const [sending, setSending] = useState(false);
   const end = useRef<HTMLDivElement>(null);
+  const swipe = useRef<{ x: number; y: number } | null>(null);  // a swipe from the left edge opens the drawer (phone)
 
   useEffect(() => {
     const on = () => setWhere(botFromHash(location.hash));
@@ -105,7 +106,9 @@ export function BotChat() {
           <div className="flex-1 bg-overlay" />
         </div>
       )}
-      <div className="flex-1 min-w-0 h-full flex flex-col max-w-[520px] md:max-w-[720px] lg:max-w-[860px] mx-auto">
+      <div className="flex-1 min-w-0 h-full flex flex-col max-w-[520px] md:max-w-[720px] lg:max-w-[860px] mx-auto"
+        onTouchStart={(e) => { const t = e.touches[0]; swipe.current = t.clientX < 24 ? { x: t.clientX, y: t.clientY } : null; }}
+        onTouchMove={(e) => { const s = swipe.current; const t = e.touches[0]; if (s && t.clientX - s.x > 60 && Math.abs(t.clientY - s.y) < 40) { swipe.current = null; setDrawer(true); } }}>
         <div className="flex items-center gap-2.5 px-[14px] safe-top pb-2">
           <button onClick={() => setDrawer(true)} aria-label="Bots and conversations" className="pill w-11 px-0 lg:hidden!"><Icon name="menu" /></button>
           <button onClick={() => bot && setDetails(true)} className="flex items-center gap-2.5 min-w-0 text-left">
@@ -119,7 +122,7 @@ export function BotChat() {
         </div>
 
         <div className="flex-1 min-h-0 overflow-y-auto no-scrollbar px-[14px] pb-4 flex flex-col gap-3">
-          {data && <div className="text-center text-[12px] text-muted pt-1">{data.conversation.origin === "chat" ? "Asked by Odie from your chat" : data.conversation.title}</div>}
+          {data && <div className="text-center text-[12px] text-muted pt-1">{data.conversation.origin === "chat" ? "Asked by Odie from your chat" : data.conversation.origin === "routine" ? `Runs by itself · ${data.conversation.title}` : data.conversation.title}</div>}
           {!conv && bot && <Hello bot={bot} onPick={(q) => setText(q)} />}
           {shown.map((m) => <Message key={m.id} m={m} bot={bot} onAnswered={load} />)}
           {busy && data?.running && <TeamCard job={data.running} />}
@@ -164,6 +167,7 @@ function Hello({ bot, onPick }: { bot: Bot; onPick: (q: string) => void }) {
 function Message({ m, bot, onAnswered }: { m: ConvMessage; bot: Bot | null; onAnswered: () => void }) {
   if (m.role === "user") return <YourMessage text={m.text} />;
   if (m.role === "ask") return <AskCard m={m} onAnswered={onAnswered} />;
+  if (m.role === "note") return <div className="self-center max-w-[90%] text-center text-[12px] text-muted px-3 py-1 rounded-full bg-well">{m.text}</div>;
   const files = Array.isArray(m.media) ? (m.media as unknown as Media[]) : [];
   return (
     <div className="flex flex-col gap-1.5 max-w-[92%]">
@@ -171,6 +175,7 @@ function Message({ m, bot, onAnswered }: { m: ConvMessage; bot: Bot | null; onAn
         <Creature look={bot?.look} size={22} /><b className="text-ink-2">{bot?.name ?? "bot"}</b>
         <span>· {new Date(m.ts).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span>
       </div>
+      {m.job_id && <TurnPill job={m.job_id} />}
       <ReplyText text={m.text} />
       {files.length > 0 && <MediaList items={files} />}
     </div>

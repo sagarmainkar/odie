@@ -79,3 +79,21 @@ describe("creatures", () => {
     expect(mix("#000000", "#ffffff", 0.5)).toBe("#808080");
   });
 });
+
+import { activityLine, nextWords } from "./bots";
+
+describe("routines and recent work", () => {
+  it("says when a routine runs next", () => {
+    const now = new Date("2026-11-16T07:00:00");
+    expect(nextWords(null, now)).toBe("paused");
+    expect(nextWords("2026-11-16T08:30:00", now, "en-GB")).toBe("today 8:30");
+    expect(nextWords("2026-11-17T08:30:00", now, "en-GB")).toBe("tomorrow 8:30");
+    expect(nextWords("2026-11-19T08:30:00", now, "en-GB")).toBe("Thu 8:30");
+  });
+  it("says how a job went", () => {
+    const a = { id: "j", title: "t", status: "done", outcome: "ready", started_at: null, ended_at: null, calls: 12, conv: null, for_chief: false, error: null };
+    expect(activityLine(a)).toBe("done · 12 steps");
+    expect(activityLine({ ...a, status: "failed", calls: 1 })).toBe("didn't finish · 1 step");
+    expect(activityLine({ ...a, for_chief: true, outcome: "blocked" })).toBe("for chief · stuck · 12 steps");
+  });
+});

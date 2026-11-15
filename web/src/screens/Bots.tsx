@@ -65,6 +65,7 @@ export function Bots() {
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
                   <span className="text-[16px] font-semibold truncate">{b.name}</span>
+                  {(b.routines ?? 0) > 0 && <span title="Runs by itself" aria-label="Runs by itself" className="text-[13px] text-muted">⟳</span>}
                   <span className="ml-auto shrink-0 text-[12px] text-muted">
                     {b.needs_you ? <span className="chip chip-warn !py-0.5 !text-[11px]">Needs your tap</span> : b.working ? "now" : whenWords(b.updated_at, undefined, locale)}
                   </span>

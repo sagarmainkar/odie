@@ -102,6 +102,24 @@ def colors_in_use(store: Store) -> set[str]:
     return out
 
 
+def shuffle_look(store: Store, name: str, pick=None) -> dict | None:
+    """A new creature for a bot ("Shuffle look" in its details): another shape, colour and eyes, the colour one no
+    other bot wears when there is one. The chief keeps its violet hexagon. Unknown bot -> None. pick: a test's
+    stand-in for random.choice."""
+    import random
+    choose = pick or random.choice
+    bot = get(store, name)
+    if bot is None:
+        return None
+    if bot.is_chief:
+        return dict(CHIEF_LOOK)
+    taken = colors_in_use(store) - {(bot.look or {}).get("color")}
+    free = [c for c in LOOK_COLORS if c not in taken and c != (bot.look or {}).get("color")] or list(LOOK_COLORS)
+    look = {"shape": choose(LOOK_SHAPES), "color": choose(free), "eyes": choose(LOOK_EYES)}
+    store.execute("update bots set look_json=? where name=?", (json.dumps(look), name))
+    return look
+
+
 def ensure_looks(store: Store) -> None:
     """Bots made before looks existed get one now, once (start up)."""
     for r in store.query("select name from bots where look_json is null order by created_at"):

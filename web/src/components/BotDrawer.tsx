@@ -59,15 +59,19 @@ export function BotDrawer({ current, conv, onPick }: { current: string; conv: st
         )}
         <button onClick={() => void fresh()} className="h-10 rounded-[14px] bg-ember text-on-ember font-semibold text-[14px] flex items-center justify-center gap-1.5"><Icon name="plus" size={16} />New conversation</button>
         {list?.length === 0 && <div className="px-1 text-[13px] text-muted">No conversations yet.</div>}
-        {list?.map((c) => (
-          <a key={c.id} href={`#bot/${c.bot}/${c.id}`} onClick={onPick}
+        {(list ?? []).some((c) => c.origin === "routine") && <div className="px-1 pt-1 text-[11.5px] font-semibold text-muted uppercase tracking-wide">Runs by itself</div>}
+        {[...(list ?? []).filter((c) => c.origin === "routine"), ...(list ?? []).filter((c) => c.origin !== "routine")].map((c, i, all) => (
+          <div key={c.id} className="contents">
+          {i > 0 && all[i - 1].origin === "routine" && c.origin !== "routine" && <div className="px-1 pt-2 text-[11.5px] font-semibold text-muted uppercase tracking-wide">Conversations</div>}
+          <a href={`#bot/${c.bot}/${c.id}`} onClick={onPick}
             className={`rounded-[14px] px-2.5 py-2 ${c.id === conv ? "bg-well" : "active:bg-well"}`}>
             <div className="flex items-center gap-2">
               <span className={`text-[14px] truncate ${c.unread ? "font-bold" : "font-medium"}`}>{c.title}</span>
               <span className="ml-auto shrink-0 text-[11.5px] text-muted">{whenWords(c.updated_at, undefined, locale)}</span>
             </div>
-            <div className="text-[12.5px] text-muted truncate">{c.origin === "chat" ? "Asked by Odie from your chat · " : ""}{c.preview}</div>
+            <div className="text-[12.5px] text-muted truncate">{c.origin === "chat" ? "Asked by Odie from your chat · " : c.origin === "routine" ? "⟳ " : ""}{c.preview}</div>
           </a>
+          </div>
         ))}
       </div>
       {adding && <NewBotSheet onClose={() => setAdding(false)} />}
