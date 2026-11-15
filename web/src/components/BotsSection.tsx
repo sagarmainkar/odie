@@ -54,7 +54,7 @@ export function BotsSection() {
   );
 }
 
-function BotEditor({ bot, powers, choices, onDone }: { bot: Bot; powers: string[]; choices: ModelChoice[]; onDone: () => void }) {
+export function BotEditor({ bot, powers, choices, onDone }: { bot: Bot; powers: string[]; choices: ModelChoice[]; onDone: () => void }) {
   const [role, setRole] = useState(bot.role);
   const [prompt, setPrompt] = useState(bot.prompt);
   const [picked, setPicked] = useState<string[]>(bot.powers);

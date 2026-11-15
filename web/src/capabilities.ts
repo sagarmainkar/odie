@@ -31,6 +31,7 @@ export function shown<T extends { needs?: string }>(items: T[], caps: Caps): T[]
 
 /** The Money tab without a money ledger is Today. */
 export function tabFor<T extends string>(tab: T, caps: Caps): T | "today" {
+  if ((tab === "bots" || tab === "bot") && !has(caps, "bots")) return "today";
   return tab === "money" && !has(caps, "money") ? "today" : tab;
 }
 

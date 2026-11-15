@@ -6,6 +6,8 @@ import { Brain } from "./screens/Brain";
 import { SampleChat } from "./screens/SampleChat";
 import { Money } from "./screens/Money";
 import { Today } from "./screens/Today";
+import { Bots } from "./screens/Bots";
+import { BotChat } from "./screens/BotChat";
 import { Setup } from "./screens/Setup";
 import { Private } from "./screens/Private";
 import { Wash } from "./components/Wash";
@@ -21,11 +23,14 @@ import { useUpdate } from "./update";
 import { PRIVATE_EVENT, codeFromHash, needsPairing, type PairStatus } from "./devices";
 import { columnWidth, showsRail } from "./layout";
 
-export type Tab = "chat" | "today" | "settings" | "brain" | "sample" | "money" | "setup";
+export type Tab = "chat" | "today" | "settings" | "brain" | "sample" | "money" | "setup" | "bots" | "bot";
 
-function tabFromHash(): Tab {
-  const h = location.hash.replace("#", "").split("?")[0];
-  return h === "chat" || h === "settings" || h === "brain" || h === "sample" || h === "money" || h === "setup" ? (h as Tab) : "today";
+/** The screen an address names: "#chat" -> chat; "#bots" -> the bots list; "#bot/chief/conv-1" -> a bot's chat;
+ * anything else -> today. */
+export function tabFromHash(hash: string = location.hash): Tab {
+  const h = hash.replace("#", "").split("?")[0];
+  if (h.startsWith("bot/")) return "bot";
+  return h === "chat" || h === "settings" || h === "brain" || h === "sample" || h === "money" || h === "setup" || h === "bots" ? (h as Tab) : "today";
 }
 
 /** While pairing is on, a browser that isn't paired sees only the Private screen (nothing else mounts, so nothing
@@ -92,6 +97,8 @@ function Main() {
           {tab === "sample" && <SampleChat />}
           {tab === "money" && <Money />}
           {tab === "setup" && <Setup />}
+          {tab === "bots" && <Bots />}
+          {tab === "bot" && <BotChat />}
         </div>
       </div>
       {tab === "today" && <AskBar pending={pending} />}

@@ -215,10 +215,11 @@ async def jobs_list(request: Request) -> dict[str, Any]:
     _jobs_on()
     from odie.workers import store as jobs_store
     store = request.app.state.store
-    running = [_job_view(j) for j in jobs_store.running(store)]
+    # A bot's jobs live with the bot (its conversation, the Bots card): this list keeps the plain Worker jobs.
+    running = [_job_view(j) for j in jobs_store.running(store) if not j.get("bot")]
     going = {j["id"] for j in running}
     # The last 8 jobs you or Odie started, and their teammates (a chief's row counts them; they don't push it out).
-    ended = [j for j in jobs_store.recent(store, 60) if j["id"] not in going]
+    ended = [j for j in jobs_store.recent(store, 60) if j["id"] not in going and not j.get("bot")]
     leads = [j for j in ended if not j.get("parent_id")][:8]
     lead_ids = {j["id"] for j in leads} | going  # a chief still at work: its finished teammates count too
     recent = [_job_view(j) for j in ended if j["id"] in lead_ids or j.get("parent_id") in lead_ids]
@@ -268,6 +269,18 @@ async def bots_list(request: Request) -> dict[str, Any]:
     store = request.app.state.store
     return {"bots": [{**b.as_dict(), **convs.list_row(store, b.name)} for b in bots.all_bots(store)],
             "powers": list(bots.POWERS)}
+
+
+@router.get("/bots/{name}/notes")
+async def bot_notes(name: str, request: Request) -> dict[str, Any]:
+    """A bot's memory notes (notes.md in its folder), for its details: the first 8,000 characters; none yet -> ""."""
+    _jobs_on()
+    from odie.workers import bots
+    if bots.get(request.app.state.store, name) is None:
+        raise HTTPException(404, "no such bot")
+    notes = bots.folder_of(name) / "notes.md"
+    text = notes.read_text(errors="replace")[:8000] if notes.is_file() else ""
+    return {"text": text}
 
 
 @router.get("/bots/{name}/conversations")
@@ -1012,6 +1025,9 @@ async def capabilities_get(request: Request) -> dict[str, Any]:
     from odie import update
     if update.can_update():
         caps.add("update")  # this is the installed copy: the app can check for and start an update
+    from odie import workers
+    if workers.enabled():
+        caps.add("bots")  # the Workers and bots spike: the Bots list, a bot's chat, the rail's Bots
     return {"caps": sorted(caps), "country": config.settings.country,
             "addons": [{"name": f.name, "status": f.status, "reason": f.reason} for f in addons.found()]}
 

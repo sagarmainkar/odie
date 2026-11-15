@@ -30,3 +30,52 @@ describe("bots", () => {
     expect(madeWords(bot({ made_by: "odie" }))).toBe("starter");
   });
 });
+
+import { botFromHash, botHref, matches, rowLine, sortBots, whenWords } from "./bots";
+import { creatureSvg, mix, safeLook } from "./creature";
+import { tabFromHash } from "./App";
+
+describe("the bots list", () => {
+  const b = (over: Partial<Bot>): Bot => bot({ ...over });
+  it("puts the chief first, then who needs you, then the latest", () => {
+    const list = sortBots([b({ name: "old", updated_at: "2026-11-10T00:00:00Z" }), b({ name: "new", updated_at: "2026-11-15T00:00:00Z" }),
+      b({ name: "asks", needs_you: true }), b({ name: "chief", chief: true })]);
+    expect(list.map((x) => x.name)).toEqual(["chief", "asks", "new", "old"]);
+  });
+  it("shows the question, the live step, the last message or a hello", () => {
+    expect(rowLine(b({ needs_you: true, ask: "Add to cart?" }))).toBe("Add to cart?");
+    expect(rowLine(b({ working: true, live: "reading zigwheels.com" }))).toBe("reading zigwheels.com…");
+    expect(rowLine(b({ preview: "Done." }))).toBe("Done.");
+    expect(rowLine(b({ role: "Finds sources" }))).toBe("I'm researcher: finds sources");
+  });
+  it("names times like a messaging app", () => {
+    const now = new Date("2026-11-15T15:00:00");
+    expect(whenWords(null, now)).toBe("");
+    expect(whenWords("2026-11-14T10:00:00", now)).toBe("Yesterday");
+    expect(whenWords("2026-11-12T10:00:00", now, "en-GB")).toBe("12 Nov");
+  });
+  it("searches names, roles and last lines", () => {
+    expect(matches(b({ preview: "Goa tides" }), "tides")).toBe(true);
+    expect(matches(b({}), "zzz")).toBe(false);
+    expect(matches(b({}), " ")).toBe(true);
+  });
+  it("reads and writes a bot's address", () => {
+    expect(botHref({ name: "chief", conversation: "conv-1a2b" })).toBe("#bot/chief/conv-1a2b");
+    expect(botHref({ name: "chief", conversation: null })).toBe("#bot/chief");
+    expect(botFromHash("#bot/chief/conv-1a2b")).toEqual({ bot: "chief", conv: "conv-1a2b" });
+    expect(botFromHash("#bot/chief")).toEqual({ bot: "chief", conv: null });
+    expect(botFromHash("#bot/Chief/<x>")).toBeNull();
+    expect(tabFromHash("#bot/chief/conv-1a2b")).toBe("bot");
+    expect(tabFromHash("#bots")).toBe("bots");
+    expect(tabFromHash("#nowhere")).toBe("today");
+  });
+});
+
+describe("creatures", () => {
+  it("draws only from its own tables", () => {
+    expect(safeLook({ shape: "hex", color: "#8B6CF6", eyes: "round" })).toEqual({ shape: "hex", color: "#8B6CF6", eyes: "round" });
+    expect(safeLook({ shape: "<script>", color: "red", eyes: "x" })).toEqual({ shape: "squircle", color: "#7C8AA5", eyes: "round" });
+    expect(creatureSvg({ shape: "hex", color: "#8B6CF6\"/><script>", eyes: "round" })).not.toContain("<script>");
+    expect(mix("#000000", "#ffffff", 0.5)).toBe("#808080");
+  });
+});

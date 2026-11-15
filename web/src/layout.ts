@@ -17,7 +17,7 @@ export const WIDE_QUERY = "(min-width: 1024px)";
 export function columnWidth(tab: Tab): string {
   if (tab === "setup") return "max-w-[780px]";
   const phoneAndTablet = "max-w-[520px] md:max-w-[720px]";
-  if (tab === "chat") return `${phoneAndTablet} lg:max-w-none`;
+  if (tab === "chat" || tab === "bot") return `${phoneAndTablet} lg:max-w-none`;  // a bot's chat lays out its own drawer
   if (tab === "today") return `${phoneAndTablet} lg:max-w-[1160px]`;
   if (tab === "settings") return `${phoneAndTablet} lg:max-w-[1040px]`;
   return `${phoneAndTablet} lg:max-w-[820px]`;  // Brain, Money, the blocks gallery: one column as wide as Chat's
@@ -32,22 +32,24 @@ export function showsRail(tab: Tab): boolean {
 export type RailItem = { tab: Tab; label: string; icon: IconName };
 
 /** The desktop rail's tabs, for what this install has. Money needs the money ledger.
- *  Worked examples: caps {mail, money} -> Today, Chat, Money, Brain, Settings; caps {mail} -> Today, Chat, Brain, Settings;
- *  caps unknown (null) -> all five, as the app shows everything when the server doesn't say. */
+ *  Worked examples: caps {mail, money} -> Today, Chat, Bots, Money, Brain, Settings; caps {mail} -> Today, Chat, Bots,
+ *  Brain, Settings; caps unknown (null) -> all six, as the app shows everything when the server doesn't say. */
 export function railItems(caps: Caps): RailItem[] {
   const items: RailItem[] = [
     { tab: "today", label: "Today", icon: "sun" },
     { tab: "chat", label: "Chat", icon: "chat" },
+    { tab: "bots", label: "Bots", icon: "spark" },
     { tab: "money", label: "Money", icon: "rupee" },
     { tab: "brain", label: "Brain", icon: "brain" },
     { tab: "settings", label: "Settings", icon: "gear" },
   ];
-  return items.filter((item) => item.tab !== "money" || has(caps, "money"));
+  return items.filter((item) => (item.tab !== "money" || has(caps, "money")) && (item.tab !== "bots" || has(caps, "bots")));
 }
 
 /** Which rail tab lights up for a screen. The sample chat is reached from Settings, so "sample" -> "settings";
  *  "brain" -> "brain"; "today" -> "today". */
 export function railTabFor(tab: Tab): Tab {
+  if (tab === "bot") return "bots";
   return tab === "sample" ? "settings" : tab;
 }
 

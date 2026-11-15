@@ -26,7 +26,11 @@ describe("the desktop rail", () => {
   it("has Money only with the money ledger", () => {
     expect(railItems(new Set(["mail", "money"])).map((i) => i.tab)).toEqual(["today", "chat", "money", "brain", "settings"]);
     expect(railItems(new Set(["mail"])).map((i) => i.tab)).toEqual(["today", "chat", "brain", "settings"]);
-    expect(railItems(null).map((i) => i.tab)).toEqual(["today", "chat", "money", "brain", "settings"]);
+    expect(railItems(null).map((i) => i.tab)).toEqual(["today", "chat", "bots", "money", "brain", "settings"]);
+  });
+  it("has Bots only with bots on, and lights it for a bot's chat", () => {
+    expect(railItems(new Set(["mail", "bots"])).map((i) => i.tab)).toEqual(["today", "chat", "bots", "brain", "settings"]);
+    expect(railTabFor("bot")).toBe("bots");
   });
   it("lights Settings for the blocks gallery, which opens from Settings", () => {
     expect(railTabFor("sample")).toBe("settings");

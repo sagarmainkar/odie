@@ -533,8 +533,7 @@ async def test_a_chiefs_card_on_today_shows_its_team(isolated_settings, tmp_path
     jobs.ended(store, done_kid.id, "done", outcome="ready", report="found it")
     async with app.router.lifespan_context(app), httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
         listed = (await c.get("/api/jobs")).json()
-        assert {j["id"] for j in listed["running"]} == {chief_job.id, busy_kid.id}
-        assert [j["id"] for j in listed["recent"]] == [done_kid.id]  # a running chief's finished teammate is listed
+        assert listed["running"] == [] and listed["recent"] == []  # a bot's jobs live with the bot, not in Jobs
         one = (await c.get(f"/api/jobs/{chief_job.id}")).json()
         assert [(t["id"], t["status"], t["report"]) for t in one["teammates"]] == [(done_kid.id, "done", "found it"),
                                                                                     (busy_kid.id, "running", "")]
@@ -893,3 +892,21 @@ def test_the_terminals_key_cant_reach_bot_conversations():
     assert not devices.terminal_may("GET", "/api/conversations/conv-1")
     assert not devices.terminal_may("POST", "/api/conversations/conv-1/messages")
     assert not devices.terminal_may("GET", "/api/bots/chief/conversations")
+
+
+async def test_bots_show_in_capabilities_and_notes_are_readable(isolated_settings, tmp_path, monkeypatch):
+    from odie.app.main import create_app
+    from tests.test_models import FakeRunner
+    monkeypatch.setenv("ODIE_WORKERS", "1")
+    store = Store(tmp_path / "assistant.db")
+    store.init_schema()
+    jobs.ensure(store)
+    bots.ensure_chief(store)
+    (bots.folder_of("chief") / "notes.md").write_text("Prefers Indian shops.")
+    app = create_app(runner=FakeRunner(), store=store)
+    async with app.router.lifespan_context(app), httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+        assert "bots" in (await c.get("/api/capabilities")).json()["caps"]
+        assert (await c.get("/api/bots/chief/notes")).json() == {"text": "Prefers Indian shops."}
+        assert (await c.get("/api/bots/ghost/notes")).status_code == 404
+        monkeypatch.delenv("ODIE_WORKERS")
+        assert "bots" not in (await c.get("/api/capabilities")).json()["caps"]
