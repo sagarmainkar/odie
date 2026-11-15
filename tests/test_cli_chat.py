@@ -6,6 +6,7 @@ import io
 import json
 import stat
 import threading
+from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from types import SimpleNamespace
@@ -102,7 +103,8 @@ class FakeApi:
 
     def get(self, path):
         self.sent.append((path, {}))
-        return {"threads": [{"id": "chat-2026-11-15", "title": "Plans", "messages": 4, "pinned": True}],
+        return {"threads": [{"id": "chat-2026-11-15", "title": "Plans", "messages": 4, "pinned": True,
+                             "updated": datetime(2026, 11, 15, 14, 23).timestamp()}],
                 "items": [{"role": "user", "text": "hi", "ts": 0, "via": "terminal"},
                           {"role": "odie", "text": "Hello.", "ts": 0, "steps": [{"name": "web_search"}]},
                           {"role": "approval", "approval": {"summary": "Send mail", "status": "pending"}}]}
@@ -192,6 +194,7 @@ def test_threads_and_show(inst):
     api = FakeApi([])
     assert cli_chat.run(inst, SimpleNamespace(command="threads", q="plans", lines=None, json=False), out, io.StringIO(), api=api) == 0
     assert "★ chat-2026-11-15" in out.getvalue() and "Plans" in out.getvalue()
+    assert "15 Nov 14:23" in out.getvalue()  # when it was last active, in local time
     assert api.sent[0][0] == "/api/threads?q=plans"
     out = io.StringIO()
     assert cli_chat.run(inst, SimpleNamespace(command="show", thread="chat-2026-11-15", lines=2, json=False), out,

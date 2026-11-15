@@ -268,7 +268,8 @@ def cmd_threads(api: Api, q: str | None, limit: int | None, as_json: bool, out: 
         return 0
     for t in threads:
         pin = "★" if t.get("pinned") else " "
-        out.write(f"{pin} {t['id']:<22} {t.get('messages', 0):>4} msgs  {t.get('title', '')}\n")
+        last_active = clock(t.get("updated"))
+        out.write(f"{pin} {t['id']:<22} {last_active:<13} {t.get('messages', 0):>4} msgs  {t.get('title', '')}\n")
     return 0
 
 
