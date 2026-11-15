@@ -81,7 +81,7 @@ def now_line(store: Store, row: dict) -> str:
     if status in ("queued",):
         return "waiting for a turn"
     if asks.waits_on_user(store, row["id"]):
-        return "waiting for your tap on Today"
+        return "waiting for you"
     if status == "running":
         busy = store.one("select count(*) as n from jobs where parent_id=? and status in ('queued','running')",
                          (row["id"],))["n"]
@@ -115,11 +115,24 @@ def model_words(store: Store, bot_name: str) -> str:
 
 def member(store: Store, row: dict) -> dict:
     """One bot's line on the card."""
-    return {"job": row["id"], "bot": row.get("bot") or row.get("kind") or "worker", "status": row["status"],
+    from odie.workers import bots
+    found = bots.get(store, row.get("bot") or "")
+    look = found.as_dict()["look"] if found else None
+    return {"job": row["id"], "bot": row.get("bot") or row.get("kind") or "worker", "look": look, "status": row["status"],
             "outcome": row.get("outcome"), "now": now_line(store, row), "model": model_words(store, row.get("bot") or ""),
             "report": (row.get("report") or row.get("error") or "")[:4000],
             "calls": store.one("select count(*) as n from job_actions where job_id=?", (row["id"],))["n"],
-            "started_at": row.get("started_at"), "ended_at": row.get("ended_at")}
+            "started_at": row.get("started_at"), "ended_at": row.get("ended_at"), **browser_of(row["id"])}
+
+
+def browser_of(job_id: str) -> dict:
+    """A bot's browser tab (named by its job) and page, when it has opened one: Watch opens it live. The tab is the
+    job's id (each Worker's session is its job): {"tab": "job-3f9a2c", "url": "https://amazon.in/…"}; none -> nulls."""
+    from odie.signin import guard
+    url = guard.LAST_URL.get(job_id)
+    if not url:
+        return {"tab": None, "url": None}
+    return {"tab": job_id, "url": url}
 
 
 def team_view(store: Store, job_id: str) -> dict | None:

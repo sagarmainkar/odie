@@ -224,18 +224,29 @@ async def jobs_list(request: Request) -> dict[str, Any]:
     lead_ids = {j["id"] for j in leads} | going  # a chief still at work: its finished teammates count too
     recent = [_job_view(j) for j in ended if j["id"] in lead_ids or j.get("parent_id") in lead_ids]
     from odie.workers import asks
-    return {"running": running, "recent": recent, "asks": [_ask_view(a) for a in asks.open_for(store)]}
+    return {"running": running, "recent": recent, "asks": [_ask_view(a, store) for a in asks.open_for(store)]}
 
 
-def _ask_view(a: dict) -> dict:
+def _ask_view(a: dict, store) -> dict:
     """An open question for Today: what it asks, and for a sign-in the Sign in card that opens the live view."""
     detail = a.get("detail") or {}
     return {"id": a["id"], "job_id": a["job_id"], "kind": a["kind"], "text": a["text"], "why": detail.get("why"),
-            "site": detail.get("site"), "card": detail.get("card"), "created_at": a["created_at"]}
+            "site": detail.get("site"), "card": detail.get("card"), "created_at": a["created_at"], **ask_where(store, a["job_id"])}
+
+
+def ask_where(store, job_id: str) -> dict:
+    """Which bot asks and in which conversation, so Today links to it: {"bot": "shopper", "conv": "conv-…"}; a
+    teammate's question -> its chief's conversation."""
+    from odie.workers import store as jobs_store
+    row = jobs_store.get(store, job_id)
+    if row is None:
+        return {"bot": None, "conv": None}
+    return {"bot": row.get("bot") or None, "conv": row.get("conv_id") or None}
 
 
 class AskAnswerIn(BaseModel):
     answer: Literal["yes", "no"]
+    secret: str | None = Field(default=None, max_length=200)  # a "secret" question's answer: typed into the page, kept nowhere
 
 
 @router.post("/jobs/asks/{ask_id}")
@@ -245,10 +256,28 @@ async def job_ask_answer(ask_id: str, body: AskAnswerIn, request: Request) -> di
     _jobs_on()
     from odie.workers import asks
     store = request.app.state.store
+    detail = asks.detail_of(store, ask_id)
+    if detail is None:
+        raise HTTPException(409, f"{ask_id} isn't waiting for an answer")
+    if detail["kind"] == "secret" and body.answer == "yes":
+        await type_users_secret(detail, body.secret or "")  # 409 when it can't go in; the question stays open
     if not asks.answer(store, ask_id, body.answer):
         raise HTTPException(409, f"{ask_id} isn't waiting for an answer")
-    store.audit("user", "job_ask_answered", result_summary=f"{ask_id}: {body.answer}")
+    store.audit("user", "job_ask_answered", result_summary=f"{ask_id}: {body.answer}")  # never the secret
     return {"ok": True}
+
+
+async def type_users_secret(detail: dict, secret: str) -> None:
+    """The user's secret goes straight into the bot's page (engine.type_secret): never stored, logged or returned.
+    Empty, or the field isn't on the page any more -> 409 with why, and the question stays open to try again."""
+    from odie.browser import shared
+    from odie.browser.engine import BrowserError
+    if not secret:
+        raise HTTPException(409, "Type it first.")
+    try:
+        await shared().type_secret(detail.get("tab", ""), detail.get("field", ""), secret)
+    except BrowserError as e:
+        raise HTTPException(409, str(e)) from None
 
 
 class BotIn(BaseModel):
@@ -334,6 +363,7 @@ async def conversation_send(conv_id: str, body: ConvMessageIn, request: Request)
     got = convs.send(store, conv_id, body.text.strip())
     if isinstance(got, str):
         raise HTTPException(409, got)
+    await convs.publish(request.app.state.runner, got)  # another device with this conversation open shows it now
     return {"job": got.id}
 
 

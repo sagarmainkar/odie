@@ -1,7 +1,8 @@
 /** The live team card (odie/workers/progress.py): each bot's step right now, Grok-style. */
 
-export type Member = { job: string; bot: string; status: string; outcome: string | null; now: string; model: string;
-  report: string; calls: number; started_at: string | null; ended_at: string | null };
+export type Member = { job: string; bot: string; look?: { shape: string; color: string; eyes: string } | null; status: string; outcome: string | null; now: string; model: string;
+  report: string; calls: number; started_at: string | null; ended_at: string | null;
+  tab?: string | null; url?: string | null };  // its browser tab, when it has used the browser: Watch opens it live
 export type TeamView = { title: string; lead: Member; team: Member[] };
 
 const COLORS = ["#5b8def", "#2fb67c", "#f08a3c", "#d65db1", "#8b6cf6", "#e0b43a", "#3cb4c8"];

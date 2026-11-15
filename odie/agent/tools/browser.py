@@ -45,6 +45,7 @@ AUTO_NOTE = {"code": "the site asked for a one-time code", "failed": "the saved 
              "captcha": "the site wants a check only a person can do", "vault": "Odie couldn't open its vault on the Mac"}
 
 
+BOT_CHECK_SAID = "showing a bot check"  # in the engine's note on a page whose bot check didn't clear (engine.BOT_NOTE)
 SCROLL_LOOP = ("Stopped: the page hasn't changed for three scrolls in a row, so more scrolling won't help. "
                "Answer with what you have, or try another way (a web search, another site).")
 
@@ -329,6 +330,9 @@ def make_browser_tools(store, browser_for: Callable[[], object] | None = None) -
 
         # 5. What the model reads above the page
         head = _page_head(page)
+        if turn.BOT.get() and BOT_CHECK_SAID in (page.note or ""):  # a bot can't wait for a chat turn: the user passes it
+            head += ("\n(A check only a person can pass is in the way. Call browser_sign_in with why \"a check only you can "
+                     "pass\": your job waits while the user does it in the live view; then look at the page again.)")
         ask_card = None
         if left:
             head += f"\n(Signed out of {sites.site_of(page.url)}.)"

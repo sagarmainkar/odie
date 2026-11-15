@@ -8,7 +8,7 @@ export type LiveResult = { site: string; done: boolean };
 /** The user's turn in Odie's browser (odie/signin/live.py), full screen: the page's frames, your taps and drags, your
  * own keyboard. Odie's model sees none of it. `chat`: Done says so in the chat ("I'm signed in to amazon.in."), and the
  * chat carries on; from Settings it only signs in. `start`: an address to open first (Settings → Sign in to a site). */
-export function LiveView(props: { tab: string; site: string; start?: string; chat: boolean; onClose: (r: LiveResult | null) => void }) {
+export function LiveView(props: { tab: string; site: string; start?: string; chat: boolean; onClose: (r: LiveResult | null) => void; watch?: boolean; who?: string }) {
   return createPortal(<Live {...props} />, document.body);  // on the page itself: a card's backdrop filter would trap it
 }
 
@@ -21,7 +21,10 @@ const ENDED: Record<string, string> = {
   lost: "The connection to Odie dropped. Open it again from the card.",
 };
 
-function Live({ tab, site, start, chat, onClose }: { tab: string; site: string; start?: string; chat: boolean; onClose: (r: LiveResult | null) => void }) {
+/** watch: a bot is at work in this tab; you see its page as it is, and nothing you do reaches it until Take control
+ * (then the bot waits, and Hand back gives the page back to it). who: the bot's name for the bar. */
+function Live({ tab, site, start, chat, onClose, watch = false, who }: { tab: string; site: string; start?: string; chat: boolean; onClose: (r: LiveResult | null) => void; watch?: boolean; who?: string }) {
+  const [controlling, setControlling] = useState(!watch);
   const ws = useRef<WebSocket | null>(null);
   const [frame, setFrame] = useState<{ src: string; w: number; h: number } | null>(null);
   const [page, setPage] = useState({ url: "", title: "", loading: true });
@@ -44,7 +47,7 @@ function Live({ tab, site, start, chat, onClose }: { tab: string; site: string; 
   useEffect(() => {
     const sock = new WebSocket(liveUrl(tab, location));
     ws.current = sock;
-    sock.onopen = () => sock.send(JSON.stringify({ t: "hello", w: Math.round(window.innerWidth), h: Math.max(480, Math.round(window.innerHeight - 112)) }));
+    sock.onopen = () => sock.send(JSON.stringify({ t: "hello", w: Math.round(window.innerWidth), h: Math.max(480, Math.round(window.innerHeight - 112)), ...(watch ? { watch: true } : {}) }));
     sock.onmessage = (ev) => {
       let m: any;
       try { m = JSON.parse(ev.data); } catch { return; }
@@ -54,6 +57,7 @@ function Live({ tab, site, start, chat, onClose }: { tab: string; site: string; 
         if (start && !opened.current) { opened.current = true; sock.send(JSON.stringify({ t: "go", url: start })); }
       } else if (m.t === "busy") setPhase("busy");
       else if (m.t === "upi") setUpi(upiLink(String(m.url)));
+      else if (m.t === "control") setControlling(true);
       else if (m.t === "error") { setNote(String(m.why || "The page didn't take that.")); window.setTimeout(() => setNote(""), 3000); }
       else if (m.t === "bye") { setEnded(String(m.why)); setPhase("ended"); }
     };
@@ -80,6 +84,7 @@ function Live({ tab, site, start, chat, onClose }: { tab: string; site: string; 
 
   const box = () => img.current?.getBoundingClientRect();
   const onDown = (e: React.PointerEvent) => {
+    if (!controlling) return;  // watching: the page is the bot's
     e.currentTarget.setPointerCapture(e.pointerId);
     fingers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
     if (fingers.current.size === 2) {
@@ -145,8 +150,19 @@ function Live({ tab, site, start, chat, onClose }: { tab: string; site: string; 
   return (
     <motion.div role="dialog" aria-modal="true" aria-label={`Sign in to ${site}`} initial={{ opacity: 0 }} animate={{ opacity: 1 }}
       className="fixed inset-0 z-50 bg-[#0d0d10] text-white flex flex-col">
+      {watch && !controlling ? (
+        <div className="flex items-center gap-2 px-3 pt-[max(10px,env(safe-area-inset-top))] pb-2">
+          <button onClick={() => { send({ t: "close" }); onClose(null); }} className="h-10 px-3 rounded-full text-[14px] font-semibold text-white/85 active:bg-white/15">Close</button>
+          <div className="flex-1 min-w-0 text-center">
+            <div className="text-[14px] font-semibold truncate">Watching {who ?? "the bot"}</div>
+            <div className="text-[11.5px] text-white/55 truncate">{host || "…"}{page.title ? ` · ${page.title}` : ""}</div>
+          </div>
+          <button onClick={() => send({ t: "control" })} disabled={phase !== "live"} className="h-10 px-4 rounded-full bg-white text-black text-[14px] font-bold disabled:opacity-40">Take control</button>
+        </div>
+      ) : (
+      <>
       <div className="flex items-center gap-2 px-3 pt-[max(10px,env(safe-area-inset-top))] pb-2">
-        <button onClick={() => finish(false)} disabled={finishing} className="h-10 px-3 rounded-full text-[14px] font-semibold text-white/85 active:bg-white/15">Cancel</button>
+        <button onClick={() => finish(false)} disabled={finishing} className="h-10 px-3 rounded-full text-[14px] font-semibold text-white/85 active:bg-white/15">{watch ? "Close" : "Cancel"}</button>
         <div className="flex-1 min-w-0 text-center">
           <div className="text-[14px] font-semibold truncate flex items-center justify-center gap-1.5">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" aria-hidden><rect x="5" y="11" width="14" height="10" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" /></svg>
@@ -154,18 +170,21 @@ function Live({ tab, site, start, chat, onClose }: { tab: string; site: string; 
           </div>
           <div className="text-[11.5px] text-white/55 truncate">{page.loading ? "Loading…" : page.title || "Your turn: Odie can't see this"}</div>
         </div>
-        <button onClick={() => finish(true)} disabled={finishing || phase !== "live"} className="h-10 px-4 rounded-full bg-white text-black text-[14px] font-bold disabled:opacity-40">
-          {finishing ? "…" : "Done"}
+        <button onClick={() => finish(!watch)} disabled={finishing || phase !== "live"} className="h-10 px-4 rounded-full bg-white text-black text-[14px] font-bold disabled:opacity-40">
+          {finishing ? "…" : watch ? `Hand back${who ? ` to ${who}` : ""}` : "Done"}
         </button>
       </div>
       <div className="flex items-center gap-2 px-3 pb-2">
         <button aria-label="Back" onClick={() => send({ t: "back" })} disabled={phase !== "live"} className={bar}>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"><path d="M15 18l-6-6 6-6" /></svg>
         </button>
+        <button aria-label="Forward" onClick={() => send({ t: "forward" })} disabled={phase !== "live"} className={bar}>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"><path d="M9 18l6-6-6-6" /></svg>
+        </button>
         <button aria-label="Reload" onClick={() => send({ t: "reload" })} disabled={phase !== "live"} className={bar}>
           <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"><path d="M21 12a9 9 0 1 1-3-6.7L21 8M21 3v5h-5" /></svg>
         </button>
-        {start !== undefined ? (
+        {start !== undefined || watch ? (
           <form className="flex-1 min-w-0" onSubmit={(e) => { e.preventDefault(); if (address.trim()) send({ t: "go", url: address.trim() }); }}>
             <input value={address} onChange={(e) => setAddress(e.target.value)} inputMode="url" autoCapitalize="off" autoCorrect="off" spellCheck={false}
               aria-label="Address" placeholder="amazon.in" className="w-full h-10 rounded-full bg-white/12 px-4 text-[14px] outline-none placeholder:text-white/40" />
@@ -177,6 +196,8 @@ function Live({ tab, site, start, chat, onClose }: { tab: string; site: string; 
         </button>
         {zoom.s > 1.01 && <button onClick={() => setZoom({ s: 1, x: 0, y: 0 })} className="h-10 px-3 rounded-full bg-white/12 text-[13px] font-semibold">1×</button>}
       </div>
+      </>
+      )}
       <input ref={keys} aria-hidden tabIndex={-1} autoCapitalize="off" autoCorrect="off" autoComplete="off" spellCheck={false}
         className="absolute -left-[200px] top-0 w-px h-px opacity-0"
         onKeyDown={(e) => { const m = fromKey(e.key); if (m) { e.preventDefault(); send(m); } }}

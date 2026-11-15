@@ -179,7 +179,7 @@ function Message({ m, bot, onAnswered }: { m: ConvMessage; bot: Bot | null; onAn
 
 /** A question the bot waits on, answered here (only the app's buttons answer: odie/workers/asks.py). */
 function AskCard({ m, onAnswered }: { m: ConvMessage; onAnswered: () => void }) {
-  const media = (m.media && !Array.isArray(m.media) ? m.media : {}) as { ask?: string; kind?: string; why?: string | null; status?: string; card?: { tab?: string; site?: string } | null };
+  const media = (m.media && !Array.isArray(m.media) ? m.media : {}) as { ask?: string; kind?: string; why?: string | null; status?: string; card?: { tab?: string; site?: string; url?: string } | null };
   const [live, setLive] = useState(false);
   const open = media.status === "open";
   async function answer(said: "yes" | "no") {
@@ -187,6 +187,9 @@ function AskCard({ m, onAnswered }: { m: ConvMessage; onAnswered: () => void }) 
     await postJSON(`/api/jobs/asks/${media.ask}`, { answer: said }).catch(() => {});
     onAnswered();
   }
+  if (media.kind === "secret") return <SecretAsk m={m} ask={media.ask ?? ""} open={open} status={media.status} why={media.why} onAnswered={onAnswered} />;
+  // A sign-in that lapsed (Odie restarted, or no answer in time): the page can still be opened, to sign in for next time.
+  const reopen = !open && media.kind === "sign_in" && media.status === "expired" && !!media.card?.tab;
   const settled = media.status === "yes" ? "You allowed it." : media.status === "no" ? "You said no." : "No answer in time: it counted as no.";
   return (
     <div className={`rounded-[22px] px-4 py-3 flex flex-col gap-2 border ${open ? "bg-warn-tint border-[rgba(255,178,63,.3)]" : "glass border-transparent"}`}>
@@ -208,7 +211,44 @@ function AskCard({ m, onAnswered }: { m: ConvMessage; onAnswered: () => void }) 
           )}
         </div>
       ) : <div className="text-[12.5px] text-muted">{settled}</div>}
-      {live && media.card?.tab && <LiveView tab={media.card.tab} site={media.card.site ?? ""} chat={false} onClose={(r) => { setLive(false); if (r?.done) void answer("yes"); }} />}
+      {reopen && <button onClick={() => setLive(true)} className="self-start pill h-9 px-3 text-[13px]">Open the page and sign in</button>}
+      {live && media.card?.tab && <LiveView tab={media.card.tab} site={media.card.site ?? ""} start={reopen ? media.card.url ?? "" : undefined} chat={false}
+        onClose={(r) => { setLive(false); if (r?.done && open) void answer("yes"); }} />}
+    </div>
+  );
+}
+
+/** "Type a secret for me": a code, a PIN, a password the bot needs in a field. What you type goes straight into that
+ * field on the page; the bot is told only that it was typed, and it is kept nowhere (odie/workers/asks.py). */
+function SecretAsk({ m, ask, open, status, why, onAnswered }: { m: ConvMessage; ask: string; open: boolean; status?: string; why?: string | null; onAnswered: () => void }) {
+  const [value, setValue] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  async function send(said: "yes" | "no") {
+    setBusy(true); setError("");
+    const r = await fetch(`/api/jobs/asks/${ask}`, { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(said === "yes" ? { answer: "yes", secret: value } : { answer: "no" }) });
+    setBusy(false);
+    if (!r.ok) { const b = await r.json().catch(() => ({})); setError(b.detail || "That didn't go in. Try again."); return; }
+    setValue("");
+    onAnswered();
+  }
+  return (
+    <div className={`rounded-[22px] px-4 py-3 flex flex-col gap-2 border ${open ? "bg-warn-tint border-[rgba(255,178,63,.3)]" : "glass border-transparent"}`}>
+      <div className="text-[14.5px] font-semibold">🔒 {m.text}</div>
+      {why && <div className="text-[12.5px] text-muted">{why}</div>}
+      {open ? (
+        <>
+          <input type="password" autoComplete="one-time-code" value={value} onChange={(e) => setValue(e.target.value)} maxLength={200}
+            placeholder="Type it here" className="h-11 rounded-[14px] border border-line-2 bg-transparent px-3 text-[15px]" />
+          <div className="text-[12px] text-muted">It goes straight into the page. The bot never sees it, and Odie keeps it nowhere.</div>
+          {error && <div className="text-[13px] text-ember-text">{error}</div>}
+          <div className="flex gap-2">
+            <button disabled={busy} onClick={() => void send("no")} className="pill h-10 px-4 text-[14px]">Skip</button>
+            <button disabled={busy || !value} onClick={() => void send("yes")} className="h-10 px-4 rounded-[14px] bg-ember text-on-ember font-semibold text-[14px] disabled:opacity-50">Type it in</button>
+          </div>
+        </>
+      ) : <div className="text-[12.5px] text-muted">{status === "yes" ? "Typed in." : status === "no" ? "You skipped it." : "No answer in time."}</div>}
     </div>
   );
 }

@@ -42,7 +42,7 @@ def clean(msg: Any) -> dict | None:
         return {"t": t, "s": msg["s"][:TEXT_CAP]}
     if t == "key" and msg.get("k") in KEYS:
         return {"t": t, "k": msg["k"]}
-    if t in ("back", "reload"):
+    if t in ("back", "forward", "reload", "control", "close"):
         return {"t": t}
     if t == "go" and isinstance(msg.get("url"), str) and msg["url"].strip():
         return {"t": t, "url": msg["url"].strip()[:2000]}
@@ -60,6 +60,8 @@ class View:
     origins: set = field(default_factory=set)  # where the page went while the user drove (for Sign out)
     timer: asyncio.Task | None = None  # the drop grace, while no phone is connected
     watch: asyncio.Task | None = None  # the idle check
+    watching: bool = False  # the user only watches (a bot at work): nothing held, no input, until they take control
+    size: tuple[int, int] = (390, 844)
 
 
 class LiveViews:
@@ -119,10 +121,13 @@ class LiveViews:
                 await old.close()
         b = self.browser()
         self._listen(b)
+        wants_to_watch = hello.get("watch") is True
         if view is None:
-            view = View(tab, secrets.token_hex(6))
+            view = View(tab, secrets.token_hex(6), watching=wants_to_watch)
             self._views[tab] = view
-            b.hold(tab, view.holder)
+            if not view.watching:
+                b.hold(tab, view.holder)
+        view.size = (w, h)
         if view.timer:
             view.timer.cancel()
             view.timer = None
@@ -137,7 +142,10 @@ class LiveViews:
                 view.origins.add(o)
             await self._send(view, {"t": "page", "url": view.url, "title": view.title, "loading": bool(info.get("loading"))})
         try:
-            await b.live_start(tab, w, h, on_frame, on_page)
+            if view.watching:  # the page stays as the bot has it, until Take control
+                await b.live_start(tab, w, h, on_frame, on_page, emulate=False)
+            else:
+                await b.live_start(tab, w, h, on_frame, on_page)
         except Exception as e:  # noqa: BLE001
             log.warning("live view couldn't start", exc_info=True)
             await self._send(view, {"t": "bye", "why": f"The browser couldn't show the page ({type(e).__name__})."})
@@ -156,6 +164,14 @@ class LiveViews:
                     continue
                 if (step := clean(msg)) is None:
                     continue  # nothing else reaches the browser
+                if step["t"] == "close":  # a watcher closes: the view ends now (a driver ends with Done or Cancel)
+                    await self.end(tab, None)
+                    return
+                if step["t"] == "control":
+                    await self._take_control(view, b, tab)
+                    continue
+                if view.watching:
+                    continue  # watching: the page is the bot's until the user takes control
                 try:
                     await b.live_input(tab, step)
                 except Exception as e:  # noqa: BLE001 (a page that didn't take a tap shouldn't end the view)
@@ -166,6 +182,19 @@ class LiveViews:
             if self._views.get(tab) is view and view.socket is ws:
                 view.socket = None
                 view.timer = asyncio.get_running_loop().create_task(self._later(view))
+
+    async def _take_control(self, view: View, b, tab: str) -> None:
+        """A watcher takes control: the tab is held (the bot's next browser step waits until the user hands back) and
+        goes phone-shaped for the user's fingers. Already in control -> nothing."""
+        if not view.watching:
+            return
+        b.hold(tab, view.holder)
+        view.watching = False
+        try:
+            await b.live_control(tab, *view.size)
+        except Exception as e:  # noqa: BLE001
+            await self._send(view, {"t": "error", "why": str(e)[:200] or type(e).__name__})
+        await self._send(view, {"t": "control"})
 
     async def _later(self, view: View) -> None:
         await asyncio.sleep(self.grace)

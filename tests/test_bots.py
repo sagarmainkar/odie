@@ -436,7 +436,7 @@ async def test_the_bots_and_asks_routes(isolated_settings, tmp_path, monkeypatch
                       "values('ask-9',?,'tap','Click Buy','{\"why\": \"may order\"}','open','t')", (job.id,))
         listed = (await c.get("/api/jobs")).json()["asks"]
         assert listed == [{"id": "ask-9", "job_id": job.id, "kind": "tap", "text": "Click Buy", "why": "may order",
-                           "site": None, "card": None, "created_at": "t"}]
+                           "site": None, "card": None, "created_at": "t", "bot": "chief", "conv": None}]
         assert (await c.post("/api/jobs/asks/ask-9", json={"answer": "maybe"})).status_code == 422
         assert (await c.post("/api/jobs/asks/ask-9", json={"answer": "yes"})).status_code == 200
         assert (await c.post("/api/jobs/asks/ask-9", json={"answer": "yes"})).status_code == 409
@@ -960,3 +960,188 @@ async def test_a_restart_tells_a_conversations_turn_there_not_in_odies_chat(worl
     last = convs.messages(store, conv)[-1]
     assert last["role"] == "bot" and last["text"].startswith("I was cut off (Odie restarted)")
     assert convs.running_job(store, conv) is None  # the user can send again at once
+
+
+# ── the browser: watch, take control, hand back; a secret; a bot check ───────
+
+class JobCtx:
+    """A tool_context inside a bot's job: its session (and browser tab) is the job's id."""
+    def __init__(self, job_id):
+        self.session = type("S", (), {"id": job_id})()
+
+
+class HeldBrowser:
+    def __init__(self):
+        self.holds = {}
+        self.typed = []
+
+    def held_by(self, tab):
+        return self.holds.get(tab)
+
+    async def type_secret(self, tab, field, text):
+        from odie.browser.engine import BrowserError
+        if field != "Enter OTP":
+            raise BrowserError(f'There is no field called "{field}" on the page now.')
+        self.typed.append((tab, field, text))
+
+    async def close(self):
+        pass
+
+
+async def test_a_bots_browser_step_waits_while_the_user_drives_then_runs(world, monkeypatch):
+    import odie.browser
+    store, chat = world
+    b = HeldBrowser()
+    monkeypatch.setattr(odie.browser, "_shared", b)
+    job = a_bot_job(store, "shopper")
+    b.holds[job.id] = "user"
+    guard = worker.guard_for(store, job, chat)
+    waiting = guard(Asking("browser_click", False), {"text": "Next"}, JobCtx(job.id))
+    task = asyncio.create_task(waiting)
+    await asyncio.sleep(0.05)
+    assert not task.done()  # the user has the page: the bot waits
+    b.holds.pop(job.id)
+    assert await asyncio.wait_for(task, 3) is None  # handed back: the step runs
+    assert jobs.actions(store, job.id)[-1]["tool"] == "handed_back"
+    assert guard(Asking("browser_click", False), {"text": "Next"}, JobCtx(job.id)) is None  # nobody driving: no wait
+
+
+async def test_a_secret_goes_into_the_page_and_nowhere_else(world, monkeypatch):
+    import odie.browser
+    from odie.signin import guard
+    from odie.workers import convs
+    store, chat = world
+    b = HeldBrowser()
+    monkeypatch.setattr(odie.browser, "_shared", b)
+    bots.make(store, "banker", "banks", "", ["browser"])
+    conv = convs.make(store, "banker")
+    job = jobs.create(store, "bot", "x", "y", None, bots.folder_of("banker"), 60, bot="banker", conv_id=conv)
+    guard.LAST_URL[job.id] = "https://netbanking.hdfcbank.com/otp"
+    tools = {t.name: t for t in team.make_bot_signin_tool(store, job)}
+    task = asyncio.create_task(tools["ask_user_to_type"].func(field="Enter OTP", why="HDFC sent a code", tool_context=JobCtx(job.id)))
+    await asyncio.sleep(0.02)
+    [ask] = asks.open_for(store)
+    assert ask["kind"] == "secret" and ask["detail"]["field"] == "Enter OTP" and ask["detail"]["tab"] == job.id
+    from odie.app.routes import type_users_secret
+    from fastapi import HTTPException
+    with pytest.raises(HTTPException):
+        await type_users_secret({**ask["detail"], "field": "Nope"}, "123456")
+    await type_users_secret(ask["detail"], "123456")
+    asks.answer(store, ask["id"], "yes")
+    got = await asyncio.wait_for(task, 3)
+    assert "typed it" in got["result"] and "123456" not in str(got)
+    assert b.typed == [(job.id, "Enter OTP", "123456")]
+    everything = str(store.query("select * from job_asks")) + str(store.query("select * from bot_msgs")) + str(store.query("select * from job_actions"))
+    assert "123456" not in everything  # kept nowhere
+    guard.LAST_URL.pop(job.id, None)
+
+
+async def test_the_answer_route_types_a_secret_and_never_audits_it(isolated_settings, tmp_path, monkeypatch):
+    import odie.browser
+    from odie.app.main import create_app
+    from tests.test_models import FakeRunner
+    monkeypatch.setenv("ODIE_WORKERS", "1")
+    b = HeldBrowser()
+    monkeypatch.setattr(odie.browser, "_shared", b)
+    store = Store(tmp_path / "assistant.db")
+    store.init_schema()
+    jobs.ensure(store)
+    app = create_app(runner=FakeRunner(), store=store)
+    store.execute("insert into job_asks(id,job_id,kind,text,detail_json,status,created_at) values('ask-s','job-1','secret','x',"
+                  "'{\"tab\": \"job-1\", \"field\": \"Enter OTP\"}','open','t')")
+    async with app.router.lifespan_context(app), httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+        assert (await c.post("/api/jobs/asks/ask-s", json={"answer": "yes"})).status_code == 409  # nothing typed
+        assert (await c.post("/api/jobs/asks/ask-s", json={"answer": "yes", "secret": "987654"})).status_code == 200
+    assert b.typed == [("job-1", "Enter OTP", "987654")]
+    assert "987654" not in str(store.query("select * from audit_log"))
+
+
+def test_a_bot_at_a_bot_check_is_told_to_hand_it_over():
+    from odie.agent.tools import browser
+    from odie.browser import engine
+    assert browser.BOT_CHECK_SAID in engine.BOT_NOTE  # the words the step looks for are the engine's own
+
+
+def test_the_team_card_names_a_bots_browser_tab(world):
+    from odie.signin import guard
+    from odie.workers import progress
+    store, _ = world
+    job = a_bot_job(store, "shopper")
+    assert progress.browser_of(job.id) == {"tab": None, "url": None}
+    guard.LAST_URL[job.id] = "https://www.amazon.in/orders"
+    try:
+        assert progress.browser_of(job.id) == {"tab": job.id, "url": "https://www.amazon.in/orders"}
+    finally:
+        guard.LAST_URL.pop(job.id, None)
+
+
+class WatchEngine:
+    """The live view's browser, as tests/test_signin_live.py has it, plus watching and taking control."""
+    def __init__(self):
+        self.calls = []
+        self.holds = {}
+
+    def hold(self, tab, holder):
+        self.holds[tab] = holder
+
+    def release(self, tab, holder=None):
+        self.holds.pop(tab, None)
+
+    def held_by(self, tab):
+        return self.holds.get(tab)
+
+    def on_upi(self, fn):
+        pass
+
+    async def live_start(self, tab, width, height, on_frame, on_page, emulate=True):
+        self.calls.append(("start", tab, emulate))
+        await on_page({"url": "https://www.amazon.in/", "title": "Amazon", "loading": False})
+        await on_frame("/9j/AAAA", {"deviceWidth": width, "deviceHeight": height})
+
+    async def live_control(self, tab, width, height):
+        self.calls.append(("control", tab, width, height))
+
+    async def live_input(self, tab, msg):
+        self.calls.append(("input", tab, msg))
+
+    async def live_stop(self, tab):
+        self.calls.append(("stop", tab))
+
+    async def close(self):
+        pass
+
+
+def test_watch_then_take_control_then_close(isolated_settings, tmp_path, monkeypatch):
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    import odie.browser
+    from fastapi.testclient import TestClient
+
+    from odie.app.main import create_app
+    from odie.signin import live, state
+    from tests.test_api import FakeRunner as ApiRunner
+    store = Store(tmp_path / "a.db")
+    store.init_schema()
+    state.turn_on(store, accepted=True, version=state.VERSION, now=datetime(2026, 11, 15, 9, 0, tzinfo=ZoneInfo("Asia/Kolkata")))
+    e = WatchEngine()
+    monkeypatch.setattr(odie.browser, "_shared", e)
+    app = create_app(runner=ApiRunner(), store=store)
+    with TestClient(app) as c, c.websocket_connect("/api/browser/live/job-abc123") as ws:
+        ws.send_json({"t": "hello", "w": 390, "h": 844, "watch": True})
+        assert ws.receive_json()["t"] == "page" and ws.receive_json()["t"] == "frame"
+        assert e.calls[0] == ("start", "job-abc123", False) and e.held_by("job-abc123") is None  # the bot keeps working
+        ws.send_json({"t": "tap", "x": 10, "y": 10})  # watching: nothing reaches the page
+        ws.send_json({"t": "ping"})
+        assert ws.receive_json() == {"t": "pong"}
+        assert not [x for x in e.calls if x[0] == "input"]
+        ws.send_json({"t": "control"})
+        assert ws.receive_json() == {"t": "control"}
+        assert e.held_by("job-abc123") and ("control", "job-abc123", 390, 844) in e.calls  # the bot's steps wait now
+        ws.send_json({"t": "forward"})
+        ws.send_json({"t": "ping"})
+        assert ws.receive_json() == {"t": "pong"}
+        assert ("input", "job-abc123", {"t": "forward"}) in e.calls
+        ws.send_json({"t": "close"})
+    assert e.held_by("job-abc123") is None and ("stop", "job-abc123") in e.calls  # handed back
+    assert live.clean({"t": "forward"}) == {"t": "forward"} and live.clean({"t": "control"}) == {"t": "control"}

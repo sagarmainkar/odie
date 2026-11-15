@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { getJSON } from "../api";
 import { colorFor, elapsed, going, headerWords, type Member, type TeamView } from "../team";
+import { Creature, FuzzFilter } from "./Creature";
+import { LiveView } from "./LiveView";
 
 const EVERY_MS = 2500;
 
@@ -11,6 +13,7 @@ export function TeamCard({ job }: { job: string }) {
   const [view, setView] = useState<TeamView | null>(null);
   const [open, setOpen] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
+  const [watching, setWatching] = useState<Member | null>(null);
 
   useEffect(() => {
     let stopped = false;
@@ -35,6 +38,7 @@ export function TeamCard({ job }: { job: string }) {
   const working = going(view.lead);
   return (
     <div className="glass rounded-[22px] p-3.5 flex flex-col gap-2">
+      <FuzzFilter />
       <div className="flex items-center gap-2 text-[13px] text-muted">
         {working && <span className="w-2 h-2 rounded-full bg-iris animate-pulse" />}
         <span className="font-semibold text-ink">{view.title}</span>
@@ -44,10 +48,17 @@ export function TeamCard({ job }: { job: string }) {
         <button key={m.job} onClick={() => setOpen(open === m.job ? null : m.job)} aria-expanded={open === m.job}
           className={`text-left flex flex-col gap-1 rounded-[14px] px-2.5 py-2 ${i === 0 ? "" : "ml-3"} active:bg-well`}>
           <div className="flex items-center gap-2">
-            <span className="w-6 h-6 rounded-full shrink-0 flex items-center justify-center text-[11px] font-bold text-white"
-              style={{ background: colorFor(m.bot) }}>{m.bot.slice(0, 1).toUpperCase()}</span>
+            {m.look ? <Creature look={m.look} size={24} mood={going(m) ? "working" : ""} /> : (
+              <span className="w-6 h-6 rounded-full shrink-0 flex items-center justify-center text-[11px] font-bold text-white"
+                style={{ background: colorFor(m.bot) }}>{m.bot.slice(0, 1).toUpperCase()}</span>
+            )}
             <span className="text-[14px] font-semibold">{m.bot}</span>
             {m.model && <span className="text-[11.5px] text-muted truncate">{m.model}</span>}
+            {going(m) && m.tab && (
+              <span role="button" tabIndex={0} onClick={(e) => { e.stopPropagation(); setWatching(m); }}
+                onKeyDown={(e) => { if (e.key === "Enter") { e.stopPropagation(); setWatching(m); } }}
+                className="ml-1 px-2.5 h-7 rounded-full bg-ember text-on-ember text-[12px] font-semibold inline-flex items-center">Watch</span>
+            )}
             <span className="ml-auto text-[11.5px] text-muted tabular-nums shrink-0">
               {going(m) ? "" : m.status === "done" && m.outcome !== "blocked" ? "✓ " : m.status === "done" ? "⛔ " : "✕ "}
               {elapsed(m, now)}{m.calls ? ` · ${m.calls} steps` : ""}
@@ -61,6 +72,14 @@ export function TeamCard({ job }: { job: string }) {
           )}
         </button>
       ))}
+      {watching?.tab && (
+        <LiveView tab={watching.tab} site={hostOf(watching.url)} chat={false} watch who={watching.bot} onClose={() => setWatching(null)} />
+      )}
     </div>
   );
+}
+
+/** A page's site for the bar: "https://www.amazon.in/x" -> "amazon.in"; nothing -> "". */
+function hostOf(url: string | null | undefined): string {
+  try { return new URL(url ?? "").host.replace(/^www\./, ""); } catch { return ""; }
 }

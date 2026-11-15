@@ -128,6 +128,9 @@ def guard_for(store: Store, job: Job, runner=None):
     from odie.agent.shell_grant import always_ask, safe_places
 
     def guard(tool, args, tool_context):
+        if tool.name.startswith("browser_") and tab_is_held(tool_context):
+            # The user drives this bot's tab (Take control): the step waits until they hand back, then runs.
+            return wait_until_handed_back(store, job, tool, args if args is not None else {}, tool_context, runner)
         if needs_users_tap(tool, args, tool_context):
             # The wait for the tap: a coroutine handed back, which ADK awaits (its callback pipeline awaits whatever
             # is awaitable); every other answer stays a plain value.
@@ -145,6 +148,37 @@ def guard_for(store: Store, job: Job, runner=None):
         args[REFUSED] = why
         return {"error": f"Not run: it {why}. Write files with write_file; find another way, or report it as blocked."}
     return guard
+
+
+HAND_BACK_WAIT = 15 * 60  # seconds a bot waits for the user to hand its tab back, as long as the live view's idle limit
+
+
+def tab_is_held(tool_context) -> bool:
+    """Is the user driving this bot's browser tab right now? job-3f9a2c held in the live view -> True."""
+    from odie.browser import shared
+    from odie.signin import guard as signin_guard
+    try:
+        return shared().held_by(signin_guard.tab_of(tool_context)) is not None
+    except Exception:  # noqa: BLE001 (no browser yet: nobody holds anything)
+        return False
+
+
+async def wait_until_handed_back(store: Store, job: Job, tool, args: dict, tool_context, runner) -> dict | None:
+    """The bot's browser step waits while the user holds its tab (checked every second), then goes on: the tap check
+    still applies after. Not handed back in HAND_BACK_WAIT -> refused, and the bot is told the user has the page."""
+    import time as _time
+    end = _time.monotonic() + HAND_BACK_WAIT
+    while tab_is_held(tool_context) and _time.monotonic() < end:
+        await asyncio.sleep(1)
+    if tab_is_held(tool_context):
+        why = "the user still has the page"
+        jobs.record_action(store, job.id, tool.name, args, refused=why)
+        args[REFUSED] = why
+        return {"error": f"Not run: {why}. Report what you have, or what is left for them."}
+    jobs.record_action(store, job.id, "handed_back", {"tool": tool.name})
+    if needs_users_tap(tool, args, tool_context):
+        return await ask_users_tap(store, job, runner, tool, args, tool_context)
+    return None
 
 
 async def ask_users_tap(store: Store, job: Job, runner, tool, args: dict, tool_context) -> dict | None:

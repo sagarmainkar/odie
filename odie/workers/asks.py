@@ -18,7 +18,7 @@ from odie.store.db import Store, now_iso
 log = logging.getLogger("odie.workers")
 
 WAIT_SECONDS = 9 * 60  # under the browser's 10 idle minutes, so an Allow still finds the page open
-KINDS = ("tap", "sign_in")
+KINDS = ("tap", "sign_in", "secret")  # secret: the user types a code or PIN into a field; it never reaches the bot
 ANSWERS = ("yes", "no")
 _waiting: dict[str, asyncio.Future] = {}  # ask id -> the future the bot's guard awaits
 
@@ -109,6 +109,8 @@ def ask_line(job, kind: str, text: str) -> str:
     a sign-in -> "🔑 shopper needs you to sign in (job-…): amazon.in: …. Sign in from Today, then tap Done."
     """
     who = job.bot or "A Worker"
+    if kind == "secret":
+        return f"🔒 {who} needs you to type something ({job.id}): {text}. Type it in its conversation; it never sees it."
     if kind == "sign_in":
         return f"🔑 {who} needs you to sign in ({job.id}): {text}. Sign in from Today, then tap Done."
     return f"✋ {who} waits for your tap ({job.id}): {text}. Allow or Deny it on Today."
@@ -122,3 +124,11 @@ def _push(store: Store, text: str, tag: str) -> None:
         send_to_all(store, persona.get(store)["name"], text[:160], url="/#today", tag=tag)
     except Exception:  # noqa: BLE001
         log.warning("push failed for %s", tag, exc_info=True)
+
+
+def detail_of(store: Store, ask_id: str) -> dict | None:
+    """An open question's kind and detail (the route needs a secret's tab and field); not open -> None."""
+    row = store.one("select kind, detail_json, status from job_asks where id=?", (ask_id,))
+    if row is None or row["status"] != "open":
+        return None
+    return {"kind": row["kind"], **json.loads(row["detail_json"] or "{}")}

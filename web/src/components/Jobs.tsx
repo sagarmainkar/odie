@@ -82,10 +82,12 @@ export function Jobs() {
         <div className="glass rounded-[26px] overflow-hidden">
           {asks.map((a) => (
             <div key={a.id} className="border-b border-line last:border-b-0 px-4 py-3 flex flex-col gap-2">
-              <div className="text-[15px] leading-5">{a.kind === "sign_in" ? "🔑 " : "✋ "}{a.text}</div>
+              <div className="text-[15px] leading-5">{a.kind === "sign_in" ? "🔑 " : a.kind === "secret" ? "🔒 " : "✋ "}{a.text}</div>
               <div className="text-[12.5px] leading-4 text-muted">{a.why ? `${a.why} · ` : ""}{titleOf(data, a.job_id)}</div>
               <div className="flex gap-2">
-                {a.kind === "tap" ? (
+                {a.kind === "secret" ? (
+                  <a href={a.bot && a.conv ? `#bot/${a.bot}/${a.conv}` : "#bots"} className="h-10 px-4 rounded-[14px] bg-ember text-on-ember font-semibold text-[14px] inline-flex items-center">Type it in {a.bot ?? "the bot"}'s chat</a>
+                ) : a.kind === "tap" ? (
                   <>
                     <button onClick={() => void answer(a.id, "yes")} className="h-10 px-4 rounded-[14px] bg-ember text-on-ember font-semibold text-[14px]">Allow</button>
                     <button onClick={() => void answer(a.id, "no")} className="pill h-10 px-4 text-[14px]">Deny</button>

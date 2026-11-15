@@ -9,8 +9,8 @@ export type Bot = { name: string; role: string; prompt: string; model: BotModel;
 export type Conversation = { id: string; bot: string; title: string; origin: string; preview: string; unread: number; created_at: string; updated_at: string };
 export type ConvMessage = { id: number; role: "user" | "bot" | "ask" | "note"; text: string; job_id: string; ts: string;
   media: null | { ask?: string; kind?: "tap" | "sign_in"; why?: string | null; status?: string; card?: { tab?: string; site?: string; url?: string } | null } | Record<string, unknown>[] };
-export type JobAsk = { id: string; job_id: string; kind: "tap" | "sign_in"; text: string; why: string | null; site: string | null;
-  card: { tab?: string; url?: string; site?: string } | null; created_at: string };
+export type JobAsk = { id: string; job_id: string; kind: "tap" | "sign_in" | "secret"; text: string; why: string | null; site: string | null;
+  card: { tab?: string; url?: string; site?: string } | null; created_at: string; bot?: string | null; conv?: string | null };
 export type ModelChoice = { value: string; label: string };
 
 export const POWER_WORDS: Record<string, string> = {

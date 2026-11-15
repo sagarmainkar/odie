@@ -122,7 +122,7 @@ def asking(tool):
 
 def tools_for(bot: Bot, store: Store, job: Job) -> list:
     """A bot's tools, from its powers: web -> web_search, web_fetch; files -> write_file, read_file in its folder;
-    notes -> search_everything, read_note, related_notes (the user's notes and photos); shell -> run_shell (the guard refuses the always-ask rules); browser -> the browser tools and browser_sign_in. The
+    notes -> search_everything, read_note, related_notes (the user's notes and photos); shell -> run_shell (the guard refuses the always-ask rules); browser -> the browser tools, browser_sign_in and ask_user_to_type. The
     chief adds list_bots, make_bot, ask_bots. Every bot gets read_file/write_file for its notes, powers or not."""
     from odie.agent.tools.web import make_web_tools
     from odie.workers.files import make_job_file_tools
@@ -139,15 +139,15 @@ def tools_for(bot: Bot, store: Store, job: Job) -> list:
     if "browser" in bot.powers:
         from odie.agent.tools.browser import make_browser_tools
         out += [asking(t) for t in make_browser_tools(store)]
-        out.append(make_bot_signin_tool(store, job))
+        out += make_bot_signin_tool(store, job)
     if bot.is_chief:
         out += make_team_tools(store, job)
     return out
 
 
-def make_bot_signin_tool(store: Store, job: Job) -> FunctionTool:
-    """browser_sign_in for a bot: the job waits while the user signs in in the live view (a Sign in card in the chat,
-    a Done on Today), then the bot looks at the page again."""
+def make_bot_signin_tool(store: Store, job: Job) -> list[FunctionTool]:
+    """A browser bot's two hand-offs: browser_sign_in (the job waits while the user signs in, or passes a check only a
+    person can, in the live view) and ask_user_to_type (a code or PIN the user types straight into a field)."""
     from odie.agent.tools.browser import _save_card
     from odie.signin import guard, sites, state
     from odie.workers import asks
@@ -170,7 +170,24 @@ def make_bot_signin_tool(store: Store, job: Job) -> FunctionTool:
             return {"result": f"The user says they're done signing in to {where}. Open the page again with browser_open."}
         return {"result": f"The user didn't sign in to {where}. Go on without it, or report what you couldn't reach."}
 
-    return FunctionTool(browser_sign_in)
+    async def ask_user_to_type(field: str, why: str, tool_context: ToolContext) -> dict:
+        """Ask the user to type something you must never type or see yourself (a one-time code, a PIN, a password) into a field on the page open in your browser. field: the field's label or placeholder as the page shows it ("Enter OTP"). why: one short line for the user ("HDFC sent a code to your phone"). Your job waits; what they type goes straight into the field and you are told only that it was typed. Then continue (press the page's own button with browser_click)."""
+        tab = guard.tab_of(tool_context)
+        url = guard.LAST_URL.get(tab, "")
+        if not url:
+            return {"error": "Open the page first (browser_open), then ask."}
+        where = sites.site_of(url)
+        why_line = " ".join((why or "").split())[:200] or f"{where} asks for a code"
+        field_name = " ".join((field or "").split())[:80]
+        if not field_name:
+            return {"error": "Say which field: its label or placeholder as the page shows it."}
+        said = await asks.ask(store, hooks["runner"], job, "secret", f'"{field_name}" on {where}',
+                              {"site": where, "tab": tab, "url": url, "field": field_name, "why": why_line})
+        if said == "yes":
+            return {"result": f'The user typed it into "{field_name}". You did not see it. Continue on the page.'}
+        return {"result": f"The user didn't type it. Go on without it, or report what you couldn't finish."}
+
+    return [FunctionTool(browser_sign_in), FunctionTool(ask_user_to_type)]
 
 
 def make_team_tools(store: Store, job: Job) -> list[FunctionTool]:
