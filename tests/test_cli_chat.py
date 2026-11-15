@@ -190,7 +190,7 @@ def test_a_removed_terminal_is_told_how_to_pair_again(inst):
 def test_threads_and_show(inst):
     out = io.StringIO()
     api = FakeApi([])
-    assert cli_chat.run(inst, SimpleNamespace(command="threads", q="plans", json=False), out, io.StringIO(), api=api) == 0
+    assert cli_chat.run(inst, SimpleNamespace(command="threads", q="plans", lines=None, json=False), out, io.StringIO(), api=api) == 0
     assert "★ chat-2026-11-15" in out.getvalue() and "Plans" in out.getvalue()
     assert api.sent[0][0] == "/api/threads?q=plans"
     out = io.StringIO()
@@ -336,3 +336,13 @@ async def test_removing_the_last_browser_still_warns_with_the_terminal_paired(is
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c, app.router.lifespan_context(app):
         c.cookies.set(devices.COOKIE, phone)
         assert (await c.delete(f"/api/devices/{phone_id}")).status_code == 409
+
+
+def test_threads_n_keeps_the_first_ones(inst):
+    class Many(FakeApi):
+        def get(self, path):
+            return {"threads": [{"id": f"chat-2026-11-{d:02d}", "title": f"Day {d}", "messages": 1} for d in (15, 14, 13)]}
+    out = io.StringIO()
+    args = SimpleNamespace(command="threads", q=None, lines=2, json=True)
+    assert cli_chat.run(inst, args, out, io.StringIO(), api=Many([])) == 0
+    assert [t["id"] for t in json.loads(out.getvalue())] == ["chat-2026-11-15", "chat-2026-11-14"]

@@ -2,7 +2,7 @@
 
     odie chat "what's on today?"        send to today's chat and print the reply as it comes
     odie chat --thread <id> "and then?" continue a thread;  --new starts a new chat first;  "-" reads stdin
-    odie threads [-q words]             the chat threads, pinned first, then the most recent
+    odie threads [-q words] [-n 20]     the chat threads, pinned first, then the most recent
     odie show <id> [-n 20]              a thread's messages
     --json                              one JSON answer for a program; chat --events prints every event as a line
 
@@ -252,11 +252,14 @@ def cmd_chat(api: Api, text: str, thread: str | None, new: bool, mode: str, out:
 
 # ── odie threads / odie show ──
 
-def cmd_threads(api: Api, q: str | None, as_json: bool, out: TextIO) -> int:
+def cmd_threads(api: Api, q: str | None, limit: int | None, as_json: bool, out: TextIO) -> int:
+    """limit: only the first N in the server's order (pinned first, then the most recent); None or 0 lists them all."""
     path = "/api/threads"
     if q:
         path += "?" + urllib.parse.urlencode({"q": q})
     threads = api.get(path)["threads"]
+    if limit:
+        threads = threads[:limit]
     if as_json:
         out.write(json.dumps(threads, ensure_ascii=False) + "\n")
         return 0
@@ -326,7 +329,7 @@ def run(inst: Install, args: Any, out: TextIO = sys.stdout, err: TextIO = sys.st
                 mode = "events"
             return cmd_chat(api, message_text(args.text, stdin), args.thread, args.new, mode, out, err)
         if args.command == "threads":
-            return cmd_threads(api, args.q, args.json, out)
+            return cmd_threads(api, args.q, args.lines, args.json, out)
         return cmd_show(api, args.thread, args.lines, args.json, out)
     except Refused:
         err.write("Odie doesn't know this terminal (was it removed in Settings → Devices?). To pair it again:\n"
