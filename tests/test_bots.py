@@ -685,3 +685,14 @@ async def test_a_question_whose_post_fails_doesnt_stay_open(world):
     with pytest.raises(RuntimeError):
         await asks.ask(store, Broken(), job, "tap", "Click Buy")
     assert asks.open_for(store) == []
+
+
+
+def test_the_starter_team_is_made_once(world):
+    store, _ = world
+    bots.ensure_starters(store)
+    assert [b.name for b in bots.all_bots(store)] == ["chief", "checker", "contrarian", "researcher"]
+    assert all(b.made_by == "odie" and b.powers == ["web", "files"] for b in bots.all_bots(store) if not b.is_chief)
+    bots.delete(store, "checker")
+    bots.ensure_starters(store)  # the next start: a deleted starter stays deleted
+    assert bots.get(store, "checker") is None

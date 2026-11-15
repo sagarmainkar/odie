@@ -46,9 +46,10 @@ export function modelChoices(providers: { id: string; name: string; models: { id
 }
 
 /** Who made a bot, in a few words: the chief's own -> "made by the chief"; changed in Settings -> "yours";
- * Odie's (the chief itself) -> "always here". */
+ * Odie's (the chief itself) -> "always here"; one of Odie's starter team -> "starter". */
 export function madeWords(b: Bot): string {
   if (b.chief) return "always here";
   if (b.edited_by_user) return "yours";
+  if (b.made_by === "odie") return "starter";
   return "made by the chief";
 }

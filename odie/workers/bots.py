@@ -44,6 +44,22 @@ but its brief.
 5. Report one answer to the user: the result first, then in a line or two who found what and where they disagreed."""
 
 
+# The team Odie starts with, beside the chief, like Grok's: one finds, one checks, one argues. Made once (a setting
+# remembers it), so a bot the user deletes stays deleted. The chief adds others when a job needs them.
+STARTERS = (
+    ("researcher", "Finds current facts, prices and sources on the web, with dates.",
+     "Search, then open the best sources and read them. Give numbers with where and when you found them. Say what "
+     "you couldn't confirm.", ["web", "files"]),
+    ("checker", "Checks the numbers, the logic and the sources of an answer.",
+     "Redo the arithmetic, check each claim against a source you open yourself, and list what is wrong or "
+     "unsupported. Agree plainly where it holds.", ["web", "files"]),
+    ("contrarian", "Looks for what the obvious answer misses: other options, hidden costs, weak assumptions.",
+     "Argue the other side honestly. Find the assumption that, if wrong, changes the answer, and test it.",
+     ["web", "files"]),
+)
+STARTERS_MADE = "bots.starters_made"
+
+
 @dataclass
 class Bot:
     """A bot as stored. model: {"provider", "model"} or None for the chat's model. powers: a subset of POWERS."""
@@ -108,6 +124,17 @@ def ensure_chief(store: Store) -> None:
         store.execute("insert into bots(name,role,prompt,model_json,powers_json,made_by,created_at,updated_at) "
                       "values(?,?,?,?,?,?,?,?)", (CHIEF, CHIEF_ROLE, CHIEF_PROMPT, None, json.dumps(["web"]), "odie",
                                                   now, now))
+
+
+def ensure_starters(store: Store) -> None:
+    """Odie's first start with bots: add the starter team (researcher, checker, contrarian) beside the chief, once.
+    A name already taken is skipped. Second start, or after the user deleted one -> nothing."""
+    if store.get_setting(STARTERS_MADE):
+        return
+    for name, role, prompt, powers in STARTERS:
+        if get(store, name) is None:
+            make(store, name, role, prompt, powers, made_by="odie")
+    store.set_setting(STARTERS_MADE, True)
 
 
 def get(store: Store, name: str) -> Bot | None:

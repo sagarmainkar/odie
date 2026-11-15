@@ -27,5 +27,6 @@ describe("bots", () => {
     expect(madeWords(bot({ chief: true }))).toBe("always here");
     expect(madeWords(bot({ edited_by_user: true }))).toBe("yours");
     expect(madeWords(bot({}))).toBe("made by the chief");
+    expect(madeWords(bot({ made_by: "odie" }))).toBe("starter");
   });
 });

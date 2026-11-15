@@ -36,6 +36,7 @@ def setup(store: Store, runner) -> None:
     hooks.update(store=store, runner=runner)
     jobs.ensure(store)
     bots.ensure_chief(store)
+    bots.ensure_starters(store)
 
 
 def slug_of(title: str) -> str:
