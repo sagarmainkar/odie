@@ -104,9 +104,10 @@ export function botHref(b: Pick<Bot, "name" | "conversation">): string {
 }
 
 /** The bot and conversation a #bot/... address names: "#bot/chief/conv-1" -> {bot: "chief", conv: "conv-1"};
- * "#bot/chief" -> {bot: "chief", conv: null}; anything else -> null. */
+ * "#bot/chief" -> {bot: "chief", conv: null}; "#bot/chief/new" -> {bot: "chief", conv: "new"} (a fresh conversation, made on
+ * the first message); anything else -> null. */
 export function botFromHash(hash: string): { bot: string; conv: string | null } | null {
-  const m = /^#?bot\/([a-z][a-z0-9-]{1,23})(?:\/(conv-[0-9a-f]+))?$/.exec(hash.split("?")[0]);
+  const m = /^#?bot\/([a-z][a-z0-9-]{1,23})(?:\/(conv-[0-9a-f]+|new))?$/.exec(hash.split("?")[0]);
   if (!m) return null;
   return { bot: m[1], conv: m[2] ?? null };
 }
@@ -115,7 +116,7 @@ export type Schedule = { kind: "daily"; at: string; days: number[] } | { kind: "
 export type Routine = { id: string; bot: string; title: string; brief: string; schedule: Schedule; when: string; paused: boolean;
   conv_id: string; last_run_at: string | null; next_run_at: string | null };
 export type Activity = { id: string; title: string; status: string; outcome: string | null; started_at: string | null; ended_at: string | null;
-  calls: number; conv: string | null; for_chief: boolean; error: string | null };
+  calls: number; conv: string | null; conv_bot?: string; for_chief: boolean; error: string | null };
 
 export const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 

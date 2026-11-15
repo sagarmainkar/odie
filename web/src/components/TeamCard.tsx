@@ -40,9 +40,9 @@ export function TeamCard({ job }: { job: string }) {
     <div className="glass rounded-[22px] p-3.5 flex flex-col gap-2">
       <FuzzFilter />
       <div className="flex items-center gap-2 text-[13px] text-muted">
-        {working && <span className="w-2 h-2 rounded-full bg-iris animate-pulse" />}
-        <span className="font-semibold text-ink">{view.title}</span>
-        <span>· {headerWords(view)}</span>
+        {working && <span className="w-2 h-2 rounded-full bg-[var(--t-brand)] animate-pulse shrink-0" />}
+        <span className="font-semibold text-ink">{headerWords(view)}</span>
+        {!working && <span className="truncate">· {view.title}</span>}
       </div>
       {rows.map((m, i) => (
         <button key={m.job} onClick={() => setOpen(open === m.job ? null : m.job)} aria-expanded={open === m.job}
@@ -53,7 +53,7 @@ export function TeamCard({ job }: { job: string }) {
                 style={{ background: colorFor(m.bot) }}>{m.bot.slice(0, 1).toUpperCase()}</span>
             )}
             <span className="text-[14px] font-semibold">{m.bot}</span>
-            {m.model && <span className="text-[11.5px] text-muted truncate">{m.model}</span>}
+            {m.model && m.own_model && <span className="text-[11.5px] text-muted truncate">{m.model}</span>}
             {going(m) && m.tab && (
               <span role="button" tabIndex={0} onClick={(e) => { e.stopPropagation(); setWatching(m); }}
                 onKeyDown={(e) => { if (e.key === "Enter") { e.stopPropagation(); setWatching(m); } }}
@@ -64,7 +64,7 @@ export function TeamCard({ job }: { job: string }) {
               {elapsed(m, now)}{m.calls ? ` · ${m.calls} steps` : ""}
             </span>
           </div>
-          <div className={`text-[13px] leading-[18px] ${going(m) ? "text-ink-2" : "text-muted"} ${open === m.job ? "" : "truncate"}`}>
+          <div className={`text-[13px] leading-[18px] ${going(m) ? "text-ink-2" : "text-muted"} ${open === m.job ? "" : "line-clamp-2"}`}>
             {going(m) ? `${m.now}…` : m.now}
           </div>
           {open === m.job && !going(m) && m.report && (
@@ -73,7 +73,8 @@ export function TeamCard({ job }: { job: string }) {
         </button>
       ))}
       {watching?.tab && (
-        <LiveView tab={watching.tab} site={hostOf(watching.url)} chat={false} watch who={watching.bot} onClose={() => setWatching(null)} />
+        <LiveView tab={watching.tab} site={hostOf(watching.url)} chat={false} watch who={watching.bot}
+          doing={[view.lead, ...view.team].find((x) => x.job === watching.job)?.now} onClose={() => setWatching(null)} />
       )}
     </div>
   );
@@ -92,7 +93,7 @@ export function TurnPill({ job }: { job: string }) {
   useEffect(() => { getJSON<TeamView>(`/api/jobs/${job}/team`).then(setView).catch(() => setView(null)); }, [job]);
   if (!view || going(view.lead)) return null;
   const steps = [view.lead, ...view.team].reduce((n, m) => n + m.calls, 0);
-  if (!steps) return null;
+  if (!steps && !(view.made ?? []).length) return null;
   const time = elapsed(view.lead, Date.now());
   const words = `${view.team.length ? `${view.team.length} bot${view.team.length === 1 ? "" : "s"} · ` : ""}${time ? `${time} · ` : ""}${steps} steps`;
   return (
@@ -103,6 +104,11 @@ export function TurnPill({ job }: { job: string }) {
         {words} <span aria-hidden="true">{open ? "▴" : "▾"}</span>
       </button>
       {open && <TeamCard job={job} />}
+      {(view.made ?? []).length > 0 && (
+        <div className="flex flex-wrap gap-2">
+          {view.made!.map((name) => <a key={name} href={`#bot/${name}/new`} className="chip chip-soft">Meet {name} ›</a>)}
+        </div>
+      )}
     </div>
   );
 }

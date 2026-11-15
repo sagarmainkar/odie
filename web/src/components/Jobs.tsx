@@ -2,24 +2,21 @@ import { useCallback, useEffect, useState } from "react";
 import { getJSON, postJSON } from "../api";
 import { useLive } from "../live";
 import { jobLine, type JobRow } from "../jobs";
-import type { JobAsk } from "../bots";
-import { LiveView } from "./LiveView";
 
 type Action = { ts: string; tool: string; args: string; result_chars: number | null; refused: string | null; error: string | null };
 type Teammate = { id: string; bot: string; title: string; status: string; outcome: string | null; report: string };
 type Detail = JobRow & { actions: Action[]; brief: string; teammates?: Teammate[] };
-type Listing = { running: JobRow[]; recent: JobRow[]; asks?: JobAsk[] };
+type Listing = { running: JobRow[]; recent: JobRow[] };  // questions bots wait on show on the Bots card
 
 function hm(ts: string) { return ts.slice(11, 19); }
 
 export function Jobs() {
   const [data, setData] = useState<Listing | null>(null);
   const [open, setOpen] = useState<Record<string, Detail | "loading">>({});
-  const [signing, setSigning] = useState<JobAsk | null>(null);
   const load = useCallback(() => { getJSON<Listing>("/api/jobs").then(setData).catch(() => setData(null)); }, []);
   useEffect(load, [load]);
   useLive(useCallback((e: { type: string }) => { if (e.type === "message") load(); }, [load]), load);
-  if (!data || (data.running.length === 0 && data.recent.length === 0 && !(data.asks ?? []).length)) return null;
+  if (!data || (data.running.length === 0 && data.recent.length === 0)) return null;
 
   async function more(id: string) {
     if (open[id]) { setOpen((o) => { const { [id]: _gone, ...rest } = o; return rest; }); return; }
@@ -28,9 +25,6 @@ export function Jobs() {
   }
   async function stop(id: string) { try { await postJSON(`/api/jobs/${id}/stop`, {}); } finally { load(); } }
   async function retry(id: string) { try { await postJSON(`/api/jobs/${id}/retry`, {}); } finally { load(); } }
-  /** Only these buttons answer a bot's question: no chat message or tool can (odie/workers/asks.py). */
-  async function answer(id: string, said: "yes" | "no") { try { await postJSON(`/api/jobs/asks/${id}`, { answer: said }); } finally { load(); } }
-  const asks = data.asks ?? [];
 
   const row = (j: JobRow, going: boolean) => {
     const d = open[j.id];
@@ -78,36 +72,6 @@ export function Jobs() {
   return (
     <section className="flex flex-col gap-2">
       <div className="px-1 text-[13px] font-semibold text-muted">Jobs</div>
-      {asks.length > 0 && (
-        <div className="glass rounded-[26px] overflow-hidden">
-          {asks.map((a) => (
-            <div key={a.id} className="border-b border-line last:border-b-0 px-4 py-3 flex flex-col gap-2">
-              <div className="text-[15px] leading-5">{a.kind === "sign_in" ? "🔑 " : a.kind === "secret" ? "🔒 " : "✋ "}{a.text}</div>
-              <div className="text-[12.5px] leading-4 text-muted">{a.why ? `${a.why} · ` : ""}{titleOf(data, a.job_id)}</div>
-              <div className="flex gap-2">
-                {a.kind === "secret" ? (
-                  <a href={a.bot && a.conv ? `#bot/${a.bot}/${a.conv}` : "#bots"} className="h-10 px-4 rounded-[14px] bg-ember text-on-ember font-semibold text-[14px] inline-flex items-center">Type it in {a.bot ?? "the bot"}'s chat</a>
-                ) : a.kind === "tap" ? (
-                  <>
-                    <button onClick={() => void answer(a.id, "yes")} className="h-10 px-4 rounded-[14px] bg-ember text-on-ember font-semibold text-[14px]">Allow</button>
-                    <button onClick={() => void answer(a.id, "no")} className="pill h-10 px-4 text-[14px]">Deny</button>
-                  </>
-                ) : (
-                  <>
-                    {a.card?.tab && <button onClick={() => setSigning(a)} className="h-10 px-4 rounded-[14px] bg-ember text-on-ember font-semibold text-[14px]">Sign in</button>}
-                    <button onClick={() => void answer(a.id, "yes")} className="pill h-10 px-4 text-[14px]">Done</button>
-                    <button onClick={() => void answer(a.id, "no")} className="pill h-10 px-4 text-[14px]">Skip</button>
-                  </>
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-      {signing?.card?.tab && (
-        <LiveView tab={signing.card.tab} site={signing.site ?? ""} chat={false}
-          onClose={(r) => { const a = signing; setSigning(null); if (r?.done) void answer(a.id, "yes"); }} />
-      )}
       <div className="glass rounded-[26px] overflow-hidden">
         {data.running.filter(isLead).map((j) => row(j, true))}
         {data.recent.filter(isLead).map((j) => row(j, false))}
@@ -116,12 +80,6 @@ export function Jobs() {
   );
 }
 
-/** The job a question comes from, by its title: a teammate's job shows as "researcher: find tides" (its row is in the
- * listing); one not listed falls back to its id. */
-function titleOf(data: Listing, jobId: string): string {
-  const all = [...data.running, ...data.recent];
-  return all.find((j) => j.id === jobId)?.title ?? jobId;
-}
 
 /** A job shown on its own row: everything but a teammate's part, which its chief's row counts instead. */
 function isLead(j: JobRow): boolean { return !j.parent_id; }

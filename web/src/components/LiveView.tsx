@@ -8,7 +8,7 @@ export type LiveResult = { site: string; done: boolean };
 /** The user's turn in Odie's browser (odie/signin/live.py), full screen: the page's frames, your taps and drags, your
  * own keyboard. Odie's model sees none of it. `chat`: Done says so in the chat ("I'm signed in to amazon.in."), and the
  * chat carries on; from Settings it only signs in. `start`: an address to open first (Settings → Sign in to a site). */
-export function LiveView(props: { tab: string; site: string; start?: string; chat: boolean; onClose: (r: LiveResult | null) => void; watch?: boolean; who?: string }) {
+export function LiveView(props: { tab: string; site: string; start?: string; chat: boolean; onClose: (r: LiveResult | null) => void; watch?: boolean; who?: string; doing?: string }) {
   return createPortal(<Live {...props} />, document.body);  // on the page itself: a card's backdrop filter would trap it
 }
 
@@ -23,7 +23,7 @@ const ENDED: Record<string, string> = {
 
 /** watch: a bot is at work in this tab; you see its page as it is, and nothing you do reaches it until Take control
  * (then the bot waits, and Hand back gives the page back to it). who: the bot's name for the bar. */
-function Live({ tab, site, start, chat, onClose, watch = false, who }: { tab: string; site: string; start?: string; chat: boolean; onClose: (r: LiveResult | null) => void; watch?: boolean; who?: string }) {
+function Live({ tab, site, start, chat, onClose, watch = false, who, doing }: { tab: string; site: string; start?: string; chat: boolean; onClose: (r: LiveResult | null) => void; watch?: boolean; who?: string; doing?: string }) {
   const [controlling, setControlling] = useState(!watch);
   const ws = useRef<WebSocket | null>(null);
   const [frame, setFrame] = useState<{ src: string; w: number; h: number } | null>(null);
@@ -41,6 +41,7 @@ function Live({ tab, site, start, chat, onClose, watch = false, who }: { tab: st
   const down = useRef<{ page: Point; at: Point; moved: boolean } | null>(null);
   const pinch = useRef<{ d0: number; s0: number; x0: number; y0: number; mid: Point } | null>(null);
   const opened = useRef(false);
+  const typing = useRef(false);  // the address box has the user's own words: a page change doesn't overwrite them
 
   const send = (m: LiveMsg | { t: string }) => { if (ws.current?.readyState === WebSocket.OPEN) ws.current.send(JSON.stringify(m)); };
 
@@ -54,6 +55,7 @@ function Live({ tab, site, start, chat, onClose, watch = false, who }: { tab: st
       if (m.t === "frame") { setFrame({ src: `data:image/jpeg;base64,${m.jpeg}`, w: Number(m.w) || 390, h: Number(m.h) || 844 }); setPhase("live"); }
       else if (m.t === "page") {
         setPage((p) => ({ url: m.url ?? p.url, title: m.title ?? p.title, loading: !!m.loading }));
+        if (watch && typeof m.url === "string") setAddress((a) => (typing.current ? a : m.url));  // the page's own address
         if (start && !opened.current) { opened.current = true; sock.send(JSON.stringify({ t: "go", url: start })); }
       } else if (m.t === "busy") setPhase("busy");
       else if (m.t === "upi") setUpi(upiLink(String(m.url)));
@@ -84,8 +86,7 @@ function Live({ tab, site, start, chat, onClose, watch = false, who }: { tab: st
 
   const box = () => img.current?.getBoundingClientRect();
   const onDown = (e: React.PointerEvent) => {
-    if (!controlling) return;  // watching: the page is the bot's
-    e.currentTarget.setPointerCapture(e.pointerId);
+    e.currentTarget.setPointerCapture(e.pointerId);  // watching too: pinch and pan the picture, nothing reaches the page
     fingers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
     if (fingers.current.size === 2) {
       const [a, b] = [...fingers.current.values()];
@@ -127,6 +128,7 @@ function Live({ tab, site, start, chat, onClose, watch = false, who }: { tab: st
     const up = toPage({ x: e.clientX, y: e.clientY }, b, frame, true) ?? d.page;
     const g = gesture(d.page, up);
     if (g.t === "drag" && zoom.s > 1.01) return;  // a pan of the zoomed picture, not a scroll
+    if (!controlling) return;  // watching: the page is the bot's
     send(g);
   };
 
@@ -155,14 +157,14 @@ function Live({ tab, site, start, chat, onClose, watch = false, who }: { tab: st
           <button onClick={() => { send({ t: "close" }); onClose(null); }} className="h-10 px-3 rounded-full text-[14px] font-semibold text-white/85 active:bg-white/15">Close</button>
           <div className="flex-1 min-w-0 text-center">
             <div className="text-[14px] font-semibold truncate">Watching {who ?? "the bot"}</div>
-            <div className="text-[11.5px] text-white/55 truncate">{host || "…"}{page.title ? ` · ${page.title}` : ""}</div>
+            <div className="text-[11.5px] text-white/55 truncate">{doing ? `${who ?? "The bot"} is ${doing}` : `${host || "…"}${page.title ? ` · ${page.title}` : ""}`}</div>
           </div>
           <button onClick={() => send({ t: "control" })} disabled={phase !== "live"} className="h-10 px-4 rounded-full bg-white text-black text-[14px] font-bold disabled:opacity-40">Take control</button>
         </div>
       ) : (
       <>
       <div className="flex items-center gap-2 px-3 pt-[max(10px,env(safe-area-inset-top))] pb-2">
-        <button onClick={() => finish(false)} disabled={finishing} className="h-10 px-3 rounded-full text-[14px] font-semibold text-white/85 active:bg-white/15">{watch ? "Close" : "Cancel"}</button>
+        {watch ? <span className="w-10" /> : <button onClick={() => finish(false)} disabled={finishing} className="h-10 px-3 rounded-full text-[14px] font-semibold text-white/85 active:bg-white/15">Cancel</button>}
         <div className="flex-1 min-w-0 text-center">
           <div className="text-[14px] font-semibold truncate flex items-center justify-center gap-1.5">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" aria-hidden><rect x="5" y="11" width="14" height="10" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" /></svg>
@@ -186,7 +188,7 @@ function Live({ tab, site, start, chat, onClose, watch = false, who }: { tab: st
         </button>
         {start !== undefined || watch ? (
           <form className="flex-1 min-w-0" onSubmit={(e) => { e.preventDefault(); if (address.trim()) send({ t: "go", url: address.trim() }); }}>
-            <input value={address} onChange={(e) => setAddress(e.target.value)} inputMode="url" autoCapitalize="off" autoCorrect="off" spellCheck={false}
+            <input value={address} onChange={(e) => { typing.current = true; setAddress(e.target.value); }} onBlur={() => { typing.current = false; }} inputMode="url" autoCapitalize="off" autoCorrect="off" spellCheck={false}
               aria-label="Address" placeholder="amazon.in" className="w-full h-10 rounded-full bg-white/12 px-4 text-[14px] outline-none placeholder:text-white/40" />
           </form>
         ) : <div className="flex-1 text-[12px] leading-4 text-white/55">You type your password and codes yourself. Odie doesn't see them.</div>}

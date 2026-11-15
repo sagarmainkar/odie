@@ -41,12 +41,12 @@ export function Bots() {
           {(working > 0 || waiting > 0) && (
             <div className="mt-2 flex gap-2">
               {working > 0 && <span className="chip chip-soft">{working} working</span>}
-              {waiting > 0 && <span className="chip chip-warn">{waiting} need{waiting === 1 ? "s" : ""} you</span>}
+              {waiting > 0 && <a href={botHref((bots ?? []).find((b) => b.needs_you)!)} className="chip chip-warn">{waiting} need{waiting === 1 ? "s" : ""} you ›</a>}
             </div>
           )}
         </div>
 
-        <a href="#chat" className="glass rounded-[22px] flex items-center gap-3 px-3.5 py-3 active:scale-[.99]">
+        <a href="#chat" className="shrink-0 glass rounded-[22px] flex items-center gap-3 px-3.5 py-3 active:scale-[.99]">
           <Creature odie size={48} />
           <div className="flex-1 min-w-0">
             <div className="text-[16px] font-semibold">Odie</div>
@@ -57,7 +57,7 @@ export function Bots() {
         <div className="px-1 flex items-center justify-between text-[12px] font-semibold text-muted uppercase tracking-wide">
           <span>Team</span><span>{(bots ?? []).length} bots</span>
         </div>
-        <div className="glass rounded-[24px] overflow-hidden">
+        <div className="shrink-0 glass rounded-[24px] overflow-hidden">
           {bots === null && <div className="px-4 py-5 text-[14px] text-muted">…</div>}
           {shown.map((b) => (
             <a key={b.name} href={botHref(b)} className="flex items-center gap-3 px-3.5 py-3 border-b border-line last:border-b-0 active:bg-well">
@@ -65,7 +65,7 @@ export function Bots() {
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
                   <span className="text-[16px] font-semibold truncate">{b.name}</span>
-                  {(b.routines ?? 0) > 0 && <span title="Runs by itself" aria-label="Runs by itself" className="text-[13px] text-muted">⟳</span>}
+                  {(b.routines ?? 0) > 0 && <span title="Runs by itself" aria-label="Runs by itself" className="text-[15px] leading-none text-muted">⟳</span>}
                   <span className="ml-auto shrink-0 text-[12px] text-muted">
                     {b.needs_you ? <span className="chip chip-warn !py-0.5 !text-[11px]">Needs your tap</span> : b.working ? "now" : whenWords(b.updated_at, undefined, locale)}
                   </span>
@@ -80,7 +80,7 @@ export function Bots() {
           ))}
           {bots !== null && shown.length === 0 && <div className="px-4 py-5 text-[14px] text-muted">No bot matches “{q}”.</div>}
         </div>
-        <button onClick={() => setAdding(true)} className="rounded-[22px] border border-dashed border-line-2 px-4 py-3.5 text-left">
+        <button onClick={() => setAdding(true)} className="shrink-0 rounded-[22px] border border-dashed border-line-2 px-4 py-3.5 text-left">
           <div className="text-[15px] font-semibold">Make a bot of your own</div>
           <div className="text-[13px] text-muted">Say what it should do; the chief writes its role and instructions, and you check them.</div>
         </button>

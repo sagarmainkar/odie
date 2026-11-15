@@ -1396,3 +1396,63 @@ def test_rejoining_a_watched_view_as_a_driver_takes_control(isolated_settings, t
             assert {"t": "control"} in got
             assert e.held_by("job-abc123")  # the bot's steps wait now
             ws.send_json({"t": "close"})
+
+
+# ── Fable's UX review (15 Nov night) ─────────────────────────────────────────
+
+def test_the_team_view_names_the_bots_a_turn_made(world):
+    from odie.workers import progress
+    store, _ = world
+    job = a_bot_job(store, "chief")
+    bots.make(store, "stocks", "follows my stocks", "", ["web"])
+    jobs.record_action(store, job.id, "make_bot", {"name": "stocks"})
+    jobs.record_action(store, job.id, "make_bot", {"name": "ghost"})  # not made
+    jobs.record_action(store, job.id, "make_bot", {"name": "stocks"}, refused="no")
+    assert progress.bots_made(store, job.id) == ["stocks"]
+    assert progress.team_view(store, job.id)["made"] == ["stocks"]
+
+
+def test_waiting_words_say_what_is_wanted(world):
+    from odie.workers import progress
+    store, _ = world
+    job = a_bot_job(store, "shopper")
+    store.execute("update jobs set status='running' where id=?", (job.id,))
+    store.execute("insert into job_asks(id,job_id,kind,text,status,created_at) values('ask-w',?,'secret','x','open','t')", (job.id,))
+    assert progress.now_line(store, jobs.get(store, job.id)) == "waiting for your code"
+
+
+async def test_stop_from_a_chat_notes_it_delete_and_activity(isolated_settings, tmp_path, monkeypatch):
+    from odie.app.main import create_app
+    from odie.workers import convs, routines
+    from tests.test_models import FakeRunner
+    monkeypatch.setenv("ODIE_WORKERS", "1")
+    store = Store(tmp_path / "assistant.db")
+    store.init_schema()
+    jobs.ensure(store)
+    bots.ensure_chief(store)
+    bots.make(store, "researcher", "finds", "", ["web"])
+    app = create_app(runner=FakeRunner(), store=store)
+    async with app.router.lifespan_context(app), httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+        router.hooks.update(store=store, runner=FakeRunner())
+        conv = convs.make(store, "chief")
+        job = jobs.create(store, "bot", "x", "y", None, bots.folder_of("chief"), 60, bot="chief", conv_id=conv)
+
+        async def forever():
+            await asyncio.sleep(3600)
+        router._tasks[job.id] = asyncio.create_task(forever())
+        store.execute("update jobs set status='running' where id=?", (job.id,))
+        assert (await c.delete(f"/api/conversations/{conv}")).status_code == 409  # still answering
+        assert (await c.post(f"/api/jobs/{job.id}/stop")).status_code == 200
+        assert convs.messages(store, conv)[-1]["text"] == "You stopped it."
+        assert (await c.delete(f"/api/conversations/{conv}")).status_code == 200
+        assert convs.get(store, conv) is None and convs.messages(store, conv) == []
+        r = routines.make(store, "chief", "Daily", "Do it.", {"kind": "every", "hours": 2})
+        assert (await c.delete(f"/api/conversations/{r['conv_id']}")).status_code == 409  # a routine's own
+        one = (await c.get(f"/api/conversations/{r['conv_id']}")).json()
+        assert one["routine"]["id"] == r["id"]
+        chief_job = a_bot_job(store, "chief")
+        kid = jobs.create(store, "bot", "researcher: Research task: tides", "y", None, bots.folder_of("researcher"), 60,
+                          bot="researcher", parent_id=chief_job.id, conv_id="conv-abc")
+        jobs.ended(store, kid.id, "failed", error="ran past its budget")
+        [act] = (await c.get("/api/bots/researcher/activity")).json()["activity"]
+        assert (act["title"], act["conv"], act["conv_bot"], act["error"]) == ("tides", "conv-abc", "chief", "ran past its budget")

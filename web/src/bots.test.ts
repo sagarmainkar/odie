@@ -65,6 +65,7 @@ describe("the bots list", () => {
     expect(botFromHash("#bot/chief/conv-1a2b")).toEqual({ bot: "chief", conv: "conv-1a2b" });
     expect(botFromHash("#bot/chief")).toEqual({ bot: "chief", conv: null });
     expect(botFromHash("#bot/Chief/<x>")).toBeNull();
+    expect(botFromHash("#bot/chief/new")).toEqual({ bot: "chief", conv: "new" });
     expect(tabFromHash("#bot/chief/conv-1a2b")).toBe("bot");
     expect(tabFromHash("#bots")).toBe("bots");
     expect(tabFromHash("#nowhere")).toBe("today");

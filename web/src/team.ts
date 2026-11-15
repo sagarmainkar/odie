@@ -1,9 +1,9 @@
 /** The live team card (odie/workers/progress.py): each bot's step right now, Grok-style. */
 
-export type Member = { job: string; bot: string; look?: { shape: string; color: string; eyes: string } | null; status: string; outcome: string | null; now: string; model: string;
+export type Member = { job: string; bot: string; look?: { shape: string; color: string; eyes: string } | null; own_model?: boolean; status: string; outcome: string | null; now: string; model: string;
   report: string; calls: number; started_at: string | null; ended_at: string | null;
   tab?: string | null; url?: string | null };  // its browser tab, when it has used the browser: Watch opens it live
-export type TeamView = { title: string; lead: Member; team: Member[] };
+export type TeamView = { title: string; lead: Member; team: Member[]; made?: string[] };  // made: bots this turn made
 
 const COLORS = ["#5b8def", "#2fb67c", "#f08a3c", "#d65db1", "#8b6cf6", "#e0b43a", "#3cb4c8"];
 
@@ -29,12 +29,13 @@ export function elapsed(m: Member, nowMs: number): string {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 }
 
-/** The card's header: "working · 2 of 3 bots done" while the team works; "done" / "didn't finish" / "stopped" after. */
+/** The card's header: "Team at work · 2 of 3 done" (one bot: "Working") while it works; "done" / "didn't finish" /
+ * "stopped" after. */
 export function headerWords(v: TeamView): string {
   if (going(v.lead)) {
-    if (!v.team.length) return "working";
+    if (!v.team.length) return "Working";
     const done = v.team.filter((m) => !going(m)).length;
-    return `working · ${done} of ${v.team.length} bots done`;
+    return `Team at work · ${done} of ${v.team.length} done`;
   }
   if (v.lead.status === "failed") return "didn't finish";
   if (v.lead.status === "stopped") return "stopped";

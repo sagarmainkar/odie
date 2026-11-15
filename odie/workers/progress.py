@@ -10,6 +10,7 @@ from odie.store.db import Store
 from odie.workers import store as jobs
 
 HEAD_MAX = 140
+WAITING_WORDS = {"tap": "waiting for your tap", "sign_in": "waiting for you to sign in", "secret": "waiting for your code"}
 
 
 def _args(action: dict) -> dict:
@@ -80,8 +81,9 @@ def now_line(store: Store, row: dict) -> str:
     status = row["status"]
     if status in ("queued",):
         return "waiting for a turn"
-    if asks.waits_on_user(store, row["id"]):
-        return "waiting for you"
+    waiting = asks.open_for(store, row["id"])
+    if waiting:
+        return WAITING_WORDS.get(waiting[0]["kind"], "waiting for you")
     if status == "running":
         busy = store.one("select count(*) as n from jobs where parent_id=? and status in ('queued','running')",
                          (row["id"],))["n"]
@@ -118,7 +120,8 @@ def member(store: Store, row: dict) -> dict:
     from odie.workers import bots
     found = bots.get(store, row.get("bot") or "")
     look = found.as_dict()["look"] if found else None
-    return {"job": row["id"], "bot": row.get("bot") or row.get("kind") or "worker", "look": look, "status": row["status"],
+    own_model = bool(found and found.model)  # the card names a model only when it isn't the chat's
+    return {"job": row["id"], "bot": row.get("bot") or row.get("kind") or "worker", "look": look, "own_model": own_model, "status": row["status"],
             "outcome": row.get("outcome"), "now": now_line(store, row), "model": model_words(store, row.get("bot") or ""),
             "report": (row.get("report") or row.get("error") or "")[:4000],
             "calls": store.one("select count(*) as n from job_actions where job_id=?", (row["id"],))["n"],
@@ -142,4 +145,19 @@ def team_view(store: Store, job_id: str) -> dict | None:
     if row is None:
         return None
     mates = [dict(r) for r in store.query("select * from jobs where parent_id=? order by created_at", (job_id,))]
-    return {"lead": member(store, row), "team": [member(store, m) for m in mates], "title": row["title"]}
+    return {"lead": member(store, row), "team": [member(store, m) for m in mates], "title": row["title"],
+            "made": bots_made(store, job_id)}
+
+
+def bots_made(store: Store, job_id: str) -> list[str]:
+    """The bots a chief's turn made (its make_bot calls that worked), for a "Meet …" chip under its answer:
+    one make_bot "stocks" -> ["stocks"]; a make_bot refused (a name taken) -> not listed; none -> []."""
+    from odie.workers import bots
+    out = []
+    for a in jobs.actions(store, job_id):
+        if a["tool"] != "make_bot" or a.get("refused") or a.get("error"):
+            continue
+        name = bots.clean_name(str(_args(a).get("name") or ""))
+        if name and name not in out and bots.get(store, name) is not None:
+            out.append(name)
+    return out

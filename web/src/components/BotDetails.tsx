@@ -21,6 +21,12 @@ export function BotDetails({ bot, onClose }: { bot: Bot; onClose: (changed: bool
     getJSON<{ providers: Providers }>("/api/models").then((r) => setProviders(r.providers)).catch(() => {});
     getJSON<{ text: string }>(`/api/bots/${bot.name}/notes`).then((r) => setNotes(r.text)).catch(() => setNotes(""));
   }, [bot.name]);
+  async function remove() {
+    if (!confirm(`Delete ${bot.name}? Its routines stop; its conversations, folder and record stay.`)) return;
+    const r = await fetch(`/api/bots/${bot.name}`, { method: "DELETE" });
+    if (r.ok) { location.hash = "#bots"; onClose(true); }
+  }
+
   async function shuffle() {
     const r = await fetch(`/api/bots/${bot.name}/look`, { method: "POST" });
     if (!r.ok) return;
@@ -40,14 +46,32 @@ export function BotDetails({ bot, onClose }: { bot: Bot; onClose: (changed: bool
           </div>
           <button onClick={() => onClose(shuffled)} className="ml-auto pill h-10 px-3 text-[13px]">Close</button>
         </div>
-        <BotEditor bot={bot} powers={powers} choices={modelChoices(providers, bot.model)} onDone={() => onClose(true)} />
-        <BotRoutines bot={bot.name} />
-        <BotActivity bot={bot.name} />
-        <div className="px-5 pb-5 flex flex-col gap-1.5">
+        <Section title="Who it is, and what it may use">
+          <BotEditor bot={bot} powers={powers} choices={modelChoices(providers, bot.model)} onDone={() => onClose(true)} deleteHere={false} />
+        </Section>
+        <Section title=""><BotRoutines bot={bot.name} /></Section>
+        <Section title=""><BotActivity bot={bot.name} /></Section>
+        <div className="px-5 pb-3 flex flex-col gap-1.5">
           <div className="text-[12.5px] text-muted">Memory notes (its notes.md: what it keeps between conversations)</div>
           <div className="rounded-[14px] bg-well px-3 py-2.5 text-[13px] whitespace-pre-wrap max-h-[220px] overflow-y-auto">{notes === null ? "…" : notes || "Nothing yet."}</div>
         </div>
+        {!bot.chief && (
+          <div className="px-5 pb-6 pt-2 border-t border-line">
+            <button onClick={() => void remove()} className="text-[13.5px] text-ember-text font-semibold">Delete this bot</button>
+            <div className="text-[12px] text-muted">Its routines stop. Its conversations, folder and record stay.</div>
+          </div>
+        )}
       </div>
+    </div>
+  );
+}
+
+/** One part of the details sheet, set apart from the next. */
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div className="border-t border-line pt-3 pb-1">
+      {title && <div className="px-5 pb-1 text-[12px] font-semibold text-muted uppercase tracking-wide">{title}</div>}
+      {children}
     </div>
   );
 }

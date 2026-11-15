@@ -101,6 +101,12 @@ def messages(store: Store, conv_id: str) -> list[dict]:
     return out
 
 
+def delete(store: Store, conv_id: str) -> None:
+    """A conversation and its messages, gone (its jobs' record stays in jobs and job_actions)."""
+    store.execute("delete from bot_msgs where conv_id=?", (conv_id,))
+    store.execute("delete from bot_convs where id=?", (conv_id,))
+
+
 def mark_read(store: Store, conv_id: str) -> None:
     store.execute("update bot_convs set unread=0 where id=?", (conv_id,))
 

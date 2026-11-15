@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { getJSON, postJSON } from "../api";
+import { getJSON } from "../api";
 import { sortBots, whenWords, type Bot, type Conversation } from "../bots";
 import { useLive } from "../live";
 import { userLocale } from "../locale";
@@ -26,16 +26,25 @@ export function BotDrawer({ current, conv, onPick }: { current: string; conv: st
   const bot = bots.find((b) => b.name === chosen);
   const locale = userLocale();
 
-  async function fresh() {
-    const { id } = await postJSON<{ id: string }>(`/api/bots/${chosen}/conversations`, {});
-    location.hash = `#bot/${chosen}/${id}`;
+  async function remove(c: Conversation) {
+    if (!confirm(`Delete "${c.title}"? Its messages go; what the bot did stays in its record.`)) return;
+    const r = await fetch(`/api/conversations/${c.id}`, { method: "DELETE" });
+    if (!r.ok) { alert(((await r.json().catch(() => ({}))) as { detail?: string }).detail ?? "Couldn't delete it."); return; }
+    location.hash = `#bot/${c.bot}/new`;
+    loadList();
+  }
+
+  function fresh() {  // the conversation is made on its first message
+    location.hash = `#bot/${chosen}/new`;
     onPick?.();
   }
 
   return (
     <div className="h-full flex">
       <div className="w-[68px] shrink-0 h-full overflow-y-auto no-scrollbar flex flex-col items-center gap-3 py-3 border-r border-line safe-top">
-        <a href="#today" aria-label="Today" className="pill w-11 px-0" onClick={onPick}><Icon name="sun" /></a>
+        <a href="#today" aria-label="Today" className="flex flex-col items-center gap-0.5 text-[10.5px] text-muted font-semibold" onClick={onPick}>
+          <span className="pill w-11 px-0"><Icon name="sun" /></span>Today
+        </a>
         <a href="#chat" aria-label="Odie" onClick={onPick}><Creature odie size={40} /></a>
         <div className="w-8 border-t border-line" />
         {bots.map((b) => (
@@ -45,7 +54,9 @@ export function BotDrawer({ current, conv, onPick }: { current: string; conv: st
           </button>
         ))}
         <button onClick={() => setAdding(true)} aria-label="Make a bot" className="pill w-10 h-10 px-0"><Icon name="plus" /></button>
-        <a href="#bots" aria-label="All bots" className="pill w-10 h-10 px-0 lg:hidden!" onClick={onPick}><Icon name="menu" /></a>
+        <a href="#bots" aria-label="All bots" className="flex flex-col items-center gap-0.5 text-[10.5px] text-muted font-semibold lg:hidden!" onClick={onPick}>
+          <span className="pill w-10 h-10 px-0 text-[13px]">All</span>bots
+        </a>
       </div>
       <div className="flex-1 min-w-0 h-full overflow-y-auto no-scrollbar px-3 py-3 safe-top flex flex-col gap-2">
         {bot && (
@@ -57,7 +68,7 @@ export function BotDrawer({ current, conv, onPick }: { current: string; conv: st
             </div>
           </div>
         )}
-        <button onClick={() => void fresh()} className="h-10 rounded-[14px] bg-ember text-on-ember font-semibold text-[14px] flex items-center justify-center gap-1.5"><Icon name="plus" size={16} />New conversation</button>
+        <button onClick={fresh} className="h-10 rounded-[14px] bg-ember text-on-ember font-semibold text-[14px] flex items-center justify-center gap-1.5"><Icon name="plus" size={16} />New conversation</button>
         {list?.length === 0 && <div className="px-1 text-[13px] text-muted">No conversations yet.</div>}
         {(list ?? []).some((c) => c.origin === "routine") && <div className="px-1 pt-1 text-[11.5px] font-semibold text-muted uppercase tracking-wide">Runs by itself</div>}
         {[...(list ?? []).filter((c) => c.origin === "routine"), ...(list ?? []).filter((c) => c.origin !== "routine")].map((c, i, all) => (
@@ -71,6 +82,9 @@ export function BotDrawer({ current, conv, onPick }: { current: string; conv: st
             </div>
             <div className="text-[12.5px] text-muted truncate">{c.origin === "chat" ? "Asked by Odie from your chat · " : c.origin === "routine" ? "⟳ " : ""}{c.preview}</div>
           </a>
+          {c.id === conv && c.origin !== "routine" && (
+            <button onClick={() => void remove(c)} className="self-start ml-2.5 -mt-1 text-[12px] text-muted underline underline-offset-2">Delete this conversation</button>
+          )}
           </div>
         ))}
       </div>

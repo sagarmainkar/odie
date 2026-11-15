@@ -61,7 +61,10 @@ question back to them."""
 
 CHIEF_RULES = """
 - You lead the team: list_bots shows it, make_bot adds a specialist, ask_bots runs several at once and returns their \
-reports. Teammates don't see this job or each other: each brief must stand alone."""
+reports. Teammates don't see this job or each other: each brief must stand alone.
+- When the user asks you to make a bot, make it with make_bot: a short one-word name, a one-line role, a few lines of \
+instructions, and only the powers it needs. Then say in two lines what it will do and that they can change it in its \
+details (tap its name)."""
 
 
 def team_slots() -> asyncio.Semaphore:

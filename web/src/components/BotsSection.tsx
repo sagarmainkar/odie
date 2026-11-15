@@ -54,7 +54,8 @@ export function BotsSection() {
   );
 }
 
-export function BotEditor({ bot, powers, choices, onDone }: { bot: Bot; powers: string[]; choices: ModelChoice[]; onDone: () => void }) {
+/** A bot's editable settings. deleteHere: false keeps Delete out (the details sheet puts it at its very end). */
+export function BotEditor({ bot, powers, choices, onDone, deleteHere = true }: { bot: Bot; powers: string[]; choices: ModelChoice[]; onDone: () => void; deleteHere?: boolean }) {
   const [role, setRole] = useState(bot.role);
   const [prompt, setPrompt] = useState(bot.prompt);
   const [picked, setPicked] = useState<string[]>(bot.powers);
@@ -99,7 +100,7 @@ export function BotEditor({ bot, powers, choices, onDone }: { bot: Bot; powers: 
       {error && <div className="text-[13px] text-ember-text">{error}</div>}
       <div className="flex gap-2">
         <button disabled={busy} onClick={() => void save()} className="h-11 px-4 rounded-[14px] bg-ember text-on-ember font-semibold">Save</button>
-        {!bot.chief && <button onClick={() => void remove()} className="pill h-11 px-4">Delete</button>}
+        {!bot.chief && deleteHere && <button onClick={() => void remove()} className="pill h-11 px-4">Delete</button>}
       </div>
     </div>
   );

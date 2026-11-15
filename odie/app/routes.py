@@ -341,9 +341,14 @@ async def bot_activity(name: str, request: Request) -> dict[str, Any]:
     out = []
     for r in rows:
         row = dict(r)
-        out.append({"id": row["id"], "title": row["title"], "status": row["status"], "outcome": row["outcome"],
+        title = row["title"].removeprefix(f"{name}: ")  # a teammate's title starts with its name
+        for lead_in in ("Research task: ", "Task: "):
+            title = title.removeprefix(lead_in)
+        conv = row["conv_id"] or None  # a teammate's part opens its chief's conversation
+        out.append({"id": row["id"], "title": title, "status": row["status"], "outcome": row["outcome"],
                     "started_at": row["started_at"], "ended_at": row["ended_at"], "calls": row["calls"],
-                    "conv": row["conv_id"] or None, "for_chief": bool(row["parent_id"]), "error": row["error"]})
+                    "conv": conv, "conv_bot": "chief" if row["parent_id"] else name,
+                    "for_chief": bool(row["parent_id"]), "error": row["error"]})
     return {"activity": out}
 
 
@@ -436,8 +441,27 @@ async def conversation_get(conv_id: str, request: Request) -> dict[str, Any]:
         raise HTTPException(404, "no such conversation")
     bot = bots.get(store, conv["bot"])
     shown = {**bot.as_dict(), **convs.list_row(store, bot.name)} if bot else {"name": conv["bot"], "gone": True}
+    from odie.workers import routines
+    routine = next((r for r in routines.of_bot(store, conv["bot"]) if r["conv_id"] == conv_id), None)
     return {"conversation": conv, "bot": shown, "messages": convs.messages(store, conv_id),
-            "running": convs.running_job(store, conv_id)}
+            "running": convs.running_job(store, conv_id), "routine": routine}
+
+
+@router.delete("/conversations/{conv_id}")
+async def conversation_delete(conv_id: str, request: Request) -> dict[str, Any]:
+    """Delete a conversation and its messages (the drawer). One still answering, or a routine's own -> 409."""
+    _jobs_on()
+    from odie.workers import convs
+    store = request.app.state.store
+    conv = convs.get(store, conv_id)
+    if conv is None:
+        raise HTTPException(404, "no such conversation")
+    if convs.running_job(store, conv_id):
+        raise HTTPException(409, "It's still answering: stop it first.")
+    if store.one("select 1 from bot_routines where conv_id=?", (conv_id,)):
+        raise HTTPException(409, "This is a routine's conversation: delete the routine in the bot's details.")
+    convs.delete(store, conv_id)
+    return {"ok": True}
 
 
 class ConvMessageIn(BaseModel):
@@ -537,10 +561,17 @@ async def job_team(job_id: str, request: Request) -> dict[str, Any]:
 @router.post("/jobs/{job_id}/stop")
 async def job_stop(job_id: str, request: Request) -> dict[str, Any]:
     _jobs_on()
+    from odie.workers import convs
     from odie.workers import router as workers_router
+    from odie.workers import store as jobs_store
     if not workers_router.stop(job_id):
         raise HTTPException(409, f"{job_id} isn't running")
-    request.app.state.store.audit("user", "job_stopped", result_summary=job_id)
+    store = request.app.state.store
+    store.audit("user", "job_stopped", result_summary=job_id)
+    row = jobs_store.get(store, job_id) or {}
+    if row.get("conv_id"):  # stopped from a bot's chat: the conversation says so, and can go on
+        convs.add(store, row["conv_id"], "note", "You stopped it.", job_id=job_id)
+        await convs.publish(request.app.state.runner, jobs_store.from_row(row))
     return {"ok": True}
 
 

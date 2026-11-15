@@ -15,8 +15,8 @@ describe("team card", () => {
   });
   it("says how far the team is", () => {
     const lead = m({ bot: "chief" });
-    expect(headerWords({ title: "t", lead, team: [] })).toBe("working");
-    expect(headerWords({ title: "t", lead, team: [m({ status: "done" }), m({}), m({ status: "failed" })] })).toBe("working · 2 of 3 bots done");
+    expect(headerWords({ title: "t", lead, team: [] })).toBe("Working");
+    expect(headerWords({ title: "t", lead, team: [m({ status: "done" }), m({}), m({ status: "failed" })] })).toBe("Team at work · 2 of 3 done");
     expect(headerWords({ title: "t", lead: m({ status: "done" }), team: [] })).toBe("done");
     expect(headerWords({ title: "t", lead: m({ status: "failed" }), team: [] })).toBe("didn't finish");
     expect(going(m({ status: "waiting" }))).toBe(true);

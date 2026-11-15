@@ -21,11 +21,11 @@ export function BotActivity({ bot }: { bot: string }) {
                 <span className="text-[13.5px] font-medium truncate">{a.title}</span>
                 <span className="ml-auto text-[11.5px] text-muted shrink-0">{whenWords(a.ended_at ?? a.started_at, undefined, locale)}</span>
               </div>
-              <div className={`text-[12px] ${a.status === "failed" ? "text-ember-text" : "text-muted"}`}>{activityLine(a)}</div>
+              <div className={`text-[12px] ${a.status === "failed" ? "text-ember-text" : "text-muted"}`}>{activityLine(a)}{a.status === "failed" && a.error ? ` · ${a.error}` : ""}</div>
             </>
           );
           return a.conv
-            ? <a key={a.id} href={`#bot/${bot}/${a.conv}`} className="block px-3 py-2 border-b border-line last:border-b-0">{row}</a>
+            ? <a key={a.id} href={`#bot/${a.conv_bot ?? bot}/${a.conv}`} className="block px-3 py-2 border-b border-line last:border-b-0">{row}</a>
             : <div key={a.id} className="px-3 py-2 border-b border-line last:border-b-0">{row}</div>;
         })}
       </div>

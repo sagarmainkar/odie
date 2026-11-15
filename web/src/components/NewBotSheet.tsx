@@ -13,7 +13,7 @@ export function NewBotSheet({ onClose }: { onClose: () => void }) {
     setBusy(true); setError("");
     try {
       const { id } = await postJSON<{ id: string }>("/api/bots/chief/conversations", {});
-      const ask = `Make me a new bot: ${said}\n\nUse make_bot with a short name, a one-line role, a few lines of instructions and only the powers it needs. Then tell me its name and what it will do, and that I can change it in its details.`;
+      const ask = `Make me a new bot: ${said}`;  // the chief knows how (make_bot); its answer gets a "Meet …" chip
       await postJSON(`/api/conversations/${id}/messages`, { text: ask });
       location.hash = `#bot/chief/${id}`;
       onClose();

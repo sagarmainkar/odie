@@ -13,6 +13,7 @@ async function call(url: string, method: string, body?: unknown): Promise<{ ok: 
 export function BotRoutines({ bot }: { bot: string }) {
   const [list, setList] = useState<Routine[] | null>(null);
   const [adding, setAdding] = useState(false);
+  const [editing, setEditing] = useState<string | null>(null);
   const [note, setNote] = useState("");
   const load = useCallback(() => { getJSON<{ routines: Routine[] }>(`/api/bots/${bot}/routines`).then((r) => setList(r.routines)).catch(() => setList([])); }, [bot]);
   useEffect(load, [load]);
@@ -45,8 +46,10 @@ export function BotRoutines({ bot }: { bot: string }) {
           <div className="flex gap-2">
             <button onClick={() => void act(r, r.paused ? "resume" : "pause")} className="pill h-8 px-3 text-[12.5px]">{r.paused ? "Resume" : "Pause"}</button>
             <button onClick={() => void act(r, "run")} className="pill h-8 px-3 text-[12.5px]">Run now</button>
+            <button onClick={() => setEditing(r.id)} className="pill h-8 px-3 text-[12.5px]">Edit</button>
             <button onClick={() => void act(r, "delete")} className="pill h-8 px-3 text-[12.5px]">Delete</button>
           </div>
+          {editing === r.id && <NewRoutine bot={bot} initial={r} onDone={(made) => { setEditing(null); if (made) load(); }} />}
         </div>
       ))}
       {adding && <NewRoutine bot={bot} onDone={(made) => { setAdding(false); if (made) load(); }} />}
@@ -55,19 +58,24 @@ export function BotRoutines({ bot }: { bot: string }) {
   );
 }
 
-function NewRoutine({ bot, onDone }: { bot: string; onDone: (made: boolean) => void }) {
-  const [brief, setBrief] = useState("");
-  const [title, setTitle] = useState("");
-  const [kind, setKind] = useState<"daily" | "every">("daily");
-  const [at, setAt] = useState("08:30");
-  const [days, setDays] = useState<number[]>([0, 1, 2, 3, 4, 5, 6]);
-  const [hours, setHours] = useState(3);
+/** A routine's form: new, or `initial` to edit one (saved with PUT; the next run moves only if the timing changed). */
+function NewRoutine({ bot, initial, onDone }: { bot: string; initial?: Routine; onDone: (made: boolean) => void }) {
+  const sched = initial?.schedule;
+  const [brief, setBrief] = useState(initial?.brief ?? "");
+  const [title, setTitle] = useState(initial?.title ?? "");
+  const [kind, setKind] = useState<"daily" | "every">(sched?.kind ?? "daily");
+  const [at, setAt] = useState(sched?.kind === "daily" ? sched.at : "08:30");
+  const [days, setDays] = useState<number[]>(sched?.kind === "daily" ? sched.days : [0, 1, 2, 3, 4, 5, 6]);
+  const [hours, setHours] = useState(sched?.kind === "every" ? sched.hours : 3);
   const [error, setError] = useState("");
   const toggle = (d: number) => setDays((now) => (now.includes(d) ? now.filter((x) => x !== d) : [...now, d].sort()));
   async function save() {
     setError("");
     const schedule: Schedule = kind === "daily" ? { kind, at, days } : { kind, hours };
-    const got = await call(`/api/bots/${bot}/routines`, "POST", { title, brief, schedule });
+    const same = sched && JSON.stringify(sched) === JSON.stringify(schedule);
+    const got = initial
+      ? await call(`/api/routines/${initial.id}`, "PUT", { title, brief, ...(same ? {} : { schedule }) })
+      : await call(`/api/bots/${bot}/routines`, "POST", { title, brief, schedule });
     if (!got.ok) { setError(got.data.detail || "Couldn't save."); return; }
     onDone(true);
   }
