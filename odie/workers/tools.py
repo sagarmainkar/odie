@@ -71,5 +71,16 @@ def make_worker_tools(store: Store) -> list[FunctionTool]:
         store.set_setting(watch_report.CARD, card)
         return {"forgotten": job_id} if len(card["needs_you"]) < before else {"error": f"{job_id} has no card on Today."}
 
+    async def ask_bot(bot: str, title: str, request: str, tool_context: ToolContext = None) -> dict:
+        """Hand the user's request to one of their bots, which works on it in the background and reports into this chat. Use it when the user names a bot ("@chief …", "ask the researcher to …"), or asks for the team or the chief. The chief leads the team: it splits a big question among specialists it makes, runs them side by side and gives one answer; send it anything that needs research from several sides, a comparison, or checking. bot: its name, without the @. title: a few words the user will recognise. request: the user's request in full, with everything the bot needs (it sees nothing else of this chat). Tell the user it started and that the answer will come here."""
+        from odie.workers import bots
+        name = bots.clean_name(bot)
+        found = bots.get(store, name) if name else None
+        if found is None:
+            names = ", ".join(b.name for b in bots.all_bots(store))
+            return {"error": f"There's no bot called {bot}. The bots: {names}."}
+        job = router.start_bot(found.name, title.strip()[:80] or found.name, request.strip(), session_id_of(tool_context))
+        return {"job_id": job.id, "bot": found.name, "status": "started"}
+
     return [FunctionTool(start_job), FunctionTool(jobs_status), FunctionTool(stop_job), FunctionTool(retry_job),
-            FunctionTool(forget_job)]
+            FunctionTool(forget_job), FunctionTool(ask_bot)]

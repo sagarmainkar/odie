@@ -249,7 +249,7 @@ async def test_start_job_from_the_chat_names_the_chat_it_came_from(world):
     store, _, _ = world
     from odie.workers.tools import make_worker_tools
     Scripted.script = [("report", {"outcome": "ready", "text": "ok"})]
-    start_job, jobs_status, stop_job, _, _ = make_worker_tools(store)
+    start_job, jobs_status, stop_job, _, _, _ = make_worker_tools(store)
 
     class Ctx:
         class session:
@@ -362,7 +362,7 @@ async def test_a_reporter_waiting_between_runs_can_be_stopped(world, monkeypatch
 async def test_start_job_with_every_minutes_makes_a_reporter_in_the_users_time(world, monkeypatch):
     store, _, _ = world
     from odie.workers.tools import make_worker_tools
-    start_job, _, stop_job, _, _ = make_worker_tools(store)
+    start_job, _, stop_job, _, _, _ = make_worker_tools(store)
     Scripted.stall = True
     got = await start_job.func("Mail count", "Count unread.", every_minutes=30, until="2026-11-04T18:00")
     row = jobs.get(store, got["job_id"])
@@ -474,7 +474,7 @@ async def test_recover_after_a_restart_tells_cut_off_jobs_and_relaunches_reporte
 async def test_retry_job_from_the_chat(world):
     store, _, _ = world
     from odie.workers.tools import make_worker_tools
-    _, _, _, retry_job, _ = make_worker_tools(store)
+    _, _, _, retry_job, _, _ = make_worker_tools(store)
     assert "error" in await retry_job.func("job-nothere")
     Scripted.stall = True
     job = router.start("task", "Stop me", "…", "chat-1")
@@ -624,7 +624,7 @@ async def test_a_stuck_or_failed_job_waits_on_today_with_retry(world):
     assert card["other"]["label"] == "Dismiss"
     assert card["pile"] == "alerts"
     from odie.workers.tools import make_worker_tools
-    *_, forget_job = make_worker_tools(store)
+    *_, forget_job, _ = make_worker_tools(store)
     assert await forget_job.func(job.id) == {"forgotten": job.id}
     assert not [c for c in needs.cards(store, datetime.now(UTC)) if c["ref"] == f"job:{job.id}"]
     assert "error" in await forget_job.func(job.id)

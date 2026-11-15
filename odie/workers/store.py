@@ -32,6 +32,8 @@ class Job:
     runs: int = 0
     notify: str = "always"        # a reporter speaks: always, on change of state, or when its condition is met
     condition: str = ""
+    bot: str = ""                 # the bot this job runs as ("researcher"); "" = a plain Worker of its kind
+    parent_id: str = ""           # a teammate's job asked for by a lead bot (ask_bots): reports to it, not to the chat
 
     @property
     def repeats(self) -> bool:
@@ -39,10 +41,18 @@ class Job:
         return self.every_minutes > 0
 
 
+# Columns added after the first spike: a home made before them gets them on start.
+LATER_COLUMNS = (("jobs", "bot", "text not null default ''"), ("jobs", "parent_id", "text not null default ''"))
+
+
 def ensure(store: Store) -> None:
-    """Create the two tables if they are missing (safe to call on every start)."""
+    """Create the tables if they are missing, and add the later columns to an older jobs table (safe on every start)."""
     with store._lock:
         store._conn.executescript(SCHEMA)
+        for table, column, kind in LATER_COLUMNS:
+            have = {r[1] for r in store._conn.execute(f"pragma table_info({table})")}
+            if column not in have:
+                store._conn.execute(f"alter table {table} add column {column} {kind}")
 
 
 def new_id() -> str:
@@ -52,14 +62,14 @@ def new_id() -> str:
 
 def create(store: Store, kind: str, title: str, brief: str, session_id: str | None, folder: Path,
            budget_seconds: int, model: str = "", every_minutes: int = 0, until_at: str | None = None,
-           notify: str = "always", condition: str = "") -> Job:
+           notify: str = "always", condition: str = "", bot: str = "", parent_id: str = "") -> Job:
     notify = notify if notify in NOTIFY else "always"
     job = Job(new_id(), kind, title, brief, session_id, folder, budget_seconds, model, every_minutes=every_minutes,
-              until_at=until_at, notify=notify, condition=condition)
+              until_at=until_at, notify=notify, condition=condition, bot=bot, parent_id=parent_id)
     store.execute("insert into jobs(id,kind,title,brief,model,status,session_id,folder,budget_seconds,every_minutes,"
-                  "until_at,notify,condition,created_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                  "until_at,notify,condition,bot,parent_id,created_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                   (job.id, kind, title, brief, model, "queued", session_id, str(folder), budget_seconds, every_minutes,
-                   until_at, notify, condition, now_iso()))
+                   until_at, notify, condition, bot, parent_id, now_iso()))
     return job
 
 
@@ -67,7 +77,7 @@ def from_row(row: dict) -> Job:
     """A Job from its row (recovery after a restart, the watchdog)."""
     return Job(row["id"], row["kind"], row["title"], row["brief"], row["session_id"], Path(row["folder"]),
                row["budget_seconds"], row["model"], row["status"], row["every_minutes"], row["until_at"], row["runs"],
-               row["notify"], row["condition"])
+               row["notify"], row["condition"], row["bot"] or "", row["parent_id"] or "")
 
 
 def started(store: Store, job: Job) -> int:

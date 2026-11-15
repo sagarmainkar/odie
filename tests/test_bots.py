@@ -1,0 +1,474 @@
+"""Bots (odie.workers.bots, team, asks): named Worker templates, the chief that makes and asks them side by side, and
+the questions a bot waits on (a tap, a sign-in) that only the app's buttons answer. Through the real ADK with stand-in
+models, one script per bot."""
+from __future__ import annotations
+
+import asyncio
+from typing import ClassVar
+
+import httpx
+import pytest
+from google.adk.models.base_llm import BaseLlm
+from google.adk.models.llm_response import LlmResponse
+from google.genai import types
+
+from odie import devices
+from odie.store.db import Store
+from odie.workers import asks, bots, nudge, router, team, watchdog, worker
+from odie.workers import store as jobs
+from tests.test_workers import Chat
+
+
+class Team(BaseLlm):
+    """Plays one script per bot, picked by the "You are <name>," its system prompt starts with. Each entry is a tool
+    call (name, args) or a text. A bot with no script left says "done" (and is nudged to report)."""
+    scripts: ClassVar[dict[str, list]] = {}
+    seen: ClassVar[dict[str, list]] = {}
+
+    async def generate_content_async(self, llm_request, stream: bool = False):
+        prompt = str(llm_request.config.system_instruction)
+        name = prompt.removeprefix("You are ").split(",", 1)[0]
+        Team.seen.setdefault(name, []).append(llm_request)
+        script = Team.scripts.get(name, [])
+        step = script.pop(0) if script else "done"
+        await asyncio.sleep(0)
+        if isinstance(step, str):
+            part = types.Part(text=step)
+        else:
+            tool, args = step
+            part = types.Part(function_call=types.FunctionCall(id=f"{name}-{len(Team.seen[name])}", name=tool, args=args))
+        yield LlmResponse(content=types.Content(role="model", parts=[part]))
+
+
+@pytest.fixture
+def world(isolated_settings, tmp_path, monkeypatch):
+    """A store with the workers' tables and the chief, a chat to post to, no pushes, one script per bot."""
+    store = Store(tmp_path / "assistant.db")
+    store.init_schema()
+    jobs.ensure(store)
+    bots.ensure_chief(store)
+    chat = Chat()
+    monkeypatch.setattr(worker, "send_to_all", lambda *a, **k: None)
+    monkeypatch.setattr(asks, "_push", lambda *a, **k: None)
+    monkeypatch.setattr(worker, "model_for_bot", lambda store, bot: Team(model="team"))
+    Team.scripts = {}
+    Team.seen = {}
+    router.hooks.update(store=store, runner=chat)
+    return store, chat
+
+
+def tool_names(request) -> list[str]:
+    return sorted(f.name for t in request.config.tools for f in t.function_declarations)
+
+
+# ── the bots store ───────────────────────────────────────────────────────────
+
+def test_names_powers_and_models_are_cleaned():
+    assert bots.clean_name("Researcher") == "researcher"
+    assert bots.clean_name(" @fact-checker ") == "fact-checker"
+    assert bots.clean_name("x") is None and bots.clean_name("my bot") is None and bots.clean_name("") is None
+    assert bots.clean_powers(["Browser", "web", "mail"]) == ["web", "browser"]
+    assert bots.clean_model({"provider": "ollama", "model": "lfm3:latest", "x": 1}) == {"provider": "ollama", "model": "lfm3:latest"}
+    assert bots.clean_model({"provider": "ollama"}) is None and bots.clean_model(None) is None
+
+
+def test_the_chief_is_made_once_and_stays(world):
+    store, _ = world
+    bots.ensure_chief(store)
+    assert [b.name for b in bots.all_bots(store)] == ["chief"]
+    chief = bots.get(store, "chief")
+    assert chief.is_chief and chief.powers == ["web"] and chief.model is None and chief.made_by == "odie"
+    assert not bots.delete(store, "chief")
+    bots.edit(store, "chief", prompt="Be brief.")
+    bots.ensure_chief(store)  # a chief the user changed is left as it is
+    assert bots.get(store, "chief").prompt == "Be brief."
+
+
+def test_make_refuses_a_bad_name_a_twin_a_missing_role_and_a_full_team(world, monkeypatch):
+    store, _ = world
+    made = bots.make(store, "Researcher", "finds sources", "Cite every claim.", ["web", "mail"])
+    assert made.name == "researcher" and made.powers == ["web"] and made.made_by == "chief" and not made.edited_by_user
+    assert "already a bot" in bots.make(store, "researcher", "again", "", ["web"])
+    assert "one word" in bots.make(store, "my bot", "x", "", [])
+    assert "role" in bots.make(store, "writer", "  ", "", [])
+    monkeypatch.setattr(bots, "MAX_BOTS", 2)
+    assert "full" in bots.make(store, "writer", "writes", "", [])
+    assert [b.name for b in bots.all_bots(store)] == ["chief", "researcher"]  # the chief first
+
+
+def test_the_users_edit_replaces_what_is_given_and_makes_the_bot_theirs(world):
+    store, _ = world
+    bots.make(store, "researcher", "finds sources", "Cite.", ["web"], model={"provider": "ollama", "model": "lfm3:latest"})
+    got = bots.edit(store, "researcher", powers=["web", "browser"])
+    assert got.powers == ["web", "browser"] and got.model == {"provider": "ollama", "model": "lfm3:latest"}  # model not sent: kept
+    assert got.edited_by_user and got.prompt == "Cite."
+    got = bots.edit(store, "researcher", model=None, model_given=True)
+    assert got.model is None  # sent as none: the chat's model
+    assert bots.edit(store, "nobody", prompt="x") is None
+    assert bots.delete(store, "researcher") and bots.get(store, "researcher") is None
+
+
+# ── a bot's kind and tools ───────────────────────────────────────────────────
+
+def a_bot_job(store, name, brief="Find it.", session_id="chat-1", parent_id=""):
+    budget = team.TEAMMATE_BUDGET if parent_id else team.BOT_BUDGET
+    return jobs.create(store, "bot", f"{name} job", brief, session_id, bots.folder_of(name), budget, bot=name,
+                       parent_id=parent_id)
+
+
+def test_powers_decide_the_tools_and_only_the_chief_leads(world):
+    store, _ = world
+    bots.make(store, "reader", "reads", "", [])
+    bots.make(store, "coder", "codes", "", ["shell", "files"])
+    bots.make(store, "shopper", "shops", "", ["browser"])
+
+    def names(name):
+        bot = bots.get(store, name)
+        return sorted(t.name for t in team.tools_for(bot, store, a_bot_job(store, name)))
+    assert names("reader") == ["read_file", "write_file"]  # its notes, whatever its powers
+    assert names("coder") == ["read_file", "run_shell", "write_file"]
+    assert {"browser_open", "browser_click", "browser_type", "browser_sign_in"} <= set(names("shopper"))
+    assert "run_shell" not in names("shopper") and "ask_bots" not in names("shopper")
+    assert names("chief") == ["ask_bots", "list_bots", "make_bot", "read_file", "web_fetch", "web_search", "write_file"]
+
+
+def test_a_bots_guarded_tools_ask_through_the_job_not_adk(world):
+    store, _ = world
+    bots.make(store, "shopper", "shops", "", ["browser"])
+    tools = {t.name: t for t in team.tools_for(bots.get(store, "shopper"), store, a_bot_job(store, "shopper"))}
+    click = tools["browser_click"]
+    assert click._require_confirmation is False and callable(click._odie_asks)
+    assert not hasattr(tools["browser_scroll"], "_odie_asks")  # never asked in chat either
+
+
+def test_the_instruction_carries_name_role_rules_and_its_own_prompt(world):
+    store, _ = world
+    bots.make(store, "shopper", "compares prices", "Prefer Indian shops.", ["browser"])
+    text = team.instruction_for(bots.get(store, "shopper"))
+    assert text.startswith("You are shopper, one of the user's bots: compares prices")
+    assert "waits for the user's tap" in text and text.endswith("Prefer Indian shops.")
+    assert "{folder}" in text and "ask_bots" not in text
+    assert "ask_bots runs several at once" in team.instruction_for(bots.get(store, "chief"))
+
+
+def test_check_asks_reads_the_team(world):
+    store, _ = world
+    bots.make(store, "researcher", "finds", "", ["web"])
+    pairs, wrong = team.check_asks(store, [{"bot": "researcher", "brief": "find tides"}])
+    assert wrong is None and [(b.name, brief) for b, brief in pairs] == [("researcher", "find tides")]
+    assert team.check_asks(store, [])[1] == "Ask at least one bot."
+    assert team.check_asks(store, [{"bot": "researcher", "brief": "x"}] * 5)[1] == "At most 4 at once."
+    assert team.check_asks(store, [{"bot": "chief", "brief": "x"}])[1] == "You can't ask yourself."
+    assert "no bot called nobody" in team.check_asks(store, [{"bot": "nobody", "brief": "x"}])[1]
+    assert team.check_asks(store, [{"bot": "researcher", "brief": " "}])[1] == "Give researcher a brief."
+
+
+# ── the chief at work ────────────────────────────────────────────────────────
+
+async def test_the_chief_makes_a_specialist_asks_two_side_by_side_and_reports_once(world):
+    store, chat = world
+    bots.make(store, "checker", "checks numbers", "", [])
+    Team.scripts = {
+        "chief": [("list_bots", {}),
+                  ("make_bot", {"name": "researcher", "role": "finds sources", "prompt": "Cite.", "powers": ["web"]}),
+                  ("ask_bots", {"asks": [{"bot": "researcher", "brief": "Find tide times in Goa."},
+                                         {"bot": "checker", "brief": "Check: high tide 06:10."}]}),
+                  ("report", {"outcome": "ready", "text": "High tide 06:10, checked."})],
+        "researcher": [("report", {"outcome": "ready", "text": "06:10 per the port site."})],
+        "checker": [("report", {"outcome": "ready", "text": "Agrees."})],
+    }
+    job = router.start_bot("chief", "Goa tides", "When is high tide in Goa?", "chat-1")
+    await asyncio.wait_for(router._tasks[job.id], 5)
+    row = jobs.get(store, job.id)
+    assert (row["status"], row["bot"], row["report"]) == ("done", "chief", "High tide 06:10, checked.")
+    kids = [dict(r) for r in store.query("select * from jobs where parent_id=? order by bot", (job.id,))]
+    assert [(k["bot"], k["status"], k["report"]) for k in kids] == [("checker", "done", "Agrees."),
+                                                                    ("researcher", "done", "06:10 per the port site.")]
+    assert all(k["budget_seconds"] == team.TEAMMATE_BUDGET for k in kids)
+    assert bots.get(store, "researcher").made_by == "chief"
+    # the chat hears once, from the chief, not from its teammates
+    assert [p["text"] for p in chat.posts] == [f"✅ Chief done: Goa tides ({job.id})\n\nHigh tide 06:10, checked."]
+    # ask_bots handed the chief both reports, in the order asked
+    last = Team.seen["chief"][-1]
+    answers = [p.function_response.response for c in last.contents for p in c.parts or [] if p.function_response]
+    reports = answers[-1]["reports"]
+    assert [(r["bot"], r["report"]) for r in reports] == [("researcher", "06:10 per the port site."), ("checker", "Agrees.")]
+    # the teammates saw their own brief only, with their own tools
+    assert "Find tide times in Goa." in str(Team.seen["researcher"][0].contents[-1])
+    assert tool_names(Team.seen["researcher"][0]) == ["read_file", "report", "web_fetch", "web_search", "write_file"]
+    assert tool_names(Team.seen["checker"][0]) == ["read_file", "report", "write_file"]
+
+
+async def test_teammates_run_side_by_side(world, monkeypatch):
+    store, _ = world
+    bots.make(store, "a-bot", "a", "", [])
+    bots.make(store, "b-bot", "b", "", [])
+    started: list[str] = []
+    both = asyncio.Event()
+    real_run = worker.run
+
+    async def run(job, store, runner, kind=None, model=None):
+        if job.parent_id:
+            started.append(job.bot)
+            if len(started) == 2:
+                both.set()
+            await asyncio.wait_for(both.wait(), 2)  # neither finishes until both have started
+        return await real_run(job, store, runner, kind, model)
+    monkeypatch.setattr(worker, "run", run)
+    Team.scripts = {"chief": [("ask_bots", {"asks": [{"bot": "a-bot", "brief": "x"}, {"bot": "b-bot", "brief": "y"}]}),
+                              ("report", {"outcome": "ready", "text": "ok"})],
+                    "a-bot": [("report", {"outcome": "ready", "text": "a"})],
+                    "b-bot": [("report", {"outcome": "ready", "text": "b"})]}
+    job = router.start_bot("chief", "Both", "do both", "chat-1")
+    await asyncio.wait_for(router._tasks[job.id], 5)
+    assert sorted(started) == ["a-bot", "b-bot"] and jobs.get(store, job.id)["status"] == "done"
+
+
+async def test_a_bot_runs_from_the_chat_with_ask_bot_and_an_unknown_one_is_named(world):
+    from odie.workers.tools import make_worker_tools
+    store, chat = world
+    bots.make(store, "writer", "writes", "", [])
+    tools = {t.name: t for t in make_worker_tools(store)}
+    Team.scripts = {"writer": [("report", {"outcome": "ready", "text": "Drafted."})]}
+    got = await tools["ask_bot"].func(bot="@Writer", title="Draft", request="Draft a note.")
+    assert got["bot"] == "writer"
+    await asyncio.wait_for(router._tasks[got["job_id"]], 5)
+    assert chat.posts[-1]["text"] == f"✅ Writer done: Draft ({got['job_id']})\n\nDrafted."
+    assert "The bots: chief, writer" in (await tools["ask_bot"].func(bot="nobody", title="x", request="y"))["error"]
+
+
+async def test_a_deleted_bots_job_fails_with_why(world):
+    store, _ = world
+    bots.make(store, "temp", "t", "", [])
+    job = a_bot_job(store, "temp")
+    bots.delete(store, "temp")
+    assert await worker.run(job, store, router.hooks["runner"]) == "failed"
+    assert "no bot called temp" in jobs.get(store, job.id)["error"]
+
+
+def test_a_bot_runs_on_its_own_model_while_its_provider_is_there(world):
+    from odie.models import all_providers, resolve_selection
+    store, _ = world
+    provider = all_providers(store)[0]
+    bots.make(store, "local", "l", "", [], model={"provider": provider.id, "model": "tiny:latest"})
+    picked = worker.selection_for_bot(store, bots.get(store, "local"))
+    assert (picked.provider.id, picked.model) == (provider.id, "tiny:latest")
+    bots.make(store, "gone", "g", "", [], model={"provider": "no-such-provider", "model": "x"})
+    fallback = worker.selection_for_bot(store, bots.get(store, "gone"))
+    chat_pick = resolve_selection(store, "chat")
+    assert (fallback.provider.id, fallback.model) == (chat_pick.provider.id, chat_pick.model)
+
+
+# ── a bot waits on the user ──────────────────────────────────────────────────
+
+class Asking:
+    """A guarded tool as asking() leaves it: a name and the chat's predicate."""
+
+    def __init__(self, name, needs):
+        self.name = name
+        self._odie_asks = lambda **_: needs
+
+
+def test_needs_users_tap_reads_only_the_kept_predicate():
+    assert worker.needs_users_tap(Asking("browser_click", True), {"text": "Place order"}, None)
+    assert not worker.needs_users_tap(Asking("browser_click", False), {"text": "Next"}, None)
+
+    class Plain:
+        name = "write_file"
+    assert not worker.needs_users_tap(Plain(), {}, None)
+
+    def broken(**_):
+        raise ValueError
+    odd = Asking("browser_type", False)
+    odd._odie_asks = broken
+    assert worker.needs_users_tap(odd, {}, None)  # can't tell: asks
+
+
+async def test_a_tap_waits_for_the_user_and_yes_lets_the_call_run(world, monkeypatch):
+    store, chat = world
+    bots.make(store, "shopper", "shops", "", ["browser"])
+    job = a_bot_job(store, "shopper")
+    monkeypatch.setattr("odie.signin.guard.card", lambda tool, args, tab, store: ('Click "Place order" on amazon.in', {"why": "may order"}))
+    guard = worker.guard_for(store, job, chat)
+    waiting = guard(Asking("browser_click", True), {"text": "Place order"}, None)
+    assert asyncio.iscoroutine(waiting)
+    task = asyncio.create_task(waiting)
+    await asyncio.sleep(0.01)
+    [ask] = asks.open_for(store)
+    assert (ask["job_id"], ask["kind"], ask["text"]) == (job.id, "tap", 'Click "Place order" on amazon.in')
+    assert chat.posts[-1]["text"].startswith(f"✋ shopper waits for your tap ({job.id})")
+    assert asks.waits_on_user(store, job.id)
+    assert asks.answer(store, ask["id"], "yes")
+    assert await task is None  # runs
+    assert not asks.answer(store, ask["id"], "no")  # answered already
+    assert asks.open_for(store) == []
+
+
+async def test_no_refuses_the_call_and_silence_counts_as_no(world, monkeypatch):
+    store, chat = world
+    job = a_bot_job(store, "chief")
+    monkeypatch.setattr("odie.signin.guard.card", lambda tool, args, tab, store: ("Type into Search on amazon.in", {}))
+    guard = worker.guard_for(store, job, chat)
+    args = {"text": "x"}
+    task = asyncio.create_task(guard(Asking("browser_type", True), args, None))
+    await asyncio.sleep(0.01)
+    asks.answer(store, asks.open_for(store)[0]["id"], "no")
+    refused = await task
+    assert "the user said no" in refused["error"]
+    assert jobs.actions(store, job.id)[-1]["refused"].startswith("the user said no")
+    said = await asks.ask(store, chat, job, "tap", "Click Buy", wait_seconds=0.01)
+    assert said == "no"
+    assert store.one("select status from job_asks order by created_at desc limit 1")["status"] == "expired"
+
+
+async def test_an_answer_must_be_yes_or_no_and_a_restart_expires_what_was_open(world):
+    store, chat = world
+    job = a_bot_job(store, "chief")
+    task = asyncio.create_task(asks.ask(store, chat, job, "sign_in", "amazon.in: sign in", {"card": {"id": "m1"}}))
+    await asyncio.sleep(0.01)
+    [ask] = asks.open_for(store)
+    assert chat.posts[-1]["media"] == [{"id": "m1"}] and chat.posts[-1]["text"].startswith("🔑 chief needs you to sign in")
+    assert not asks.answer(store, ask["id"], "approve")
+    assert not asks.answer(store, "ask-nothere", "yes")
+    assert asks.expire_all(store) == 1
+    assert asks.open_for(store) == []
+    task.cancel()
+
+
+async def test_recover_expires_questions_and_closes_teammates(world):
+    store, chat = world
+    chief_job = a_bot_job(store, "chief")
+    kid = a_bot_job(store, "chief", parent_id=chief_job.id)
+    store.execute("insert into job_asks(id,job_id,kind,text,status,created_at) values('ask-1',?,'tap','x','open','t')", (kid.id,))
+    lines = await router.recover()
+    assert "1 question(s) to the user expired" in lines
+    assert jobs.get(store, kid.id)["status"] == "failed"
+    assert [p["text"] for p in chat.posts] == [f"❌ chief job didn't finish ({chief_job.id}): Odie restarted. "
+                                               f"Say \"retry {chief_job.id}\" to start it again."]
+    assert router.retry(kid.id) is None  # a teammate's part is retried through its chief
+
+
+def test_the_watchdog_leaves_waiting_jobs_and_teammates_alone(world):
+    store, _ = world
+    chief_job = a_bot_job(store, "chief")
+    plain = a_bot_job(store, "chief")
+    kid = a_bot_job(store, "chief", parent_id=chief_job.id)
+    store.execute("update jobs set status='running'")
+    assert not watchdog.watched(store, jobs.get(store, chief_job.id))  # its teammate is at work
+    assert not watchdog.watched(store, jobs.get(store, kid.id))
+    assert watchdog.watched(store, jobs.get(store, plain.id))
+    store.execute("insert into job_asks(id,job_id,kind,text,status,created_at) values('ask-2',?,'tap','x','open','t')", (plain.id,))
+    assert not watchdog.watched(store, jobs.get(store, plain.id))
+
+
+async def test_a_teammates_signed_in_read_makes_the_chief_and_its_chat_private(world, monkeypatch):
+    from odie.signin import guard
+    store, _ = world
+    bots.make(store, "shopper", "shops", "", ["browser"])
+    real_run = worker.run
+
+    async def run(job, store, runner, kind=None, model=None):
+        if job.bot == "shopper":
+            guard.remember(store, job.id, "amazon.in")  # what a signed-in page read leaves behind
+        return await real_run(job, store, runner, kind, model)
+    monkeypatch.setattr(worker, "run", run)
+    Team.scripts = {"chief": [("ask_bots", {"asks": [{"bot": "shopper", "brief": "my orders"}]}),
+                              ("report", {"outcome": "ready", "text": "Two orders."})],
+                    "shopper": [("report", {"outcome": "ready", "text": "Two orders on amazon.in."})]}
+    job = router.start_bot("chief", "Orders", "what did I order?", "chat-1")
+    await asyncio.wait_for(router._tasks[job.id], 5)
+    assert guard.private_of(store, job.id) == {"amazon.in"}  # the chief's later web steps would ask
+    assert guard.private_of(store, "chat-1") == {"amazon.in"}  # and so would the chat's
+
+
+# ── the chat ─────────────────────────────────────────────────────────────────
+
+@pytest.mark.parametrize(("text", "expected"), [
+    ("@chief compare the three e-bikes", "chief"),
+    ("@Writer draft it", "writer"),
+    ("@nobody hello", None),
+    ("mail @chief later", None),
+    ("hi", None),
+])
+def test_addressed_bot(text, expected):
+    assert nudge.addressed_bot(text, {"chief", "writer"}) == expected
+
+
+def test_the_bot_nudge_rides_on_a_message_to_a_bot(world, monkeypatch):
+    from odie.app.runner import OdieRunner
+    store, _ = world
+    monkeypatch.setenv("ODIE_WORKERS", "1")
+    r = OdieRunner.__new__(OdieRunner)
+    r.store = store
+    assert r._job_nudge("chat-1", "@chief which phone should I buy?") == "\n" + nudge.BOT_NUDGE.format(name="chief")
+    assert r._job_nudge("chat-1", "@ghost hi") == ""
+
+
+# ── the app's routes, and what the terminal's key can't reach ────────────────
+
+async def test_the_bots_and_asks_routes(isolated_settings, tmp_path, monkeypatch):
+    from odie.app.main import create_app
+    from tests.test_models import FakeRunner
+    monkeypatch.setenv("ODIE_WORKERS", "1")
+    store = Store(tmp_path / "assistant.db")
+    store.init_schema()
+    jobs.ensure(store)
+    bots.ensure_chief(store)
+    app = create_app(runner=FakeRunner(), store=store)
+    async with app.router.lifespan_context(app), httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+        got = (await c.get("/api/bots")).json()
+        assert [b["name"] for b in got["bots"]] == ["chief"] and got["powers"] == list(bots.POWERS)
+        made = await c.post("/api/bots", json={"name": "Writer", "role": "writes", "prompt": "Short.", "powers": ["files"]})
+        assert made.status_code == 200 and made.json()["bot"]["edited_by_user"]
+        assert (await c.post("/api/bots", json={"name": "writer", "role": "again"})).status_code == 422
+        edited = await c.put("/api/bots/writer", json={"model": {"provider": "ollama", "model": "lfm3:latest"}, "model_given": True})
+        assert edited.json()["bot"]["model"] == {"provider": "ollama", "model": "lfm3:latest"}
+        assert (await c.put("/api/bots/ghost", json={"prompt": "x"})).status_code == 404
+        assert (await c.delete("/api/bots/chief")).status_code == 409
+        assert (await c.delete("/api/bots/writer")).status_code == 200
+        job = a_bot_job(store, "chief")
+        store.execute("insert into job_asks(id,job_id,kind,text,detail_json,status,created_at) "
+                      "values('ask-9',?,'tap','Click Buy','{\"why\": \"may order\"}','open','t')", (job.id,))
+        listed = (await c.get("/api/jobs")).json()["asks"]
+        assert listed == [{"id": "ask-9", "job_id": job.id, "kind": "tap", "text": "Click Buy", "why": "may order",
+                           "site": None, "card": None, "created_at": "t"}]
+        assert (await c.post("/api/jobs/asks/ask-9", json={"answer": "maybe"})).status_code == 422
+        assert (await c.post("/api/jobs/asks/ask-9", json={"answer": "yes"})).status_code == 200
+        assert (await c.post("/api/jobs/asks/ask-9", json={"answer": "yes"})).status_code == 409
+        monkeypatch.delenv("ODIE_WORKERS")
+        assert (await c.get("/api/bots")).status_code == 404
+
+
+def test_the_terminals_key_cant_answer_a_bot_or_change_one():
+    assert not devices.terminal_may("POST", "/api/jobs/asks/ask-1")
+    assert not devices.terminal_may("GET", "/api/bots")
+    assert not devices.terminal_may("PUT", "/api/bots/chief")
+    assert not devices.terminal_may("POST", "/api/jobs/job-1/retry")
+
+
+async def test_through_adk_a_bot_pauses_at_a_tap_and_goes_on_after_yes(world, monkeypatch):
+    """The real ADK awaits the guard's wait: the tool runs only after the user's yes, and the bot then reports."""
+    from google.adk.tools import FunctionTool
+    store, chat = world
+    bots.make(store, "buyer", "buys", "", [])
+    ran: list[str] = []
+
+    async def place_order(item: str) -> dict:
+        """Place the order."""
+        ran.append(item)
+        return {"placed": item}
+    tool = FunctionTool(place_order)
+    tool._odie_asks = lambda **_: True
+    monkeypatch.setattr(team, "tools_for", lambda bot, store, job: [tool])
+    monkeypatch.setattr("odie.signin.guard.card", lambda tool, args, tab, store: (f"Order {args['item']}", {}))
+    Team.scripts = {"buyer": [("place_order", {"item": "kettle"}), ("report", {"outcome": "ready", "text": "Ordered."})]}
+    job = router.start_bot("buyer", "Kettle", "order the kettle", "chat-1")
+    for _ in range(100):
+        if asks.open_for(store):
+            break
+        await asyncio.sleep(0.01)
+    [ask] = asks.open_for(store)
+    assert ask["text"] == "Order kettle" and ran == []  # waiting: nothing ran yet
+    asks.answer(store, ask["id"], "yes")
+    await asyncio.wait_for(router._tasks[job.id], 5)
+    assert ran == ["kettle"] and jobs.get(store, job.id)["report"] == "Ordered."

@@ -34,3 +34,26 @@ create table if not exists job_actions (
   error text                                 -- what the tool raised
 );
 create index if not exists job_actions_job on job_actions(job_id, id);
+-- Bots (odie.workers.bots): named Worker templates. The chief makes the others; the user edits any of them in Settings.
+create table if not exists bots (
+  name text primary key,                     -- "chief", "researcher": lower case, what the chat and the chief call it
+  role text not null,                        -- one line: what it is for ("finds and checks sources")
+  prompt text not null,                      -- its own instructions, under the Worker rules
+  model_json text,                           -- {"provider": "ollama", "model": "lfm3:latest"}; null = the chat's model
+  powers_json text not null default '[]',    -- what it may use: web, files, shell, browser
+  made_by text not null default 'user',      -- chief | user | odie (the chief itself)
+  edited_by_user integer not null default 0, -- the user changed it in Settings: the chief may no longer change it
+  created_at text not null,
+  updated_at text not null
+);
+-- A question a running bot waits on: a tap for a browser step, or the user's sign-in in the live view.
+create table if not exists job_asks (
+  id text primary key,                       -- "ask-1a2b3c"
+  job_id text not null,
+  kind text not null,                        -- tap | sign_in
+  text text not null,                        -- what the card says ("Click "Place order" on amazon.in")
+  detail_json text,                          -- why, site, tab, screenshot
+  status text not null default 'open',       -- open | yes | no | expired
+  created_at text not null,
+  answered_at text
+);

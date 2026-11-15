@@ -695,11 +695,16 @@ class OdieRunner:
         it, when workers are on and this message looks like a job; "" otherwise.
           "Write a script that … and run it", workers on  -> a line break, then "[If this takes code to write …]"
           the same, workers off                           -> ""
-          "How is the market today?"                      -> """""
+          "How is the market today?"                      -> ""
+          "@chief compare these phones", a bot chief      -> a line break, then the bot nudge for chief"""
         from odie import workers
         if not workers.enabled():
             return ""
-        from odie.workers import nudge
+        from odie.workers import bots, nudge
+        addressed = nudge.addressed_bot(text, {b.name for b in bots.all_bots(self.store)})
+        if addressed:
+            self.store.audit("agent", "bot_nudge", result_summary=text[:200], session_id=session_id)
+            return "\n" + nudge.BOT_NUDGE.format(name=addressed)
         if not nudge.looks_like_a_job(text):
             return ""
         self.store.audit("agent", "job_nudge", result_summary=text[:200], session_id=session_id)

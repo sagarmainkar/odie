@@ -6,6 +6,10 @@ import re
 from contextvars import ContextVar
 
 USER_TEXT: ContextVar[str | None] = ContextVar("odie_user_text", default=None)
+# The bot whose job this is (odie.workers.bots), when a bot with the browser power runs: its browser is signed in like
+# a chat turn's, but there is nobody in a chat to see a Sign in card, so a page that asks to sign in tells it to call
+# browser_sign_in (its job waits for the user). None in a chat turn and in every other background turn.
+BOT: ContextVar[str | None] = ContextVar("odie_bot", default=None)
 # This chat's history limit in tokens (odie.models.history_limit_for), pinned per session by the runner; past it the
 # older turns go as words only (odie.agent.compaction). None outside a chat turn: the default limit.
 HISTORY_LIMIT: ContextVar[int | None] = ContextVar("odie_history_limit", default=None)

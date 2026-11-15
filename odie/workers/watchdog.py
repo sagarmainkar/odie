@@ -64,12 +64,28 @@ def missed_run(row: dict, now: datetime) -> bool:
     return bool(due) and now > due + timedelta(minutes=MISSED_RUN_GRACE_MINUTES)
 
 
+def watched(store: Store, row: dict) -> bool:
+    """Does the watchdog judge this job now? Not a teammate (its chief's job and budget cover it), and not a job that
+    waits on someone: the user's tap or sign-in (odie.workers.asks), or its teammates still at work.
+      a chief inside ask_bots, two teammates running -> False;  a bot at a "Place order" tap -> False;
+      a teammate's row -> False;  a plain task job -> True"""
+    from odie.workers import asks
+    if row.get("parent_id"):
+        return False
+    if asks.waits_on_user(store, row["id"]):
+        return False
+    teammates = store.one("select 1 from jobs where parent_id=? and status in ('queued','running')", (row["id"],))
+    return not teammates
+
+
 async def check(store: Store, now: datetime | None = None) -> list[str]:
     """One pass: fail what is stuck, launch what was missed. Returns one line per action, for the log and tests."""
     from odie.workers import router
     now = now or datetime.now(UTC)
     done: list[str] = []
     for row in jobs.running(store):
+        if not watched(store, row):
+            continue
         if row["status"] == "running":
             why = why_stuck(row, jobs.actions(store, row["id"]), now)
             if why:

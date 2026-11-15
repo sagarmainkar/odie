@@ -102,15 +102,36 @@ def stop_after_report(got: Report):
     return before
 
 
-def guard_for(store: Store, job: Job):
+def needs_users_tap(tool, args: dict, tool_context) -> bool:
+    """Does a bot's call wait for the user's tap? Only a tool made with asking() carries a predicate (_odie_asks): the
+    one the chat asks with. browser_click "Place order" on a signed-in amazon.in -> True; browser_click "Next" -> False;
+    write_file (no predicate) -> False. A predicate that can't tell asks."""
+    predicate = getattr(tool, "_odie_asks", None)
+    if predicate is None:
+        return False
+    if not callable(predicate):
+        return bool(predicate)
+    try:
+        return bool(predicate(**(args or {}), tool_context=tool_context))
+    except Exception:  # noqa: BLE001
+        return True
+
+
+def guard_for(store: Store, job: Job, runner=None):
     """before_tool_callback: decides whether a Worker's call runs, and sets the shell's folder.
     - run_shell with no cwd -> cwd becomes the job's folder, then runs.
     - run_shell that the pass's always-ask rules would stop (`rm old.txt`, `cat ~/.env`, `curl ... | sh`) -> refused
       with the rule's words, recorded with refused=<why>; the Worker is told to find another way or report blocked.
+    - a bot's call the chat would ask about (needs_users_tap: "Place order" on a signed-in site) -> the job waits for
+      the user's tap (odie.workers.asks); yes -> runs; no, or no answer in 15 minutes -> refused, "the user said no".
     - any other tool -> runs."""
     from odie.agent.shell_grant import always_ask, safe_places
 
-    def guard(tool, args, tool_context) -> dict | None:
+    def guard(tool, args, tool_context):
+        if needs_users_tap(tool, args, tool_context):
+            # The wait for the tap: a coroutine handed back, which ADK awaits (its callback pipeline awaits whatever
+            # is awaitable); every other answer stays a plain value.
+            return ask_users_tap(store, job, runner, tool, args if args is not None else {}, tool_context)
         if tool.name != "run_shell":
             return None
         args = args if args is not None else {}
@@ -124,6 +145,22 @@ def guard_for(store: Store, job: Job):
         args[REFUSED] = why
         return {"error": f"Not run: it {why}. Write files with write_file; find another way, or report it as blocked."}
     return guard
+
+
+async def ask_users_tap(store: Store, job: Job, runner, tool, args: dict, tool_context) -> dict | None:
+    """The job waits for the user's tap on what the chat's card would say (guard.card). yes -> None (the call runs);
+    no -> the call is refused, on the record, and the bot is told not to try it another way."""
+    from odie.signin import guard as signin_guard
+    from odie.workers import asks
+    tab = signin_guard.tab_of(tool_context)
+    text, detail = signin_guard.card(tool.name, args, tab, store)
+    said = await asks.ask(store, runner, job, "tap", text, detail)
+    if said == "yes":
+        return None
+    why = "the user said no (or didn't answer)"
+    jobs.record_action(store, job.id, tool.name, args, refused=why)
+    args[REFUSED] = why
+    return {"error": f"Not run: {why}. Don't try it another way: go on without it, or report what's left."}
 
 
 def after_for(store: Store, job: Job):
@@ -293,15 +330,76 @@ def model_for_kind(store: Store, kind: WorkerKind):
     return model_for(selection_for_kind(store, kind), False)
 
 
+def selection_for_bot(store: Store, bot):
+    """Which model a bot runs on: its own pick when its provider is still there, else the chat's.
+    researcher on ollama/lfm3 -> lfm3; on a provider since removed -> the chat's; no pick -> the chat's."""
+    from odie.models import Selection, all_providers, resolve_selection
+    if bot.model:
+        providers = {p.id: p for p in all_providers(store)}
+        provider = providers.get(bot.model["provider"])
+        if provider is not None:
+            return Selection(provider, bot.model["model"], "chat")
+    return resolve_selection(store, "chat")
+
+
+def model_for_bot(store: Store, bot):
+    """The ADK model a bot runs on (selection_for_bot)."""
+    from odie.agent.model import model_for
+    return model_for(selection_for_bot(store, bot), False)
+
+
+def bot_of(store: Store, job: Job):
+    """The bot a job runs as, or None for a plain Worker job (or a bot deleted since)."""
+    if not job.bot:
+        return None
+    from odie.workers import bots
+    return bots.get(store, job.bot)
+
+
+def set_bot_turn(job: Job, bot) -> None:
+    """A bot's run sees the turn a chat would: its private set (a signed-in read, or a teammate's, makes its later web
+    steps ask), and, with the browser, the brief as the user's words (sites it names may be opened) and turn.BOT (a
+    sign-in waits for the user). Called inside the job's own task, so nothing leaks to the chat."""
+    from odie.agent import turn
+    turn.PRIVATE.set(set())
+    turn.READ.set(set())
+    if "browser" in bot.powers:
+        turn.USER_TEXT.set(job.brief)
+        turn.BOT.set(bot.name)
+
+
+def pass_privacy_on(store: Store, job: Job) -> None:
+    """A bot that read the user's signed-in pages: its report carries them, so the chat it reports to turns private
+    (its later searches and other sites ask first, as after its own signed-in read). A teammate passes it to its chief
+    in odie.workers.team instead."""
+    from odie.signin import guard as signin_guard
+    if job.parent_id or not job.session_id:
+        return
+    for site in signin_guard.private_of(store, job.id):
+        signin_guard.remember(store, job.session_id, site)
+
+
 async def run(job: Job, store: Store, runner, kind: WorkerKind | None = None, model=None) -> str:
     """Run the Worker on the job to its end and tell the chat. Returns the job's final status.
     model: a test's stand-in BaseLlm; otherwise the kind's chosen model (model_for_kind)."""
     from google.adk.agents.invocation_context import LlmCallsLimitExceededError
-    kind = kind or KINDS[job.kind]
     s = config.settings
+    bot = bot_of(store, job)
+    if kind is None and job.bot and bot is None:
+        jobs.ended(store, job.id, "failed", error=f"there is no bot called {job.bot} any more")
+        return "failed"
+    if kind is None and bot is not None:
+        from odie.workers.team import kind_for
+        kind = kind_for(bot, teammate=bool(job.parent_id))
+    kind = kind or KINDS[job.kind]
     if model is None:
         await ensure_small_model(store)
-        model = model_for_kind(store, kind)
+        if bot is not None:
+            model = model_for_bot(store, bot)
+        else:
+            model = model_for_kind(store, kind)
+    if bot is not None:
+        set_bot_turn(job, bot)
     tz = ZoneInfo(s.timezone)
     now = datetime.now(tz).strftime("%A %d %B %Y, %H:%M")
     got = Report()
@@ -311,7 +409,7 @@ async def run(job: Job, store: Store, runner, kind: WorkerKind | None = None, mo
         return instruction  # a function, so ADK passes the text on untouched (a brace in a path would otherwise be read as state)
 
     agent = LlmAgent(name="odie_worker", model=model, tools=[*kind.tools(store, job), make_report_tool(got)],
-                     instruction=as_written, before_tool_callback=guard_for(store, job),
+                     instruction=as_written, before_tool_callback=guard_for(store, job, runner),
                      after_tool_callback=after_for(store, job), on_tool_error_callback=on_error_for(store, job),
                      before_model_callback=stop_after_report(got))
     sessions = InMemorySessionService()
@@ -359,6 +457,9 @@ async def run(job: Job, store: Store, runner, kind: WorkerKind | None = None, mo
             return "quiet"
     else:
         jobs.ended(store, job.id, status, outcome=got.outcome or None, report=got.text or None, error=error or None)
+    if job.parent_id:  # a teammate: its chief reads the row; the chat hears from the chief
+        return status
+    pass_privacy_on(store, job)
     media = media_for(job, got.files) if status == "done" else []
     await tell(store, runner, job, message_for(kind, job, status, got, error), media)
     if status == "failed":

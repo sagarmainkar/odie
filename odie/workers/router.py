@@ -30,9 +30,12 @@ _slots: asyncio.Semaphore | None = None
 
 
 def setup(store: Store, runner) -> None:
-    """Called once at startup when workers are on: remember the runner and the store, and make sure the tables exist."""
+    """Called once at startup when workers are on: remember the runner and the store, make sure the tables exist, and
+    that the chief bot is there."""
+    from odie.workers import bots
     hooks.update(store=store, runner=runner)
     jobs.ensure(store)
+    bots.ensure_chief(store)
 
 
 def slug_of(title: str) -> str:
@@ -93,6 +96,17 @@ def start(kind_name: str, title: str, brief: str, session_id: str | None, every_
     job = jobs.create(store, kind.name, title, brief, session_id, folder, kind.budget_seconds,
                       every_minutes=every_minutes, until_at=until_for(every_minutes, until_at, now_utc()),
                       notify=notify, condition=condition)
+    launch(job)
+    return job
+
+
+def start_bot(name: str, title: str, brief: str, session_id: str | None) -> Job:
+    """Start a bot's job from the chat: its row (kind bot), the bot's own folder, its budget, and a task that runs it
+    when a slot is free. The report comes back into the chat like any job's. Needs the running loop."""
+    from odie.workers import bots
+    from odie.workers.team import BOT_BUDGET
+    store = hooks["store"]
+    job = jobs.create(store, "bot", title, brief, session_id, bots.folder_of(name), BOT_BUDGET, bot=name)
     launch(job)
     return job
 
@@ -193,6 +207,8 @@ def retry(job_id: str) -> Job | None:
     row = jobs.get(store, job_id)
     if row is None or row["status"] not in ("failed", "stopped"):
         return None
+    if row["parent_id"]:  # a teammate's part: retrying the chief's job asks it again
+        return None
     if row["every_minutes"] and row["until_at"] and datetime.fromisoformat(row["until_at"]) <= now_utc():
         return None  # its schedule is over
     store.execute("update jobs set status='queued', error=null, ended_at=null, next_run_at=null where id=?", (job_id,))
@@ -204,10 +220,17 @@ def retry(job_id: str) -> Job | None:
 async def recover() -> list[str]:
     """Odie started: a job that was running or queued is told as cut off (its Worker is gone); a reporter that was
     running or waiting is launched again and keeps its schedule. Returns one line per job, for the log."""
+    from odie.workers import asks
     store = hooks["store"]
     lines = []
+    expired = asks.expire_all(store)
+    if expired:
+        lines.append(f"{expired} question(s) to the user expired")
     for row in jobs.running(store):
         job = jobs.from_row(row)
+        if job.parent_id:  # a teammate: its chief is told as cut off below, and that is enough
+            jobs.ended(store, job.id, "failed", error="Odie restarted")
+            continue
         if job.repeats:
             launch(job)
             lines.append(f"{job.id}: reporter launched again")

@@ -44,3 +44,20 @@ def looks_like_a_job(text: str) -> bool:
     if _NOT_A_JOB.search(text):
         return False
     return bool(_JOB_ASK.search(text))
+
+
+BOT_NUDGE = "[The user addressed the bot '{name}': call ask_bot now with bot='{name}' and the request in full, and say it started.]"
+_AT_BOT = re.compile(r"^\s*@([a-z][a-z0-9-]{1,23})\b", re.IGNORECASE)
+
+
+def addressed_bot(text: str, names: set[str]) -> str | None:
+    """The bot a message is addressed to: it starts with @ and a bot's name. Worked examples, with bots chief, writer:
+      "@chief compare the three e-bikes" -> "chief";  "@Writer draft it" -> "writer";
+      "@nobody hello" -> None (no such bot);  "mail @chief later" -> None (not at the start);  "hi" -> None"""
+    found = _AT_BOT.match(text or "")
+    if not found:
+        return None
+    name = found.group(1).lower()
+    if name in names:
+        return name
+    return None

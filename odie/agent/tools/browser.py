@@ -168,6 +168,9 @@ def _ask_to_sign_in(store, tab: str, url: str) -> tuple[dict | None, str]:
     no card, "Call browser_sign_in"; signed-in browsing off -> no card, "turn it on in Settings → Browser"."""
     where = sites.site_of(url)
     now = time.monotonic()
+    if turn.BOT.get() and _signin_switched_on(store):  # a bot: its job waits while the user signs in (odie.workers.asks)
+        return None, ("\n(This page asks the user to sign in. Call browser_sign_in: your job waits while the user signs "
+                      "in, then look at the page again. Never type a password or code yourself.)")
     if _live_chat_signin_on(store) and _card_due(tab, where, now):
         _carded[_card_key(tab, where)] = now  # the card comes from here, not from the model remembering to call for it
         card = {"site": where, "tab": tab, "why": f"{where} asks you to sign in", "url": url}
@@ -223,6 +226,9 @@ def _after_auto_sign_in(auto: dict, tab: str, url: str) -> tuple[str, dict, str]
         reason = "failed"
     note = (f"\n(Odie tried the user's saved login for {where}: {AUTO_NOTE[reason]}. A card in the chat asks the user: "
             "tell them in one short line that it's their turn, and stop.)")
+    if turn.BOT.get():  # a bot has no chat turn to stop in: its job waits for the user instead
+        note = (f"\n(Odie tried the user's saved login for {where}: {AUTO_NOTE[reason]}. Call browser_sign_in: your job "
+                "waits while the user does it, then look at the page again.)")
     card = {"site": where, "tab": tab, "state": reason, "auto": True, "url": url, "why": AUTO_WHY[reason].format(site=where)}
     _carded[_card_key(tab, where)] = time.monotonic()  # browser_sign_in points to this card instead of adding one
     return note, card, f"{where} needs you"

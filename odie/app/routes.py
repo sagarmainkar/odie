@@ -203,7 +203,7 @@ def _jobs_on() -> None:
 def _job_view(j: dict) -> dict:
     """A job row for the app: the columns Today shows, the report cut short."""
     keys = ("id", "kind", "title", "status", "runs", "outcome", "error", "every_minutes", "next_run_at", "until_at",
-            "notify", "created_at", "started_at", "ended_at")
+            "notify", "created_at", "started_at", "ended_at", "bot", "parent_id")
     out = {k: j.get(k) for k in keys}
     out["report"] = (j.get("report") or "")[:300]
     return out
@@ -218,7 +218,88 @@ async def jobs_list(request: Request) -> dict[str, Any]:
     running = [_job_view(j) for j in jobs_store.running(store)]
     going = {j["id"] for j in running}
     recent = [_job_view(j) for j in jobs_store.recent(store, 8) if j["id"] not in going]
-    return {"running": running, "recent": recent}
+    from odie.workers import asks
+    return {"running": running, "recent": recent, "asks": [_ask_view(a) for a in asks.open_for(store)]}
+
+
+def _ask_view(a: dict) -> dict:
+    """An open question for Today: what it asks, and for a sign-in the Sign in card that opens the live view."""
+    detail = a.get("detail") or {}
+    return {"id": a["id"], "job_id": a["job_id"], "kind": a["kind"], "text": a["text"], "why": detail.get("why"),
+            "site": detail.get("site"), "card": detail.get("card"), "created_at": a["created_at"]}
+
+
+class AskAnswerIn(BaseModel):
+    answer: Literal["yes", "no"]
+
+
+@router.post("/jobs/asks/{ask_id}")
+async def job_ask_answer(ask_id: str, body: AskAnswerIn, request: Request) -> dict[str, Any]:
+    """The user's tap on a bot's question (Allow / Deny, or Done / Skip after a sign-in). Only this route answers one:
+    no tool and no chat message can (odie.workers.asks), and the terminal's key can't reach it (devices.terminal_may)."""
+    _jobs_on()
+    from odie.workers import asks
+    store = request.app.state.store
+    if not asks.answer(store, ask_id, body.answer):
+        raise HTTPException(409, f"{ask_id} isn't waiting for an answer")
+    store.audit("user", "job_ask_answered", result_summary=f"{ask_id}: {body.answer}")
+    return {"ok": True}
+
+
+class BotIn(BaseModel):
+    name: str | None = None
+    role: str | None = None
+    prompt: str | None = None
+    powers: list[str] | None = None
+    model: dict | None = None
+    model_given: bool = False  # the model was sent: None then means "the chat's model"
+
+
+@router.get("/bots")
+async def bots_list(request: Request) -> dict[str, Any]:
+    """Settings → Bots: every bot, the chief first, with what the app can change, and the powers to choose from."""
+    _jobs_on()
+    from odie.workers import bots
+    return {"bots": [b.as_dict() for b in bots.all_bots(request.app.state.store)], "powers": list(bots.POWERS)}
+
+
+@router.post("/bots")
+async def bots_make(body: BotIn, request: Request) -> dict[str, Any]:
+    """The user adds a bot by hand (the chief makes most of them)."""
+    _jobs_on()
+    from odie.workers import bots
+    store = request.app.state.store
+    made = bots.make(store, body.name or "", body.role or "", body.prompt or "", body.powers, body.model, made_by="user")
+    if isinstance(made, str):
+        raise HTTPException(422, made)
+    bots.edit(store, made.name)  # made by the user: theirs, the chief may not change it
+    store.audit("user", "bot_made", result_summary=made.name)
+    return {"bot": bots.get(store, made.name).as_dict()}
+
+
+@router.put("/bots/{name}")
+async def bots_edit(name: str, body: BotIn, request: Request) -> dict[str, Any]:
+    """The user's change to a bot: role, prompt, powers, model. The bot becomes theirs (the chief can't change it)."""
+    _jobs_on()
+    from odie.workers import bots
+    store = request.app.state.store
+    got = bots.edit(store, name, role=body.role, prompt=body.prompt, powers=body.powers, model=body.model,
+                    model_given=body.model_given)
+    if got is None:
+        raise HTTPException(404, "no such bot")
+    store.audit("user", "bot_edited", result_summary=name)
+    return {"bot": got.as_dict()}
+
+
+@router.delete("/bots/{name}")
+async def bots_delete(name: str, request: Request) -> dict[str, Any]:
+    _jobs_on()
+    from odie.workers import bots
+    store = request.app.state.store
+    if not bots.delete(store, name):
+        raise HTTPException(409, "The chief stays; other bots can go." if name == bots.CHIEF else "no such bot")
+    store.audit("user", "bot_deleted", result_summary=name)
+    return {"ok": True}
 
 
 @router.get("/jobs/{job_id}")
