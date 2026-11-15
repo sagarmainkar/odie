@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.2.46 (2026-11-15)
+
+- `odie threads` lists the most recently active threads first, pinned or not (★ still marks a pin), so `odie threads -n 10` gives the ten newest. The app keeps pins on top.
+
 ## v0.2.45 (2026-11-15)
 
 - `odie threads` shows when each thread was last active, and `-n 20` lists only the first 20 (pinned first, then the most recent).
