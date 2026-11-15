@@ -212,6 +212,12 @@ def after_for(store: Store, job: Job):
         exposed = confidential.label_for(tool.name)
         if exposed is not None:
             turn.mark_read(exposed)
+            # Kept at once, not only when the run ends: a run stopped or cut off still leaves its job and its bot
+            # (its notes may now hold what it read) marked.
+            from odie.workers import privacy
+            privacy.carry(store, job.id, set(), {exposed})
+            if job.bot:
+                privacy.carry(store, privacy.bot_key(job.bot), set(), {exposed})
     return after
 
 
@@ -524,6 +530,11 @@ async def run(job: Job, store: Store, runner, kind: WorkerKind | None = None, mo
     error = ""
     try:
         await asyncio.wait_for(go(), job.budget_seconds)
+    except asyncio.CancelledError:  # stopped, failed by the watchdog, or Odie shutting down: keep what it read, then go
+        if bot is not None:
+            from odie.workers import privacy
+            privacy.at_end(store, job.id, bot.name)
+        raise
     except TimeoutError:
         error = f"ran past its budget of {budget_words(job.budget_seconds)}"
     except LlmCallsLimitExceededError:

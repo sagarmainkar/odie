@@ -151,6 +151,12 @@ class LiveViews:
             await self._send(view, {"t": "bye", "why": f"The browser couldn't show the page ({type(e).__name__})."})
             await self.end(tab, None)
             return
+        # A view that already existed (another device, or within the drop grace) takes the mode this hello asks for:
+        # a driver on a watched view takes control; a watcher on a driven view is told it drives.
+        if view.watching and not wants_to_watch:
+            await self._take_control(view, b, tab)
+        elif not view.watching and wants_to_watch:
+            await self._send(view, {"t": "control"})
         if view.watch is None:
             view.watch = asyncio.get_running_loop().create_task(self._watch(view))
         try:

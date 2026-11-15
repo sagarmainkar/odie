@@ -64,15 +64,26 @@ def missed_run(row: dict, now: datetime) -> bool:
     return bool(due) and now > due + timedelta(minutes=MISSED_RUN_GRACE_MINUTES)
 
 
+def user_holds_tab(job_id: str) -> bool:
+    """Is the user driving this job's browser tab (Take control)? The tab is the job's id. No browser -> False."""
+    from odie.browser import shared
+    try:
+        return shared().held_by(job_id) is not None
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def watched(store: Store, row: dict) -> bool:
     """Does the watchdog judge this job now? Not a teammate (its chief's job and budget cover it), and not a job that
     waits on someone: the user's tap or sign-in (odie.workers.asks), or its teammates still at work.
       a chief inside ask_bots, two teammates running -> False;  a bot at a "Place order" tap -> False;
-      a teammate's row -> False;  a plain task job -> True"""
+      a teammate's row -> False;  a bot whose page the user took control of -> False;  a plain task job -> True"""
     from odie.workers import asks
     if row.get("parent_id"):
         return False
     if asks.waits_on_user(store, row["id"]):
+        return False
+    if user_holds_tab(row["id"]):  # Take control: the bot waits for the user to hand its page back
         return False
     teammates = store.one("select 1 from jobs where parent_id=? and status in ('queued','running')", (row["id"],))
     return not teammates

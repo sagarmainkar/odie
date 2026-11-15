@@ -396,7 +396,7 @@ async def routine_run_now(routine_id: str, request: Request) -> dict[str, Any]:
     r = routines.get(store, routine_id)
     if r is None:
         raise HTTPException(404, "no such routine")
-    job = routines.run(store, r)
+    job = routines.run(store, r, scheduled=False)
     if job is None:
         raise HTTPException(409, "It's running now.")
     return {"job": job.id, "conversation": r["conv_id"]}

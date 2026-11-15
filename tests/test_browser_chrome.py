@@ -325,3 +325,18 @@ async def test_a_dropdown_option_is_picked_by_its_words(browser, servers):
     with pytest.raises(BrowserError) as e:
         await browser.click("t1", "31-Mar-2027")
     assert 'Dropdowns: "expiry date": "13-oct-2026", "29-dec-2026"' in str(e.value)
+
+
+
+async def test_the_users_secret_goes_only_into_a_secret_field(browser, servers):
+    """A code or password the user typed for a bot (odie.workers.asks "secret") goes into the password field, and is
+    refused for a plain one, so a bot can't steer it into a visible field (the review of 15 Nov)."""
+    await browser.open("t1", servers[0] + "/")
+    await browser.type_secret("t1", "Password", "hunter2")
+    s = await browser._session("t1", False)
+    assert await browser._eval(s, "document.getElementById('pw').value") == "hunter2"
+    with pytest.raises(BrowserError) as e:
+        await browser.type_secret("t1", "search products", "123456")
+    assert "ordinary field" in str(e.value) and "123456" not in str(e.value)
+    with pytest.raises(BrowserError):
+        await browser.type_secret("t1", "No such field", "123456")

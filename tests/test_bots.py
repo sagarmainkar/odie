@@ -1304,3 +1304,95 @@ def test_a_bots_notes_are_not_handed_over_as_a_result(world):
     (job.folder / "loan.py").write_text("print(1)")
     got = worker.media_for(job, ["notes.md", "loan.py"])
     assert [m["title"] for m in got] == ["loan.py"]
+
+
+# ── the second review's fixes (15 Nov, night) ────────────────────────────────
+
+async def test_a_routine_made_from_a_private_chat_carries_its_privacy(world):
+    from odie.signin import guard
+    from odie.workers import privacy, routines
+    from odie.workers.tools import make_worker_tools
+    store, _ = world
+    guard.remember_read(store, "chat-1", "your mail")
+    tools = {t.name: t for t in make_worker_tools(store)}
+    got = await tools["make_routine"].func(bot="chief", title="x", request="y", every_hours=2, tool_context=Ctx())
+    conv = routines.get(store, got["routine"])["conv_id"]
+    assert privacy.marks_of(store, conv) == (set(), {"your mail"})
+
+
+def test_a_read_is_kept_at_once_for_the_job_and_the_bot(world):
+    from odie.agent import turn
+    from odie.workers import privacy
+    store, _ = world
+    job = a_bot_job(store, "journal")
+    token = turn.READ.set(set())
+    try:
+        worker.after_for(store, job)(Asking("read_note", False), {"note": "x"}, None, "text")
+    finally:
+        turn.READ.reset(token)
+    assert privacy.marks_of(store, job.id)[1] == {"your notes"}
+    assert privacy.marks_of(store, privacy.bot_key("journal"))[1] == {"your notes"}
+
+
+def test_the_watchdog_leaves_a_bot_alone_while_the_user_holds_its_page(world, monkeypatch):
+    import odie.browser
+    store, _ = world
+    b = HeldBrowser()
+    monkeypatch.setattr(odie.browser, "_shared", b)
+    job = a_bot_job(store, "shopper")
+    store.execute("update jobs set status='running' where id=?", (job.id,))
+    assert watchdog.watched(store, jobs.get(store, job.id))
+    b.holds[job.id] = "user"
+    assert not watchdog.watched(store, jobs.get(store, job.id))
+
+
+def test_a_deleted_bots_conversation_says_it_cant_answer(world):
+    from odie.workers import convs
+    store, _ = world
+    bots.make(store, "temp", "t", "", [])
+    conv = convs.make(store, "temp")
+    bots.delete(store, "temp")
+    assert "no bot called temp any more" in convs.send(store, conv, "hello?")
+
+
+def test_renaming_a_routine_keeps_its_next_run_and_run_now_on_a_busy_one_changes_nothing(world):
+    from datetime import UTC, datetime
+
+    from odie.workers import routines
+    store, _ = world
+    r = routines.make(store, "chief", "Note", "Do it.", {"kind": "every", "hours": 24}, now=datetime(2026, 11, 16, tzinfo=UTC))
+    renamed = routines.edit(store, r["id"], title="Morning note", now=datetime(2026, 11, 16, 20, tzinfo=UTC))
+    assert renamed["next_run_at"] == r["next_run_at"] and renamed["title"] == "Morning note"
+    job = jobs.create(store, "bot", "x", "y", None, bots.folder_of("chief"), 60, bot="chief", conv_id=r["conv_id"])
+    store.execute("update jobs set status='running' where id=?", (job.id,))
+    assert routines.run(store, routines.get(store, r["id"]), scheduled=False) is None
+    assert routines.get(store, r["id"])["next_run_at"] == r["next_run_at"]
+
+
+def test_rejoining_a_watched_view_as_a_driver_takes_control(isolated_settings, tmp_path, monkeypatch):
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    import odie.browser
+    from fastapi.testclient import TestClient
+
+    from odie.app.main import create_app
+    from odie.signin import state
+    from tests.test_api import FakeRunner as ApiRunner
+    store = Store(tmp_path / "a.db")
+    store.init_schema()
+    state.turn_on(store, accepted=True, version=state.VERSION, now=datetime(2026, 11, 15, 9, 0, tzinfo=ZoneInfo("Asia/Kolkata")))
+    e = WatchEngine()
+    monkeypatch.setattr(odie.browser, "_shared", e)
+    app = create_app(runner=ApiRunner(), store=store)
+    with TestClient(app) as c:
+        with c.websocket_connect("/api/browser/live/job-abc123") as ws:
+            ws.send_json({"t": "hello", "w": 390, "h": 844, "watch": True})
+            ws.receive_json(), ws.receive_json()
+        # the watcher's socket dropped without Close: within the grace a Sign in opens the driver's view on the same tab
+        with c.websocket_connect("/api/browser/live/job-abc123") as ws:
+            ws.send_json({"t": "hello", "w": 390, "h": 844})
+            got = [ws.receive_json() for _ in range(3)]
+            assert {"t": "control"} in got
+            assert e.held_by("job-abc123")  # the bot's steps wait now
+            ws.send_json({"t": "close"})

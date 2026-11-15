@@ -231,12 +231,17 @@ function SecretAsk({ m, ask, open, status, why, onAnswered }: { m: ConvMessage; 
   const [busy, setBusy] = useState(false);
   async function send(said: "yes" | "no") {
     setBusy(true); setError("");
-    const r = await fetch(`/api/jobs/asks/${ask}`, { method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(said === "yes" ? { answer: "yes", secret: value } : { answer: "no" }) });
-    setBusy(false);
-    if (!r.ok) { const b = await r.json().catch(() => ({})); setError(b.detail || "That didn't go in. Try again."); return; }
-    setValue("");
-    onAnswered();
+    try {
+      const r = await fetch(`/api/jobs/asks/${ask}`, { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(said === "yes" ? { answer: "yes", secret: value } : { answer: "no" }) });
+      if (!r.ok) { const b = await r.json().catch(() => ({})); setError(b.detail || "That didn't go in. Try again."); return; }
+      setValue("");
+      onAnswered();
+    } catch {
+      setError("Odie didn't answer. Try again.");
+    } finally {
+      setBusy(false);
+    }
   }
   return (
     <div className={`rounded-[22px] px-4 py-3 flex flex-col gap-2 border ${open ? "bg-warn-tint border-[rgba(255,178,63,.3)]" : "glass border-transparent"}`}>

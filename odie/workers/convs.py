@@ -134,6 +134,9 @@ def send(store: Store, conv_id: str, text: str):
     conv = get(store, conv_id)
     if conv is None:
         return "There's no such conversation."
+    from odie.workers import bots
+    if bots.get(store, conv["bot"]) is None:
+        return f"There's no bot called {conv['bot']} any more: its conversations stay, but it can't answer."
     if running_job(store, conv_id):
         return f"{conv['bot']} is still answering here: wait for it, or stop it."
     brief = brief_for(store, conv_id, text)

@@ -163,7 +163,13 @@ def edit(store: Store, routine_id: str, title: str | None = None, brief: str | N
     new_title = " ".join(title.split())[:TITLE_MAX] if title is not None else r["title"]
     new_brief = brief.strip()[:BRIEF_MAX] if brief is not None else r["brief"]
     is_paused = r["paused"] if paused is None else bool(paused)
-    nxt = None if is_paused else next_run(sched, now).isoformat(timespec="seconds")
+    timing_changed = schedule is not None or is_paused != r["paused"]
+    if is_paused:
+        nxt = None
+    elif timing_changed:
+        nxt = next_run(sched, now).isoformat(timespec="seconds")
+    else:
+        nxt = r["next_run_at"]  # a new name or brief keeps the next run where it was
     store.execute("update bot_routines set title=?, brief=?, schedule_json=?, paused=?, next_run_at=? where id=?",
                   (new_title or r["title"], new_brief or r["brief"], json.dumps(sched), int(is_paused), nxt, routine_id))
     return get(store, routine_id)
@@ -184,15 +190,22 @@ def due(store: Store, now: datetime) -> list[dict]:
     return [_row(r) for r in rows]
 
 
-def run(store: Store, routine: dict, now: datetime | None = None):
+def run(store: Store, routine: dict, now: datetime | None = None, scheduled: bool = True):
     """One run: a note in its conversation, then a job of its bot answering there (the brief carries the earlier runs).
-    The next run is set from now, so a run missed while the Mac slept happens once. A run still going -> None."""
+    A scheduled run sets the next one from now, so a run missed while the Mac slept happens once; a run still going ->
+    None (a scheduled one is skipped, the next stays set; Run now changes nothing)."""
     from odie.workers import convs, privacy, router
     now = now or datetime.now(UTC)
-    nxt = None if routine["paused"] else next_run(routine["schedule"], now).isoformat(timespec="seconds")
-    store.execute("update bot_routines set last_run_at=?, next_run_at=? where id=?",
-                  (now.isoformat(timespec="seconds"), nxt, routine["id"]))
-    if convs.running_job(store, routine["conv_id"]):
+    busy = convs.running_job(store, routine["conv_id"]) is not None
+    if busy and not scheduled:
+        return None
+    if scheduled:
+        nxt = None if routine["paused"] else next_run(routine["schedule"], now).isoformat(timespec="seconds")
+        store.execute("update bot_routines set last_run_at=?, next_run_at=? where id=?",
+                      (now.isoformat(timespec="seconds"), nxt, routine["id"]))
+    else:
+        store.execute("update bot_routines set last_run_at=? where id=?", (now.isoformat(timespec="seconds"), routine["id"]))
+    if busy:
         return None
     local = now.astimezone(tz()).strftime("%a %d %b, %H:%M")
     brief = convs.brief_for(store, routine["conv_id"], ROUTINE_BRIEF.format(when=local, brief=routine["brief"]))

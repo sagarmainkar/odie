@@ -244,6 +244,25 @@ _FIELD = """((want) => {""" + _VISIBLE + """
   return {ok: true};
 })"""
 
+# The field for the user's own secret (odie.workers.asks "secret": an OTP, a PIN, a password a bot asked them to type):
+# found the same way as _FIELD, but it must be a secret field, the opposite of _FIELD's rule, so a bot can never steer the
+# user's code into a plain, visible field. {ok: true} (focused), {ok: false, plain: true}, or {ok: false, options}.
+_SECRET_FIELD = """((want) => {""" + _VISIBLE + """
+  const w = norm(want);
+  const fields = [...document.querySelectorAll("input:not([type=hidden]):not([type=submit]):not([type=button]):not([type=checkbox]):not([type=radio]):not([type=file]), textarea")].filter(visible);
+  const names = (f) => [f.labels ? [...f.labels].map((l) => l.innerText).join(" ") : "", f.placeholder, f.getAttribute("aria-label"), f.name, f.id, f.title].map(norm).filter(Boolean);
+  const hit = fields.find((f) => names(f).some((n) => n === w)) || fields.find((f) => names(f).some((n) => n.includes(w)));
+  if (!hit) return {ok: false, options: [...new Set(fields.map((f) => names(f)[0]).filter(Boolean))].slice(0, 15)};
+  const said = names(hit);
+  const secret = hit.type === "password" || said.some((n) => /""" + _SECRET + """/i.test(n))
+    || /^(cc-(number|csc|exp(-month|-year)?)|one-time-code)$/.test(hit.autocomplete) || hit.inputMode === "numeric";
+  if (!secret) return {ok: false, plain: true};
+  hit.scrollIntoView({block: "center"});
+  hit.focus();
+  if (hit.select) hit.select();
+  return {ok: true};
+})"""
+
 # The login fields of a page, for a login Odie fills itself (never the model's browser_type, which refuses these fields).
 _LOGIN = """((op) => {""" + _VISIBLE + """
   const inputs = [...document.querySelectorAll("input")].filter((i) => visible(i) && !i.disabled && !i.readOnly);
@@ -971,10 +990,14 @@ class Browser:
     async def type_secret(self, tab: str, field: str, text: str) -> None:
         """The user's own secret (a code, a PIN, a password) into a field on the page, from the app's answer to a bot's
         question (odie.workers.asks, kind "secret"); never from a model, which `type` keeps out of these fields. Only
-        through CDP Input.insertText: never logged, never read back, nothing returned. No such field -> BrowserError."""
+        through CDP Input.insertText: never logged, never read back, nothing returned. Only into a password, code, PIN
+        or card field (_SECRET_FIELD); a plain field, or none, -> BrowserError."""
         async def go(s: str) -> Page:
             assert self._cdp
-            hit = await self._eval(s, f"{_FIELD}({json.dumps(field)})") or {}
+            hit = await self._eval(s, f"{_SECRET_FIELD}({json.dumps(field)})") or {}
+            if hit.get("plain"):
+                raise BrowserError(f'"{field}" is an ordinary field, not a code or password one: Odie only types your '
+                                   "secrets into those. Use Watch, then Take control, to type it yourself.")
             if not hit.get("ok"):
                 raise BrowserError(f'There is no field called "{field}" on the page now.')
             await self._cdp.send("Input.insertText", {"text": text}, session=s, timeout=INPUT_TIMEOUT)

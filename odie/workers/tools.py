@@ -138,7 +138,7 @@ def make_worker_tools(store: Store) -> list[FunctionTool]:
         return out
 
     async def make_routine(bot: str, title: str, request: str, at: str = "", days: list[int] | None = None,
-                           every_hours: int = 0) -> dict:
+                           every_hours: int = 0, tool_context: ToolContext = None) -> dict:
         """Set up a bot to do something by itself on a schedule, for good (until the user pauses or deletes it): "every morning at 8, @researcher …", "every weekday at 9:15 give me a market note", "every 3 hours check …". bot: its name. title: a few words ("Morning market note"). request: what to do each time, in full (it sees nothing else of this chat; each run also sees its own earlier runs). at: the local time, "08:00", for a daily routine; days: weekdays 0=Mon … 6=Sun (left out: every day; weekdays [0,1,2,3,4]). every_hours: instead of at, every N hours. Each run answers in the routine's own conversation with a push. For a short watch that should end ("until the match ends", "for the next 2 hours") use ask_bot with every_minutes instead."""
         from odie.workers import bots, routines
         name = bots.clean_name(bot)
@@ -148,6 +148,8 @@ def make_worker_tools(store: Store) -> list[FunctionTool]:
         got = routines.make(store, name, title, request, schedule)
         if isinstance(got, str):
             return {"error": got}
+        from odie.workers import privacy  # what this chat read goes with the request, into every run
+        privacy.carry(store, got["conv_id"], *privacy.of_this_turn(store, session_id_of(tool_context)))
         return {"routine": got["id"], "bot": name, "when": got["when"], "next_run_utc": got["next_run_at"]}
 
     return [FunctionTool(start_job), FunctionTool(jobs_status), FunctionTool(stop_job), FunctionTool(retry_job),
