@@ -23,6 +23,7 @@ from odie.workers.store import Job
 
 log = logging.getLogger("odie.workers")
 
+NOTES_TOOLS = frozenset({"search_everything", "read_note", "related_notes"})  # the notes power: search, read, related
 BOT_BUDGET = 30 * 60      # a bot's job: wall time
 TEAMMATE_BUDGET = 15 * 60  # one teammate's part of a chief's job
 BOT_MAX_CALLS = 80
@@ -121,13 +122,16 @@ def asking(tool):
 
 def tools_for(bot: Bot, store: Store, job: Job) -> list:
     """A bot's tools, from its powers: web -> web_search, web_fetch; files -> write_file, read_file in its folder;
-    shell -> run_shell (the guard refuses the always-ask rules); browser -> the browser tools and browser_sign_in. The
+    notes -> search_everything, read_note, related_notes (the user's notes and photos); shell -> run_shell (the guard refuses the always-ask rules); browser -> the browser tools and browser_sign_in. The
     chief adds list_bots, make_bot, ask_bots. Every bot gets read_file/write_file for its notes, powers or not."""
     from odie.agent.tools.web import make_web_tools
     from odie.workers.files import make_job_file_tools
     out: list = [*make_job_file_tools(job.folder)]
     if "web" in bot.powers:
         out += [asking(t) for t in make_web_tools(store=store, browser_for=None, ask_first=True)]
+    if "notes" in bot.powers:  # the user's notes and photos: searching or reading them makes its web steps ask
+        from odie.vault.tools import make_vault_tools
+        out += [t for t in make_vault_tools(store) if t.name in NOTES_TOOLS]
     if "shell" in bot.powers:
         from odie.agent.free import unlocked
         from odie.agent.tools.shell import make_shell_tool
@@ -177,7 +181,7 @@ def make_team_tools(store: Store, job: Job) -> list[FunctionTool]:
         return {"bots": [bot_store.line_for(b) for b in bot_store.all_bots(store) if not b.is_chief]}
 
     async def make_bot(name: str, role: str, prompt: str, powers: list[str]) -> dict:
-        """Add a specialist to the team, when no bot you have fits a part of the work. name: one lower-case word ("researcher", "fact-checker"). role: one line on what it is for. prompt: its standing instructions, a few lines: how it works and what a good answer from it looks like (not this request: that goes in the brief). powers: what it may use, from "web" (search and read pages), "files" (its folder), "shell" (run commands; refused when risky), "browser" (Odie's signed-in browser; risky steps wait for the user's tap). Give only what it needs. It runs on the chat's model; the user can change that in Settings."""
+        """Add a specialist to the team, when no bot you have fits a part of the work. name: one lower-case word ("researcher", "fact-checker"). role: one line on what it is for. prompt: its standing instructions, a few lines: how it works and what a good answer from it looks like (not this request: that goes in the brief). powers: what it may use, from "web" (search and read pages), "files" (its folder), "notes" (search the user's notes and photos; once it has, its web steps wait for the user's tap, so give notes and web to different bots), "shell" (run commands; refused when risky), "browser" (Odie's signed-in browser; risky steps wait for the user's tap). Give only what it needs. It runs on the chat's model; the user can change that in Settings."""
         made = bot_store.make(store, name, role, prompt, powers, made_by="chief")
         if isinstance(made, str):
             return {"error": made}

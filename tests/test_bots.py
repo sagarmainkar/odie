@@ -910,3 +910,39 @@ async def test_bots_show_in_capabilities_and_notes_are_readable(isolated_setting
         assert (await c.get("/api/bots/ghost/notes")).status_code == 404
         monkeypatch.delenv("ODIE_WORKERS")
         assert "bots" not in (await c.get("/api/capabilities")).json()["caps"]
+
+
+# ── the notes & photos power ─────────────────────────────────────────────────
+
+def test_the_notes_power_gives_the_notes_and_photos_search(world):
+    store, _ = world
+    bots.make(store, "journal", "finds what I wrote", "", ["notes"])
+    names = sorted(t.name for t in team.tools_for(bots.get(store, "journal"), store, a_bot_job(store, "journal")))
+    assert names == ["read_file", "read_note", "related_notes", "search_everything", "write_file"]
+    assert bots.clean_powers(["notes", "web"]) == ["web", "notes"]
+
+
+def test_reading_a_note_marks_the_run_so_its_web_steps_ask(world):
+    from odie.agent import turn
+    store, _ = world
+    job = a_bot_job(store, "journal")
+    after = worker.after_for(store, job)
+    token = turn.READ.set(set())
+    try:
+        after(Asking("search_everything", False), {"query": "goa"}, None, "Goa trip.md: …")
+        after(Asking("web_search", False), {"query": "x"}, None, "results")
+        assert turn.read_sources() == {"your notes"}
+    finally:
+        turn.READ.reset(token)
+    assert [a["tool"] for a in jobs.actions(store, job.id)] == ["search_everything", "web_search"]
+
+
+async def test_a_notes_only_bot_is_never_asked_to_work_past(world):
+    from odie.signin import guard
+    store, chat = world
+    bots.make(store, "journal", "finds what I wrote", "", ["notes"])
+    guard.remember_read(store, "bot:journal", "your notes")  # it read notes in an earlier job
+    job = a_bot_job(store, "journal")
+    await worker.ask_to_work_past(store, chat, job, bots.get(store, "journal"))
+    assert asks.open_for(store) == [] and chat.posts == []
+    assert worker.reaches_out(bots.get(store, "chief")) and not worker.reaches_out(bots.get(store, "journal"))

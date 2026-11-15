@@ -9,6 +9,7 @@ Settings → Bots. A bot the user edited is theirs: the chief can use it but no 
 What a bot may do is fixed by its powers, never by what it reads:
 - web: web search and fetch
 - files: write_file and read_file in its folder
+- notes: search the user's notes and photos by meaning, read a note (odie.vault.tools); once it has, its web steps ask
 - shell: the shell, with the pass's always-ask rules refused (as for every Worker)
 - browser: Odie's browser, signed in where the user is; every step the chat would ask about waits for the user's tap,
   and a sign-in waits for the user in the live view (odie.workers.asks)
@@ -22,7 +23,7 @@ from pathlib import Path
 
 from odie.store.db import Store, now_iso
 
-POWERS = ("web", "files", "shell", "browser")
+POWERS = ("web", "files", "notes", "shell", "browser")
 CHIEF = "chief"
 MAX_BOTS = 12  # the chief's team, the chief included
 NAME = re.compile(r"^[a-z][a-z0-9-]{1,23}$")
@@ -141,7 +142,8 @@ def clean_name(name: str) -> str | None:
 
 
 def clean_powers(powers: list[str] | None) -> list[str]:
-    """The powers kept, in POWERS order, anything unknown dropped: ["Browser", "web", "mail"] -> ["web", "browser"]."""
+    """The powers kept, in POWERS order, anything unknown dropped: ["Browser", "web", "mail"] -> ["web", "browser"];
+    ["notes", "web"] -> ["web", "notes"]."""
     asked = {str(p).strip().lower() for p in (powers or [])}
     return [p for p in POWERS if p in asked]
 

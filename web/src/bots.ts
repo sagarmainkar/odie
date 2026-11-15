@@ -16,6 +16,7 @@ export type ModelChoice = { value: string; label: string };
 export const POWER_WORDS: Record<string, string> = {
   web: "Web search and pages",
   files: "Files in its folder",
+  notes: "Your notes and photos (after it reads them, its web steps ask you)",
   shell: "Run commands (risky ones refused)",
   browser: "Your signed-in browser (risky steps wait for your tap)",
 };

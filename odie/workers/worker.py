@@ -165,12 +165,19 @@ async def ask_users_tap(store: Store, job: Job, runner, tool, args: dict, tool_c
 
 
 def after_for(store: Store, job: Job):
-    """after_tool_callback: every call that ran goes on the record with the size of its answer. A call the guard
-    refused is already on the record (ADK still calls this with the refusal as the answer): nothing more."""
+    """after_tool_callback: every call that ran goes on the record with the size of its answer, and a call that read
+    something of the user's own (a note, a photo: odie.agent.confidential) marks the run as having read it, so its
+    later web steps ask, as the chat's do. A call the guard refused is already on the record: nothing more.
+      search_everything -> recorded, "your notes" read;  web_search -> recorded only"""
+    from odie.agent import confidential, turn
+
     def after(tool, args, tool_context, tool_response):
         if isinstance(args, dict) and args.pop(REFUSED, None):
             return
         jobs.record_action(store, job.id, tool.name, args, result_chars=len(json.dumps(tool_response, default=str)))
+        exposed = confidential.label_for(tool.name)
+        if exposed is not None:
+            turn.mark_read(exposed)
     return after
 
 
@@ -366,6 +373,12 @@ def bot_of(store: Store, job: Job):
     return bots.get(store, job.bot)
 
 
+def reaches_out(bot) -> bool:
+    """Can this bot send words off the Mac? With web or the browser, yes; a notes-only or files-only bot, no (its
+    shell keeps the always-ask rules, which refuse sending data out). researcher (web) -> True; journal (notes) -> False."""
+    return "web" in bot.powers or "browser" in bot.powers
+
+
 async def ask_to_work_past(store: Store, runner, job: Job, bot) -> None:
     """A bot's job that starts private (its chat read your memory, mail or a signed-in page): rather than a tap on
     every search, one tap at the start. Allow -> those marks no longer make this job's steps ask (privacy.clear), nor
@@ -374,6 +387,8 @@ async def ask_to_work_past(store: Store, runner, job: Job, bot) -> None:
       "@chief …" from a chat that looked at your memory -> "Let chief work on 'Goa' with the web? …" -> Allow -> runs"""
     from odie.workers import asks, privacy
     if job.parent_id:
+        return
+    if not reaches_out(bot):  # a bot with no web and no browser can't send anything out: nothing to ask
         return
     sites, reads = privacy.at_start(store, job.id, bot.name)
     if not sites and not reads:
