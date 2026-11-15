@@ -53,6 +53,11 @@ REPEAT_RULES = """
 and say what changed. In report, give `state`: the few facts that matter, written the same way every run so runs \
 compare; set `met` when the brief's condition holds now, and `done` when there is nothing left to watch."""
 
+CONV_RULES = """
+- This is a conversation with the user: your brief holds it so far and their new message. Answer them directly, as a \
+reply in a chat (Markdown is fine): report's text is your reply, in full, not a summary of it. You may end with a \
+question back to them."""
+
 CHIEF_RULES = """
 - You lead the team: list_bots shows it, make_bot adds a specialist, ask_bots runs several at once and returns their \
 reports. Teammates don't see this job or each other: each brief must stand alone."""
@@ -65,7 +70,7 @@ def team_slots() -> asyncio.Semaphore:
     return _team_slots
 
 
-def instruction_for(bot: Bot, repeats: bool = False) -> str:
+def instruction_for(bot: Bot, repeats: bool = False, conversation: bool = False) -> str:
     """A bot's whole system prompt: the Worker rules with its name, role and folder, the browser rules when it has the
     browser, the schedule's rules when its job repeats, the team rules for the chief, then its own prompt. {folder}
     stays a placeholder: the Worker fills it."""
@@ -74,6 +79,8 @@ def instruction_for(bot: Bot, repeats: bool = False) -> str:
         text += BROWSER_RULES
     if repeats:
         text += REPEAT_RULES
+    if conversation:
+        text += CONV_RULES
     if bot.is_chief:
         text += CHIEF_RULES
     if bot.prompt:
@@ -89,13 +96,13 @@ def budget_for(teammate: bool, repeats: bool) -> int:
     return BOT_BUDGET
 
 
-def kind_for(bot: Bot, teammate: bool = False, repeats: bool = False) -> WorkerKind:
+def kind_for(bot: Bot, teammate: bool = False, repeats: bool = False, conversation: bool = False) -> WorkerKind:
     """The WorkerKind a bot's job runs as: kind "bot", named by the bot, its tools from its powers (tools_for), its
     budget (budget_for). A chief asked as a teammate is not possible (ask_bots refuses it)."""
 
     def tools(store: Store, job: Job) -> list:
         return tools_for(bot, store, job)
-    return WorkerKind(name="bot", word=bot.name, instruction=instruction_for(bot, repeats), tools=tools,
+    return WorkerKind(name="bot", word=bot.name, instruction=instruction_for(bot, repeats, conversation), tools=tools,
                       budget_seconds=budget_for(teammate, repeats), max_llm_calls=BOT_MAX_CALLS)
 
 
@@ -249,7 +256,7 @@ def start_teammate(store: Store, parent: Job, bot: Bot, brief: str) -> Job:
     from odie.workers import privacy
     title = f"{bot.name}: {brief.splitlines()[0][:60]}"
     child = jobs.create(store, "bot", title, brief, parent.session_id, bot_store.folder_of(bot.name), TEAMMATE_BUDGET,
-                        bot=bot.name, parent_id=parent.id)
+                        bot=bot.name, parent_id=parent.id, conv_id=parent.conv_id)  # its taps show in the chief's conversation
     sites, reads = privacy.of_lead_now(store, parent.id)
     privacy.carry(store, child.id, sites, reads)
     return child

@@ -84,7 +84,11 @@ async def ask(store: Store, runner, job, kind: str, text: str, detail: dict | No
     _waiting[ask_id] = future
     line = ask_line(job, kind, text)
     try:
-        await runner.post_message(line, job.session_id, kind="job")
+        if job.conv_id:  # asked in the bot's conversation, with Allow / Deny there too
+            from odie.workers import convs
+            await convs.ask_posted(store, runner, job, ask_id, kind, text, detail or {})
+        if job.session_id:  # asked from a chat: a line there; a conversation-only job never posts to Odie's chat
+            await runner.post_message(line, job.session_id, kind="job")
         _push(store, line, job.id)
         return await asyncio.wait_for(future, wait_seconds)
     except TimeoutError:

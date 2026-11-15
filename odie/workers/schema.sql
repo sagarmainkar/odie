@@ -57,3 +57,25 @@ create table if not exists job_asks (
   created_at text not null,
   answered_at text
 );
+-- Conversations with a bot (odie.workers.convs): each message the user sends is answered by one of the bot's jobs.
+create table if not exists bot_convs (
+  id text primary key,                       -- "conv-1a2b3c4d"
+  bot text not null,
+  title text not null,
+  origin text not null default '',           -- chat: started by "@bot …" in Odie's own chat
+  preview text not null default '',          -- the last message's first line
+  unread integer not null default 0,         -- the bot said something the user hasn't opened
+  created_at text not null,
+  updated_at text not null
+);
+create index if not exists bot_convs_bot on bot_convs(bot, updated_at);
+create table if not exists bot_msgs (
+  id integer primary key autoincrement,
+  conv_id text not null,
+  role text not null,                        -- user | bot | ask (a question the bot waits on) | note
+  text text not null,
+  job_id text not null default '',
+  media_json text,                           -- a reply's files; a question's {"ask": id, "kind", "why", "card"}
+  ts text not null
+);
+create index if not exists bot_msgs_conv on bot_msgs(conv_id, id);

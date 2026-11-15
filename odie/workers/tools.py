@@ -123,12 +123,15 @@ def make_worker_tools(store: Store) -> list[FunctionTool]:
         if found is None:
             names = ", ".join(b.name for b in bots.all_bots(store))
             return {"error": f"There's no bot called {bot}. The bots: {names}."}
-        from odie.workers import privacy
+        from odie.workers import convs, privacy
         session_id = session_id_of(tool_context)
-        job = router.start_bot(found.name, title.strip()[:80] or found.name, request.strip(), session_id,
+        shown_title = title.strip()[:80] or found.name
+        conv_id = convs.make(store, found.name, shown_title, origin="chat")  # the bot's own history has it too
+        convs.add(store, conv_id, "user", request.strip())
+        job = router.start_bot(found.name, shown_title, request.strip(), session_id,
                                every_minutes=int(every_minutes or 0), until_at=until_in_users_time(until),
                                notify=notify.strip().lower(), condition=condition.strip(),
-                               private=privacy.of_this_turn(store, session_id))
+                               private=privacy.of_this_turn(store, session_id), conv_id=conv_id)
         out = {"job_id": job.id, "bot": found.name, "status": "started", "media": team_card(job.id, found.name)}
         if job.repeats:
             out["repeats"] = f"every {job.every_minutes} minutes until {job.until_at}, telling you: {job.notify}"

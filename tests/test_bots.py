@@ -234,7 +234,7 @@ async def test_a_bot_runs_from_the_chat_with_ask_bot_and_an_unknown_one_is_named
     bots.make(store, "writer", "writes", "", [])
     tools = {t.name: t for t in make_worker_tools(store)}
     Team.scripts = {"writer": [("report", {"outcome": "ready", "text": "Drafted."})]}
-    got = await tools["ask_bot"].func(bot="@Writer", title="Draft", request="Draft a note.")
+    got = await tools["ask_bot"].func(bot="@Writer", title="Draft", request="Draft a note.", tool_context=Ctx())
     assert got["bot"] == "writer"
     await asyncio.wait_for(router._tasks[got["job_id"]], 5)
     assert chat.posts[-1]["text"] == f"✅ Writer done: Draft ({got['job_id']})\n\nDrafted."
@@ -497,7 +497,7 @@ async def test_a_bot_on_a_schedule_runs_again_told_its_last_report(world, monkey
                                 ("report", {"outcome": "ready", "text": "₹2.40L, down", "state": "2.40L"})]}
     tools = {t.name: t for t in make_worker_tools(store)}
     got = await tools["ask_bot"].func(bot="watcher", title="CB350 price", request="Check the CB350 price.",
-                                      every_minutes=60, notify="change")
+                                      every_minutes=60, notify="change", tool_context=Ctx())
     job_id = got["job_id"]
     assert "every 60 minutes" in got["repeats"]
     await asyncio.wait_for(asyncio.gather(router._tasks[job_id], return_exceptions=True), 5)
@@ -786,3 +786,110 @@ def test_a_chief_waiting_on_its_team_says_so(world):
     assert progress.now_line(store, jobs.get(store, chief_job.id)) == "waiting for 1 bot"
     jobs.ended(store, kid.id, "done", outcome="ready", report="x")
     assert progress.now_line(store, jobs.get(store, chief_job.id)) == 'searching "goa"'
+
+
+# ── conversations with a bot (Fable's design) ────────────────────────────────
+
+async def test_a_conversation_keeps_its_history_and_the_reply_lands_in_it(world):
+    from odie.workers import convs
+    store, chat = world
+    bots.make(store, "writer", "writes", "", [])
+    conv = convs.make(store, "writer")
+    Team.scripts = {"writer": [("report", {"outcome": "ready", "text": "**Dear Asha,** thank you."}),
+                               ("report", {"outcome": "ready", "text": "Shorter: Thanks, Asha!"})]}
+    job = convs.send(store, conv, "Draft a thank-you note to Asha")
+    assert job.conv_id == conv and job.session_id is None
+    assert "still answering" in convs.send(store, conv, "again")  # one turn at a time
+    await asyncio.wait_for(router._tasks[job.id], 5)
+    row = convs.get(store, conv)
+    assert (row["title"], row["preview"], row["unread"]) == ("Draft a thank-you note to Asha", "Dear Asha, thank you.", 1)
+    assert [(m["role"], m["text"]) for m in convs.messages(store, conv)] == [
+        ("user", "Draft a thank-you note to Asha"), ("bot", "**Dear Asha,** thank you.")]
+    assert chat.posts == []  # a conversation's job never posts into Odie's chat
+    assert "a conversation with the user" in str(Team.seen["writer"][0].config.system_instruction)
+    job2 = convs.send(store, conv, "Make it shorter")
+    await asyncio.wait_for(router._tasks[job2.id], 5)
+    second = Team.seen["writer"][-1].contents[0].parts[0].text
+    assert "The user: Draft a thank-you note to Asha" in second and "You: **Dear Asha,** thank you." in second
+    assert second.rstrip().endswith("Make it shorter")
+    convs.mark_read(store, conv)
+    assert convs.get(store, conv)["unread"] == 0
+
+
+async def test_a_question_shows_in_the_conversation_not_in_odies_chat(world):
+    from odie.workers import convs
+    store, chat = world
+    conv = convs.make(store, "chief")
+    job = jobs.create(store, "bot", "x", "y", None, bots.folder_of("chief"), 60, bot="chief", conv_id=conv)
+    task = asyncio.create_task(asks.ask(store, chat, job, "tap", 'Click "Buy" on amazon.in', {"why": "may order"}))
+    await asyncio.sleep(0.01)
+    [ask_msg] = [m for m in convs.messages(store, conv) if m["role"] == "ask"]
+    assert ask_msg["text"] == 'Click "Buy" on amazon.in' and ask_msg["media"]["status"] == "open"
+    assert ask_msg["media"]["why"] == "may order"
+    assert chat.posts == []
+    assert convs.list_row(store, "chief")["needs_you"]
+    asks.answer(store, ask_msg["media"]["ask"], "yes")
+    assert await task == "yes"
+    assert [m for m in convs.messages(store, conv) if m["role"] == "ask"][0]["media"]["status"] == "yes"
+
+
+async def test_at_chief_from_odies_chat_is_in_the_chiefs_history_too(world):
+    from odie.workers import convs
+    from odie.workers.tools import make_worker_tools
+    store, chat = world
+    Team.scripts = {"chief": [("report", {"outcome": "ready", "text": "Done."})]}
+    tools = {t.name: t for t in make_worker_tools(store)}
+    got = await tools["ask_bot"].func(bot="chief", title="Tides", request="When is high tide?", tool_context=Ctx())
+    await asyncio.wait_for(router._tasks[got["job_id"]], 5)
+    [conv] = convs.of_bot(store, "chief")
+    assert (conv["origin"], conv["title"]) == ("chat", "Tides")
+    assert [m["role"] for m in convs.messages(store, conv["id"])] == ["user", "bot"]
+    assert len(chat.posts) == 1  # and the chat heard, as before
+
+
+def test_looks_are_kept_and_a_small_team_has_no_two_colours_alike(world):
+    store, _ = world
+    bots.ensure_starters(store)
+    bots.ensure_looks(store)
+    looks = {b.name: b.look for b in bots.all_bots(store)}
+    assert looks["chief"] == bots.CHIEF_LOOK
+    colours = [looks[n]["color"] for n in ("researcher", "checker", "contrarian")]
+    assert len(set(colours)) == 3
+    assert all(looks[n]["shape"] in bots.LOOK_SHAPES and looks[n]["eyes"] in bots.LOOK_EYES for n in looks)
+    again = bots.look_for("researcher", set())
+    assert again["shape"] == looks["researcher"]["shape"] and again["eyes"] == looks["researcher"]["eyes"]
+    assert bots.name_hash("ab") == (ord("a") * 31 + ord("b"))
+
+
+async def test_the_conversation_routes(isolated_settings, tmp_path, monkeypatch):
+    from odie.app.main import create_app
+    from odie.workers import convs
+    from tests.test_models import FakeRunner
+    monkeypatch.setenv("ODIE_WORKERS", "1")
+    store = Store(tmp_path / "assistant.db")
+    store.init_schema()
+    jobs.ensure(store)
+    bots.ensure_chief(store)
+    app = create_app(runner=FakeRunner(), store=store)
+    async with app.router.lifespan_context(app), httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+        listed = (await c.get("/api/bots")).json()["bots"]
+        chief = next(b for b in listed if b["name"] == "chief")
+        assert chief["look"] == bots.CHIEF_LOOK and chief["conversation"] is None and not chief["working"]
+        made = (await c.post("/api/bots/chief/conversations")).json()["id"]
+        assert (await c.post("/api/bots/ghost/conversations")).status_code == 404
+        convs.add(store, made, "user", "hi")
+        convs.add(store, made, "bot", "hello **there**")
+        one = (await c.get(f"/api/conversations/{made}")).json()
+        assert [m["role"] for m in one["messages"]] == ["user", "bot"] and one["running"] is None
+        assert one["bot"]["name"] == "chief" and one["bot"]["unread"]
+        drawer = (await c.get("/api/bots/chief/conversations")).json()
+        assert [x["id"] for x in drawer["conversations"]] == [made] and drawer["conversations"][0]["preview"] == "hello there"
+        assert (await c.post(f"/api/conversations/{made}/read")).status_code == 200
+        assert (await c.get("/api/conversations/conv-none")).status_code == 404
+        assert (await c.post(f"/api/conversations/{made}/messages", json={"text": ""})).status_code == 422
+
+
+def test_the_terminals_key_cant_reach_bot_conversations():
+    assert not devices.terminal_may("GET", "/api/conversations/conv-1")
+    assert not devices.terminal_may("POST", "/api/conversations/conv-1/messages")
+    assert not devices.terminal_may("GET", "/api/bots/chief/conversations")

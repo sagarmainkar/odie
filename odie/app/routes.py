@@ -261,10 +261,75 @@ class BotIn(BaseModel):
 
 @router.get("/bots")
 async def bots_list(request: Request) -> dict[str, Any]:
-    """Settings → Bots: every bot, the chief first, with what the app can change, and the powers to choose from."""
+    """The Bots list (and Settings): every bot, the chief first, with its look, what the app can change, and how it
+    stands now (odie.workers.convs.list_row); the powers to choose from."""
     _jobs_on()
-    from odie.workers import bots
-    return {"bots": [b.as_dict() for b in bots.all_bots(request.app.state.store)], "powers": list(bots.POWERS)}
+    from odie.workers import bots, convs
+    store = request.app.state.store
+    return {"bots": [{**b.as_dict(), **convs.list_row(store, b.name)} for b in bots.all_bots(store)],
+            "powers": list(bots.POWERS)}
+
+
+@router.get("/bots/{name}/conversations")
+async def bot_conversations(name: str, request: Request) -> dict[str, Any]:
+    """A bot's conversations, the latest first (the drawer)."""
+    _jobs_on()
+    from odie.workers import bots, convs
+    store = request.app.state.store
+    bot = bots.get(store, name)
+    if bot is None:
+        raise HTTPException(404, "no such bot")
+    return {"bot": {**bot.as_dict(), **convs.list_row(store, name)}, "conversations": convs.of_bot(store, name)}
+
+
+@router.post("/bots/{name}/conversations")
+async def bot_conversation_new(name: str, request: Request) -> dict[str, Any]:
+    """A new, empty conversation with a bot (the compose button)."""
+    _jobs_on()
+    from odie.workers import bots, convs
+    store = request.app.state.store
+    if bots.get(store, name) is None:
+        raise HTTPException(404, "no such bot")
+    return {"id": convs.make(store, name)}
+
+
+@router.get("/conversations/{conv_id}")
+async def conversation_get(conv_id: str, request: Request) -> dict[str, Any]:
+    """One conversation: its bot, its messages (a question with its state), and the job answering now, if any."""
+    _jobs_on()
+    from odie.workers import bots, convs
+    store = request.app.state.store
+    conv = convs.get(store, conv_id)
+    if conv is None:
+        raise HTTPException(404, "no such conversation")
+    bot = bots.get(store, conv["bot"])
+    shown = {**bot.as_dict(), **convs.list_row(store, bot.name)} if bot else {"name": conv["bot"], "gone": True}
+    return {"conversation": conv, "bot": shown, "messages": convs.messages(store, conv_id),
+            "running": convs.running_job(store, conv_id)}
+
+
+class ConvMessageIn(BaseModel):
+    text: str = Field(min_length=1, max_length=20000)
+
+
+@router.post("/conversations/{conv_id}/messages")
+async def conversation_send(conv_id: str, body: ConvMessageIn, request: Request) -> dict[str, Any]:
+    """The user's message to a bot: kept, and answered by one of the bot's jobs (its reply arrives as a message)."""
+    _jobs_on()
+    from odie.workers import convs
+    store = request.app.state.store
+    got = convs.send(store, conv_id, body.text.strip())
+    if isinstance(got, str):
+        raise HTTPException(409, got)
+    return {"job": got.id}
+
+
+@router.post("/conversations/{conv_id}/read")
+async def conversation_read(conv_id: str, request: Request) -> dict[str, Any]:
+    _jobs_on()
+    from odie.workers import convs
+    convs.mark_read(request.app.state.store, conv_id)
+    return {"ok": True}
 
 
 @router.post("/bots")

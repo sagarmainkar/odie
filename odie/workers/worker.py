@@ -228,6 +228,15 @@ def message_for(kind: WorkerKind, job: Job, status: str, got: Report, error: str
     return f"✅ {kind.word.capitalize()} done: {job.title} ({job.id})\n\n{got.text}"
 
 
+def conv_reply_for(job: Job, status: str, got: Report, error: str) -> str:
+    """A bot's message in its conversation: its report as it wrote it; a failed turn says why and how to go on.
+    done -> "<report>"; failed -> "I didn't finish: ran past its budget of 30 minutes. Ask me again to retry."
+    """
+    if status == "failed":
+        return f"I didn't finish: {error}. Ask me again to retry."
+    return got.text or "Done."
+
+
 def preface_for(job: Job, last_report: str | None) -> str:
     """What a reporter's run is told before the brief: which run this is and the last report, so it can say what
     changed. A first run, or a plain job -> ""; run 3 with a last report -> "This is run 3. Your last report:\n…"."""
@@ -400,10 +409,12 @@ def pass_privacy_on(store: Store, job: Job) -> None:
     turns private (its later searches and other sites ask first, as after its own signed-in read). A teammate passes
     it to its chief in odie.workers.team instead."""
     from odie.workers import privacy
-    if job.parent_id or not job.session_id:
+    if job.parent_id:
         return
     sites, reads = privacy.marks_of(store, job.id)
-    privacy.carry(store, job.session_id, sites, reads)
+    for where in (job.session_id, job.conv_id):  # the chat it reports to, and its conversation's next turns
+        if where:
+            privacy.carry(store, where, sites, reads)
 
 
 async def run(job: Job, store: Store, runner, kind: WorkerKind | None = None, model=None) -> str:
@@ -417,7 +428,7 @@ async def run(job: Job, store: Store, runner, kind: WorkerKind | None = None, mo
         return "failed"
     if kind is None and bot is not None:
         from odie.workers.team import kind_for
-        kind = kind_for(bot, teammate=bool(job.parent_id), repeats=job.repeats)
+        kind = kind_for(bot, teammate=bool(job.parent_id), repeats=job.repeats, conversation=bool(job.conv_id) and not job.parent_id)
     kind = kind or KINDS[job.kind]
     if model is None:
         await ensure_small_model(store)
@@ -492,11 +503,15 @@ async def run(job: Job, store: Store, runner, kind: WorkerKind | None = None, mo
         return status
     pass_privacy_on(store, job)
     media = media_for(job, got.files) if status == "done" else []
-    await tell(store, runner, job, message_for(kind, job, status, got, error), media)
-    if status == "failed":
-        needs_you_card(store, job, error)
-    elif got.outcome == "blocked":
-        needs_you_card(store, job, got.text.splitlines()[0] if got.text else "needs you")
+    if job.conv_id:  # a conversation with the bot: its reply is the report itself
+        from odie.workers import convs
+        await convs.reply(store, runner, job, conv_reply_for(job, status, got, error), media)
+    if job.session_id:  # a chat's job ("@chief …" in Odie's chat): the chat hears too
+        await tell(store, runner, job, message_for(kind, job, status, got, error), media)
+        if status == "failed":
+            needs_you_card(store, job, error)
+        elif got.outcome == "blocked":
+            needs_you_card(store, job, got.text.splitlines()[0] if got.text else "needs you")
     if job.repeats and got.done:
         return "finished"
     return status

@@ -59,6 +59,54 @@ STARTERS = (
 )
 STARTERS_MADE = "bots.starters_made"
 
+# A bot's creature (Fable's design, 15 Nov): shape, colour and eyes, picked from its name when it is made and then
+# kept, so it never changes. The circle is Odie's alone; the chief is always the violet hexagon.
+LOOK_COLORS = ("#F27B5B", "#F2A541", "#3FB8A8", "#4FA8E8", "#A77BF0", "#8CC152", "#EE7F9A", "#7C8AA5")
+LOOK_SHAPES = ("hex", "cloud", "squircle", "pent", "pill", "drop", "tri", "flower")
+LOOK_EYES = ("round", "tall", "calm", "stern", "dots", "side")
+CHIEF_LOOK = {"shape": "hex", "color": "#8B6CF6", "eyes": "round"}
+
+
+def name_hash(name: str) -> int:
+    """The same number the app's mockup used: h = h * 31 + each character, kept to 32 bits. "researcher" -> one number,
+    always the same."""
+    h = 0
+    for ch in name:
+        h = (h * 31 + ord(ch)) & 0xFFFFFFFF
+    return h
+
+
+def look_for(name: str, colors_taken: set[str]) -> dict:
+    """A new bot's creature. The chief -> the violet hexagon. Others: shape, colour and eyes from the name's hash; when
+    the colour is already another bot's, the next free one in LOOK_COLORS, so a small team never has two alike (all
+    taken -> the hashed one).
+      "researcher", nothing taken -> {shape, color, eyes} from its hash;  the same with that colour taken -> the next"""
+    if name == CHIEF:
+        return dict(CHIEF_LOOK)
+    h = name_hash(name)
+    start = (h >> 4) % len(LOOK_COLORS)
+    color = LOOK_COLORS[start]
+    for step in range(len(LOOK_COLORS)):
+        candidate = LOOK_COLORS[(start + step) % len(LOOK_COLORS)]
+        if candidate not in colors_taken:
+            color = candidate
+            break
+    return {"shape": LOOK_SHAPES[h % len(LOOK_SHAPES)], "color": color, "eyes": LOOK_EYES[(h >> 9) % len(LOOK_EYES)]}
+
+
+def colors_in_use(store: Store) -> set[str]:
+    out = set()
+    for r in store.query("select look_json from bots where look_json is not null"):
+        out.add(json.loads(r["look_json"]).get("color"))
+    return out
+
+
+def ensure_looks(store: Store) -> None:
+    """Bots made before looks existed get one now, once (start up)."""
+    for r in store.query("select name from bots where look_json is null order by created_at"):
+        look = look_for(r["name"], colors_in_use(store))
+        store.execute("update bots set look_json=? where name=?", (json.dumps(look), r["name"]))
+
 
 @dataclass
 class Bot:
@@ -70,6 +118,7 @@ class Bot:
     powers: list[str] = field(default_factory=list)
     made_by: str = "user"
     edited_by_user: bool = False
+    look: dict | None = None
 
     @property
     def is_chief(self) -> bool:
@@ -78,7 +127,7 @@ class Bot:
     def as_dict(self) -> dict:
         return {"name": self.name, "role": self.role, "prompt": self.prompt, "model": self.model,
                 "powers": list(self.powers), "made_by": self.made_by, "edited_by_user": self.edited_by_user,
-                "chief": self.is_chief}
+                "chief": self.is_chief, "look": self.look or look_for(self.name, set())}
 
 
 def clean_name(name: str) -> str | None:
@@ -112,8 +161,9 @@ def clean_model(model: dict | None) -> dict | None:
 
 def _from_row(row) -> Bot:
     model = json.loads(row["model_json"]) if row["model_json"] else None
+    look = json.loads(row["look_json"]) if "look_json" in row.keys() and row["look_json"] else None
     return Bot(row["name"], row["role"], row["prompt"], model, json.loads(row["powers_json"] or "[]"), row["made_by"],
-               bool(row["edited_by_user"]))
+               bool(row["edited_by_user"]), look)
 
 
 def ensure_chief(store: Store) -> None:
@@ -163,10 +213,11 @@ def make(store: Store, name: str, role: str, prompt: str, powers: list[str] | No
         return "Give the bot a role: one line on what it is for."
     now = now_iso()
     picked = clean_model(model)
-    store.execute("insert into bots(name,role,prompt,model_json,powers_json,made_by,created_at,updated_at) "
-                  "values(?,?,?,?,?,?,?,?)",
+    look = look_for(tidy, colors_in_use(store))
+    store.execute("insert into bots(name,role,prompt,model_json,powers_json,made_by,look_json,created_at,updated_at) "
+                  "values(?,?,?,?,?,?,?,?,?)",
                   (tidy, role_line, (prompt or "").strip()[:PROMPT_MAX], json.dumps(picked) if picked else None,
-                   json.dumps(clean_powers(powers)), made_by, now, now))
+                   json.dumps(clean_powers(powers)), made_by, json.dumps(look), now, now))
     return get(store, tidy)
 
 
