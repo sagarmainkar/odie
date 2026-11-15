@@ -57,6 +57,18 @@ def strip_trailer(text: str) -> str:
     return text[:min(cuts)] if cuts else text
 
 
+# Added to the hidden context of a message the odie command sent (odie chat), so the model knows a program typed it,
+# and history can label it "via Terminal". It sits after "[context: ", so strip_trailer removes it with the rest.
+VIA_TERMINAL = "\n[sent from the terminal: a program on this Mac (an AI agent or a script) typed this for the user]"
+
+
+def came_via_terminal(text: str) -> bool:
+    """Whether a stored user message was sent by the odie command: its hidden context carries VIA_TERMINAL.
+      "hi\n\n[context: now 09:30 …]"                                -> False (typed in the app)
+      "hi\n\n[context: now 09:30 …]\n[sent from the terminal: …]"  -> True"""
+    return VIA_TERMINAL in text
+
+
 def split_images(text: str) -> tuple[str, list[str]]:
     ids = IMAGE_MARK.findall(text)
     return IMAGE_MARK.sub("", text).strip(), ids
@@ -190,8 +202,12 @@ def events_to_history(events: list[Any]) -> list[dict[str, Any]]:
             if texts and "".join(texts).startswith(CHECK_PREFIX):
                 continue  # a code-made nudge, not something the user said
             if texts:
-                clean, imgs = split_images(strip_trailer("".join(texts)))
-                out.append(line("user", clean, [], ts, inv, images=imgs))
+                sent = "".join(texts)
+                clean, imgs = split_images(strip_trailer(sent))
+                if came_via_terminal(sent):
+                    out.append(line("user", clean, [], ts, inv, images=imgs, via="terminal"))
+                else:
+                    out.append(line("user", clean, [], ts, inv, images=imgs))
             continue
         if tools:
             if adds_to_last():
@@ -814,10 +830,11 @@ class OdieRunner:
                    assistant=persona.get(self.store)["name"])
 
     async def chat(self, text: str, thinking: bool | None = None, session_id: str | None = None,
-                   images: list[str] | None = None) -> AsyncIterator[dict[str, Any]]:
+                   images: list[str] | None = None, via: str | None = None) -> AsyncIterator[dict[str, Any]]:
         """One user turn. session_id defaults to today's chat session; pass one to start elsewhere (eval, new thread).
         thinking: Think harder for this turn; None (every app now) uses the chat's own (odie.thinking).
-        images: upload ids; each becomes an inline image part the vision model sees, and an [image:id] marker in the text."""
+        images: upload ids; each becomes an inline image part the vision model sees, and an [image:id] marker in the text.
+        via: "terminal" when the odie command sent it (odie chat): VIA_TERMINAL joins the hidden context."""
         s = config.settings
         today = datetime.now(self.tz).strftime("%Y-%m-%d")
         session_id = session_id or self.current_session_id(today)
@@ -837,6 +854,8 @@ class OdieRunner:
             # Think harder on a local server: words at the very end, after everything its cache holds (the effort stays).
             # They stay in the history as sent, so later turns replay the same text.
             trailer += think_harder_words(selection, thinking)
+            if via == "terminal":
+                trailer += VIA_TERMINAL
             parts: list[types.Part] = []
             markers = ""
             for iid in images or []:
@@ -965,7 +984,7 @@ class OdieRunner:
             await self.post_message(unsaved_note, session_id=session_id)
         if not was_private:  # a turn that read a signed-in page never feeds the memory review
             self._note_turn(text, "".join(final))
-        yield {"type": "done", "text": "".join(final)}
+        yield {"type": "done", "text": "".join(final), "session_id": session_id}  # the thread, also when a card ended it
 
     def request_stop(self, session_id: str) -> None:
         """The user tapped Stop: the turn in this session ends at its next safe point."""

@@ -3,8 +3,9 @@ import { CopyButton } from "./CopyButton";
 
 /** A message you sent: its photos, its words in your bubble, and under the bubble the same copy button Odie's replies
  * have (a tick for "Copied"). The text is what you typed: the server strips what Odie appended before it comes back.
- * A form's answer shows as its line only: the odie-form-answer block after it is for the model. */
-export function YourMessage({ text: sent, images }: { text: string; images?: string[] }) {
+ * A form's answer shows as its line only: the odie-form-answer block after it is for the model.
+ * via "terminal": the odie command sent it (an agent or a script), so "via Terminal" sits beside the copy button. */
+export function YourMessage({ text: sent, images, via }: { text: string; images?: string[]; via?: "terminal" }) {
   const text = withoutFormAnswers(sent);
   const hasPhotos = !!images && images.length > 0;
   return (
@@ -17,7 +18,10 @@ export function YourMessage({ text: sent, images }: { text: string; images?: str
       {text && (
         <>
           <div className="bubble-me rounded-[24px] rounded-br-[8px] px-4 py-3 text-[15.5px] leading-[1.5] whitespace-pre-wrap break-words">{text}</div>
-          <div className="flex items-center mr-1 text-muted"><CopyButton text={text} label="Copy message" /></div>
+          <div className="flex items-center gap-2 mr-1 text-muted">
+            {via === "terminal" && <span className="text-[12px]">via Terminal</span>}
+            <CopyButton text={text} label="Copy message" />
+          </div>
         </>
       )}
     </div>

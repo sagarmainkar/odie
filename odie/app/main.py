@@ -119,7 +119,8 @@ class DeviceGate:
     async def __call__(self, scope, receive, send):
         if scope["type"] in ("http", "websocket") and devices.gated(scope["path"]) and devices.pairing_on(self.store):
             from starlette.requests import HTTPConnection
-            if devices.device_for(self.store, HTTPConnection(scope).cookies.get(devices.COOKIE)) is None:
+            device = devices.device_for(self.store, HTTPConnection(scope).cookies.get(devices.COOKIE))
+            if device is None:
                 if scope["type"] == "websocket":
                     from starlette.websockets import WebSocketClose
                     await WebSocketClose(code=4401)(scope, receive, send)
@@ -127,7 +128,26 @@ class DeviceGate:
                     from fastapi.responses import JSONResponse
                     await JSONResponse(devices.PRIVATE, status_code=401)(scope, receive, send)
                 return
+            if devices.is_terminal(device) and not self.terminal_allowed(scope):
+                await self.refuse_terminal(scope, receive, send)
+                return
         await self.app(scope, receive, send)
+
+    @staticmethod
+    def terminal_allowed(scope) -> bool:
+        """The odie command's key: only its own calls (devices.terminal_may), never a websocket."""
+        if scope["type"] != "http":
+            return False
+        return devices.terminal_may(scope["method"], scope["path"])
+
+    @staticmethod
+    async def refuse_terminal(scope, receive, send) -> None:
+        if scope["type"] == "websocket":
+            from starlette.websockets import WebSocketClose
+            await WebSocketClose(code=4403)(scope, receive, send)
+            return
+        from fastapi.responses import JSONResponse
+        await JSONResponse({"detail": "The terminal may only chat and read threads."}, status_code=403)(scope, receive, send)
 
 
 def scheduler_enabled() -> bool:

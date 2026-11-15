@@ -14,7 +14,7 @@ import type { ReplyUsage } from "./usage";
 export type HistoryItem = {
   key?: string; sid?: string; inv?: string; role: "user" | "odie" | "approval"; text: string; tools: string[];
   steps?: HistoryStep[]; ts?: number; images?: string[]; approval?: Approval; media?: Media[]; private?: boolean;
-  usage?: ReplyUsage;
+  usage?: ReplyUsage; via?: "terminal";  // via: a message the odie command sent (an agent or a script), not typed here
 };
 
 /** What a message needs for a turn's live events to join it (Chat's Msg has these and more). */

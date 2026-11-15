@@ -151,6 +151,24 @@ odie doctor       check everything Odie needs and say how to fix what's wrong (i
 odie uninstall    remove the service, the command and the app copy; asks separately before deleting your data
 ```
 
+### Talking to Odie from the terminal (for you, Claude Code or a script)
+
+```
+odie chat "what's on today?"          send to today's chat; the reply prints as it comes
+odie chat --thread <id> "and then?"   continue a thread (ids from odie threads); --new starts a new chat first
+echo "a long prompt" | odie chat -    the message from stdin
+odie threads [-q words]               the chat threads, pinned first
+odie show <id> [-n 20]                a thread's messages
+--json                                one JSON answer for a program; odie chat --events prints every event
+```
+
+`odie chat --json` answers `{"thread", "text", "needs_tap", "errors"}`. Only this Mac can use it. The first command
+pairs the terminal as a device ("Terminal (odie chat)" in Settings → Devices), and its key reaches only chat and the
+threads: never approvals, settings or pairing. Removing it in Settings signs the key out until the terminal pairs
+again (any program running as you can, so it's a switch, not a lock).
+These messages show "via Terminal" in the chat, and Odie knows a program typed them. Nothing can be approved from
+the terminal: a turn that needs a tap names it, ends with exit code 3, and you tap the card in the app.
+
 Updates follow releases (tags like `v0.2.0`); `ODIE_BRANCH=main scripts/install.sh` makes an install follow `main`
 instead, for working on Odie itself. An update never leaves you without a working Odie: if the build fails, or the restarted service isn't healthy within
 a minute, it goes back to the previous version by itself. The build's output is in `~/.odie/logs/update.log`.
