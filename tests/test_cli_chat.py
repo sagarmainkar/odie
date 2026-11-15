@@ -341,10 +341,12 @@ async def test_removing_the_last_browser_still_warns_with_the_terminal_paired(is
         assert (await c.delete(f"/api/devices/{phone_id}")).status_code == 409
 
 
-def test_threads_n_keeps_the_first_ones(inst):
+def test_threads_are_newest_first_pinned_or_not_and_n_keeps_the_newest(inst):
     class Many(FakeApi):
-        def get(self, path):
-            return {"threads": [{"id": f"chat-2026-11-{d:02d}", "title": f"Day {d}", "messages": 1} for d in (15, 14, 13)]}
+        def get(self, path):  # the server's order: pins on top, as the app shows them
+            return {"threads": [{"id": "chat-2026-10-30", "pinned": True, "updated": 300.0},
+                                {"id": "chat-2026-11-15", "pinned": False, "updated": 900.0},
+                                {"id": "chat-2026-11-14", "pinned": False, "updated": 800.0}]}
     out = io.StringIO()
     args = SimpleNamespace(command="threads", q=None, lines=2, json=True)
     assert cli_chat.run(inst, args, out, io.StringIO(), api=Many([])) == 0
