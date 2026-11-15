@@ -157,7 +157,7 @@ odie uninstall    remove the service, the command and the app copy; asks separat
 odie chat "what's on today?"          send to today's chat; the reply prints as it comes
 odie chat --thread <id> "and then?"   continue a thread (ids from odie threads); --new starts a new chat first
 echo "a long prompt" | odie chat -    the message from stdin
-odie threads [-q words] [-n 20]       the chat threads, pinned first
+odie threads [-q words] [-n 20]       the chat threads, the most recently active first
 odie show <id> [-n 20]                a thread's messages
 --json                                one JSON answer for a program; odie chat --events prints every event
 ```

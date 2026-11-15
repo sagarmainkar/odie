@@ -2,7 +2,7 @@
 
     odie chat "what's on today?"        send to today's chat and print the reply as it comes
     odie chat --thread <id> "and then?" continue a thread;  --new starts a new chat first;  "-" reads stdin
-    odie threads [-q words] [-n 20]     the chat threads, pinned first, then the most recent
+    odie threads [-q words] [-n 20]     the chat threads, the most recently active first (★ pinned)
     odie show <id> [-n 20]              a thread's messages
     --json                              one JSON answer for a program; chat --events prints every event as a line
 
@@ -253,11 +253,13 @@ def cmd_chat(api: Api, text: str, thread: str | None, new: bool, mode: str, out:
 # ── odie threads / odie show ──
 
 def cmd_threads(api: Api, q: str | None, limit: int | None, as_json: bool, out: TextIO) -> int:
-    """limit: only the first N in the server's order (pinned first, then the most recent); None or 0 lists them all."""
+    """The threads, the most recently active first, whether pinned or not (★ marks a pin; the app keeps pins on top).
+    limit: only the first N; None or 0 lists them all."""
     path = "/api/threads"
     if q:
         path += "?" + urllib.parse.urlencode({"q": q})
     threads = api.get(path)["threads"]
+    threads = sorted(threads, key=last_active_at, reverse=True)
     if limit:
         threads = threads[:limit]
     if as_json:
@@ -271,6 +273,11 @@ def cmd_threads(api: Api, q: str | None, limit: int | None, as_json: bool, out: 
         last_active = clock(t.get("updated"))
         out.write(f"{pin} {t['id']:<22} {last_active:<13} {t.get('messages', 0):>4} msgs  {t.get('title', '')}\n")
     return 0
+
+
+def last_active_at(thread: dict) -> float:
+    """When a thread last had a message, for sorting: {"updated": 1794736915.0} -> 1794736915.0; none given -> 0.0."""
+    return float(thread.get("updated") or 0)
 
 
 def clock(ts: float | None) -> str:
