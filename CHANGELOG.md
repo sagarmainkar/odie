@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.2.44 (2026-11-15)
+
+- Odie from the terminal, for you, Claude Code or a script: `odie chat "…"` sends to today's chat and prints the reply as it comes (`--thread <id>` continues another thread, `--new` starts a new chat, `-` reads the message from stdin), `odie threads [-q words]` lists the threads, and `odie show <id>` prints one. `--json` gives a program one answer: the thread, the reply, what needs a tap, and any errors.
+- Only this Mac can use it. The first command pairs the terminal as a device, "Terminal (odie chat)" in Settings → Devices, and its key reaches only chat and the threads: never approvals, settings or pairing. Nothing is approved from the terminal: a turn that needs a tap names it and ends with exit code 3, and you tap the card in the app.
+- Messages sent from the terminal say "via Terminal" under the bubble, and Odie is told a program typed them.
+
 ## v0.2.43 (2026-11-05)
 
 - Settings → Approvals: Careful (today's behaviour, the default) or Smart. In Smart, shell commands and connected apps' tools run on their own and show in each reply's steps; installing software, deleting or moving files outside Odie's folders, sending anything, paying or ordering, and reading secrets always ask. The Mac's calendar and reminders writes run in Smart too. The activity log says "allowed by smart mode" for a command that ran without a card, and the step's pill reads "ran on its own" (it used to say "pass").
