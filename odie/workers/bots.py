@@ -249,6 +249,7 @@ def delete(store: Store, name: str) -> bool:
     if name == CHIEF or get(store, name) is None:
         return False
     store.execute("delete from bots where name=?", (name,))
+    store.execute("delete from bot_routines where bot=?", (name,))  # its routines stop; their conversations stay
     return True
 
 

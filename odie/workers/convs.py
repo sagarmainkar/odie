@@ -203,7 +203,8 @@ def list_row(store: Store, bot: str) -> dict:
             open_ask = a
             break
     unread = store.one("select count(*) as n from bot_convs where bot=? and unread=1", (bot,))["n"]
-    return {"conversation": last["id"] if last else None, "preview": last["preview"] if last else "",
+    routines = store.one("select count(*) as n from bot_routines where bot=? and paused=0", (bot,))["n"]
+    return {"conversation": last["id"] if last else None, "preview": last["preview"] if last else "", "routines": routines,
             "updated_at": last["updated_at"] if last else None, "working": lead is not None,
             "live": progress.now_line(store, dict(lead)) if lead is not None else "",
             "needs_you": open_ask is not None, "ask": open_ask["text"] if open_ask else "", "unread": unread > 0}

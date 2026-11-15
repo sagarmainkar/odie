@@ -35,6 +35,8 @@ def setup(store: Store, runner) -> None:
     from odie.workers import bots
     hooks.update(store=store, runner=runner)
     jobs.ensure(store)
+    from odie.workers import routines
+    routines.ensure(store)
     bots.ensure_chief(store)
     bots.ensure_starters(store)
     bots.ensure_looks(store)

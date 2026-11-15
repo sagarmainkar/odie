@@ -1155,3 +1155,111 @@ def test_a_reply_the_user_reads_may_draw_blocks_a_teammates_report_doesnt(world)
     mate = team.kind_for(chief, teammate=True).instruction
     assert "odie-blocks" in lead and "odie-blocks" not in mate
     assert "{folder}" in lead  # still a placeholder; the Worker fills it with replace, braces in the JSON untouched
+
+
+# ── routines: bots that run by themselves ────────────────────────────────────
+
+def test_a_schedule_is_cleaned_and_said_in_words():
+    from odie.workers import routines
+    assert routines.clean_schedule({"kind": "daily", "at": "8:30"}) == {"kind": "daily", "at": "08:30", "days": [0, 1, 2, 3, 4, 5, 6]}
+    assert routines.clean_schedule({"kind": "daily", "at": "25:00"}) == "A time like 08:30."
+    assert routines.clean_schedule({"kind": "daily", "at": "08:00", "days": []}) == "Pick at least one day."
+    assert routines.clean_schedule({"kind": "every", "hours": 0}) == "Every 1 to 168 hours."
+    assert routines.clean_schedule({"kind": "weekly"}) == "Say when: daily at a time, or every few hours."
+    assert routines.when_words({"kind": "daily", "at": "08:30", "days": list(range(7))}) == "Every day at 08:30"
+    assert routines.when_words({"kind": "daily", "at": "09:15", "days": [0, 1, 2, 3, 4]}) == "Weekdays at 09:15"
+    assert routines.when_words({"kind": "daily", "at": "07:00", "days": [0, 3]}) == "Mon, Thu at 07:00"
+    assert routines.when_words({"kind": "every", "hours": 1}) == "Every hour"
+
+
+def test_next_run_lands_on_the_right_local_day_and_time():
+    from datetime import UTC, datetime, timedelta
+    from zoneinfo import ZoneInfo
+
+    from odie.workers import routines
+    ist = ZoneInfo("Asia/Kolkata")
+    daily = {"kind": "daily", "at": "08:30", "days": list(range(7))}
+    weekdays = {"kind": "daily", "at": "08:30", "days": [0, 1, 2, 3, 4]}
+    mon_0800 = datetime(2026, 11, 16, 8, 0, tzinfo=ist).astimezone(UTC)
+    mon_0900 = datetime(2026, 11, 16, 9, 0, tzinfo=ist).astimezone(UTC)
+    fri_0900 = datetime(2026, 11, 20, 9, 0, tzinfo=ist).astimezone(UTC)
+    assert routines.next_run(daily, mon_0800, ist) == datetime(2026, 11, 16, 8, 30, tzinfo=ist)
+    assert routines.next_run(daily, mon_0900, ist) == datetime(2026, 11, 17, 8, 30, tzinfo=ist)
+    assert routines.next_run(weekdays, fri_0900, ist) == datetime(2026, 11, 23, 8, 30, tzinfo=ist)  # Monday
+    assert routines.next_run({"kind": "every", "hours": 3}, mon_0800, ist) == mon_0800 + timedelta(hours=3)
+
+
+async def test_a_routine_runs_when_due_in_its_own_conversation_and_only_once_after_a_sleep(world):
+    from datetime import UTC, datetime
+
+    from odie.workers import convs, routines
+    store, chat = world
+    bots.make(store, "markets", "morning market note", "", [])
+    made = routines.make(store, "markets", "Morning note", "Tell me what moved in my watchlist.",
+                         {"kind": "every", "hours": 3}, now=datetime(2026, 11, 16, 0, 0, tzinfo=UTC))
+    assert made["when"] == "Every 3 hours" and made["next_run_at"] == "2026-11-16T03:00:00+00:00"
+    assert convs.get(store, made["conv_id"])["origin"] == "routine"
+    assert await routines.tick(store, now=datetime(2026, 11, 16, 2, 0, tzinfo=UTC)) == []  # not yet
+    Team.scripts = {"markets": [("report", {"outcome": "ready", "text": "Nifty flat; HDFC −2%."})]}
+    later = datetime(2026, 11, 16, 9, 0, tzinfo=UTC)  # the Mac slept through two runs
+    [line] = await routines.tick(store, now=later)
+    job_id = line.split("started ")[1]
+    await asyncio.wait_for(router._tasks[job_id], 5)
+    msgs = convs.messages(store, made["conv_id"])
+    assert [m["role"] for m in msgs] == ["note", "note", "bot"] and msgs[-1]["text"] == "Nifty flat; HDFC −2%."
+    assert msgs[1]["text"].startswith("⏰ Morning note")
+    assert routines.get(store, made["id"])["next_run_at"] == "2026-11-16T12:00:00+00:00"  # from now: once, not twice
+    first_brief = Team.seen["markets"][0].contents[0].parts[0].text
+    assert "scheduled run" in first_brief and "Tell me what moved" in first_brief
+    assert chat.posts == []
+
+
+def test_pause_resume_delete_and_a_deleted_bot_takes_its_routines(world):
+    from datetime import UTC, datetime
+
+    from odie.workers import routines
+    store, _ = world
+    bots.make(store, "markets", "notes", "", [])
+    r = routines.make(store, "markets", "Note", "Do it.", {"kind": "daily", "at": "08:30"})
+    assert "no bot" in routines.make(store, "ghost", "x", "y", {"kind": "every", "hours": 2})
+    assert "Say what" in routines.make(store, "markets", "x", " ", {"kind": "every", "hours": 2})
+    paused = routines.edit(store, r["id"], paused=True)
+    assert paused["paused"] and paused["next_run_at"] is None
+    assert routines.due(store, datetime(2030, 1, 1, tzinfo=UTC)) == []
+    resumed = routines.edit(store, r["id"], paused=False, schedule={"kind": "every", "hours": 6})
+    assert resumed["when"] == "Every 6 hours" and resumed["next_run_at"]
+    bots.delete(store, "markets")
+    assert routines.of_bot(store, "markets") == []
+
+
+async def test_the_routine_routes_and_the_chat_tool(isolated_settings, tmp_path, monkeypatch):
+    from odie.app.main import create_app
+    from odie.workers.tools import make_worker_tools
+    from tests.test_models import FakeRunner
+    monkeypatch.setenv("ODIE_WORKERS", "1")
+    monkeypatch.setattr(worker, "model_for_bot", lambda store, bot: Team(model="team"))
+    store = Store(tmp_path / "assistant.db")
+    store.init_schema()
+    jobs.ensure(store)
+    bots.ensure_chief(store)
+    app = create_app(runner=FakeRunner(), store=store)
+    async with app.router.lifespan_context(app), httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+        router.hooks.update(store=store, runner=FakeRunner())
+        made = await c.post("/api/bots/chief/routines", json={"title": "Daily brief", "brief": "Brief me.",
+                                                              "schedule": {"kind": "daily", "at": "07:30", "days": [0, 1, 2, 3, 4]}})
+        assert made.status_code == 200 and made.json()["routine"]["when"] == "Weekdays at 07:30"
+        rid = made.json()["routine"]["id"]
+        assert (await c.post("/api/bots/chief/routines", json={"brief": "x", "schedule": {"kind": "daily", "at": "99"}})).status_code == 422
+        assert [r["id"] for r in (await c.get("/api/bots/chief/routines")).json()["routines"]] == [rid]
+        assert (await c.put(f"/api/routines/{rid}", json={"paused": True})).json()["routine"]["paused"]
+        Team.scripts = {"chief": [("report", {"outcome": "ready", "text": "Morning!"})]}
+        ran = await c.post(f"/api/routines/{rid}/run")
+        assert ran.status_code == 200
+        await asyncio.wait_for(router._tasks[ran.json()["job"]], 5)
+        assert (await c.delete(f"/api/routines/{rid}")).status_code == 200
+        assert (await c.delete(f"/api/routines/{rid}")).status_code == 404
+    tools = {t.name: t for t in make_worker_tools(store)}
+    got = await tools["make_routine"].func(bot="chief", title="Market note", request="What moved?", at="09:15", days=[0, 1, 2, 3, 4])
+    assert got["when"] == "Weekdays at 09:15"
+    assert "no bot" in (await tools["make_routine"].func(bot="ghost", title="x", request="y", every_hours=2))["error"]
+    assert not devices.terminal_may("POST", "/api/routines/rt-1/run")

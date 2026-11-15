@@ -79,3 +79,16 @@ create table if not exists bot_msgs (
   ts text not null
 );
 create index if not exists bot_msgs_conv on bot_msgs(conv_id, id);
+-- Routines (odie.workers.routines): a bot that runs by itself on a schedule, answering in its own conversation.
+create table if not exists bot_routines (
+  id text primary key,                       -- "rt-1a2b3c"
+  bot text not null,
+  title text not null,                       -- "Morning market note"
+  brief text not null,                       -- what to do each run
+  schedule_json text not null,               -- {"kind": "daily", "at": "08:30", "days": [0,1,2,3,4]} | {"kind": "every", "hours": 3}
+  paused integer not null default 0,
+  conv_id text not null,                     -- its own conversation: every run answers there
+  last_run_at text,                          -- UTC
+  next_run_at text,                          -- UTC; null while paused
+  created_at text not null
+);

@@ -312,6 +312,68 @@ async def bot_notes(name: str, request: Request) -> dict[str, Any]:
     return {"text": text}
 
 
+class RoutineIn(BaseModel):
+    title: str | None = Field(default=None, max_length=200)
+    brief: str | None = Field(default=None, max_length=4000)
+    schedule: dict | None = None
+    paused: bool | None = None
+
+
+@router.get("/bots/{name}/routines")
+async def bot_routines(name: str, request: Request) -> dict[str, Any]:
+    """A bot's routines (Runs by itself in its details)."""
+    _jobs_on()
+    from odie.workers import routines
+    return {"routines": routines.of_bot(request.app.state.store, name)}
+
+
+@router.post("/bots/{name}/routines")
+async def bot_routine_make(name: str, body: RoutineIn, request: Request) -> dict[str, Any]:
+    _jobs_on()
+    from odie.workers import routines
+    store = request.app.state.store
+    got = routines.make(store, name, body.title or "", body.brief or "", body.schedule or {})
+    if isinstance(got, str):
+        raise HTTPException(422, got)
+    store.audit("user", "routine_made", result_summary=f"{name}: {got['when']}")
+    return {"routine": got}
+
+
+@router.put("/routines/{routine_id}")
+async def routine_edit(routine_id: str, body: RoutineIn, request: Request) -> dict[str, Any]:
+    _jobs_on()
+    from odie.workers import routines
+    got = routines.edit(request.app.state.store, routine_id, title=body.title, brief=body.brief, schedule=body.schedule,
+                        paused=body.paused)
+    if isinstance(got, str):
+        raise HTTPException(404 if got.startswith("There's no") else 422, got)
+    return {"routine": got}
+
+
+@router.delete("/routines/{routine_id}")
+async def routine_delete(routine_id: str, request: Request) -> dict[str, Any]:
+    _jobs_on()
+    from odie.workers import routines
+    if not routines.delete(request.app.state.store, routine_id):
+        raise HTTPException(404, "no such routine")
+    return {"ok": True}
+
+
+@router.post("/routines/{routine_id}/run")
+async def routine_run_now(routine_id: str, request: Request) -> dict[str, Any]:
+    """Run now: one run at once (the schedule then goes on from now)."""
+    _jobs_on()
+    from odie.workers import routines
+    store = request.app.state.store
+    r = routines.get(store, routine_id)
+    if r is None:
+        raise HTTPException(404, "no such routine")
+    job = routines.run(store, r)
+    if job is None:
+        raise HTTPException(409, "It's running now.")
+    return {"job": job.id, "conversation": r["conv_id"]}
+
+
 @router.get("/bots/{name}/conversations")
 async def bot_conversations(name: str, request: Request) -> dict[str, Any]:
     """A bot's conversations, the latest first (the drawer)."""

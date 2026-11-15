@@ -116,7 +116,7 @@ def make_worker_tools(store: Store) -> list[FunctionTool]:
 
     async def ask_bot(bot: str, title: str, request: str, every_minutes: int = 0, until: str = "", notify: str = "always",
                       condition: str = "", tool_context: ToolContext = None) -> dict:
-        """Hand the user's request to one of their bots, which works on it in the background and reports into this chat. Use it when the user names a bot ("@chief …", "ask the researcher to …"), or asks for the team or the chief. The chief leads the team: it splits a big question among specialists it makes, runs them side by side and gives one answer; send it anything that needs research from several sides, a comparison, or checking. bot: its name, without the @. title: a few words the user will recognise. request: the user's request in full, with everything the bot needs (it sees nothing else of this chat). For a request that repeats ("every morning", "every hour"): every_minutes (a morning digest -> 1440), until (a local date-time; left out: 24 hours, at most 7 days), notify ("always", "change": only when the facts changed, or "condition": only when `condition` holds). Tell the user it started and that the answer will come here."""
+        """Hand the user's request to one of their bots, which works on it in the background and reports into this chat. Use it when the user names a bot ("@chief …", "ask the researcher to …"), or asks for the team or the chief. The chief leads the team: it splits a big question among specialists it makes, runs them side by side and gives one answer; send it anything that needs research from several sides, a comparison, or checking. bot: its name, without the @. title: a few words the user will recognise. request: the user's request in full, with everything the bot needs (it sees nothing else of this chat). For something that should run for good on a schedule ("every morning at 8"), use make_routine instead. For a short watch that ends: every_minutes, until (a local date-time; left out: 24 hours, at most 7 days), notify ("always", "change": only when the facts changed, or "condition": only when `condition` holds). Tell the user it started and that the answer will come here."""
         from odie.workers import bots
         name = bots.clean_name(bot)
         found = bots.get(store, name) if name else None
@@ -137,5 +137,18 @@ def make_worker_tools(store: Store) -> list[FunctionTool]:
             out["repeats"] = f"every {job.every_minutes} minutes until {job.until_at}, telling you: {job.notify}"
         return out
 
+    async def make_routine(bot: str, title: str, request: str, at: str = "", days: list[int] | None = None,
+                           every_hours: int = 0) -> dict:
+        """Set up a bot to do something by itself on a schedule, for good (until the user pauses or deletes it): "every morning at 8, @researcher …", "every weekday at 9:15 give me a market note", "every 3 hours check …". bot: its name. title: a few words ("Morning market note"). request: what to do each time, in full (it sees nothing else of this chat; each run also sees its own earlier runs). at: the local time, "08:00", for a daily routine; days: weekdays 0=Mon … 6=Sun (left out: every day; weekdays [0,1,2,3,4]). every_hours: instead of at, every N hours. Each run answers in the routine's own conversation with a push. For a short watch that should end ("until the match ends", "for the next 2 hours") use ask_bot with every_minutes instead."""
+        from odie.workers import bots, routines
+        name = bots.clean_name(bot)
+        if not name or bots.get(store, name) is None:
+            return {"error": f"There's no bot called {bot}."}
+        schedule = {"kind": "every", "hours": every_hours} if every_hours else {"kind": "daily", "at": at, "days": days}
+        got = routines.make(store, name, title, request, schedule)
+        if isinstance(got, str):
+            return {"error": got}
+        return {"routine": got["id"], "bot": name, "when": got["when"], "next_run_utc": got["next_run_at"]}
+
     return [FunctionTool(start_job), FunctionTool(jobs_status), FunctionTool(stop_job), FunctionTool(retry_job),
-            FunctionTool(forget_job), FunctionTool(ask_bot)]
+            FunctionTool(forget_job), FunctionTool(ask_bot), FunctionTool(make_routine)]

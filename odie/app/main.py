@@ -283,11 +283,15 @@ def start_scheduler(store: Store, runner=None, background=None):
     from odie import workers
     if workers.enabled():  # the spike's watchdog: once a minute, reads the jobs store and fails what is stuck
         async def workers_watchdog_job():
-            from odie.workers import watchdog
+            from odie.workers import routines, watchdog
             try:
                 await watchdog.check(store)
             except Exception:  # noqa: BLE001
                 logging.getLogger("odie").warning("workers watchdog failed", exc_info=True)
+            try:
+                await routines.tick(store)  # bots that run by themselves: start what is due
+            except Exception:  # noqa: BLE001
+                logging.getLogger("odie").warning("routines tick failed", exc_info=True)
         sched.add_job(workers_watchdog_job, IntervalTrigger(minutes=1, timezone=tz), id="workers_watchdog", misfire_grace_time=120, coalesce=True)
     from odie import addons
     for a in addons.active():
