@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.2.45 (2026-11-15)
+
+- `odie threads` shows when each thread was last active, and `-n 20` lists only the first 20 (pinned first, then the most recent).
+
 ## v0.2.44 (2026-11-15)
 
 - Odie from the terminal, for you, Claude Code or a script: `odie chat "…"` sends to today's chat and prints the reply as it comes (`--thread <id>` continues another thread, `--new` starts a new chat, `-` reads the message from stdin), `odie threads [-q words]` lists the threads, and `odie show <id>` prints one. `--json` gives a program one answer: the thread, the reply, what needs a tap, and any errors.
