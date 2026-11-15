@@ -11,6 +11,7 @@ import { TeamCard, TurnPill } from "../components/TeamCard";
 import { Icon } from "../components/Tile";
 import { YourMessage } from "../components/YourMessage";
 import type { Media } from "../media";
+import { ChatActions } from "../blocks/ChatActions";
 import { ReplyText } from "./Chat";
 
 type Loaded = { conversation: Conversation; bot: Bot; messages: ConvMessage[]; running: string | null };
@@ -60,8 +61,8 @@ export function BotChat() {
   useLive(useCallback((e: { type: string; conv?: string }) => { if (e.type === "bot_message" && e.conv === conv) load(); }, [conv, load]), load);
   useEffect(() => { end.current?.scrollIntoView({ block: "end" }); }, [data?.messages.length, data?.running]);
 
-  async function send() {
-    const said = text.trim();
+  async function send(typed?: string) {
+    const said = (typed ?? text).trim();
     if (!said || !name) return;
     setSending(true); setError("");
     try {
@@ -75,7 +76,7 @@ export function BotChat() {
         setError(body.detail || "Couldn't send. Try again.");
         return;
       }
-      setText("");
+      if (typed === undefined) setText("");
       if (id !== conv) location.hash = `#bot/${name}/${id}`;
       else load();
     } finally {
@@ -121,6 +122,8 @@ export function BotChat() {
           <button onClick={() => void fresh()} aria-label="New conversation" className="ml-auto pill w-11 px-0"><Icon name="plus" /></button>
         </div>
 
+        {/* A bot's answer can carry Odie's blocks: their buttons, picks and forms answer here, to this bot. */}
+        <ChatActions.Provider value={{ send: (t) => void send(t), fill: (t) => setText(t), busy: sending || busy }}>
         <div className="flex-1 min-h-0 overflow-y-auto no-scrollbar px-[14px] pb-4 flex flex-col gap-3">
           {data && <div className="text-center text-[12px] text-muted pt-1">{data.conversation.origin === "chat" ? "Asked by Odie from your chat" : data.conversation.origin === "routine" ? `Runs by itself · ${data.conversation.title}` : data.conversation.title}</div>}
           {!conv && bot && <Hello bot={bot} onPick={(q) => setText(q)} />}
@@ -128,6 +131,7 @@ export function BotChat() {
           {busy && data?.running && <TeamCard job={data.running} />}
           <div ref={end} />
         </div>
+        </ChatActions.Provider>
 
         <div className="px-[14px] pb-4">
           {error && <div className="mb-2 text-[13px] text-ember-text">{error}</div>}
