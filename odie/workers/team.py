@@ -214,7 +214,7 @@ async def run_asks(store: Store, parent: Job, asks: list) -> dict:
     teammate that read the user's signed-in pages makes the chief's run private from here (its web steps then ask the
     user, as a chat's would). The chief stopped -> its teammates stop too."""
     from odie.agent import turn
-    from odie.signin import guard
+    from odie.workers import privacy
     pairs, wrong = check_asks(store, asks)
     if wrong:
         return {"error": wrong}
@@ -227,12 +227,16 @@ async def run_asks(store: Store, parent: Job, asks: list) -> dict:
         for t in tasks:
             if not t.done():
                 t.cancel()
+        close_teammates(store, parent.id)
     out = []
     for child in children:
         row = jobs.get(store, child.id) or {}
-        for site in guard.private_of(store, child.id):
+        sites, reads = privacy.marks_of(store, child.id)
+        for site in sites:
             turn.mark_private(site)
-            guard.remember(store, parent.id, site)
+        for label in reads:
+            turn.mark_read(label)
+        privacy.carry(store, parent.id, sites, reads)
         out.append({"bot": child.bot, "job": child.id, "status": row.get("status"), "outcome": row.get("outcome"),
                     "report": row.get("report") or row.get("error") or ""})
     return {"reports": out}
@@ -240,22 +244,36 @@ async def run_asks(store: Store, parent: Job, asks: list) -> dict:
 
 def start_teammate(store: Store, parent: Job, bot: Bot, brief: str) -> Job:
     """The teammate's row: a bot job under the chief's, in the bot's folder, in the chief's chat (for questions it
-    must ask the user), with a teammate's budget."""
+    must ask the user), with a teammate's budget. It starts as private as the chief is now: the brief may carry what
+    another teammate read."""
+    from odie.workers import privacy
     title = f"{bot.name}: {brief.splitlines()[0][:60]}"
-    return jobs.create(store, "bot", title, brief, parent.session_id, bot_store.folder_of(bot.name), TEAMMATE_BUDGET,
-                       bot=bot.name, parent_id=parent.id)
+    child = jobs.create(store, "bot", title, brief, parent.session_id, bot_store.folder_of(bot.name), TEAMMATE_BUDGET,
+                        bot=bot.name, parent_id=parent.id)
+    sites, reads = privacy.of_this_turn(store, parent.id)
+    privacy.carry(store, child.id, sites, reads)
+    return child
+
+
+def close_teammates(store: Store, parent_id: str) -> None:
+    """The chief's ask_bots is over (done, stopped, or out of time): a teammate still queued or running is marked
+    stopped, so none is left "going" on Today or keeps the watchdog off its chief. A teammate cancelled while it waited
+    for a slot never ran a line, so its row is closed here."""
+    from odie.store.db import now_iso
+    store.execute("update jobs set status='stopped', error='the chief''s job ended', ended_at=? "
+                  "where parent_id=? and status in ('queued','running')", (now_iso(), parent_id))
 
 
 async def _run_teammate(store: Store, child: Job) -> str:
     from odie.workers import worker
     from odie.workers.router import hooks
-    async with team_slots():
-        try:
+    try:
+        async with team_slots():
             return await worker.run(child, store, hooks["runner"])
-        except asyncio.CancelledError:
-            jobs.ended(store, child.id, "stopped", error="the chief's job ended")
-            raise
-        except Exception:  # noqa: BLE001
-            log.exception("teammate %s crashed", child.id)
-            jobs.ended(store, child.id, "failed", error="crashed")
-            return "failed"
+    except asyncio.CancelledError:
+        jobs.ended(store, child.id, "stopped", error="the chief's job ended")
+        raise
+    except Exception:  # noqa: BLE001
+        log.exception("teammate %s crashed", child.id)
+        jobs.ended(store, child.id, "failed", error="crashed")
+        return "failed"

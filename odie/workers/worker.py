@@ -155,6 +155,7 @@ async def ask_users_tap(store: Store, job: Job, runner, tool, args: dict, tool_c
     tab = signin_guard.tab_of(tool_context)
     text, detail = signin_guard.card(tool.name, args, tab, store)
     said = await asks.ask(store, runner, job, "tap", text, detail)
+    jobs.record_action(store, job.id, "user_tap", {"asked": text, "said": said})  # the wait ends on the record (the watchdog)
     if said == "yes":
         return None
     why = "the user said no (or didn't answer)"
@@ -356,27 +357,32 @@ def bot_of(store: Store, job: Job):
     return bots.get(store, job.bot)
 
 
-def set_bot_turn(job: Job, bot) -> None:
-    """A bot's run sees the turn a chat would: its private set (a signed-in read, or a teammate's, makes its later web
-    steps ask), and, with the browser, the brief as the user's words (sites it names may be opened) and turn.BOT (a
-    sign-in waits for the user). Called inside the job's own task, so nothing leaks to the chat."""
+def set_bot_turn(store: Store, job: Job, bot) -> None:
+    """A bot's run sees the turn a chat would. Its private marks start from what it carries (odie.workers.privacy: the
+    chat or chief that asked, its earlier runs, its notes), so its web steps ask when the chat's would. With the
+    browser: USER_TEXT is "" (a chat turn, so the browser is signed in, but nothing counts as the user's own words: a
+    brief is written by a model, which may have read a page, so naming a site in it must not let a private bot go
+    there without a tap) and turn.BOT (a sign-in waits for the user). Called inside the job's own task, so nothing
+    leaks to the chat."""
     from odie.agent import turn
-    turn.PRIVATE.set(set())
-    turn.READ.set(set())
+    from odie.workers import privacy
+    sites, reads = privacy.at_start(store, job.id, bot.name)
+    turn.PRIVATE.set(set(sites))
+    turn.READ.set(set(reads))
     if "browser" in bot.powers:
-        turn.USER_TEXT.set(job.brief)
+        turn.USER_TEXT.set("")
         turn.BOT.set(bot.name)
 
 
 def pass_privacy_on(store: Store, job: Job) -> None:
-    """A bot that read the user's signed-in pages: its report carries them, so the chat it reports to turns private
-    (its later searches and other sites ask first, as after its own signed-in read). A teammate passes it to its chief
-    in odie.workers.team instead."""
-    from odie.signin import guard as signin_guard
+    """A bot that read the user's signed-in pages or own things: its report carries them, so the chat it reports to
+    turns private (its later searches and other sites ask first, as after its own signed-in read). A teammate passes
+    it to its chief in odie.workers.team instead."""
+    from odie.workers import privacy
     if job.parent_id or not job.session_id:
         return
-    for site in signin_guard.private_of(store, job.id):
-        signin_guard.remember(store, job.session_id, site)
+    sites, reads = privacy.marks_of(store, job.id)
+    privacy.carry(store, job.session_id, sites, reads)
 
 
 async def run(job: Job, store: Store, runner, kind: WorkerKind | None = None, model=None) -> str:
@@ -399,7 +405,7 @@ async def run(job: Job, store: Store, runner, kind: WorkerKind | None = None, mo
         else:
             model = model_for_kind(store, kind)
     if bot is not None:
-        set_bot_turn(job, bot)
+        set_bot_turn(store, job, bot)
     tz = ZoneInfo(s.timezone)
     now = datetime.now(tz).strftime("%A %d %B %Y, %H:%M")
     got = Report()
@@ -441,6 +447,9 @@ async def run(job: Job, store: Store, runner, kind: WorkerKind | None = None, mo
     except Exception as e:  # noqa: BLE001 (whatever went wrong is said in the chat, never lost)
         log.warning("worker %s failed", job.id, exc_info=True)
         error = f"{type(e).__name__}: {e}"[:200]
+    if bot is not None:  # what it read stays with the job and the bot (its next run, its notes)
+        from odie.workers import privacy
+        privacy.at_end(store, job.id, bot.name)
     if not error and not got.given():
         error = "stopped without a report"
     status = "failed" if error else "done"

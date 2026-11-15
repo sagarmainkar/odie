@@ -52,7 +52,10 @@ def away_since(store: Store, now: datetime) -> datetime | None:
 def gather(store: Store, since: datetime, now: datetime) -> dict:
     """What there is to say: jobs that ended since, cards waiting on the user, today's events still ahead."""
     from odie.watch import needs, report
-    ended = [j for j in jobs.recent(store, 20) if j["status"] in ("done", "failed") and _at(j["ended_at"]) and _at(j["ended_at"]) > since]
+    from odie.workers import privacy
+    ended = [j for j in jobs.recent(store, 20) if j["status"] in ("done", "failed") and _at(j["ended_at"])
+             and _at(j["ended_at"]) > since and not j.get("parent_id")]  # a teammate's part is its chief's to tell
+    ended = [{**j, "report": None} if privacy.job_is_private(store, j["id"]) else j for j in ended]  # a private report stays out
     done = [j for j in ended if j["status"] == "done" and j["outcome"] != "blocked"]
     stuck = [j for j in ended if j["status"] == "failed" or j["outcome"] == "blocked"]
     cards = needs.cards(store, now)

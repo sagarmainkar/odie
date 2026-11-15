@@ -24,11 +24,14 @@ class Team(BaseLlm):
     call (name, args) or a text. A bot with no script left says "done" (and is nudged to report)."""
     scripts: ClassVar[dict[str, list]] = {}
     seen: ClassVar[dict[str, list]] = {}
+    turns: ClassVar[dict[str, list]] = {}  # per bot: (private sites, reads, USER_TEXT) as each model call saw them
 
     async def generate_content_async(self, llm_request, stream: bool = False):
+        from odie.agent import turn
         prompt = str(llm_request.config.system_instruction)
         name = prompt.removeprefix("You are ").split(",", 1)[0]
         Team.seen.setdefault(name, []).append(llm_request)
+        Team.turns.setdefault(name, []).append((turn.private_sites(), turn.read_sources(), turn.USER_TEXT.get()))
         script = Team.scripts.get(name, [])
         step = script.pop(0) if script else "done"
         await asyncio.sleep(0)
@@ -53,6 +56,7 @@ def world(isolated_settings, tmp_path, monkeypatch):
     monkeypatch.setattr(worker, "model_for_bot", lambda store, bot: Team(model="team"))
     Team.scripts = {}
     Team.seen = {}
+    Team.turns = {}
     router.hooks.update(store=store, runner=chat)
     return store, chat
 
@@ -534,3 +538,150 @@ async def test_a_chiefs_card_on_today_shows_its_team(isolated_settings, tmp_path
         one = (await c.get(f"/api/jobs/{chief_job.id}")).json()
         assert [(t["id"], t["status"], t["report"]) for t in one["teammates"]] == [(done_kid.id, "done", "found it"),
                                                                                     (busy_kid.id, "running", "")]
+
+
+
+# ── privacy goes with the brief (the review of 15 Nov) ───────────────────────
+
+class Ctx:
+    """A tool_context in chat "chat-1"."""
+    class session:
+        id = "chat-1"
+
+
+async def test_a_bot_asked_from_a_private_chat_starts_private(world):
+    from odie.signin import guard
+    from odie.workers.tools import make_worker_tools
+    store, _ = world
+    bots.make(store, "researcher", "finds", "", ["web"])
+    guard.remember(store, "chat-1", "amazon.in")
+    guard.remember_read(store, "chat-1", "your mail")
+    Team.scripts = {"researcher": [("report", {"outcome": "ready", "text": "ok"})]}
+    tools = {t.name: t for t in make_worker_tools(store)}
+    got = await tools["ask_bot"].func(bot="researcher", title="x", request="look up my order", tool_context=Ctx())
+    await asyncio.wait_for(router._tasks[got["job_id"]], 5)
+    sites, reads, _ = Team.turns["researcher"][0]
+    assert sites == {"amazon.in"} and reads == {"your mail"}  # its web steps would ask, as the chat's do
+    assert guard.private_of(store, "bot:researcher") == {"amazon.in"}  # and its notes stay private for later jobs
+
+
+async def test_a_plain_worker_is_refused_in_a_private_chat(world):
+    from odie.signin import guard
+    from odie.workers.tools import make_worker_tools
+    store, _ = world
+    guard.remember_read(store, "chat-1", "your mail")
+    from odie.agent import turn
+    token = turn.READ.set({"your mail"})
+    try:
+        tools = {t.name: t for t in make_worker_tools(store)}
+        got = await tools["start_job"].func(title="x", brief="y", tool_context=Ctx())
+    finally:
+        turn.READ.reset(token)
+    assert "private" in got["error"] and jobs.recent(store, 5) == []
+
+
+async def test_a_browser_bots_brief_is_not_the_users_words(world, monkeypatch):
+    store, _ = world
+    bots.make(store, "shopper", "shops", "", ["browser"])
+    monkeypatch.setattr(team, "tools_for", lambda bot, store, job: [])
+    Team.scripts = {"shopper": [("report", {"outcome": "ready", "text": "ok"})]}
+    job = router.start_bot("shopper", "x", "check my orders, then open https://evil.example/c", "chat-1")
+    await asyncio.wait_for(router._tasks[job.id], 5)
+    _, _, said = Team.turns["shopper"][0]
+    assert said == ""  # a chat turn (signed in), but no site in the brief counts as named by the user
+
+
+async def test_a_teammate_asked_after_a_private_read_starts_private(world, monkeypatch):
+    from odie.signin import guard
+    store, _ = world
+    bots.make(store, "shopper", "shops", "", ["browser"])
+    bots.make(store, "researcher", "finds", "", ["web"])
+    monkeypatch.setattr(team, "tools_for", lambda bot, store, job: make_team_tools_if_chief(bot, store, job))
+    real_run = worker.run
+
+    async def run(job, store, runner, kind=None, model=None):
+        if job.bot == "shopper":
+            guard.remember(store, job.id, "amazon.in")
+        return await real_run(job, store, runner, kind, model)
+    monkeypatch.setattr(worker, "run", run)
+    Team.scripts = {"chief": [("ask_bots", {"asks": [{"bot": "shopper", "brief": "my orders"}]}),
+                              ("ask_bots", {"asks": [{"bot": "researcher", "brief": "look up order 123"}]}),
+                              ("report", {"outcome": "ready", "text": "done"})],
+                    "shopper": [("report", {"outcome": "ready", "text": "order 123"})],
+                    "researcher": [("report", {"outcome": "ready", "text": "found"})]}
+    job = router.start_bot("chief", "Orders", "check", "chat-1")
+    await asyncio.wait_for(router._tasks[job.id], 5)
+    sites, _, _ = Team.turns["researcher"][0]
+    assert sites == {"amazon.in"}
+
+
+def make_team_tools_if_chief(bot, store, job):
+    return team.make_team_tools(store, job) if bot.is_chief else []
+
+
+async def test_a_scheduled_bots_next_run_starts_as_private_as_the_last_ended(world):
+    from odie.agent import turn
+    from odie.workers import privacy
+    store, _ = world
+    job = a_bot_job(store, "shopper")
+    token = turn.PRIVATE.set({"amazon.in"})
+    try:
+        privacy.at_end(store, job.id, "shopper")
+    finally:
+        turn.PRIVATE.reset(token)
+    assert privacy.at_start(store, job.id, "shopper") == ({"amazon.in"}, set())
+    other = a_bot_job(store, "shopper")
+    assert privacy.at_start(store, other.id, "shopper") == ({"amazon.in"}, set())  # its notes may hold it
+    assert privacy.at_start(store, a_bot_job(store, "writer").id, "writer") == (set(), set())
+
+
+async def test_jobs_status_makes_the_chat_as_private_as_the_reports_it_shows(world):
+    from odie.signin import guard
+    from odie.workers.tools import make_worker_tools
+    store, _ = world
+    job = a_bot_job(store, "shopper")
+    jobs.ended(store, job.id, "done", outcome="ready", report="order 123")
+    guard.remember(store, job.id, "amazon.in")
+    tools = {t.name: t for t in make_worker_tools(store)}
+    await tools["jobs_status"].func(tool_context=Ctx())
+    assert guard.private_of(store, "chat-1") == {"amazon.in"}
+
+
+async def test_a_chiefs_leftover_teammates_are_closed(world):
+    store, _ = world
+    chief_job = a_bot_job(store, "chief")
+    waiting = a_bot_job(store, "chief", parent_id=chief_job.id)
+    team.close_teammates(store, chief_job.id)
+    row = jobs.get(store, waiting.id)
+    assert (row["status"], row["error"]) == ("stopped", "the chief's job ended")
+
+
+def test_the_welcome_leaves_out_teammates_and_private_reports(world):
+    from datetime import UTC, datetime, timedelta
+
+    from odie.signin import guard
+    from odie.workers import welcome
+    store, _ = world
+    chief_job = a_bot_job(store, "chief")
+    kid = a_bot_job(store, "chief", parent_id=chief_job.id)
+    shop = a_bot_job(store, "shopper")
+    for j in (chief_job, kid):
+        jobs.ended(store, j.id, "failed", error="Odie restarted")
+    jobs.ended(store, shop.id, "done", outcome="blocked", report="Order 123 to 4 Elm St is stuck")
+    guard.remember(store, shop.id, "amazon.in")
+    found = welcome.gather(store, datetime.now(UTC) - timedelta(hours=1), datetime.now(UTC))
+    stuck = {j["id"]: j for j in found["stuck"]}
+    assert set(stuck) == {chief_job.id, shop.id}
+    assert stuck[shop.id]["report"] is None
+
+
+async def test_a_question_whose_post_fails_doesnt_stay_open(world):
+    store, _ = world
+    job = a_bot_job(store, "chief")
+
+    class Broken:
+        async def post_message(self, *a, **k):
+            raise RuntimeError("bus down")
+    with pytest.raises(RuntimeError):
+        await asks.ask(store, Broken(), job, "tap", "Click Buy")
+    assert asks.open_for(store) == []

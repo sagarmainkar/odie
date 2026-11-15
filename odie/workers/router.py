@@ -101,7 +101,8 @@ def start(kind_name: str, title: str, brief: str, session_id: str | None, every_
 
 
 def start_bot(name: str, title: str, brief: str, session_id: str | None, every_minutes: int = 0,
-              until_at: str | None = None, notify: str = "always", condition: str = "") -> Job:
+              until_at: str | None = None, notify: str = "always", condition: str = "",
+              private: tuple[set, set] | None = None) -> Job:
     """Start a bot's job from the chat: its row (kind bot), the bot's own folder, its budget, and a task that runs it
     when a slot is free. The report comes back into the chat like any job's. every_minutes > 0: the bot runs again
     that often until until_at, telling the chat by the notify rule, like a reporter. Needs the running loop."""
@@ -112,6 +113,9 @@ def start_bot(name: str, title: str, brief: str, session_id: str | None, every_m
     job = jobs.create(store, "bot", title, brief, session_id, bots.folder_of(name),
                       budget_for(teammate=False, repeats=every_minutes > 0), bot=name, every_minutes=every_minutes,
                       until_at=until_for(every_minutes, until_at, now_utc()), notify=notify, condition=condition)
+    if private:  # the chat's private marks go with its brief (odie.workers.privacy)
+        from odie.workers import privacy
+        privacy.carry(store, job.id, *private)
     launch(job)
     return job
 

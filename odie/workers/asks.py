@@ -5,7 +5,7 @@ signed-in pages it read), the bot's job waits. So does a sign-in: the user signs
 The question is a row in job_asks and a card on Today (Jobs). The chat gets a message with a push saying what waits.
 Only the app's buttons answer it (POST /api/jobs/asks/{id}); there is no tool and no chat words that answer, so a model
 (the bot itself, the chief, the chat, or an agent at the terminal) can never say yes for the user. No answer within
-WAIT_SECONDS counts as no. A restart of Odie expires every open question (the bot that asked is gone)."""
+WAIT_SECONDS (9 minutes) counts as no. A restart of Odie expires every open question (the bot that asked is gone)."""
 from __future__ import annotations
 
 import asyncio
@@ -17,7 +17,7 @@ from odie.store.db import Store, now_iso
 
 log = logging.getLogger("odie.workers")
 
-WAIT_SECONDS = 15 * 60
+WAIT_SECONDS = 9 * 60  # under the browser's 10 idle minutes, so an Allow still finds the page open
 KINDS = ("tap", "sign_in")
 ANSWERS = ("yes", "no")
 _waiting: dict[str, asyncio.Future] = {}  # ask id -> the future the bot's guard awaits
@@ -91,7 +91,7 @@ async def ask(store: Store, runner, job, kind: str, text: str, detail: dict | No
         store.execute("update job_asks set status='expired', answered_at=? where id=? and status='open'",
                       (now_iso(), ask_id))
         return "no"
-    except asyncio.CancelledError:
+    except BaseException:  # cancelled, or the post failed: the question must not stay open with nobody waiting
         store.execute("update job_asks set status='expired', answered_at=? where id=? and status='open'",
                       (now_iso(), ask_id))
         raise

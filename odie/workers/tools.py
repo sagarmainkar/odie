@@ -36,10 +36,33 @@ def until_in_users_time(until: str) -> str | None:
     return asked.isoformat(timespec="seconds")
 
 
+PRIVATE_CHAT = ("This chat has read something private (a signed-in page, your mail or notes), and a background Worker "
+                "has nobody to ask before it searches: start a new chat for it, or ask a bot (ask_bot), whose steps "
+                "wait for your tap.")
+
+
+def bring_privacy_in(store: Store, job_ids: list[str], session_id: str | None) -> None:
+    """Reports read into this chat carry what their jobs read: the chat turns as private as the most private of them
+    (odie.workers.privacy). A shopper's orders report shown here -> the chat is private from now on."""
+    from odie.agent import turn
+    from odie.workers import privacy
+    for job_id in job_ids:
+        sites, reads = privacy.marks_of(store, job_id)
+        for site in sites:
+            turn.mark_private(site)
+        for label in reads:
+            turn.mark_read(label)
+        if session_id:
+            privacy.carry(store, session_id, sites, reads)
+
+
 def make_worker_tools(store: Store) -> list[FunctionTool]:
     async def start_job(title: str, brief: str, every_minutes: int = 0, until: str = "", notify: str = "always",
                         condition: str = "", tool_context: ToolContext = None) -> dict:
         """Hand a long job to a background Worker and answer the user now. A job is: code to write and run, a test to run, a check that takes more than one shell command, anything that repeats, or anything that would take you over a minute. Coding, testing, a system check, a report that takes digging. One read or one command: do it here yourself, as before; a question (today's market, a sum, a note, a picture): answer here. If unsure, start the job. The Worker runs alone with the shell, files and the web, never asks the user anything, and posts its report into this chat when done or stuck. title: a few words the user will recognise. brief: everything the Worker needs, in full: the goal, where things are, what done looks like, what to leave alone. The Worker has a folder of its own for what it makes: name no paths for that unless the user did. every_minutes: for something to check again and again ("track X and report every hour" -> 60): the same Worker runs that often and posts a report each time, until `until` (a local date-time like 2026-11-04T18:00; left out: 24 hours) or stop_job. notify, for a repeating check: "always" (every run posts), "change" (the first run, then only when the facts changed: an order's status, a score), or "condition" (only when `condition` holds: "price below 3000"; put the condition in the brief too). Tell the user it started and that the result will come here."""
+        from odie.signin import guard
+        if guard.query_needs_tap(store):  # a plain Worker has no tap: what this chat read can't go with it
+            return {"error": PRIVATE_CHAT}
         until_at = until_in_users_time(until)
         job = router.start("task", title.strip()[:80] or "Job", brief.strip(), session_id_of(tool_context),
                            every_minutes=int(every_minutes or 0), until_at=until_at, notify=notify.strip().lower(),
@@ -49,11 +72,12 @@ def make_worker_tools(store: Store) -> list[FunctionTool]:
             out["repeats"] = f"every {job.every_minutes} minutes until {job.until_at}, telling you: {job.notify}"
         return out
 
-    async def jobs_status() -> dict:
+    async def jobs_status(tool_context: ToolContext = None) -> dict:
         """The background jobs: what is running or waiting, and the last few that ended, with their reports."""
         going = [job_line(j) for j in jobs.running(store)]
-        ended = [f"{job_line(j)}: {(j.get('report') or j.get('error') or '')[:200]}" for j in jobs.recent(store, 5)
-                 if j["status"] not in ("queued", "running")]
+        recent = [j for j in jobs.recent(store, 5) if j["status"] not in ("queued", "running")]
+        ended = [f"{job_line(j)}: {(j.get('report') or j.get('error') or '')[:200]}" for j in recent]
+        bring_privacy_in(store, [j["id"] for j in recent], session_id_of(tool_context))
         return {"running": going, "recent": ended}
 
     async def stop_job(job_id: str) -> dict:
@@ -87,9 +111,12 @@ def make_worker_tools(store: Store) -> list[FunctionTool]:
         if found is None:
             names = ", ".join(b.name for b in bots.all_bots(store))
             return {"error": f"There's no bot called {bot}. The bots: {names}."}
-        job = router.start_bot(found.name, title.strip()[:80] or found.name, request.strip(), session_id_of(tool_context),
+        from odie.workers import privacy
+        session_id = session_id_of(tool_context)
+        job = router.start_bot(found.name, title.strip()[:80] or found.name, request.strip(), session_id,
                                every_minutes=int(every_minutes or 0), until_at=until_in_users_time(until),
-                               notify=notify.strip().lower(), condition=condition.strip())
+                               notify=notify.strip().lower(), condition=condition.strip(),
+                               private=privacy.of_this_turn(store, session_id))
         out = {"job_id": job.id, "bot": found.name, "status": "started"}
         if job.repeats:
             out["repeats"] = f"every {job.every_minutes} minutes until {job.until_at}, telling you: {job.notify}"

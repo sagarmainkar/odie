@@ -38,13 +38,22 @@ there to ask:
 
 - A step the chat would put a card in front of (a click that may order, pay, book or send; typing on a signed-in site;
   leaving a site whose signed-in pages it read) makes the job wait. Today shows the question with Allow / Deny, the
-  chat gets a line and the phone a push. No answer in 15 minutes is a no.
+  chat gets a line and the phone a push. No answer in 9 minutes is a no (the browser closes a page after 10 idle
+  minutes).
 - A sign-in page (or a saved login that needs a code) makes the bot call `browser_sign_in`; Today shows Sign in (the
   live view of the bot's own tab), Done and Skip.
 - Only the app's buttons answer (`POST /api/jobs/asks/{id}`). No tool, no chat message and not the terminal's key can:
   a model, the chief, or an agent at the terminal can never say yes for you.
-- A teammate that read your signed-in pages makes its chief's run private (its later searches ask you) and the chief's
-  report makes the chat private, as a signed-in read in the chat would.
+- Private goes with the words (`odie/workers/privacy.py`). A bot asked from a chat that read a signed-in page or your
+  mail starts private; so does a teammate the chief asks after another teammate read one; so does a scheduled bot's
+  next run, and every later job of a bot whose notes may hold it. A private bot's searches and other sites wait for
+  your tap. Back out: a bot's report makes the chief or chat it reaches private, and so does `jobs_status` showing it.
+  The welcome leaves a private report's text out. A plain Worker (`start_job`) has no tap, so a private chat can't
+  start one.
+- A bot's brief is never "your words": in a chat, a site you name may be opened without a tap; a brief is written by a
+  model that may have read a page, so naming a site in it opens nothing private.
+- The questions rely on pairing: with pairing on (as on this Mac), only a paired browser answers, never the terminal's
+  key. With `ODIE_PAIRING=off`, any program on the Mac can call the route, the same as the chat's own approvals.
 - The watchdog leaves a job alone while it waits on you or on its teammates; a restart expires every open question.
 
 ## What is built
