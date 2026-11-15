@@ -47,12 +47,49 @@ def of_this_turn(store: Store, key: str | None) -> tuple[set, set]:
     return sites, reads
 
 
+CLEARED = "bots.cleared."  # + a job id: the marks the user let that job work past with one tap, {"sites", "reads"}
+
+
+def cleared_of(store: Store, job_id: str) -> tuple[set, set]:
+    """What the user let this job work past (clear). None yet -> (set(), set())."""
+    saved = store.get_setting(CLEARED + job_id) or {}
+    return set(saved.get("sites") or ()), set(saved.get("reads") or ())
+
+
+def clear(store: Store, job_id: str, sites: set, reads: set) -> None:
+    """The user's one tap at a job's start: these marks no longer make this job's steps ask. Only these: a signed-in
+    page it reads later still does."""
+    had_sites, had_reads = cleared_of(store, job_id)
+    store.set_setting(CLEARED + job_id, {"sites": sorted(had_sites | sites), "reads": sorted(had_reads | reads)})
+
+
 def at_start(store: Store, job_id: str, bot_name: str) -> tuple[set, set]:
     """What a bot's run starts out knowing is private: its job's marks (the chat's or chief's, carried at start, and
-    an earlier run's) and its bot's (its notes). A fresh bot on a fresh job -> (set(), set())."""
+    an earlier run's) and its bot's (its notes), less what the user cleared for this job with a tap.
+    A fresh bot on a fresh job -> (set(), set()); a job from a chat that read your memory -> (set(), {"your memory"});
+    the same after the user's Allow at its start -> (set(), set())."""
     job_sites, job_reads = marks_of(store, job_id)
     bot_sites, bot_reads = marks_of(store, bot_key(bot_name))
-    return job_sites | bot_sites, job_reads | bot_reads
+    ok_sites, ok_reads = cleared_of(store, job_id)
+    return (job_sites | bot_sites) - ok_sites, (job_reads | bot_reads) - ok_reads
+
+
+def of_lead_now(store: Store, job_id: str) -> tuple[set, set]:
+    """What a chief passes to a teammate it asks now: what its run has read (its turn) and what its job carries, less
+    what the user cleared for the job at its start. Cleared "your memory", then a teammate read amazon.in ->
+    ({"amazon.in"}, set())."""
+    sites, reads = of_this_turn(store, job_id)
+    ok_sites, ok_reads = cleared_of(store, job_id)
+    return sites - ok_sites, reads - ok_reads
+
+
+def what_words(sites: set, reads: set) -> str:
+    """What a job carries, for the one tap: ({"amazon.in"}, {"your memory"}) -> "your signed-in amazon.in and your
+    memory"; (set(), {"your mail"}) -> "your mail"."""
+    parts = [f"your signed-in {s}" for s in sorted(sites)] + sorted(reads)
+    if len(parts) <= 1:
+        return "".join(parts)
+    return ", ".join(parts[:-1]) + " and " + parts[-1]
 
 
 def at_end(store: Store, job_id: str, bot_name: str) -> tuple[set, set]:

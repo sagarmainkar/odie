@@ -250,7 +250,7 @@ def start_teammate(store: Store, parent: Job, bot: Bot, brief: str) -> Job:
     title = f"{bot.name}: {brief.splitlines()[0][:60]}"
     child = jobs.create(store, "bot", title, brief, parent.session_id, bot_store.folder_of(bot.name), TEAMMATE_BUDGET,
                         bot=bot.name, parent_id=parent.id)
-    sites, reads = privacy.of_this_turn(store, parent.id)
+    sites, reads = privacy.of_lead_now(store, parent.id)
     privacy.carry(store, child.id, sites, reads)
     return child
 

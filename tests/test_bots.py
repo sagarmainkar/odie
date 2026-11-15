@@ -559,10 +559,46 @@ async def test_a_bot_asked_from_a_private_chat_starts_private(world):
     Team.scripts = {"researcher": [("report", {"outcome": "ready", "text": "ok"})]}
     tools = {t.name: t for t in make_worker_tools(store)}
     got = await tools["ask_bot"].func(bot="researcher", title="x", request="look up my order", tool_context=Ctx())
+    await answer_when_asked(store, "no")
     await asyncio.wait_for(router._tasks[got["job_id"]], 5)
     sites, reads, _ = Team.turns["researcher"][0]
-    assert sites == {"amazon.in"} and reads == {"your mail"}  # its web steps would ask, as the chat's do
+    assert sites == {"amazon.in"} and reads == {"your mail"}  # Deny: its web steps ask, as the chat's do
     assert guard.private_of(store, "bot:researcher") == {"amazon.in"}  # and its notes stay private for later jobs
+
+
+async def answer_when_asked(store, said: str) -> dict:
+    """Wait for a bot's question to open, answer it, and return it."""
+    for _ in range(200):
+        open_now = asks.open_for(store)
+        if open_now:
+            asks.answer(store, open_now[0]["id"], said)
+            return open_now[0]
+        await asyncio.sleep(0.01)
+    raise AssertionError("no question was asked")
+
+
+async def test_one_allow_at_the_start_lets_the_whole_team_work(world):
+    from odie.signin import guard
+    store, _ = world
+    bots.make(store, "researcher", "finds", "", ["web"])
+    guard.remember_read(store, "chat-1", "your memory")
+    Team.scripts = {"chief": [("ask_bots", {"asks": [{"bot": "researcher", "brief": "find it"}]}),
+                              ("report", {"outcome": "ready", "text": "ok"})],
+                    "researcher": [("report", {"outcome": "ready", "text": "found"})]}
+    job = router.start_bot("chief", "Goa", "North or South Goa?", "chat-1", private=(set(), {"your memory"}))
+    asked = await answer_when_asked(store, "yes")
+    assert asked["text"].startswith("Let chief work on 'Goa' with the web? This chat read your memory")
+    await asyncio.wait_for(router._tasks[job.id], 5)
+    assert Team.turns["chief"][0][:2] == (set(), set())
+    assert Team.turns["researcher"][0][:2] == (set(), set())  # the teammate starts as private as the chief: cleared
+    assert len([a for a in jobs.actions(store, job.id) if a["tool"] == "user_tap"]) == 1  # one tap, not one per step
+
+
+def test_what_words():
+    from odie.workers import privacy
+    assert privacy.what_words({"amazon.in"}, {"your memory"}) == "your signed-in amazon.in and your memory"
+    assert privacy.what_words(set(), {"your mail"}) == "your mail"
+    assert privacy.what_words({"a.in"}, {"your mail", "your notes"}) == "your signed-in a.in, your mail and your notes"
 
 
 async def test_a_plain_worker_is_refused_in_a_private_chat(world):
@@ -696,3 +732,57 @@ def test_the_starter_team_is_made_once(world):
     bots.delete(store, "checker")
     bots.ensure_starters(store)  # the next start: a deleted starter stays deleted
     assert bots.get(store, "checker") is None
+
+
+# ── the live team card ───────────────────────────────────────────────────────
+
+@pytest.mark.parametrize(("tool", "args", "refused", "expected"), [
+    ("web_search", {"query": "CB350 price Bangalore"}, None, 'searching "CB350 price Bangalore"'),
+    ("web_fetch", {"url": "https://www.zigwheels.com/x"}, None, "reading zigwheels.com"),
+    ("browser_click", {"text": "Next"}, None, 'clicking "Next"'),
+    ("ask_bots", {"asks": [{}, {}, {}]}, None, "asking 3 bots"),
+    ("make_bot", {"name": "skeptic"}, None, "adding skeptic to the team"),
+    ("report", {}, None, "writing the answer"),
+    ("run_shell", {"command": "ls"}, None, "running a command"),
+    ("browser_click", {"text": "Buy"}, "the user said no", "refused: the user said no"),
+])
+def test_activity_line(tool, args, refused, expected):
+    import json
+
+    from odie.workers import progress
+    assert progress.activity_line({"tool": tool, "args_json": json.dumps(args), "refused": refused}) == expected
+
+
+async def test_the_team_card_follows_the_lead_and_its_teammates(world):
+    from odie.workers import progress
+    from odie.workers.tools import make_worker_tools
+    store, _ = world
+    bots.make(store, "researcher", "finds", "", ["web"])
+    tools = {t.name: t for t in make_worker_tools(store)}
+    Team.scripts = {"chief": [("ask_bots", {"asks": [{"bot": "researcher", "brief": "find it"}]}),
+                              ("report", {"outcome": "ready", "text": "**High tide 06:10.**\nMore below."})],
+                    "researcher": [("web_search", {"query": "tides goa"}), ("report", {"outcome": "ready", "text": "06:10"})]}
+    got = await tools["ask_bot"].func(bot="chief", title="Tides", request="When is high tide?", tool_context=Ctx())
+    assert got["media"]["kind"] == "team"
+    from odie import media
+    assert media.get(got["media"]["id"])[1]["job"] == got["job_id"]
+    first = progress.team_view(store, got["job_id"])
+    assert first["title"] == "Tides" and first["lead"]["now"] == "waiting for a turn"
+    await asyncio.wait_for(router._tasks[got["job_id"]], 5)
+    view = progress.team_view(store, got["job_id"])
+    assert (view["lead"]["bot"], view["lead"]["status"], view["lead"]["now"]) == ("chief", "done", "High tide 06:10.")
+    [mate] = view["team"]
+    assert (mate["bot"], mate["now"], mate["calls"]) == ("researcher", "06:10", 2)
+    assert progress.team_view(store, "job-none") is None
+
+
+def test_a_chief_waiting_on_its_team_says_so(world):
+    from odie.workers import progress
+    store, _ = world
+    chief_job = a_bot_job(store, "chief")
+    kid = a_bot_job(store, "chief", parent_id=chief_job.id)
+    store.execute("update jobs set status='running' where id in (?,?)", (chief_job.id, kid.id))
+    jobs.record_action(store, chief_job.id, "web_search", {"query": "goa"})
+    assert progress.now_line(store, jobs.get(store, chief_job.id)) == "waiting for 1 bot"
+    jobs.ended(store, kid.id, "done", outcome="ready", report="x")
+    assert progress.now_line(store, jobs.get(store, chief_job.id)) == 'searching "goa"'

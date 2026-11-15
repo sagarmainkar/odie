@@ -19,7 +19,7 @@ import wave
 from pathlib import Path
 
 ID_RE = re.compile(r"^[0-9a-f]{16}\Z")
-KINDS = ("memo", "podcast", "screenshot", "file", "page", "link", "turn", "tracker", "picture", "video", "audio")  # picture/video/audio: a file a tool made, shown or played inline (odie.agent.tools.files)  # link: a UPI app button; turn: "your turn" to sign in  # page: a deck's slide preview (odie.decks)  # tracker: "check this page signed in?" (odie.trackers.signed_in)
+KINDS = ("memo", "podcast", "screenshot", "file", "page", "link", "turn", "tracker", "picture", "video", "audio", "team")  # team: a bot's live team card (odie.workers.progress)  # picture/video/audio: a file a tool made, shown or played inline (odie.agent.tools.files)  # link: a UPI app button; turn: "your turn" to sign in  # page: a deck's slide preview (odie.decks)  # tracker: "check this page signed in?" (odie.trackers.signed_in)
 
 
 def media_dir() -> Path:

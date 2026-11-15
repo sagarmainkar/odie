@@ -324,6 +324,18 @@ async def job_get(job_id: str, request: Request) -> dict[str, Any]:
             "teammates": team}
 
 
+@router.get("/jobs/{job_id}/team")
+async def job_team(job_id: str, request: Request) -> dict[str, Any]:
+    """The live team card in the chat: each bot's step right now, or its report's first line (odie.workers.progress).
+    The app asks again every few seconds while the lead is at work."""
+    _jobs_on()
+    from odie.workers import progress
+    got = progress.team_view(request.app.state.store, job_id)
+    if got is None:
+        raise HTTPException(404, "no such job")
+    return got
+
+
 @router.post("/jobs/{job_id}/stop")
 async def job_stop(job_id: str, request: Request) -> dict[str, Any]:
     _jobs_on()

@@ -30,6 +30,14 @@ you: "@chief should I buy X or Y?"            (or Odie decides: ask_bot(bot="chi
 - Today: a chief's row says how many teammates are done ("2 of 3 teammates done"); More shows each teammate's
   report.
 
+## Watching the team (like Grok)
+
+Under Odie's "Sent it to @chief" sits a live team card (`components/TeamCard.tsx`, `odie/workers/progress.py`,
+`GET /api/jobs/{id}/team`): the chief and each teammate with its model, time, steps and what it is doing right now
+("searching …", "reading zigwheels.com", "waiting for 4 bots", "waiting for your tap"). The app asks every 2.5 s while
+the chief works; afterwards each line shows its answer's first line and opens to the whole report. Live on 15 Nov:
+chief + 4 teammates, 7.5 minutes, one tap.
+
 ## The browser, and what waits for you
 
 A bot with the browser runs with the turn a chat would have: its brief counts as your words (sites it names may be
@@ -52,6 +60,10 @@ there to ask:
   start one.
 - A bot's brief is never "your words": in a chat, a site you name may be opened without a tap; a brief is written by a
   model that may have read a page, so naming a site in it opens nothing private.
+- One tap, not one per step: a job that starts private (its chat looked at your memory, say) asks once, at the start
+  ("Let chief work on 'Goa' with the web? This chat read your memory…"). Allow clears those marks for the job and its
+  teammates; anything new they read (a signed-in page) still asks. Deny: every step asks. Seen live: before this, a
+  chat that had looked at memory once made every bot ask before every search.
 - The questions rely on pairing: with pairing on (as on this Mac), only a paired browser answers, never the terminal's
   key. With `ODIE_PAIRING=off`, any program on the Mac can call the route, the same as the chat's own approvals.
 - The watchdog leaves a job alone while it waits on you or on its teammates; a restart expires every open question.

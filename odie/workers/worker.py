@@ -357,6 +357,27 @@ def bot_of(store: Store, job: Job):
     return bots.get(store, job.bot)
 
 
+async def ask_to_work_past(store: Store, runner, job: Job, bot) -> None:
+    """A bot's job that starts private (its chat read your memory, mail or a signed-in page): rather than a tap on
+    every search, one tap at the start. Allow -> those marks no longer make this job's steps ask (privacy.clear), nor
+    its teammates', who start as private as the chief is; Deny or no answer -> every step asks as before. A teammate,
+    a job that starts with nothing private, or one already cleared -> no question.
+      "@chief …" from a chat that looked at your memory -> "Let chief work on 'Goa' with the web? …" -> Allow -> runs"""
+    from odie.workers import asks, privacy
+    if job.parent_id:
+        return
+    sites, reads = privacy.at_start(store, job.id, bot.name)
+    if not sites and not reads:
+        return
+    what = privacy.what_words(sites, reads)
+    text = (f"Let {bot.name} work on '{job.title}' with the web? This chat read {what}, so what it searches and opens "
+            f"may carry it")
+    said = await asks.ask(store, runner, job, "tap", text, {"why": f"Allow once for this job; Deny and each step asks."})
+    jobs.record_action(store, job.id, "user_tap", {"asked": "work past what the chat read", "said": said})
+    if said == "yes":
+        privacy.clear(store, job.id, sites, reads)
+
+
 def set_bot_turn(store: Store, job: Job, bot) -> None:
     """A bot's run sees the turn a chat would. Its private marks start from what it carries (odie.workers.privacy: the
     chat or chief that asked, its earlier runs, its notes), so its web steps ask when the chat's would. With the
@@ -405,6 +426,7 @@ async def run(job: Job, store: Store, runner, kind: WorkerKind | None = None, mo
         else:
             model = model_for_kind(store, kind)
     if bot is not None:
+        await ask_to_work_past(store, runner, job, bot)
         set_bot_turn(store, job, bot)
     tz = ZoneInfo(s.timezone)
     now = datetime.now(tz).strftime("%A %d %B %Y, %H:%M")

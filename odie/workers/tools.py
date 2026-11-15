@@ -36,6 +36,18 @@ def until_in_users_time(until: str) -> str | None:
     return asked.isoformat(timespec="seconds")
 
 
+def team_card(job_id: str, bot_name: str) -> dict:
+    """The live team card shown under the chat's reply (the app polls /api/jobs/{id}/team): the media's id, kind and
+    title, as a tool's result carries it."""
+    import json
+
+    from odie import media
+    title = "The team at work" if bot_name == "chief" else f"{bot_name} at work"
+    made = media.save(json.dumps({"job": job_id}).encode(), "team", "team", "application/json", title,
+                      {"job": job_id, "bot": bot_name})
+    return {k: made[k] for k in ("id", "kind", "title")}
+
+
 PRIVATE_CHAT = ("This chat has read something private (a signed-in page, your mail or notes), and a background Worker "
                 "has nobody to ask before it searches: start a new chat for it, or ask a bot (ask_bot), whose steps "
                 "wait for your tap.")
@@ -117,7 +129,7 @@ def make_worker_tools(store: Store) -> list[FunctionTool]:
                                every_minutes=int(every_minutes or 0), until_at=until_in_users_time(until),
                                notify=notify.strip().lower(), condition=condition.strip(),
                                private=privacy.of_this_turn(store, session_id))
-        out = {"job_id": job.id, "bot": found.name, "status": "started"}
+        out = {"job_id": job.id, "bot": found.name, "status": "started", "media": team_card(job.id, found.name)}
         if job.repeats:
             out["repeats"] = f"every {job.every_minutes} minutes until {job.until_at}, telling you: {job.notify}"
         return out

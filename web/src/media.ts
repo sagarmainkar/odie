@@ -6,7 +6,7 @@ export type Turn = { host: string; text: string; start: number };
 /** A podcast host or a voice in a story. A story's `who` says who they are in a few words ("the widow who tells it"). */
 export type Host = { name: string; group: string; voice?: string; who?: string };
 export type Media = {
-  id: string; kind: "memo" | "podcast" | "screenshot" | "file" | "page" | "link" | "turn" | "tracker" | "picture" | "video" | "audio"; title: string; mime: string; size: number; created: number;
+  id: string; kind: "memo" | "podcast" | "screenshot" | "file" | "page" | "link" | "turn" | "tracker" | "picture" | "video" | "audio" | "team"; title: string; mime: string; size: number; created: number;
   duration?: number; peaks?: number[]; transcript?: string | Turn[]; voice?: string; hosts?: Host[];
   url?: string; page_title?: string; step?: string;  // a screenshot: the page and the browser step that took it
   filename?: string;  // a file: its name for the download
@@ -14,6 +14,7 @@ export type Media = {
   site?: string; tab?: string; why?: string;  // a "your turn" card (signed-in browsing): the site, the browser tab, why
   state?: "done" | "code" | "failed" | "captcha" | "vault"; auto?: boolean;  // a "your turn" card: where the sign-in stands
   label?: string;  // a link: its button (a UPI app link's "Pay in your UPI app")
+  job?: string; bot?: string;  // a team card: the bot's job it follows live (odie/workers/progress.py)
   tracker_id?: number; page?: string;  // a "check this page signed in?" card (odie/trackers/signed_in.py)
   format?: "story";  // a podcast that is an audio story (a user skill can make one): its hosts are the cast
   teaser?: string;  // a story: what it's about in a sentence or two, shown before it plays
