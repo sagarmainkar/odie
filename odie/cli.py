@@ -1273,6 +1273,7 @@ def parser() -> argparse.ArgumentParser:
     shape.add_argument("--events", action="store_true", help="every event as a JSON line, as the app sees them")
     threads = sub.add_parser("threads", help="list the chat threads (pinned first, then the most recent)")
     threads.add_argument("-q", help="only threads with these words")
+    threads.add_argument("-n", type=int, dest="lines", help="only the first N (pinned first, then the most recent)")
     threads.add_argument("--json", action="store_true", help="as JSON")
     show = sub.add_parser("show", help="print a thread's messages")
     show.add_argument("thread", help="the thread id (from odie threads)")
