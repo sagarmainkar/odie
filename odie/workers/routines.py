@@ -1,5 +1,5 @@
-"""Routines: a bot that runs by itself on a schedule (spike, Nov 2026), like OpenBot's (its "Stock Markets: morning
-note", "Jyotish: daily almanac"). A routine is a bot, a brief, and when: every day or on chosen weekdays at a time,
+"""Routines: a bot that runs by itself on a schedule (spike, Nov 2026), like OpenBot's (a morning market note, a
+daily digest). A routine is a bot, a brief, and when: every day or on chosen weekdays at a time,
 or every few hours. It never ends by itself (a Workers reporter stops after 7 days); the user pauses or deletes it.
 
 Each routine has a conversation of its own ("Runs by itself" in the drawer). A run puts a small note in it, then a job
