@@ -37,7 +37,7 @@ log = logging.getLogger("odie.workers")
 
 NUDGE = "You stopped without calling report. Call report now with what you did and what you found."
 REFUSED = "__refused__"  # set on a call's args by the guard, so the after-callback knows the tool never ran
-REPORT_LIMIT = 4000  # characters of a report kept and posted
+REPORT_LIMIT = 12000  # characters of a report kept and posted (room for a chart or a table in a bot's reply)
 
 
 @dataclass
@@ -491,7 +491,7 @@ async def run(job: Job, store: Store, runner, kind: WorkerKind | None = None, mo
     tz = ZoneInfo(s.timezone)
     now = datetime.now(tz).strftime("%A %d %B %Y, %H:%M")
     got = Report()
-    instruction = kind.instruction.format(folder=job.folder)
+    instruction = kind.instruction.replace("{folder}", str(job.folder))  # not .format: a bot's prompt holds JSON braces
 
     def as_written(_context) -> str:
         return instruction  # a function, so ADK passes the text on untouched (a brace in a path would otherwise be read as state)

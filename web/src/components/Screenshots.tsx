@@ -1,17 +1,24 @@
+import { LiveView } from "./LiveView";
 import { AnimatePresence, motion } from "framer-motion";
 import { useEffect, useRef, useState } from "react";
 import { mediaUrl, type Media } from "../media";
 import { site } from "../screenshots";
 
 /** The page the browser is on, large, while the reply is being written (like watching it work). */
-export function LiveBrowser({ shot, count }: { shot: Media; count: number }) {
+/** Odie's browser while a reply is being written: the latest page, and with the chat's tab, Watch: the page live, and
+ * Take control (Odie's next browser step then waits for you: "the user is using the browser"). */
+export function LiveBrowser({ shot, count, tab: chatTab }: { shot: Media; count: number; tab?: string }) {
+  const [watching, setWatching] = useState(false);
+  const tab = shot.tab ?? chatTab;  // the page's own tab (saved with the screenshot), else the chat's
   return (
     <div className="glass rounded-[22px] overflow-hidden w-full max-w-[460px]" data-media="browser-live">
       <div className="flex items-center gap-2 px-3.5 py-2.5 text-[12.5px] font-semibold text-muted">
         <span className="relative flex w-2 h-2"><span className="absolute inline-flex h-full w-full rounded-full bg-ember opacity-60 animate-ping" /><span className="relative inline-flex w-2 h-2 rounded-full bg-ember" /></span>
         <span className="truncate">Browsing {site(shot.url ?? "")}</span>
         {count > 1 && <span className="ml-auto shrink-0 text-dim">{count} pages</span>}
+        {tab && <button onClick={() => setWatching(true)} className={`${count > 1 ? "" : "ml-auto "}shrink-0 px-2.5 h-7 rounded-full bg-ember text-on-ember text-[12px] font-semibold`}>Watch</button>}
       </div>
+      {watching && tab && <LiveView tab={tab} site={site(shot.url ?? "")} chat={false} watch who="Odie" onClose={() => setWatching(false)} />}
       <AnimatePresence mode="popLayout" initial={false}>
         <motion.img key={shot.id} src={mediaUrl(shot)} alt={shot.title} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
           transition={{ duration: 0.25 }} className="block w-full aspect-[1280/900] object-cover object-top bg-well" />

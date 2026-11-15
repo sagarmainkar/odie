@@ -71,10 +71,11 @@ def team_slots() -> asyncio.Semaphore:
     return _team_slots
 
 
-def instruction_for(bot: Bot, repeats: bool = False, conversation: bool = False) -> str:
+def instruction_for(bot: Bot, repeats: bool = False, conversation: bool = False, blocks: bool = False) -> str:
     """A bot's whole system prompt: the Worker rules with its name, role and folder, the browser rules when it has the
-    browser, the schedule's rules when its job repeats, the team rules for the chief, then its own prompt. {folder}
-    stays a placeholder: the Worker fills it."""
+    browser, the schedule's rules when its job repeats, the team rules for the chief, its own prompt, and with blocks
+    the app's visual blocks (charts, tables, cards), as Odie's own prompt has them. {folder} stays a placeholder: the
+    Worker fills it."""
     text = BOT_RULES.replace("{name}", bot.name).replace("{role}", bot.role)
     if "browser" in bot.powers:
         text += BROWSER_RULES
@@ -86,6 +87,9 @@ def instruction_for(bot: Bot, repeats: bool = False, conversation: bool = False)
         text += CHIEF_RULES
     if bot.prompt:
         text += f"\n\nYour own instructions:\n{bot.prompt}"
+    if blocks:  # a reply the user reads in the app: the same visual blocks Odie's own replies use
+        from odie.blocks import visuals_prompt
+        text += "\n\n" + visuals_prompt()
     return text
 
 
@@ -103,7 +107,8 @@ def kind_for(bot: Bot, teammate: bool = False, repeats: bool = False, conversati
 
     def tools(store: Store, job: Job) -> list:
         return tools_for(bot, store, job)
-    return WorkerKind(name="bot", word=bot.name, instruction=instruction_for(bot, repeats, conversation), tools=tools,
+    # The user reads a lead's reply in the app (its chat, or Odie's): it may draw blocks. A teammate reports to its chief.
+    return WorkerKind(name="bot", word=bot.name, instruction=instruction_for(bot, repeats, conversation, blocks=not teammate), tools=tools,
                       budget_seconds=budget_for(teammate, repeats), max_llm_calls=BOT_MAX_CALLS)
 
 

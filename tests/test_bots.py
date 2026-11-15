@@ -1145,3 +1145,13 @@ def test_watch_then_take_control_then_close(isolated_settings, tmp_path, monkeyp
         ws.send_json({"t": "close"})
     assert e.held_by("job-abc123") is None and ("stop", "job-abc123") in e.calls  # handed back
     assert live.clean({"t": "forward"}) == {"t": "forward"} and live.clean({"t": "control"}) == {"t": "control"}
+
+
+
+def test_a_reply_the_user_reads_may_draw_blocks_a_teammates_report_doesnt(world):
+    store, _ = world
+    chief = bots.get(store, "chief")
+    lead = team.kind_for(chief, conversation=True).instruction
+    mate = team.kind_for(chief, teammate=True).instruction
+    assert "odie-blocks" in lead and "odie-blocks" not in mate
+    assert "{folder}" in lead  # still a placeholder; the Worker fills it with replace, braces in the JSON untouched
