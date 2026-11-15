@@ -69,7 +69,7 @@ import { shrinkPhoto } from "../shrinkPhoto";
 
 // key and sid: the name the server gave a reply (its ADK event id) and the session it is in; its saved ticks hang off them.
 // inv: the turn it belongs to; what Odie does after a tap joins the message of its turn (turns.ts).
-type Msg = { id: number; key?: string; sid?: string; inv?: string; role: "user" | "odie" | "approval"; text: string; tools: Tool[]; error?: string; awaiting?: boolean; ts?: number; live?: boolean; approval?: Approval; images?: string[]; asked?: string; media?: Media[]; autoplay?: string; private?: boolean; usage?: ReplyUsage };  // private: its chat read a signed-in page; usage: the reply's own token counts
+type Msg = { id: number; key?: string; sid?: string; inv?: string; role: "user" | "odie" | "approval"; text: string; tools: Tool[]; error?: string; awaiting?: boolean; ts?: number; live?: boolean; approval?: Approval; images?: string[]; asked?: string; media?: Media[]; autoplay?: string; private?: boolean; usage?: ReplyUsage; via?: "terminal" };  // private: its chat read a signed-in page; usage: the reply's own token counts
 type Pending = { id: string; url: string; w: number; h: number };
 let nextId = 1;
 const EASE = [0.2, 0.8, 0.2, 1] as const;
@@ -267,7 +267,7 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
   const mainRef = useRef<HTMLElement>(null);
   type H = { items: HistoryItem[]; total: number; start: number };
   // One turn, one message: a turn's lines fold into one first (turns.ts), however many taps it took.
-  const toMsgs = (items: H["items"]): Msg[] => foldTurns(items).filter((m) => m.text || m.tools.length || m.images?.length || m.approval || m.media?.length).map((m) => ({ id: nextId++, key: m.key, sid: m.sid, inv: m.inv, role: m.role, text: m.text, ts: m.ts, images: m.images, approval: m.approval, media: m.media, private: m.private, usage: m.usage, tools: fromHistory(m) }));
+  const toMsgs = (items: H["items"]): Msg[] => foldTurns(items).filter((m) => m.text || m.tools.length || m.images?.length || m.approval || m.media?.length).map((m) => ({ id: nextId++, key: m.key, sid: m.sid, inv: m.inv, role: m.role, text: m.text, ts: m.ts, images: m.images, approval: m.approval, media: m.media, private: m.private, usage: m.usage, via: m.via, tools: fromHistory(m) }));
   const [pending, setPending] = useState<Pending[]>([]);
   const [uploading, setUploading] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -718,7 +718,7 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
                     ) : m.role === "odie" && m.text.startsWith(ROLLOVER) ? (
                       <SegmentDivider text={m.text.slice(ROLLOVER.length).trim()} ts={m.ts} />
                     ) : m.role === "user" ? (
-                      <motion.div {...enter} className="flex flex-col"><YourMessage text={m.text} images={m.images} /></motion.div>
+                      <motion.div {...enter} className="flex flex-col"><YourMessage text={m.text} images={m.images} via={m.via} /></motion.div>
                     ) : (
                       <motion.div {...enter} className="flex flex-col gap-2.5">
                         <div className="flex items-center gap-2 text-[12.5px] text-muted font-semibold">

@@ -236,7 +236,7 @@ async def test_hook_failures_are_contained(store):
     assert await OdiePlugin(store).after_tool_callback(tool=SimpleNamespace(name="now"), tool_args={}, tool_context=ctx,
                                                        result={"result": "9:30"}) is None
     sent, posted, out = await _turn(store, "hi", lambda n: [_text("Hello.")])
-    assert len(sent) == 1 and posted == [] and out[-1] == {"type": "done", "text": "Hello."}
+    assert len(sent) == 1 and posted == [] and out[-1] == {"type": "done", "text": "Hello.", "session_id": "chat-2026-10-06"}
 
 
 def test_background_guard_refuses_addon_gated_tools():
@@ -287,4 +287,4 @@ async def test_a_nudge_note_is_only_used_for_its_own_call(store):
 async def test_a_turn_check_factory_that_gives_nothing_is_skipped(store):
     addons.use([Addon("empty", turn_check=lambda: None)])
     sent, posted, out = await _turn(store, "hi", lambda n: [_text("Hello.")])
-    assert len(sent) == 1 and out[-1] == {"type": "done", "text": "Hello."}
+    assert len(sent) == 1 and out[-1] == {"type": "done", "text": "Hello.", "session_id": "chat-2026-10-06"}

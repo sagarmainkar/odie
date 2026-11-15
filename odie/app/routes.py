@@ -8,7 +8,7 @@ import os
 import re
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -36,6 +36,7 @@ class ChatIn(BaseModel):
     thinking: bool | None = None  # left out: the chat's own Think harder (odie.thinking); given (an older web app): saved first
     images: list[str] = []
     session_id: str | None = None  # continue an older thread; None = today's
+    via: Literal["terminal"] | None = None  # who typed it: "terminal" is the odie command (odie chat), for an agent or script
 
 
 class Keys(BaseModel):
@@ -130,7 +131,11 @@ async def chat(body: ChatIn, request: Request):
         raise HTTPException(422, "not a chat thread")
     if body.thinking is not None:  # an app that still sends it: the same as choosing it in the menu, then the turn
         await _set_chat_thinking(request, _chat_meant(request, body.session_id), body.thinking)
-    kw = {"session_id": body.session_id} if body.session_id else {}
+    kw: dict[str, Any] = {}
+    if body.session_id:
+        kw["session_id"] = body.session_id
+    if body.via:
+        kw["via"] = body.via
     turn = request.app.state.runner.chat(body.text, thinking=body.thinking, images=body.images or None, **kw)
     return _sse(detached(turn, on_orphaned_done=answered_while_away))
 

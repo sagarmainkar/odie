@@ -118,6 +118,19 @@ def add_device(store, name: str) -> str:
     return key
 
 
+TERMINAL_NAME = "Terminal (odie chat)"
+
+
+def add_terminal(store) -> str:
+    """Pairs the odie command on this Mac (odie chat, odie threads, odie show) and returns its key. Unlike add_device it
+    leaves a setup link alone: the phone may not be paired yet. It shows in Settings → Devices like any device, and
+    removing it there cuts the terminal off."""
+    key = secrets.token_urlsafe(32)
+    t = now()
+    store.execute("insert into devices(name,key_hash,created_at,last_seen_at) values(?,?,?,?)", (TERMINAL_NAME, _sha(key), t, t))
+    return key
+
+
 def device_for(store, key: str | None) -> dict | None:
     """The device holding this key, or None. The lookup is by the sha256 of a 256-bit random key, so its timing tells a
     guesser nothing."""

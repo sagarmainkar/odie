@@ -2,6 +2,7 @@
 something breaks.
 
     odie start | stop | restart | status | pair | logs | open | update | doctor | uninstall | serve
+    odie chat | threads | show   (talking to the running Odie from the terminal: odie.cli_chat)
 
 Only the standard library is imported at the top, so the command starts instantly and still works when the app's
 dependencies are broken, which is exactly when `odie update --rollback` and `odie doctor` are needed. (`serve`, which
@@ -1262,6 +1263,21 @@ def parser() -> argparse.ArgumentParser:
     data.add_argument("--keep-data", action="store_true", help="keep the data, without asking")
     sub.add_parser("serve", help="run Odie in the foreground (what the service runs)")
     sub.add_parser("write-command", help="write the odie command file (scripts/install.sh runs this)")
+    chat = sub.add_parser("chat", help="send Odie a message and print the reply (for you, or an agent or script)")
+    chat.add_argument("text", help='the message, or "-" to read it from stdin')
+    where = chat.add_mutually_exclusive_group()
+    where.add_argument("--thread", help="continue this thread (an id from odie threads); default: today's chat")
+    where.add_argument("--new", action="store_true", help="start a new chat first, as New chat in the app does")
+    shape = chat.add_mutually_exclusive_group()
+    shape.add_argument("--json", action="store_true", help='one JSON answer at the end: {"thread", "text", "needs_tap", "errors"}')
+    shape.add_argument("--events", action="store_true", help="every event as a JSON line, as the app sees them")
+    threads = sub.add_parser("threads", help="list the chat threads (pinned first, then the most recent)")
+    threads.add_argument("-q", help="only threads with these words")
+    threads.add_argument("--json", action="store_true", help="as JSON")
+    show = sub.add_parser("show", help="print a thread's messages")
+    show.add_argument("thread", help="the thread id (from odie threads)")
+    show.add_argument("-n", type=int, dest="lines", help="only the last N messages")
+    show.add_argument("--json", action="store_true", help="as JSON")
     return p
 
 
@@ -1304,6 +1320,9 @@ def main(argv: list[str] | None = None, environ: Mapping[str, str] | None = None
         return cmd_serve(inst, runner)
     if args.command == "write-command":
         return cmd_write_command(inst, environ)
+    if args.command in ("chat", "threads", "show"):
+        from odie import cli_chat
+        return cli_chat.run(inst, environ, args)
     parser().print_help()
     return 0
 
