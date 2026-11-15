@@ -163,7 +163,9 @@ odie show <id> [-n 20]                a thread's messages
 ```
 
 `odie chat --json` answers `{"thread", "text", "needs_tap", "errors"}`. Only this Mac can use it. The first command
-pairs the terminal as a device ("Terminal (odie chat)" in Settings → Devices); removing it there cuts the terminal off.
+pairs the terminal as a device ("Terminal (odie chat)" in Settings → Devices), and its key reaches only chat and the
+threads: never approvals, settings or pairing. Removing it in Settings signs the key out until the terminal pairs
+again (any program running as you can, so it's a switch, not a lock).
 These messages show "via Terminal" in the chat, and Odie knows a program typed them. Nothing can be approved from
 the terminal: a turn that needs a tap names it, ends with exit code 3, and you tap the card in the app.
 

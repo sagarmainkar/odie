@@ -10,18 +10,21 @@ It goes through the server's own routes (/api/chat, /api/threads), so every guar
 Nothing is approved from here: a turn that needs a tap says so and ends with exit code 3, and the tap is made in the
 app. Only this Mac: it calls 127.0.0.1, and its device key lives in Odie's data folder.
 
-The key: with pairing on, the first command pairs this terminal as a device ("Terminal (odie chat)") and keeps the key
-in <ODIE_HOME>/data/terminal.key (readable by this user only). Removing that device in Settings → Devices cuts it off;
-the command then says how to pair it again. Standard library only, like odie.cli."""
+The key: the first command pairs this terminal as a device ("Terminal (odie chat)") and keeps the key in
+<ODIE_HOME>/data/terminal.key (readable by this user only). The key reaches only chat and the threads
+(devices.terminal_may): never approvals, settings or pairing. Removing the device in Settings → Devices signs that key
+out, and the command says how to pair again; any program running as this user can do that, so it is a switch, not a
+lock. Standard library only, like odie.cli."""
 from __future__ import annotations
 
+import http.client
 import json
 import os
 import sys
 import urllib.error
 import urllib.parse
 import urllib.request
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, TextIO
 
@@ -64,22 +67,20 @@ def pair_terminal(inst: Install) -> str:
         store.close()
     path = key_file(inst)
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    os.fchmod(fd, 0o600)  # a file left from before keeps its old mode otherwise
     with os.fdopen(fd, "w") as f:
         f.write(key + "\n")
     return key
 
 
-def key_for(inst: Install, environ: Mapping[str, str], err: TextIO) -> str | None:
-    """The key to send, or None when none is needed. With pairing on and no key saved yet, this terminal is paired now.
-      pairing off                        -> None (Odie lets every caller in)
-      pairing on, terminal.key saved     -> that key
-      pairing on, nothing saved          -> a new key, saved, and one line on stderr saying so"""
-    from odie.cli import pairing_asked_for
+def key_for(inst: Install, err: TextIO) -> str:
+    """The key to send. With none saved yet, this terminal is paired now, whether pairing is on or off: the server
+    decides whether it looks at the key, so the command never has to guess the same way it does.
+      terminal.key saved  -> that key
+      nothing saved       -> a new key, saved, and one line on stderr saying so"""
     saved = read_key(inst)
     if saved:
         return saved
-    if not pairing_asked_for(inst, environ):
-        return None
     if not inst.database.exists():
         raise ApiError("Odie hasn't started yet: odie start first.")
     key = pair_terminal(inst)
@@ -128,15 +129,19 @@ class Api:
             return json.loads(r.read().decode("utf-8", "replace"))
 
     def stream(self, path: str, body: dict) -> Iterator[dict]:
-        """The events of a server-sent stream, one dict each. Lines that aren't `data:` (pings, blank lines) are skipped."""
+        """The events of a server-sent stream, one dict each. Lines that aren't `data:` (pings, blank lines) are skipped.
+        A stream cut off halfway (Odie restarting for an update) is an ApiError, not a traceback."""
         with self._open(self._request(path, body), timeout=CHAT_TIMEOUT) as r:
-            for raw in r:
-                line = raw.decode("utf-8", "replace").rstrip("\r\n")
-                if not line.startswith("data:"):
-                    continue
-                payload = line[len("data:"):].strip()
-                if payload:
-                    yield json.loads(payload)
+            try:
+                for raw in r:
+                    line = raw.decode("utf-8", "replace").rstrip("\r\n")
+                    if not line.startswith("data:"):
+                        continue
+                    payload = line[len("data:"):].strip()
+                    if payload:
+                        yield json.loads(payload)
+            except (http.client.HTTPException, OSError, ValueError) as e:
+                raise ApiError("The reply was cut off (did Odie restart?). odie show <thread> shows how far it got.") from e
 
 
 def _detail(body: str) -> str:
@@ -198,7 +203,7 @@ def show_event(e: dict, turn: Turn, out: TextIO, err: TextIO) -> None:
     elif kind == "approval":
         err.write(f"  ⏸ needs your tap: {e.get('summary', '')} (tap it in the Odie app)\n")
     elif kind == "error":
-        err.write(f"  ! {e.get('text') or e.get('error') or e}\n")
+        err.write(f"  ! {e.get('message', '')}\n")
 
 
 def note_event(e: dict, turn: Turn) -> None:
@@ -209,7 +214,7 @@ def note_event(e: dict, turn: Turn) -> None:
     if kind == "approval":
         turn.taps.append(e.get("summary", ""))
     elif kind == "error":
-        turn.errors.append(str(e.get("text") or e.get("error") or e))
+        turn.errors.append(e.get("message", ""))
     elif kind == "done":
         turn.text = e.get("text", "")
 
@@ -307,12 +312,12 @@ def cmd_show(api: Api, thread: str, limit: int | None, as_json: bool, out: TextI
 
 # ── the entry point odie.cli calls ──
 
-def run(inst: Install, environ: Mapping[str, str], args: Any, out: TextIO = sys.stdout, err: TextIO = sys.stderr,
+def run(inst: Install, args: Any, out: TextIO = sys.stdout, err: TextIO = sys.stderr,
         stdin: TextIO = sys.stdin, api: Api | None = None) -> int:
     """odie chat / threads / show. A refused key says how to pair again; any other failure says what went wrong."""
     try:
         if api is None:
-            api = Api(inst.api, key_for(inst, environ, err))
+            api = Api(inst.api, key_for(inst, err))
         if args.command == "chat":
             mode = "text"
             if args.json:

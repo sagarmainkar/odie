@@ -1322,7 +1322,7 @@ def main(argv: list[str] | None = None, environ: Mapping[str, str] | None = None
         return cmd_write_command(inst, environ)
     if args.command in ("chat", "threads", "show"):
         from odie import cli_chat
-        return cli_chat.run(inst, environ, args)
+        return cli_chat.run(inst, args)
     parser().print_help()
     return 0
 

@@ -2646,7 +2646,9 @@ async def devices_remove(device_id: int, request: Request, confirm: bool = False
     known = devices.list_devices(store)
     if not any(d["id"] == device_id for d in known):
         raise HTTPException(404, "No such device.")
-    if len(known) == 1 and devices.pairing_on(store) and not confirm:
+    browsers = [d for d in known if not devices.is_terminal(d)]  # the terminal can't open the app, so it doesn't count
+    removing_last_browser = len(browsers) == 1 and browsers[0]["id"] == device_id
+    if removing_last_browser and devices.pairing_on(store) and not confirm:
         raise HTTPException(409, "This is the last paired device. Without it, only the recovery passcode lets a browser in.")
     devices.remove_device(store, device_id)
     devices.offer_setup(store)

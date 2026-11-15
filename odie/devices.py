@@ -25,6 +25,7 @@ LOCK_AFTER = 5
 LOCK_FOR = 10 * 60
 EXEMPT = ("/api/health", "/api/pair/")
 PRIVATE = {"detail": "This Odie is private.", "pair": True}
+TERMINAL_NAME = "Terminal (odie chat)"  # the device the odie command pairs as (add_terminal)
 _ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"  # no 0/O or 1/I to misread
 _PAIRING, _PASSCODE, _TRIES = "pairing", "pairing_passcode", "pairing_tries"
 
@@ -90,7 +91,10 @@ def set_pairing(store, on: bool) -> None:
 
 # ── devices ──
 def _any_device(store) -> bool:
-    return store.one("select 1 from devices limit 1") is not None
+    """Whether a browser is paired. The terminal (odie chat) doesn't count: it can't open the app, so a setup link
+    still works and a new one is still offered after it.
+      no devices -> False;  only "Terminal (odie chat)" -> False;  a phone -> True"""
+    return store.one("select 1 from devices where name<>? limit 1", (TERMINAL_NAME,)) is not None
 
 
 def name_from(user_agent: str | None) -> str:
@@ -118,17 +122,35 @@ def add_device(store, name: str) -> str:
     return key
 
 
-TERMINAL_NAME = "Terminal (odie chat)"
-
-
 def add_terminal(store) -> str:
     """Pairs the odie command on this Mac (odie chat, odie threads, odie show) and returns its key. Unlike add_device it
-    leaves a setup link alone: the phone may not be paired yet. It shows in Settings → Devices like any device, and
-    removing it there cuts the terminal off."""
+    leaves a setup link alone: the phone may not be paired yet. It shows in Settings → Devices like any device. Its
+    key reaches only the routes terminal_may allows."""
     key = secrets.token_urlsafe(32)
     t = now()
     store.execute("insert into devices(name,key_hash,created_at,last_seen_at) values(?,?,?,?)", (TERMINAL_NAME, _sha(key), t, t))
     return key
+
+
+def is_terminal(device: dict | None) -> bool:
+    """Whether a paired device is the odie command: {"name": "Terminal (odie chat)"} -> True; an iPhone -> False."""
+    return device is not None and device.get("name") == TERMINAL_NAME
+
+
+def terminal_may(method: str, path: str) -> bool:
+    """Whether the terminal's key may make this call: chatting and reading threads, nothing else. So an agent holding
+    the key can't approve its own card, change the approvals mode, or touch pairing.
+      POST /api/chat -> True;  POST /api/chat/new -> True;  GET /api/threads -> True;
+      GET /api/threads/chat-2026-11-15/history -> True;  POST /api/approvals/7/decide -> False;
+      POST /api/threads/chat-2026-11-15/pin -> False;  PUT /api/approvals/mode -> False"""
+    if method == "POST":
+        return path in ("/api/chat", "/api/chat/new")
+    if method != "GET":
+        return False
+    if path == "/api/threads":
+        return True
+    parts = path.split("/")  # "", "api", "threads", "<id>", "history"
+    return len(parts) == 5 and parts[2] == "threads" and parts[4] == "history"
 
 
 def device_for(store, key: str | None) -> dict | None:
