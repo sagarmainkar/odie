@@ -946,3 +946,17 @@ async def test_a_notes_only_bot_is_never_asked_to_work_past(world):
     await worker.ask_to_work_past(store, chat, job, bots.get(store, "journal"))
     assert asks.open_for(store) == [] and chat.posts == []
     assert worker.reaches_out(bots.get(store, "chief")) and not worker.reaches_out(bots.get(store, "journal"))
+
+
+async def test_a_restart_tells_a_conversations_turn_there_not_in_odies_chat(world):
+    from odie.workers import convs
+    store, chat = world
+    conv = convs.make(store, "chief")
+    convs.add(store, conv, "user", "what are people using?")
+    job = jobs.create(store, "bot", "x", "y", None, bots.folder_of("chief"), 60, bot="chief", conv_id=conv)
+    store.execute("update jobs set status='running' where id=?", (job.id,))
+    await router.recover()
+    assert chat.posts == []  # nothing in Odie's chat ("❌ Hi didn't finish", 15 Nov)
+    last = convs.messages(store, conv)[-1]
+    assert last["role"] == "bot" and last["text"].startswith("I was cut off (Odie restarted)")
+    assert convs.running_job(store, conv) is None  # the user can send again at once

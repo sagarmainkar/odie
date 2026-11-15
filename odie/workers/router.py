@@ -207,9 +207,10 @@ async def fail(job_id: str, why: str) -> None:
     if row is None:
         return
     jobs.ended(store, job_id, "failed", error=why)
-    await hooks["runner"].post_message(f"❌ {row['title']} didn't finish ({job_id}): {why}. Say \"retry {job_id}\" to start it again.",
-                                       row["session_id"], kind="job")
-    worker.needs_you_card(store, jobs.from_row(row), why)
+    job = jobs.from_row(row)
+    await tell_unfinished(store, job, why)
+    if job.session_id:
+        worker.needs_you_card(store, job, why)
 
 
 def retry(job_id: str) -> Job | None:
@@ -227,6 +228,22 @@ def retry(job_id: str) -> Job | None:
     job = jobs.from_row(jobs.get(store, job_id))
     launch(job)
     return job
+
+
+async def tell_unfinished(store: Store, job: Job, why: str) -> None:
+    """A job cut off (a restart, the watchdog) is told where it was asked: in its bot's conversation as the bot's own
+    message, with how to go on; in the chat it came from with its Retry line. A conversation-only job never posts into
+    Odie's chat (it once did, as "❌ Hi didn't finish", on 15 Nov).
+      a chief's turn in its conversation, restart -> "I was cut off (Odie restarted)… Send your message again …"
+    """
+    if job.conv_id:
+        from odie.workers import convs
+        convs.add(store, job.conv_id, "bot", f"I was cut off ({why}) before I could answer. Send your message again, "
+                                             "or just say \"retry\", and I'll start over.", job_id=job.id)
+        await convs.publish(hooks["runner"], job)
+    if job.session_id:
+        await hooks["runner"].post_message(f"❌ {job.title} didn't finish ({job.id}): {why}. Say \"retry {job.id}\" to start "
+                                           "it again.", job.session_id, kind="job")
 
 
 async def recover() -> list[str]:
@@ -248,8 +265,7 @@ async def recover() -> list[str]:
             lines.append(f"{job.id}: reporter launched again")
             continue
         jobs.ended(store, job.id, "failed", error="Odie restarted")
-        await hooks["runner"].post_message(f"❌ {job.title} didn't finish ({job.id}): Odie restarted. Say \"retry {job.id}\" to start it again.",
-                                           job.session_id, kind="job")
+        await tell_unfinished(store, job, "Odie restarted")
         lines.append(f"{job.id}: cut off by the restart")
     for line in lines:
         log.info("workers: %s", line)
