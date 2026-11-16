@@ -66,33 +66,12 @@ def is_smart(store) -> bool:
     return mode(store) == SMART
 
 
-# What a tool's result puts into the chat that someone else wrote: mail and messages (odie.agent.confidential labels).
-_OUTSIDE_WORDS = frozenset({"your mail", "your messages"})
-
-
-def mail_read_this_turn(store, session_id: str | None) -> bool:
-    """Whether the model has read mail or messages since the user's latest message in this chat, which is when words
-    someone else wrote could be steering it. In Smart that turn asks again. Judged from the tools called this turn
-    (the audit log's tool_call rows, labelled by odie.agent.confidential) and from any mail_seen row an add-on wrote:
-    gmail_find_email this turn -> True; GMAIL_FETCH_EMAILS this turn -> True; mail read last turn -> False;
-    only web_search this turn -> False; no chat (session_id None) -> False."""
-    if not session_id:
-        return False
-    from odie.agent.confidential import label_for
-    called = store.tools_called_this_turn(session_id)
-    read_outside_words = any(label_for(name) in _OUTSIDE_WORDS for name in called)
-    if read_outside_words:
-        return True
-    seen = store.recent_mail_seen(session_id)
-    return any(m.get("turn") == "current" for m in seen)
-
-
 def runs_free(store, session_id: str | None) -> bool:
-    """Whether routine work in this chat runs without a tap right now: Smart, and no mail read since the user's
-    latest message. Careful -> False; Smart, no mail this turn -> True; Smart, a mail opened this turn -> False."""
-    if not is_smart(store):
-        return False
-    return not mail_read_this_turn(store, session_id)
+    """Whether routine work in this chat runs without a tap right now: Smart. A mail read this turn no longer turns
+    the turn Careful (16 Nov 2026: the user found it asked for every step after reading a mail); the always-ask rules
+    (installs, deletes, sends, payments, secrets) still ask on their own. Careful -> False; Smart -> True; Smart, a
+    mail opened this turn -> True."""
+    return is_smart(store)
 
 
 def asks_by_name(name: str) -> bool:
@@ -123,8 +102,7 @@ hooks: dict = {}
 def plain_write_asks(tool_context=None, **_) -> bool:
     """ADK's require_confirmation for a plain local write such as mac_calendar_add or mac_reminder_add (ADK calls it
     with the tool's own arguments, which it ignores, and the tool_context, which names the chat). It reads the mode
-    on every call from the app's store: Careful -> True (the card); Smart -> False (it runs); Smart but a mail was
-    read this turn -> True; no store set yet (a test, a tool run outside the app) -> True."""
+    on every call from the app's store: Careful -> True (the card); Smart -> False (it runs); no store set yet (a test, a tool run outside the app) -> True."""
     store = hooks.get("store")
     if store is None:
         return True
@@ -139,6 +117,6 @@ def context_line(store) -> str:
     ask first)"."""
     if is_smart(store):
         return ("Approvals: smart (commands and app tools run without a tap; installs, deletes outside Odie's folders, "
-                "sends, payments and secrets still ask, and so does anything right after you read a mail; where a rule "
-                "or a skill says a tool asks first, that now means only those)")
+                "sends, payments and secrets still ask; where a rule or a skill says a tool asks first, that now means "
+                "only those)")
     return "Approvals: careful (changes ask first)"

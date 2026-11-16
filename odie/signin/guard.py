@@ -142,24 +142,24 @@ def tab_of(tool_context) -> str:
 
 
 # The *_needs_tap predicates below answer one question each: should this tool call wait for the user's tap?
-# "Private chat" means: in this chat turn Odie has read a page where the user is signed in (turn.private_sites()), or
-# something of the user's own, mail, notes, memory (turn.read_sources(): odie.agent.confidential).
+# "Private chat" means: in this chat turn Odie has read a page where the user is signed in (turn.private_sites()).
+# Reading the user's own mail, notes, memory or messages no longer counts (16 Nov 2026: the user found it blocked
+# ordinary work, such as handing a PR review to a job after reading GitHub's mail about it). Sends, payments,
+# installs and secrets still ask on their own rules.
 
 
 def chat_is_private(store) -> bool:
-    """Whether words leaving this chat could carry something of the user's: it read a signed-in page (with signed-in
-    browsing on), or it read the user's mail, notes, memory or messages. Example: the chat read your amazon.in orders
-    -> True; it fetched a mail -> True (whatever the browsing switch says); it read a public page and nothing else ->
-    False; outside a chat turn (a background check) -> False."""
+    """Whether words leaving this chat could carry what a signed-in page showed: it read one, with signed-in browsing
+    on. Example: the chat read your amazon.in orders -> True; it fetched a mail -> False (mail no longer counts); it
+    read a public page and nothing else -> False; outside a chat turn (a background check) -> False."""
     read_a_signed_in_page = bool(turn.private_sites()) and _on(store)
-    read_the_users_own = bool(turn.read_sources())
-    return read_a_signed_in_page or read_the_users_own
+    return read_a_signed_in_page
 
 
 def what_was_read() -> str:
-    """How the card names what the chat read: "your signed-in amazon.in", "your mail", "your signed-in amazon.in and
-    your mail"; nothing read -> "something of yours"."""
-    parts = [f"your signed-in {site}" for site in sorted(turn.private_sites())] + sorted(turn.read_sources())
+    """How the card names what the chat read: "your signed-in amazon.in", "your signed-in amazon.in and your signed-in
+    flipkart.com"; nothing read -> "something of yours"."""
+    parts = [f"your signed-in {site}" for site in sorted(turn.private_sites())]
     if not parts:
         return "something of yours"
     if len(parts) == 1:

@@ -125,7 +125,7 @@ def guard_for(store: Store, job: Job, runner=None):
     - a bot's call the chat would ask about (needs_users_tap: "Place order" on a signed-in site) -> the job waits for
       the user's tap (odie.workers.asks); yes -> runs; no, or no answer in 15 minutes -> refused, "the user said no".
     - any other tool -> runs."""
-    from odie.agent.shell_grant import always_ask, safe_places
+    from odie.agent.shell_grant import always_ask, safe_places, scratch_places
 
     def guard(tool, args, tool_context):
         if tool.name.startswith("browser_") and tab_is_held(tool_context):
@@ -141,7 +141,8 @@ def guard_for(store: Store, job: Job, runner=None):
         if not args.get("cwd"):
             args["cwd"] = str(job.folder)
         places = (*safe_places(store), str(job.folder))
-        why = always_ask(str(args.get("command") or ""), safe_dirs=places, cwd=args.get("cwd"))
+        scratch = (*scratch_places(), str(job.folder))
+        why = always_ask(str(args.get("command") or ""), safe_dirs=places, cwd=args.get("cwd"), scratch_dirs=scratch)
         if why is None:
             return None
         jobs.record_action(store, job.id, tool.name, args, refused=why)
@@ -199,25 +200,15 @@ async def ask_users_tap(store: Store, job: Job, runner, tool, args: dict, tool_c
 
 
 def after_for(store: Store, job: Job):
-    """after_tool_callback: every call that ran goes on the record with the size of its answer, and a call that read
-    something of the user's own (a note, a photo: odie.agent.confidential) marks the run as having read it, so its
-    later web steps ask, as the chat's do. A call the guard refused is already on the record: nothing more.
-      search_everything -> recorded, "your notes" read;  web_search -> recorded only"""
-    from odie.agent import confidential, turn
+    """after_tool_callback: every call that ran goes on the record with the size of its answer. Reading the user's
+    own notes, photos or mail no longer marks the run private (16 Nov 2026); a signed-in page still does, in the
+    browser's own guard. A call the guard refused is already on the record: nothing more.
+      search_everything -> recorded;  web_search -> recorded"""
 
     def after(tool, args, tool_context, tool_response):
         if isinstance(args, dict) and args.pop(REFUSED, None):
             return
         jobs.record_action(store, job.id, tool.name, args, result_chars=len(json.dumps(tool_response, default=str)))
-        exposed = confidential.label_for(tool.name)
-        if exposed is not None:
-            turn.mark_read(exposed)
-            # Kept at once, not only when the run ends: a run stopped or cut off still leaves its job and its bot
-            # (its notes may now hold what it read) marked.
-            from odie.workers import privacy
-            privacy.carry(store, job.id, set(), {exposed})
-            if job.bot:
-                privacy.carry(store, privacy.bot_key(job.bot), set(), {exposed})
     return after
 
 
@@ -422,11 +413,11 @@ def reaches_out(bot) -> bool:
 
 
 async def ask_to_work_past(store: Store, runner, job: Job, bot) -> None:
-    """A bot's job that starts private (its chat read your memory, mail or a signed-in page): rather than a tap on
+    """A bot's job that starts private (its chat read a signed-in page): rather than a tap on
     every search, one tap at the start. Allow -> those marks no longer make this job's steps ask (privacy.clear), nor
     its teammates', who start as private as the chief is; Deny or no answer -> every step asks as before. A teammate,
     a job that starts with nothing private, or one already cleared -> no question.
-      "@chief …" from a chat that looked at your memory -> "Let chief work on 'Goa' with the web? …" -> Allow -> runs"""
+      "@chief …" from a chat that read your amazon.in orders -> "Let chief work on 'Goa' with the web? …" -> Allow -> runs"""
     from odie.workers import asks, privacy
     if job.parent_id:
         return

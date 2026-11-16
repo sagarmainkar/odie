@@ -561,7 +561,7 @@ async def test_a_bot_asked_from_a_private_chat_starts_private(world):
     await answer_when_asked(store, "no")
     await asyncio.wait_for(router._tasks[got["job_id"]], 5)
     sites, reads, _ = Team.turns["researcher"][0]
-    assert sites == {"amazon.in"} and reads == {"your mail"}  # Deny: its web steps ask, as the chat's do
+    assert sites == {"amazon.in"} and reads == set()  # Deny: its web steps ask (the signed-in page); mail no longer counts
     assert guard.private_of(store, "bot:researcher") == {"amazon.in"}  # and its notes stay private for later jobs
 
 
@@ -580,13 +580,13 @@ async def test_one_allow_at_the_start_lets_the_whole_team_work(world):
     from odie.signin import guard
     store, _ = world
     bots.make(store, "researcher", "finds", "", ["web"])
-    guard.remember_read(store, "chat-1", "your memory")
+    guard.remember(store, "chat-1", "amazon.in")
     Team.scripts = {"chief": [("ask_bots", {"asks": [{"bot": "researcher", "brief": "find it"}]}),
                               ("report", {"outcome": "ready", "text": "ok"})],
                     "researcher": [("report", {"outcome": "ready", "text": "found"})]}
-    job = router.start_bot("chief", "Goa", "North or South Goa?", "chat-1", private=(set(), {"your memory"}))
+    job = router.start_bot("chief", "Goa", "North or South Goa?", "chat-1", private=({"amazon.in"}, set()))
     asked = await answer_when_asked(store, "yes")
-    assert asked["text"].startswith("Let chief work on 'Goa' with the web? This chat read your memory")
+    assert asked["text"].startswith("Let chief work on 'Goa' with the web? This chat read your signed-in amazon.in")
     await asyncio.wait_for(router._tasks[job.id], 5)
     assert Team.turns["chief"][0][:2] == (set(), set())
     assert Team.turns["researcher"][0][:2] == (set(), set())  # the teammate starts as private as the chief: cleared
@@ -600,19 +600,28 @@ def test_what_words():
     assert privacy.what_words({"a.in"}, {"your mail", "your notes"}) == "your signed-in a.in, your mail and your notes"
 
 
-async def test_a_plain_worker_is_refused_in_a_private_chat(world):
+async def test_a_plain_worker_is_refused_only_after_a_signed_in_page(world, monkeypatch):
+    """A chat that read mail hands a job off (16 Nov 2026: the PR review); one that read a signed-in page doesn't."""
+    from odie.agent import turn
     from odie.signin import guard
     from odie.workers.tools import make_worker_tools
     store, _ = world
-    guard.remember_read(store, "chat-1", "your mail")
-    from odie.agent import turn
-    token = turn.READ.set({"your mail"})
+    monkeypatch.setattr(guard, "_on", lambda store: True)
+    tools = {t.name: t for t in make_worker_tools(store)}
+    token = turn.PRIVATE.set({"amazon.in"})
     try:
-        tools = {t.name: t for t in make_worker_tools(store)}
         got = await tools["start_job"].func(title="x", brief="y", tool_context=Ctx())
     finally:
+        turn.PRIVATE.reset(token)
+    assert "signed-in page" in got["error"] and jobs.recent(store, 5) == []
+    from types import SimpleNamespace
+    monkeypatch.setattr(router, "start", lambda *a, **k: SimpleNamespace(id="job-1", folder="/tmp/x", repeats=False))
+    token = turn.READ.set({"your mail"})
+    try:
+        got = await tools["start_job"].func(title="Review PR 12", brief="run the checks", tool_context=Ctx())
+    finally:
         turn.READ.reset(token)
-    assert "private" in got["error"] and jobs.recent(store, 5) == []
+    assert got["status"] == "started"
 
 
 async def test_a_browser_bots_brief_is_not_the_users_words(world, monkeypatch):
@@ -922,19 +931,16 @@ def test_the_notes_power_gives_the_notes_and_photos_search(world):
     assert bots.clean_powers(["notes", "web"]) == ["web", "notes"]
 
 
-def test_reading_a_note_marks_the_run_so_its_web_steps_ask(world):
-    from odie.agent import turn
+def test_reading_a_note_is_recorded_and_marks_nothing(world):
+    from odie.workers import privacy
     store, _ = world
     job = a_bot_job(store, "journal")
     after = worker.after_for(store, job)
-    token = turn.READ.set(set())
-    try:
-        after(Asking("search_everything", False), {"query": "goa"}, None, "Goa trip.md: …")
-        after(Asking("web_search", False), {"query": "x"}, None, "results")
-        assert turn.read_sources() == {"your notes"}
-    finally:
-        turn.READ.reset(token)
+    after(Asking("search_everything", False), {"query": "goa"}, None, "Goa trip.md: …")
+    after(Asking("web_search", False), {"query": "x"}, None, "results")
     assert [a["tool"] for a in jobs.actions(store, job.id)] == ["search_everything", "web_search"]
+    assert privacy.marks_of(store, job.id) == (set(), set())
+    assert privacy.marks_of(store, privacy.bot_key("journal")) == (set(), set())
 
 
 async def test_a_notes_only_bot_is_never_asked_to_work_past(world):
@@ -1313,25 +1319,11 @@ async def test_a_routine_made_from_a_private_chat_carries_its_privacy(world):
     from odie.workers import privacy, routines
     from odie.workers.tools import make_worker_tools
     store, _ = world
-    guard.remember_read(store, "chat-1", "your mail")
+    guard.remember(store, "chat-1", "amazon.in")
     tools = {t.name: t for t in make_worker_tools(store)}
     got = await tools["make_routine"].func(bot="chief", title="x", request="y", every_hours=2, tool_context=Ctx())
     conv = routines.get(store, got["routine"])["conv_id"]
-    assert privacy.marks_of(store, conv) == (set(), {"your mail"})
-
-
-def test_a_read_is_kept_at_once_for_the_job_and_the_bot(world):
-    from odie.agent import turn
-    from odie.workers import privacy
-    store, _ = world
-    job = a_bot_job(store, "journal")
-    token = turn.READ.set(set())
-    try:
-        worker.after_for(store, job)(Asking("read_note", False), {"note": "x"}, None, "text")
-    finally:
-        turn.READ.reset(token)
-    assert privacy.marks_of(store, job.id)[1] == {"your notes"}
-    assert privacy.marks_of(store, privacy.bot_key("journal"))[1] == {"your notes"}
+    assert privacy.marks_of(store, conv) == ({"amazon.in"}, set())
 
 
 def test_the_watchdog_leaves_a_bot_alone_while_the_user_holds_its_page(world, monkeypatch):

@@ -48,7 +48,7 @@ def team_card(job_id: str, bot_name: str) -> dict:
     return {k: made[k] for k in ("id", "kind", "title")}
 
 
-PRIVATE_CHAT = ("This chat has read something private (a signed-in page, your mail or notes), and a background Worker "
+PRIVATE_CHAT = ("This chat has read a signed-in page, and a background Worker "
                 "has nobody to ask before it searches: start a new chat for it, or ask a bot (ask_bot), whose steps "
                 "wait for your tap.")
 
@@ -73,7 +73,7 @@ def make_worker_tools(store: Store) -> list[FunctionTool]:
                         condition: str = "", tool_context: ToolContext = None) -> dict:
         """Hand a long job to a background Worker and answer the user now. A job is: code to write and run, a test to run, a check that takes more than one shell command, anything that repeats, or anything that would take you over a minute. Coding, testing, a system check, a report that takes digging. One read or one command: do it here yourself, as before; a question (today's market, a sum, a note, a picture): answer here. If unsure, start the job. The Worker runs alone with the shell, files and the web, never asks the user anything, and posts its report into this chat when done or stuck. title: a few words the user will recognise. brief: everything the Worker needs, in full: the goal, where things are, what done looks like, what to leave alone. The Worker has a folder of its own for what it makes: name no paths for that unless the user did. every_minutes: for something to check again and again ("track X and report every hour" -> 60): the same Worker runs that often and posts a report each time, until `until` (a local date-time like 2026-11-04T18:00; left out: 24 hours) or stop_job. notify, for a repeating check: "always" (every run posts), "change" (the first run, then only when the facts changed: an order's status, a score), or "condition" (only when `condition` holds: "price below 3000"; put the condition in the brief too). Tell the user it started and that the result will come here."""
         from odie.signin import guard
-        if guard.query_needs_tap(store):  # a plain Worker has no tap: what this chat read can't go with it
+        if guard.query_needs_tap(store):  # a plain Worker has no tap: a signed-in page this chat read can't go with it
             return {"error": PRIVATE_CHAT}
         until_at = until_in_users_time(until)
         job = router.start("task", title.strip()[:80] or "Job", brief.strip(), session_id_of(tool_context),

@@ -1,7 +1,6 @@
-"""What a tool result exposes: the user's own mail, notes, memory or messages, read into the chat's context. Once a
-chat holds them, anything that sends words to the web (a search, a fetch, another site) asks first (odie.signin.guard),
-the way it does after a signed-in page: the words a model picks for a search can carry what it just read, and an
-instruction hidden in a mail is written to make it do exactly that."""
+"""What a tool result exposes: the user's own mail, notes, memory or messages, read into the chat's context. The label
+names it on approval cards and in the turn's record. Since 16 Nov 2026 it no longer makes the chat's searches, fetches
+or job handoffs ask (odie.signin.guard): only a signed-in page does."""
 from __future__ import annotations
 
 MAIL_WORDS = ("mail", "inbox", "imap", "outlook", "thread", "watch_item")

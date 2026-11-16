@@ -102,7 +102,8 @@ def test_the_guard_puts_the_shell_in_the_jobs_folder_and_refuses_what_the_pass_w
     assert guard(Tool("run_shell"), args, None) is None
     assert args["cwd"] == str(job.folder)  # the Worker's commands start in its own folder
     assert guard(Tool("run_shell"), {"command": "echo x > notes.txt", "cwd": str(job.folder)}, None) is None  # its folder is a safe place
-    bad = {"command": "rm old.txt", "cwd": str(job.folder)}
+    assert guard(Tool("run_shell"), {"command": "rm old.txt", "cwd": str(job.folder)}, None) is None  # its own scratch
+    bad = {"command": "rm ~/old.txt", "cwd": str(job.folder)}
     refused = guard(Tool("run_shell"), bad, None)
     assert refused == {"error": "Not run: it deletes or stops something. Write files with write_file; find another way, or report it as blocked."}
     assert guard(Tool("web_search"), {"query": "tides"}, None) is None
