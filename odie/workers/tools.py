@@ -137,15 +137,13 @@ def make_worker_tools(store: Store) -> list[FunctionTool]:
             out["repeats"] = f"every {job.every_minutes} minutes until {job.until_at}, telling you: {job.notify}"
         return out
 
-    async def make_routine(bot: str, title: str, request: str, at: str = "", days: list[int] | None = None,
-                           every_hours: int = 0, tool_context: ToolContext = None) -> dict:
-        """Set up a bot to do something by itself on a schedule, for good (until the user pauses or deletes it): "every morning at 8, @researcher …", "every weekday at 9:15 give me a market note", "every 3 hours check …". bot: its name. title: a few words ("Morning market note"). request: what to do each time, in full (it sees nothing else of this chat; each run also sees its own earlier runs). at: the local time, "08:00", for a daily routine; days: weekdays 0=Mon … 6=Sun (left out: every day; weekdays [0,1,2,3,4]). every_hours: instead of at, every N hours. Each run answers in the routine's own conversation with a push. For a short watch that should end ("until the match ends", "for the next 2 hours") use ask_bot with every_minutes instead."""
+    async def make_routine(bot: str, title: str, request: str, when: str, tool_context: ToolContext = None) -> dict:
+        """Set up a bot to do something by itself on a schedule (until the user pauses or deletes it, or the words end it): "every morning at 8, @researcher …", "every weekday at 9:15 give me a market note", "every 3 hours check …". bot: its name. title: a few words ("Morning market note"). request: what to do each time, in full (it sees nothing else of this chat; each run also sees its own earlier runs). when: the user's timing in plain words, as they said it: "weekdays at 9:15 and 6pm", "every 30 minutes from 9 to 6", "every 2 hours on weekends", "1st and 15th at 9", "last Friday of the month at 5pm", "tomorrow 3pm", "every day at 8 until 30 Nov", "every day at 8 for 2 weeks". If the answer is an error, it says what wasn't understood: say it another way. Each run answers in the routine's own conversation with a push; tell the user when it runs (the "when" in the answer) and the next run. For a short watch that should end within hours ("until the match ends") use ask_bot with every_minutes instead."""
         from odie.workers import bots, routines
         name = bots.clean_name(bot)
         if not name or bots.get(store, name) is None:
             return {"error": f"There's no bot called {bot}."}
-        schedule = {"kind": "every", "hours": every_hours} if every_hours else {"kind": "daily", "at": at, "days": days}
-        got = routines.make(store, name, title, request, schedule)
+        got = routines.make(store, name, title, request, words=when)
         if isinstance(got, str):
             return {"error": got}
         from odie.workers import privacy  # what this chat read goes with the request, into every run

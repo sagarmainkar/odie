@@ -9,7 +9,7 @@ Settings → Bots. A bot the user edited is theirs: the chief can use it but no 
 What a bot may do is fixed by its powers, never by what it reads:
 - web: web search and fetch
 - files: write_file and read_file in its folder
-- notes: search the user's notes and photos by meaning, read a note (odie.vault.tools); once it has, its web steps ask
+- notes: search the user's notes and photos by meaning, read a note (odie.vault.tools)
 - shell: the shell, with the pass's always-ask rules refused (as for every Worker)
 - browser: Odie's browser, signed in where the user is; every step the chat would ask about waits for the user's tap,
   and a sign-in waits for the user in the live view (odie.workers.asks)
@@ -277,6 +277,34 @@ def folder_of(name: str) -> Path:
     folder = workspace() / "bots" / name
     folder.mkdir(parents=True, exist_ok=True)
     return folder
+
+
+NOTES_MAX = 20000  # what the user may save into a bot's notes.md from its details
+
+
+def notes_of(name: str) -> dict:
+    """A bot's memory for its details: the text of its notes.md, how many things it holds (its bullet points; with
+    none, its paragraphs) and when it last changed. 12 bullets -> {"things": 12, …}; no file -> {"text": "",
+    "things": 0, "updated_at": None}."""
+    from datetime import UTC, datetime
+    notes = folder_of(name) / "notes.md"
+    if not notes.is_file():
+        return {"text": "", "things": 0, "updated_at": None}
+    text = notes.read_text(errors="replace")
+    lines = [line.strip() for line in text.splitlines()]
+    bullets = [line for line in lines if re.match(r"([-*+]|\d+[.)])\s+\S", line)]
+    things = len(bullets)
+    if not things:
+        paragraphs = [p for p in re.split(r"\n\s*\n", text) if p.strip() and not p.strip().startswith("#")]
+        things = len(paragraphs)
+    changed = datetime.fromtimestamp(notes.stat().st_mtime, UTC).isoformat(timespec="seconds")
+    return {"text": text, "things": things, "updated_at": changed}
+
+
+def save_notes(name: str, text: str) -> None:
+    """The user's own edit of a bot's memory, from its details: notes.md written whole (at most NOTES_MAX)."""
+    notes = folder_of(name) / "notes.md"
+    notes.write_text(text[:NOTES_MAX].rstrip() + "\n" if text.strip() else "")
 
 
 def line_for(bot: Bot) -> str:

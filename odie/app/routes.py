@@ -302,21 +302,42 @@ async def bots_list(request: Request) -> dict[str, Any]:
 
 @router.get("/bots/{name}/notes")
 async def bot_notes(name: str, request: Request) -> dict[str, Any]:
-    """A bot's memory notes (notes.md in its folder), for its details: the first 8,000 characters; none yet -> ""."""
+    """A bot's memory (notes.md in its folder), for its details: the text, how many things it holds and when it last
+    changed; none yet -> {"text": "", "things": 0, "updated_at": None}."""
     _jobs_on()
     from odie.workers import bots
     if bots.get(request.app.state.store, name) is None:
         raise HTTPException(404, "no such bot")
-    notes = bots.folder_of(name) / "notes.md"
-    text = notes.read_text(errors="replace")[:8000] if notes.is_file() else ""
-    return {"text": text}
+    return bots.notes_of(name)
+
+
+class NotesIn(BaseModel):
+    text: str = Field(max_length=20000)
+
+
+@router.put("/bots/{name}/notes")
+async def bot_notes_save(name: str, body: NotesIn, request: Request) -> dict[str, Any]:
+    """The user edits what a bot remembers (fixes a wrong fact, removes one): notes.md is written whole."""
+    _jobs_on()
+    from odie.workers import bots
+    store = request.app.state.store
+    if bots.get(store, name) is None:
+        raise HTTPException(404, "no such bot")
+    bots.save_notes(name, body.text)
+    store.audit("user", "bot_notes_edited", result_summary=f"{name}: {len(body.text)} characters")
+    return bots.notes_of(name)
 
 
 class RoutineIn(BaseModel):
     title: str | None = Field(default=None, max_length=200)
     brief: str | None = Field(default=None, max_length=4000)
     schedule: dict | None = None
+    when: str | None = Field(default=None, max_length=200)  # the user's words: "weekdays at 9:15 and 6pm"
     paused: bool | None = None
+
+
+class WhenIn(BaseModel):
+    text: str = Field(max_length=200)
 
 
 @router.post("/bots/{name}/look")
@@ -365,11 +386,27 @@ async def bot_routine_make(name: str, body: RoutineIn, request: Request) -> dict
     _jobs_on()
     from odie.workers import routines
     store = request.app.state.store
-    got = routines.make(store, name, body.title or "", body.brief or "", body.schedule or {})
+    got = routines.make(store, name, body.title or "", body.brief or "", body.schedule, words=body.when)
     if isinstance(got, str):
         raise HTTPException(422, got)
     store.audit("user", "routine_made", result_summary=f"{name}: {got['when']}")
     return {"routine": got}
+
+
+@router.post("/routines/when")
+async def routine_when(body: WhenIn) -> dict[str, Any]:
+    """The preview under a routine's When box: the user's words read as a schedule, said back, with its next three
+    runs; or what wasn't understood. "weekdays at 9 and 6pm" -> {"words": "Weekdays at 09:00 and 18:00", "next": [...]}."""
+    _jobs_on()
+    from datetime import UTC, datetime
+
+    from odie.workers import routines, when
+    now = datetime.now(UTC)
+    got = when.parse(body.text, now, routines.tz())
+    if isinstance(got, str):
+        return {"error": got}
+    upcoming = when.next_runs(got, now, routines.tz())
+    return {"schedule": got, "words": when.words(got), "next": [d.isoformat(timespec="seconds") for d in upcoming]}
 
 
 @router.put("/routines/{routine_id}")
@@ -377,7 +414,7 @@ async def routine_edit(routine_id: str, body: RoutineIn, request: Request) -> di
     _jobs_on()
     from odie.workers import routines
     got = routines.edit(request.app.state.store, routine_id, title=body.title, brief=body.brief, schedule=body.schedule,
-                        paused=body.paused)
+                        paused=body.paused, words=body.when)
     if isinstance(got, str):
         raise HTTPException(404 if got.startswith("There's no") else 422, got)
     return {"routine": got}

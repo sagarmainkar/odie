@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getJSON, postJSON } from "../api";
-import { botFromHash, nextWords, type Bot, type Conversation, type ConvMessage, type Routine } from "../bots";
+import { botFromHash, routineState, type Bot, type Conversation, type ConvMessage, type Routine } from "../bots";
 import { useLive } from "../live";
 import { BotDetails } from "../components/BotDetails";
 import { BotDrawer } from "../components/BotDrawer";
@@ -291,7 +291,7 @@ function RoutineStrip({ r, onChange }: { r: Routine; onChange: () => void }) {
   return (
     <div className="glass rounded-[18px] px-3.5 py-2.5 flex flex-col gap-1.5">
       <div className="text-[13.5px] font-semibold">⟳ {r.title}</div>
-      <div className="text-[12.5px] text-muted">{r.when} · {r.paused ? "paused" : `next ${nextWords(r.next_run_at)}`}</div>
+      <div className="text-[12.5px] text-muted">{r.when} · {routineState(r)}</div>
       <div className="flex gap-2">
         <button onClick={() => void act(r.paused ? "resume" : "pause")} className="pill h-8 px-3 text-[12.5px]">{r.paused ? "Resume" : "Pause"}</button>
         <button onClick={() => void act("run")} className="pill h-8 px-3 text-[12.5px]">Run now</button>

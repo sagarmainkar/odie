@@ -915,7 +915,8 @@ async def test_bots_show_in_capabilities_and_notes_are_readable(isolated_setting
     app = create_app(runner=FakeRunner(), store=store)
     async with app.router.lifespan_context(app), httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
         assert "bots" in (await c.get("/api/capabilities")).json()["caps"]
-        assert (await c.get("/api/bots/chief/notes")).json() == {"text": "Prefers Indian shops."}
+        got = (await c.get("/api/bots/chief/notes")).json()
+        assert got["text"] == "Prefers Indian shops." and got["things"] == 1
         assert (await c.get("/api/bots/ghost/notes")).status_code == 404
         monkeypatch.delenv("ODIE_WORKERS")
         assert "bots" not in (await c.get("/api/capabilities")).json()["caps"]
@@ -1166,33 +1167,98 @@ def test_a_reply_the_user_reads_may_draw_blocks_a_teammates_report_doesnt(world)
 # ── routines: bots that run by themselves ────────────────────────────────────
 
 def test_a_schedule_is_cleaned_and_said_in_words():
-    from odie.workers import routines
-    assert routines.clean_schedule({"kind": "daily", "at": "8:30"}) == {"kind": "daily", "at": "08:30", "days": [0, 1, 2, 3, 4, 5, 6]}
-    assert routines.clean_schedule({"kind": "daily", "at": "25:00"}) == "A time like 08:30."
-    assert routines.clean_schedule({"kind": "daily", "at": "08:00", "days": []}) == "Pick at least one day."
-    assert routines.clean_schedule({"kind": "every", "hours": 0}) == "Every 1 to 168 hours."
-    assert routines.clean_schedule({"kind": "weekly"}) == "Say when: daily at a time, or every few hours."
-    assert routines.when_words({"kind": "daily", "at": "08:30", "days": list(range(7))}) == "Every day at 08:30"
-    assert routines.when_words({"kind": "daily", "at": "09:15", "days": [0, 1, 2, 3, 4]}) == "Weekdays at 09:15"
-    assert routines.when_words({"kind": "daily", "at": "07:00", "days": [0, 3]}) == "Mon, Thu at 07:00"
-    assert routines.when_words({"kind": "every", "hours": 1}) == "Every hour"
+    from odie.workers import when
+    every_day = [0, 1, 2, 3, 4, 5, 6]
+    assert when.clean({"kind": "daily", "at": "8:30"}) == {"kind": "daily", "times": ["08:30"], "days": every_day}
+    assert when.clean({"kind": "daily", "times": ["25:00"]}) == "A time like 08:30."
+    assert when.clean({"kind": "daily", "times": ["08:00"], "days": []}) == "Pick at least one day."
+    assert when.clean({"kind": "every", "hours": 3})["minutes"] == 180
+    assert when.clean({"kind": "every", "minutes": 5}) == "Every 15 minutes at the most often."
+    assert when.clean({"kind": "monthly", "times": ["09:00"]}) == "Say which days of the month."
+    assert when.clean({"kind": "weekly"}).startswith("Say when")
+    assert when.words({"kind": "daily", "times": ["08:30"], "days": every_day}) == "Every day at 08:30"
+    assert when.words({"kind": "daily", "times": ["09:15", "18:00"], "days": [0, 1, 2, 3, 4]}) == "Weekdays at 09:15 and 18:00"
+    assert when.words({"kind": "daily", "times": ["07:00"], "days": [0, 3]}) == "Mon, Thu at 07:00"
+    assert when.words(when.clean({"kind": "every", "hours": 1})) == "Every hour"
+
+
+WHEN_NOW_IST = (2026, 11, 16, 10, 0)  # Mon 16 Nov 2026, 10:00 in India
+
+
+@pytest.mark.parametrize("said, words, first", [
+    ("every day at 8", "Every day at 08:00", "Tue 17 Nov 08:00"),
+    ("weekdays at 9:15 and 6pm", "Weekdays at 09:15 and 18:00", "Mon 16 Nov 18:00"),
+    ("mondays and thursdays at 7am", "Mon, Thu at 07:00", "Thu 19 Nov 07:00"),
+    ("every evening at 8", "Every day at 20:00", "Mon 16 Nov 20:00"),
+    ("every 30 minutes", "Every 30 minutes", "Mon 16 Nov 10:30"),
+    ("every 2 hours 9-6 on weekdays", "Every 2 hours from 09:00 to 18:00 on weekdays", "Mon 16 Nov 11:00"),
+    ("hourly", "Every hour", "Mon 16 Nov 11:00"),
+    ("1st and 15th at 9", "Monthly on the 1st and 15th at 09:00", "Tue 01 Dec 09:00"),
+    ("last friday of the month at 5pm", "Monthly on the last Fri at 17:00", "Fri 27 Nov 17:00"),
+    ("last day of the month at 18:00", "Monthly on the last day at 18:00", "Mon 30 Nov 18:00"),
+    ("second monday at noon", "Monthly on the second Mon at 12:00", "Mon 14 Dec 12:00"),
+    ("tomorrow 3pm", "Once on 17 Nov 2026 at 15:00", "Tue 17 Nov 15:00"),
+    ("next friday at 10am", "Once on 20 Nov 2026 at 10:00", "Fri 20 Nov 10:00"),
+    ("every day at 8 until 30 nov", "Every day at 08:00 until 30 Nov 2026", "Tue 17 Nov 08:00"),
+    ("every day at 8 for 2 weeks", "Every day at 08:00 until 30 Nov 2026", "Tue 17 Nov 08:00"),
+    ("weekly on mondays at 9", "Every Mon at 09:00", "Mon 23 Nov 09:00"),
+])
+def test_the_users_words_become_a_schedule_said_back_the_same_way(said, words, first):
+    from datetime import UTC, datetime
+    from zoneinfo import ZoneInfo
+
+    from odie.workers import when
+    ist = ZoneInfo("Asia/Kolkata")
+    now = datetime(*WHEN_NOW_IST, tzinfo=ist).astimezone(UTC)
+    got = when.parse(said, now, ist)
+    assert when.words(got) == words
+    assert when.parse(words, now, ist) == got  # the words read back to the same schedule
+    assert when.next_run(got, now, ist).astimezone(ist).strftime("%a %d %b %H:%M") == first
+
+
+@pytest.mark.parametrize("said, why", [
+    ("every day at 8 except holidays", 'didn\'t follow "except holidays"'),
+    ("every 5 minutes", "Every 15 minutes at the most often."),
+    ("every 2 days at 9", "Every few days isn't something"),
+    ("weekly at 9", "Say which day of the week"),
+    ("every month", "Say which days of the month"),
+    ("today at 9am", "That time has passed."),
+    ("", "Say when it should run."),
+])
+def test_words_it_cant_follow_say_what(said, why):
+    from datetime import UTC, datetime
+    from zoneinfo import ZoneInfo
+
+    from odie.workers import when
+    ist = ZoneInfo("Asia/Kolkata")
+    got = when.parse(said, datetime(*WHEN_NOW_IST, tzinfo=ist).astimezone(UTC), ist)
+    assert isinstance(got, str) and why in got
 
 
 def test_next_run_lands_on_the_right_local_day_and_time():
-    from datetime import UTC, datetime, timedelta
+    from datetime import UTC, datetime
     from zoneinfo import ZoneInfo
 
-    from odie.workers import routines
+    from odie.workers import when
     ist = ZoneInfo("Asia/Kolkata")
-    daily = {"kind": "daily", "at": "08:30", "days": list(range(7))}
-    weekdays = {"kind": "daily", "at": "08:30", "days": [0, 1, 2, 3, 4]}
+    daily = when.clean({"kind": "daily", "times": ["08:30"]})
+    weekdays = when.clean({"kind": "daily", "times": ["08:30"], "days": [0, 1, 2, 3, 4]})
     mon_0800 = datetime(2026, 11, 16, 8, 0, tzinfo=ist).astimezone(UTC)
     mon_0900 = datetime(2026, 11, 16, 9, 0, tzinfo=ist).astimezone(UTC)
     fri_0900 = datetime(2026, 11, 20, 9, 0, tzinfo=ist).astimezone(UTC)
-    assert routines.next_run(daily, mon_0800, ist) == datetime(2026, 11, 16, 8, 30, tzinfo=ist)
-    assert routines.next_run(daily, mon_0900, ist) == datetime(2026, 11, 17, 8, 30, tzinfo=ist)
-    assert routines.next_run(weekdays, fri_0900, ist) == datetime(2026, 11, 23, 8, 30, tzinfo=ist)  # Monday
-    assert routines.next_run({"kind": "every", "hours": 3}, mon_0800, ist) == mon_0800 + timedelta(hours=3)
+    assert when.next_run(daily, mon_0800, ist) == datetime(2026, 11, 16, 8, 30, tzinfo=ist)
+    assert when.next_run(daily, mon_0900, ist) == datetime(2026, 11, 17, 8, 30, tzinfo=ist)
+    assert when.next_run(weekdays, fri_0900, ist) == datetime(2026, 11, 23, 8, 30, tzinfo=ist)  # Monday
+    every_3 = when.clean({"kind": "every", "hours": 3})  # on the clock: 00, 03, 06, 09 …
+    assert when.next_run(every_3, mon_0800, ist) == datetime(2026, 11, 16, 9, 0, tzinfo=ist)
+    window = when.clean({"kind": "every", "minutes": 120, "from": "09:00", "to": "18:00", "days": [0, 1, 2, 3, 4]})
+    fri_1730 = datetime(2026, 11, 20, 17, 30, tzinfo=ist).astimezone(UTC)
+    assert when.next_run(window, fri_1730, ist) == datetime(2026, 11, 23, 9, 0, tzinfo=ist)  # Monday's first
+    once = when.clean({"kind": "once", "at": "2026-11-16T08:30"})
+    assert when.next_run(once, mon_0800, ist) == datetime(2026, 11, 16, 8, 30, tzinfo=ist)
+    assert when.next_run(once, mon_0900, ist) is None
+    ends = when.clean({"kind": "daily", "times": ["08:30"], "until": "2026-11-16"})
+    assert when.next_run(ends, mon_0900, ist) is None
 
 
 async def test_a_routine_runs_when_due_in_its_own_conversation_and_only_once_after_a_sleep(world):
@@ -1203,9 +1269,10 @@ async def test_a_routine_runs_when_due_in_its_own_conversation_and_only_once_aft
     bots.make(store, "markets", "morning market note", "", [])
     made = routines.make(store, "markets", "Morning note", "Tell me what moved in my watchlist.",
                          {"kind": "every", "hours": 3}, now=datetime(2026, 11, 16, 0, 0, tzinfo=UTC))
-    assert made["when"] == "Every 3 hours" and made["next_run_at"] == "2026-11-16T03:00:00+00:00"
+    # on the local clock (IST here): 05:30 now -> 06:00, which is 00:30 UTC
+    assert made["when"] == "Every 3 hours" and made["next_run_at"] == "2026-11-16T00:30:00+00:00"
     assert convs.get(store, made["conv_id"])["origin"] == "routine"
-    assert await routines.tick(store, now=datetime(2026, 11, 16, 2, 0, tzinfo=UTC)) == []  # not yet
+    assert await routines.tick(store, now=datetime(2026, 11, 16, 0, 10, tzinfo=UTC)) == []  # not yet
     Team.scripts = {"markets": [("report", {"outcome": "ready", "text": "Nifty flat; HDFC −2%."})]}
     later = datetime(2026, 11, 16, 9, 0, tzinfo=UTC)  # the Mac slept through two runs
     [line] = await routines.tick(store, now=later)
@@ -1214,7 +1281,7 @@ async def test_a_routine_runs_when_due_in_its_own_conversation_and_only_once_aft
     msgs = convs.messages(store, made["conv_id"])
     assert [m["role"] for m in msgs] == ["note", "note", "bot"] and msgs[-1]["text"] == "Nifty flat; HDFC −2%."
     assert msgs[1]["text"].startswith("⏰ Morning note")
-    assert routines.get(store, made["id"])["next_run_at"] == "2026-11-16T12:00:00+00:00"  # from now: once, not twice
+    assert routines.get(store, made["id"])["next_run_at"] == "2026-11-16T09:30:00+00:00"  # from now: once, not twice
     first_brief = Team.seen["markets"][0].contents[0].parts[0].text
     assert "scheduled run" in first_brief and "Tell me what moved" in first_brief
     assert chat.posts == []
@@ -1226,7 +1293,7 @@ def test_pause_resume_delete_and_a_deleted_bot_takes_its_routines(world):
     from odie.workers import routines
     store, _ = world
     bots.make(store, "markets", "notes", "", [])
-    r = routines.make(store, "markets", "Note", "Do it.", {"kind": "daily", "at": "08:30"})
+    r = routines.make(store, "markets", "Note", "Do it.", words="every day at 8:30")
     assert "no bot" in routines.make(store, "ghost", "x", "y", {"kind": "every", "hours": 2})
     assert "Say what" in routines.make(store, "markets", "x", " ", {"kind": "every", "hours": 2})
     paused = routines.edit(store, r["id"], paused=True)
@@ -1257,6 +1324,14 @@ async def test_the_routine_routes_and_the_chat_tool(isolated_settings, tmp_path,
         rid = made.json()["routine"]["id"]
         assert (await c.post("/api/bots/chief/routines", json={"brief": "x", "schedule": {"kind": "daily", "at": "99"}})).status_code == 422
         assert [r["id"] for r in (await c.get("/api/bots/chief/routines")).json()["routines"]] == [rid]
+        said = (await c.post("/api/routines/when", json={"text": "weekdays at 9 and 6pm"})).json()
+        assert said["words"] == "Weekdays at 09:00 and 18:00" and len(said["next"]) == 3
+        assert "didn't follow" in (await c.post("/api/routines/when", json={"text": "at 9 except holidays"})).json()["error"]
+        by_words = await c.post("/api/bots/chief/routines", json={"brief": "x", "when": "1st of the month at 9"})
+        assert by_words.json()["routine"]["when"] == "Monthly on the 1st at 09:00"
+        moved = await c.put(f"/api/routines/{by_words.json()['routine']['id']}", json={"when": "every 2 hours 9-6"})
+        assert moved.json()["routine"]["when"] == "Every 2 hours from 09:00 to 18:00"
+        await c.delete(f"/api/routines/{by_words.json()['routine']['id']}")
         assert (await c.put(f"/api/routines/{rid}", json={"paused": True})).json()["routine"]["paused"]
         Team.scripts = {"chief": [("report", {"outcome": "ready", "text": "Morning!"})]}
         ran = await c.post(f"/api/routines/{rid}/run")
@@ -1265,9 +1340,11 @@ async def test_the_routine_routes_and_the_chat_tool(isolated_settings, tmp_path,
         assert (await c.delete(f"/api/routines/{rid}")).status_code == 200
         assert (await c.delete(f"/api/routines/{rid}")).status_code == 404
     tools = {t.name: t for t in make_worker_tools(store)}
-    got = await tools["make_routine"].func(bot="chief", title="Market note", request="What moved?", at="09:15", days=[0, 1, 2, 3, 4])
+    got = await tools["make_routine"].func(bot="chief", title="Market note", request="What moved?", when="weekdays at 9:15")
     assert got["when"] == "Weekdays at 09:15"
-    assert "no bot" in (await tools["make_routine"].func(bot="ghost", title="x", request="y", every_hours=2))["error"]
+    assert "no bot" in (await tools["make_routine"].func(bot="ghost", title="x", request="y", when="hourly"))["error"]
+    said = await tools["make_routine"].func(bot="chief", title="x", request="y", when="every day except holidays")
+    assert "didn't follow" in said["error"]
     assert not devices.terminal_may("POST", "/api/routines/rt-1/run")
 
 
@@ -1321,7 +1398,7 @@ async def test_a_routine_made_from_a_private_chat_carries_its_privacy(world):
     store, _ = world
     guard.remember(store, "chat-1", "amazon.in")
     tools = {t.name: t for t in make_worker_tools(store)}
-    got = await tools["make_routine"].func(bot="chief", title="x", request="y", every_hours=2, tool_context=Ctx())
+    got = await tools["make_routine"].func(bot="chief", title="x", request="y", when="every 2 hours", tool_context=Ctx())
     conv = routines.get(store, got["routine"])["conv_id"]
     assert privacy.marks_of(store, conv) == ({"amazon.in"}, set())
 
@@ -1448,3 +1525,46 @@ async def test_stop_from_a_chat_notes_it_delete_and_activity(isolated_settings, 
         jobs.ended(store, kid.id, "failed", error="ran past its budget")
         [act] = (await c.get("/api/bots/researcher/activity")).json()["activity"]
         assert (act["title"], act["conv"], act["conv_bot"], act["error"]) == ("tides", "conv-abc", "chief", "ran past its budget")
+
+
+# ── what a bot remembers (its notes.md) ──────────────────────────────────────
+
+def test_a_bots_memory_is_counted_and_the_user_can_edit_it(world):
+    store, _ = world
+    assert bots.notes_of("chief") == {"text": "", "things": 0, "updated_at": None}
+    notes = bots.folder_of("chief") / "notes.md"
+    notes.write_text("# Chief notes\n\n- Likes short answers.\n- Lives in Pune.\n* Uses DeepSeek.\n")
+    got = bots.notes_of("chief")
+    assert got["things"] == 3 and got["updated_at"]
+    notes.write_text("A paragraph.\n\nAnother one.\n")
+    assert bots.notes_of("chief")["things"] == 2  # no bullets: its paragraphs
+    bots.save_notes("chief", "- Lives in Pune.")
+    assert notes.read_text() == "- Lives in Pune.\n"
+
+
+def test_a_long_memory_asks_the_bot_to_tidy_first_and_notes_are_not_a_diary(world):
+    store, _ = world
+    chief = bots.get(store, "chief")
+    assert team.notes_nudge(chief) == ""
+    (bots.folder_of("chief") / "notes.md").write_text("- x\n" * 1600)
+    assert "6,400 characters" in team.notes_nudge(chief)
+    assert "not a diary" in team.BOT_RULES and "under about 40 lines" in team.BOT_RULES
+
+
+async def test_the_notes_routes_and_the_terminal_key_cant_reach_them(isolated_settings, tmp_path, monkeypatch):
+    from odie import devices
+    from odie.app.main import create_app
+    from tests.test_models import FakeRunner
+    monkeypatch.setenv("ODIE_WORKERS", "1")
+    store = Store(tmp_path / "assistant.db")
+    store.init_schema()
+    jobs.ensure(store)
+    bots.ensure_chief(store)
+    app = create_app(runner=FakeRunner(), store=store)
+    async with app.router.lifespan_context(app), httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+        saved = await c.put("/api/bots/chief/notes", json={"text": "- Likes short answers.\n- Lives in Pune."})
+        assert saved.status_code == 200 and saved.json()["things"] == 2
+        assert (await c.get("/api/bots/chief/notes")).json()["text"].startswith("- Likes short answers.")
+        assert (await c.put("/api/bots/ghost/notes", json={"text": "x"})).status_code == 404
+    assert not devices.terminal_may("PUT", "/api/bots/chief/notes")
+    assert not devices.terminal_may("POST", "/api/routines/when")

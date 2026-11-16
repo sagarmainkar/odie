@@ -16,7 +16,7 @@ export type ModelChoice = { value: string; label: string };
 export const POWER_WORDS: Record<string, string> = {
   web: "Web search and pages",
   files: "Files in its folder",
-  notes: "Your notes and photos (after it reads them, its web steps ask you)",
+  notes: "Your notes and photos (read only)",
   shell: "Run commands (risky ones refused)",
   browser: "Your signed-in browser (risky steps wait for your tap)",
 };
@@ -112,16 +112,19 @@ export function botFromHash(hash: string): { bot: string; conv: string | null } 
   return { bot: m[1], conv: m[2] ?? null };
 }
 
-export type Schedule = { kind: "daily"; at: string; days: number[] } | { kind: "every"; hours: number };
+/** A routine's schedule as the server keeps it (odie.workers.when); the app only shows `when`, its words. */
+export type Schedule = { kind: "daily" | "every" | "monthly" | "once"; [key: string]: unknown };
 export type Routine = { id: string; bot: string; title: string; brief: string; schedule: Schedule; when: string; paused: boolean;
-  conv_id: string; last_run_at: string | null; next_run_at: string | null };
+  finished: boolean; conv_id: string; last_run_at: string | null; next_run_at: string | null };
+/** The preview under the When box: the words read back with the next runs, or what wasn't understood. */
+export type WhenPreview = { words: string; next: string[]; schedule: Schedule } | { error: string };
 export type Activity = { id: string; title: string; status: string; outcome: string | null; started_at: string | null; ended_at: string | null;
   calls: number; conv: string | null; conv_bot?: string; for_chief: boolean; error: string | null };
 
 export const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
-/** When a routine runs next, in words: today -> "today 8:30 AM"; tomorrow -> "tomorrow 8:30 AM"; later -> "Mon 8:30 AM";
- * paused or none -> "paused". */
+/** When a routine runs next, in words: today -> "today 8:30 AM"; tomorrow -> "tomorrow 8:30 AM"; within a week ->
+ * "Mon 8:30 AM"; later -> "1 Dec 8:30 AM"; paused or none -> "paused". */
 export function nextWords(iso: string | null, now: Date = new Date(), locale?: string): string {
   if (!iso) return "paused";
   const t = new Date(iso);
@@ -132,7 +135,17 @@ export function nextWords(iso: string | null, now: Date = new Date(), locale?: s
   const tomorrow = new Date(now);
   tomorrow.setDate(now.getDate() + 1);
   if (day(t) === day(tomorrow)) return `tomorrow ${time}`;
-  return `${t.toLocaleDateString(locale, { weekday: "short" })} ${time}`;
+  const inAWeek = t.getTime() - now.getTime() < 6 * 24 * 3600 * 1000;
+  if (inAWeek) return `${t.toLocaleDateString(locale, { weekday: "short" })} ${time}`;
+  return `${t.toLocaleDateString(locale, { day: "numeric", month: "short" })} ${time}`;
+}
+
+/** A routine's state for its card and strip: paused -> "paused"; no run left (a once that ran, past its until) ->
+ * "finished"; else "next tomorrow 8:30 AM". */
+export function routineState(r: Pick<Routine, "paused" | "finished" | "next_run_at">, now: Date = new Date(), locale?: string): string {
+  if (r.paused) return "paused";
+  if (r.finished || !r.next_run_at) return "finished";
+  return `next ${nextWords(r.next_run_at, now, locale)}`;
 }
 
 /** A finished job's line in Recent work: "done · 12 steps"; failed -> "didn't finish · 3 steps"; for the chief -> "for chief · …". */

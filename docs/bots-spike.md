@@ -133,6 +133,21 @@ Built on Fable's design (`docs/bots-design.md`) and the OpenBot comparison:
 - A per-bot browser profile: every bot shares Odie's one signed-in profile, each in its own tab.
 - Nested teams: a specialist can't ask others.
 
+## 16 Nov: fewer taps, routines in words, a tidy memory
+
+- **Reading mail no longer blocks work.** Reading the user's mail, notes, memory or messages no longer makes a chat or
+  a bot private: job handoff, web searches, a bot's start question and Smart mode carry on (a PR review was blocked
+  by "this chat read your mail"). A signed-in page still counts. Sends, payments, installs and secrets still ask.
+- **Fewer shell cards** (odie/agent/shell_grant.py): deleting scratch files in /tmp or the workspace, `\x` escapes
+  that can't spell a command (sed stripping colours), grep patterns, the project's own `npx` tool, `uvx`/`uv --with`
+  of well-known tools, and code that writes where it runs in a safe place now run free. Last week's false alarms
+  are tests.
+- **Routines in words** (odie/workers/when.py): one When box, "weekdays at 9:15 and 6pm", "every 2 hours 9-6",
+  "1st and 15th at 9", "last Friday at 5pm", "tomorrow 3pm", "… until 30 Nov", read back with the next three runs
+  before saving. The chat's make_routine takes the same words.
+- **What a bot remembers**: folded to "Remembers 12 things · updated today" in its details, opened to read or edit.
+  Bots keep notes.md as lasting facts and preferences, not a diary, and a long one is tidied on the next job.
+
 ## Trying it beside the live Odie
 
 ```sh

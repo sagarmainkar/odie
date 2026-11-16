@@ -1,6 +1,7 @@
 """Routines: a bot that runs by itself on a schedule (spike, Nov 2026), like OpenBot's (a morning market note, a
-daily digest). A routine is a bot, a brief, and when: every day or on chosen weekdays at a time,
-or every few hours. It never ends by itself (a Workers reporter stops after 7 days); the user pauses or deletes it.
+daily digest). A routine is a bot, a brief, and when, said in words (odie.workers.when): "weekdays at 9:15 and 6pm",
+"every 2 hours from 9 to 6", "1st and 15th at 9", "last Friday at 5pm", "tomorrow 3pm", "… until 30 Nov". It runs
+until the user pauses or deletes it, or its words end it (a once, an until); a Workers reporter stops after 7 days.
 
 Each routine has a conversation of its own ("Runs by itself" in the drawer). A run puts a small note in it, then a job
 of the bot answers there with the conversation so far in its brief (odie.workers.convs), so the bot sees its earlier
@@ -13,20 +14,16 @@ from __future__ import annotations
 import json
 import logging
 import secrets
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
 from odie.store.db import Store, now_iso
+from odie.workers import when
 
 log = logging.getLogger("odie.workers")
 
-KINDS = ("daily", "every")
-MIN_EVERY_HOURS = 1
-MAX_EVERY_HOURS = 24 * 7
-DAY_NAMES = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
 BRIEF_MAX = 2000
 TITLE_MAX = 60
-
 
 
 def ensure(store: Store) -> None:
@@ -40,79 +37,24 @@ def tz() -> ZoneInfo:
     return ZoneInfo(config.settings.timezone)
 
 
-def clean_schedule(schedule: dict) -> dict | str:
-    """A schedule as stored, or a line saying what's wrong.
-      {"kind": "daily", "at": "8:30"} -> {"kind": "daily", "at": "08:30", "days": [0..6]} (every day)
-      {"kind": "daily", "at": "07:00", "days": [0, 1, 2, 3, 4]} -> weekdays at 7
-      {"kind": "every", "hours": 3} -> every 3 hours;  {"kind": "every", "hours": 0} -> "Every 1 to 168 hours."
-      {"kind": "daily", "at": "25:00"} -> "A time like 08:30.\""""
-    if not isinstance(schedule, dict) or schedule.get("kind") not in KINDS:
-        return "Say when: daily at a time, or every few hours."
-    if schedule["kind"] == "every":
-        try:
-            hours = int(schedule.get("hours"))
-        except (TypeError, ValueError):
-            return f"Every {MIN_EVERY_HOURS} to {MAX_EVERY_HOURS} hours."
-        if not MIN_EVERY_HOURS <= hours <= MAX_EVERY_HOURS:
-            return f"Every {MIN_EVERY_HOURS} to {MAX_EVERY_HOURS} hours."
-        return {"kind": "every", "hours": hours}
-    at = str(schedule.get("at") or "").strip()
-    try:
-        hh, mm = (int(x) for x in at.split(":", 1))
-    except ValueError:
-        return "A time like 08:30."
-    if not (0 <= hh <= 23 and 0 <= mm <= 59):
-        return "A time like 08:30."
-    days = schedule.get("days")
-    if days is None:
-        days = list(range(7))
-    days = sorted({int(d) for d in days if isinstance(d, int | float) and 0 <= int(d) <= 6})
-    if not days:
-        return "Pick at least one day."
-    return {"kind": "daily", "at": f"{hh:02d}:{mm:02d}", "days": days}
-
-
-def next_run(schedule: dict, after: datetime, zone: ZoneInfo | None = None) -> datetime:
-    """When a routine runs next, strictly after `after` (UTC in, UTC out). Daily: the next chosen weekday at its local
-    time; every N hours: N hours after `after`.
-      daily 08:30, every day, after Mon 09:00 IST -> Tue 08:30 IST;  after Mon 08:00 IST -> Mon 08:30 IST
-      daily 08:30 weekdays, after Fri 09:00 IST -> Mon 08:30 IST;  every 3 hours, after 10:00 -> 13:00"""
-    zone = zone or tz()
-    if schedule["kind"] == "every":
-        return after + timedelta(hours=schedule["hours"])
-    hh, mm = (int(x) for x in schedule["at"].split(":"))
-    local = after.astimezone(zone)
-    for step in range(8):
-        day = (local + timedelta(days=step)).date()
-        when = datetime(day.year, day.month, day.day, hh, mm, tzinfo=zone)
-        if when > local and day.weekday() in schedule["days"]:
-            return when.astimezone(UTC)
-    raise ValueError("no day chosen")
-
-
-def when_words(schedule: dict) -> str:
-    """A schedule in words: daily 08:30 every day -> "Every day at 08:30"; weekdays -> "Weekdays at 08:30";
-    Mon and Thu -> "Mon, Thu at 08:30"; every 3 hours -> "Every 3 hours"; every 1 hour -> "Every hour"."""
-    if schedule["kind"] == "every":
-        hours = schedule["hours"]
-        return "Every hour" if hours == 1 else f"Every {hours} hours"
-    days = schedule["days"]
-    if days == list(range(7)):
-        which = "Every day"
-    elif days == [0, 1, 2, 3, 4]:
-        which = "Weekdays"
-    elif days == [5, 6]:
-        which = "Weekends"
-    else:
-        which = ", ".join(DAY_NAMES[d] for d in days)
-    return f"{which} at {schedule['at']}"
+def schedule_from(schedule: dict | None, words: str | None, now: datetime) -> dict | str:
+    """A routine's schedule from the user's words ("weekdays at 9 and 6pm": odie.workers.when.parse) or a stored-form
+    dict (when.clean), or a line saying what's wrong. Words win when both come."""
+    if words is not None and words.strip():
+        return when.parse(words, now, tz())
+    return when.clean(schedule or {})
 
 
 def _row(r) -> dict:
+    """A routine as the app and tools see it: its schedule (an older stored form read as today's), the schedule in
+    words, and whether it is finished (not paused, and no run left: a once that ran, or past its until)."""
     out = dict(r)
-    out["schedule"] = json.loads(out.pop("schedule_json"))
-    out["when"] = when_words(out["schedule"])
+    stored = json.loads(out.pop("schedule_json"))
+    cleaned = when.clean(stored)
+    out["schedule"] = stored if isinstance(cleaned, str) else cleaned
+    out["when"] = when.words(out["schedule"]) if not isinstance(cleaned, str) else "?"
     out["paused"] = bool(out["paused"])
+    out["finished"] = not out["paused"] and out["next_run_at"] is None
     return out
 
 
@@ -125,49 +67,60 @@ def of_bot(store: Store, bot: str) -> list[dict]:
     return [_row(r) for r in store.query("select * from bot_routines where bot=? order by created_at", (bot,))]
 
 
-def make(store: Store, bot: str, title: str, brief: str, schedule: dict, now: datetime | None = None) -> dict | str:
-    """A new routine for a bot, with its own conversation. Returns it, or a line saying what's wrong."""
+def make(store: Store, bot: str, title: str, brief: str, schedule: dict | None = None, now: datetime | None = None,
+         words: str | None = None) -> dict | str:
+    """A new routine for a bot, with its own conversation, timed by `words` ("weekdays at 9:15") or a stored-form
+    `schedule`. Returns it, or a line saying what's wrong."""
     from odie.workers import bots, convs
     if bots.get(store, bot) is None:
         return f"There's no bot called {bot}."
-    sched = clean_schedule(schedule)
+    now = now or datetime.now(UTC)
+    sched = schedule_from(schedule, words, now)
     if isinstance(sched, str):
         return sched
+    first = when.next_run(sched, now, tz())
+    if first is None:
+        return "That time has passed."
     brief = (brief or "").strip()[:BRIEF_MAX]
     if not brief:
         return "Say what it should do each time."
     title = " ".join((title or "").split())[:TITLE_MAX] or brief.splitlines()[0][:TITLE_MAX]
-    now = now or datetime.now(UTC)
     routine_id = "rt-" + secrets.token_hex(3)
     conv_id = convs.make(store, bot, title, origin="routine")
-    nxt = next_run(sched, now).isoformat(timespec="seconds")
+    nxt = first.isoformat(timespec="seconds")
     store.execute("insert into bot_routines(id,bot,title,brief,schedule_json,paused,conv_id,next_run_at,created_at) "
                   "values(?,?,?,?,?,?,?,?,?)", (routine_id, bot, title, brief, json.dumps(sched), 0, conv_id, nxt, now_iso()))
-    convs.add(store, conv_id, "note", f"Runs by itself: {when_words(sched)}. {brief}")
+    convs.add(store, conv_id, "note", f"Runs by itself: {when.words(sched)}. {brief}")
     return get(store, routine_id)
 
 
 def edit(store: Store, routine_id: str, title: str | None = None, brief: str | None = None,
-         schedule: dict | None = None, paused: bool | None = None, now: datetime | None = None) -> dict | str:
-    """Change what is given. A new schedule or a resume sets the next run from now; pausing clears it."""
+         schedule: dict | None = None, paused: bool | None = None, now: datetime | None = None,
+         words: str | None = None) -> dict | str:
+    """Change what is given. A new schedule (`words` or `schedule`) or a resume sets the next run from now; pausing
+    clears it. A new time with no run left (a once in the past) -> a line saying so, and nothing changes."""
     r = get(store, routine_id)
     if r is None:
         return "There's no such routine."
     now = now or datetime.now(UTC)
     sched = r["schedule"]
-    if schedule is not None:
-        got = clean_schedule(schedule)
+    new_timing = schedule is not None or (words is not None and words.strip() != "")
+    if new_timing:
+        got = schedule_from(schedule, words, now)
         if isinstance(got, str):
             return got
         sched = got
     new_title = " ".join(title.split())[:TITLE_MAX] if title is not None else r["title"]
     new_brief = brief.strip()[:BRIEF_MAX] if brief is not None else r["brief"]
     is_paused = r["paused"] if paused is None else bool(paused)
-    timing_changed = schedule is not None or is_paused != r["paused"]
+    timing_changed = new_timing or is_paused != r["paused"]
     if is_paused:
         nxt = None
     elif timing_changed:
-        nxt = next_run(sched, now).isoformat(timespec="seconds")
+        upcoming = when.next_run(sched, now, tz())
+        if upcoming is None:
+            return "It has no runs left: change when it runs."
+        nxt = upcoming.isoformat(timespec="seconds")
     else:
         nxt = r["next_run_at"]  # a new name or brief keeps the next run where it was
     store.execute("update bot_routines set title=?, brief=?, schedule_json=?, paused=?, next_run_at=? where id=?",
@@ -200,7 +153,11 @@ def run(store: Store, routine: dict, now: datetime | None = None, scheduled: boo
     if busy and not scheduled:
         return None
     if scheduled:
-        nxt = None if routine["paused"] else next_run(routine["schedule"], now).isoformat(timespec="seconds")
+        nxt = None
+        if not routine["paused"]:
+            upcoming = when.next_run(routine["schedule"], now, tz())  # None: a once, or past its until: finished
+            if upcoming is not None:
+                nxt = upcoming.isoformat(timespec="seconds")
         store.execute("update bot_routines set last_run_at=?, next_run_at=? where id=?",
                       (now.isoformat(timespec="seconds"), nxt, routine["id"]))
     else:

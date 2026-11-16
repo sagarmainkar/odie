@@ -35,8 +35,10 @@ BOT_RULES = """You are {name}, one of the user's bots: {role}
 You work in the background, unattended. Nobody reads along and nobody answers questions (except the taps and sign-ins \
 described below), so decide for yourself and keep going.
 
-- Your folder is {folder}; it is yours across jobs. Keep what a later job of yours should know in notes.md there \
-(write_file); read it first (read_file) when it exists. The only memory you have is what you write down.
+- Your folder is {folder}; it is yours across jobs. notes.md there is your memory, the only one you have: read it \
+first (read_file) when it exists. Keep in it what a later job should know: the user's preferences and setup, and \
+lasting facts you checked, as short bullet points. It is not a diary: never log a conversation or what you did today. \
+To change it, write it whole again (write_file), merging and dropping what is stale, under about 40 lines.
 - Verify before you say something works or is true: run it, read the source.
 - A tool the rules refuse is not run; the answer says why. Don't retry it in another form: find another way, or \
 report it as blocked.
@@ -96,6 +98,23 @@ def instruction_for(bot: Bot, repeats: bool = False, conversation: bool = False,
     return text
 
 
+NOTES_TIDY_CHARS = 3000  # a bot's notes.md past this: its next job is told to make it shorter first
+
+
+def notes_nudge(bot: Bot) -> str:
+    """A line for a bot whose memory has grown long, asking it to tidy first; none otherwise.
+    notes.md of 5,856 characters -> "\n- Your notes.md is 5,856 characters: …"; 900 characters, or none -> ""."""
+    from odie.workers import bots
+    notes = bots.folder_of(bot.name) / "notes.md"
+    if not notes.is_file():
+        return ""
+    size = len(notes.read_text(errors="replace"))
+    if size <= NOTES_TIDY_CHARS:
+        return ""
+    return (f"\n- Your notes.md is {size:,} characters, longer than it should be: before anything else, write it "
+            f"again shorter (the lasting facts and the user's preferences, no history).")
+
+
 def budget_for(teammate: bool, repeats: bool) -> int:
     """A bot job's wall time: a teammate's part -> 15 minutes; one run of a scheduled bot -> 15 minutes (it runs again
     later); a bot's own job -> 30 minutes."""
@@ -111,7 +130,8 @@ def kind_for(bot: Bot, teammate: bool = False, repeats: bool = False, conversati
     def tools(store: Store, job: Job) -> list:
         return tools_for(bot, store, job)
     # The user reads a lead's reply in the app (its chat, or Odie's): it may draw blocks. A teammate reports to its chief.
-    return WorkerKind(name="bot", word=bot.name, instruction=instruction_for(bot, repeats, conversation, blocks=not teammate), tools=tools,
+    instruction = instruction_for(bot, repeats, conversation, blocks=not teammate) + notes_nudge(bot)
+    return WorkerKind(name="bot", word=bot.name, instruction=instruction, tools=tools,
                       budget_seconds=budget_for(teammate, repeats), max_llm_calls=BOT_MAX_CALLS)
 
 

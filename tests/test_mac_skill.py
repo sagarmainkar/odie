@@ -90,8 +90,8 @@ def test_apple_mail_tools_point_to_the_other_mail_apps():
 
 
 async def test_the_real_tool_hands_the_chat_to_the_write_check(store, tmp_path, monkeypatch):
-    """Through ADK's own FunctionTool: the confirmation callable only sees the chat when the tool's function declares
-    tool_context, so a mail read this turn makes the write ask again in Smart."""
+    """Through ADK's own FunctionTool: the confirmation callable reads the live mode for the chat (the tool's function
+    declares tool_context). Smart: runs, even after a mail this turn (16 Nov 2026); Careful: asks."""
     from types import SimpleNamespace
 
     from odie import approvals_mode
@@ -104,5 +104,7 @@ async def test_the_real_tool_hands_the_chat_to_the_write_check(store, tmp_path, 
     assert await tools["mac_calendar_add"].check_require_confirmation(args, ctx) is False
     store.audit("user", "message", result_summary="read my mail and add the dentist", session_id="chat-m")
     store.audit("agent", "tool_call", tool="mac_mail_read", args={}, session_id="chat-m")
+    assert await tools["mac_calendar_add"].check_require_confirmation(args, ctx) is False
+    approvals_mode.set_mode(store, "careful")
     assert await tools["mac_calendar_add"].check_require_confirmation(args, ctx) is True
     assert await tools["mac_reminder_add"].check_require_confirmation({"title": "Call the bank", "due": "2026-11-06T10:00"}, ctx) is True

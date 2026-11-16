@@ -178,8 +178,8 @@ def query_needs_tap(store) -> bool:
 def url_needs_tap(store, url: str, tab: str = "") -> bool:
     """Opening an address asks in a private chat, unless its site is one the chat may go to freely (_free).
     Example: the chat read amazon.in, then browser_open("https://www.amazon.in/orders") -> False (same site);
-    browser_open("https://evil.example/") -> True; the chat read a mail, then browser_open("https://evil.example/")
-    -> True; any address in a chat that read nothing of the user's -> False."""
+    browser_open("https://evil.example/") -> True; the chat read only a mail, then browser_open("https://evil.example/")
+    -> False (mail no longer counts); any address in a chat that read no signed-in page -> False."""
     if not chat_is_private(store):
         return False
     site = sites.site_of(url)
@@ -199,8 +199,7 @@ def fetch_needs_tap(store, url: str) -> bool:
 def foreign(tab: str, store=None) -> bool:
     """In a private chat (chat_is_private), the tab is on a site that isn't one of the chat's signed-in, okayed or
     named sites. Example: the chat read amazon.in and the tab now shows evil.example -> True; the tab shows amazon.in
-    -> False; the chat read a mail and the tab shows a site the user never named -> True; a chat that read nothing of
-    the user's -> False."""
+    -> False; a chat that read only a mail, or no signed-in page at all -> False."""
     if not chat_is_private(store):
         return False
     tab_site = sites.site_of(LAST_URL.get(tab, ""))

@@ -81,7 +81,7 @@ describe("creatures", () => {
   });
 });
 
-import { activityLine, nextWords } from "./bots";
+import { activityLine, nextWords, routineState } from "./bots";
 
 describe("routines and recent work", () => {
   it("says when a routine runs next", () => {
@@ -90,6 +90,13 @@ describe("routines and recent work", () => {
     expect(nextWords("2026-11-16T08:30:00", now, "en-GB")).toBe("today 8:30");
     expect(nextWords("2026-11-17T08:30:00", now, "en-GB")).toBe("tomorrow 8:30");
     expect(nextWords("2026-11-19T08:30:00", now, "en-GB")).toBe("Thu 8:30");
+    expect(nextWords("2026-12-01T09:00:00", now, "en-GB")).toBe("1 Dec 9:00");
+  });
+  it("says a routine's state", () => {
+    const now = new Date("2026-11-16T07:00:00");
+    expect(routineState({ paused: true, finished: false, next_run_at: null }, now)).toBe("paused");
+    expect(routineState({ paused: false, finished: true, next_run_at: null }, now)).toBe("finished");
+    expect(routineState({ paused: false, finished: false, next_run_at: "2026-11-17T08:30:00" }, now, "en-GB")).toBe("next tomorrow 8:30");
   });
   it("says how a job went", () => {
     const a = { id: "j", title: "t", status: "done", outcome: "ready", started_at: null, ended_at: null, calls: 12, conv: null, for_chief: false, error: null };
