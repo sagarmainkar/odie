@@ -70,6 +70,7 @@ async def test_open_returns_text_and_a_screenshot(store):
     path, m = media.get(out["media"]["id"])
     assert path.read_bytes() == SHOT and m["mime"] == "image/jpeg" and m["url"] == "https://amazon.in/s?k=airpods+pro"
     assert m["step"] == "Opened amazon.in" and m["title"] == "amazon.in · Amazon.in : airpods pro"
+    assert m["tab"] == "chat-2026-10-07"  # the chat's Watch opens this tab live
 
 
 async def test_each_step_says_what_it_did(store):

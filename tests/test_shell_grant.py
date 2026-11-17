@@ -359,21 +359,79 @@ def test_the_mode_flipped_between_two_calls_takes_effect_on_the_next_call(tmp_pa
     assert check(command="ls ~", tool_context=ctx) is True
 
 
-def test_smart_asks_again_after_the_model_read_mail_this_turn(tmp_path):
-    """Words from a mail could be steering the model: the turn's commands show a card, as in Careful."""
+def test_smart_runs_free_after_the_model_read_mail_this_turn(tmp_path):
+    """16 Nov 2026: a mail read this turn no longer makes an ordinary command ask."""
     from types import SimpleNamespace
     s = _smart_store(tmp_path)
     ctx = SimpleNamespace(session=SimpleNamespace(id="chat-x"))
     check = g.make_check(s, clock=lambda: NOW)
     s.audit("user", "message", result_summary="read my mail then list downloads", session_id="chat-x")
-    s.audit("agent", "tool_call", tool="gmail_find_email", args={"query": "newest"}, session_id="chat-x")  # what the core logs
-    assert check(command="ls ~/Downloads", tool_context=ctx) is True
-    assert _shell_audit(s, "shell_auto_approved") == []
-    s.audit("user", "message", result_summary="now list downloads", session_id="chat-x")
-    assert check(command="ls ~/Downloads", tool_context=ctx) is False  # the next turn runs free again
+    s.audit("agent", "tool_call", tool="gmail_find_email", args={"query": "newest"}, session_id="chat-x")
+    assert check(command="ls ~/Downloads", tool_context=ctx) is False
 
 
 @pytest.mark.parametrize("cmd", ["ls ~/.odie/workspace", "ls ${ODIE_HOME}/data/workspace/x", "cat $ODIE_HOME/workspace/notes.md",
                                  "ls ~/Downloads", "echo my.odiefile"])
 def test_odies_workspace_and_ordinary_paths_are_not_its_own_files(cmd):
     assert not g.touches_odie_home(cmd), cmd
+
+
+# ── fewer cards for ordinary work (16 Nov 2026: a PR review asked 7 times) ──────────────────────────────────────────
+
+WS = "/Users/x/.odie/data/workspace"
+
+
+@pytest.mark.parametrize("cmd", [
+    r"""grep -E "Tests|passed" /tmp/pr12-vitest.log | sed 's/\x1b\[[0-9;]*m//g' | tail -6""",
+    "cd /tmp/pr12-review && rm -f /tmp/pr12-pytest.log /tmp/pr12-vitest.log && ls",
+    "rm -rf /tmp/pr12-review",
+    "cd ~/work/x && git worktree remove --force /tmp/pr12-review && rm -f /tmp/pr12-*.log && git worktree list",
+    r"""cd ~/pr7-review && grep -n "install\|local\|dev\|source" README.md | head -40""",
+    "rm -rf /Users/x/.odie/data/workspace/old-job",
+    "uvx ruff check .",
+    "uv run --no-project -q --with pytest --with httpx pytest -q",
+])
+def test_ordinary_review_work_needs_no_card(cmd):
+    assert g.always_ask(cmd, safe_dirs=(WS,), scratch_dirs=(WS,)) is None, cmd
+
+
+@pytest.mark.parametrize("cmd, why", [
+    ("rm -rf /tmp", "deletes or stops something"),
+    ("rm -rf /tmp/*", "deletes or stops something"),
+    ("rm -rf /tmp/../Users/x", "deletes or stops something"),
+    ("rm -rf /tmp/$X", "deletes or stops something"),
+    ("rm /tmp/a ~/b", "deletes or stops something"),
+    ("sudo rm -rf /tmp/x", "deletes or stops something"),
+    ("rm -rf /Users/x/.odie/data/workspace", "deletes or stops something"),
+    (r"$'\x72\x6d' -rf ~", "runs text as commands"),
+    (r"""perl -e 'system "\x72\x6d x"'""", "runs text as commands"),
+    (r"$(printf '\x72\x6d') -rf ~", "runs text as commands"),
+    ('grep "$(rm -rf ~)" f', "deletes or stops something"),
+    ("uvx cowsay hi", "installs software (runs its install scripts)"),
+    ("uvx --from evil ruff", "installs software (runs its install scripts)"),
+    ("npx cowsay hi", "installs software (runs its install scripts)"),
+    ("uv run --with evilpkg x", "installs software (runs its install scripts)"),
+    ("source ./evil.sh", "runs text as commands"),
+])
+def test_what_still_asks(cmd, why):
+    assert g.always_ask(cmd, safe_dirs=(WS,), scratch_dirs=(WS,)) == why, cmd
+
+
+def test_npx_runs_free_only_for_the_projects_own_tool(tmp_path):
+    bin_dir = tmp_path / "web" / "node_modules" / ".bin"
+    bin_dir.mkdir(parents=True)
+    (bin_dir / "tsc").write_text("")
+    assert g.always_ask(f"cd {tmp_path}/web && npx tsc --noEmit 2>&1 | tail -5") is None
+    assert g.always_ask(f"cd {tmp_path}/web && npx cowsay hi") == "installs software (runs its install scripts)"
+
+
+def test_code_that_writes_where_it_runs_in_a_safe_place_is_a_plain_write(tmp_path):
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    code = 'import pathlib\np = pathlib.Path("3-Resources/Vocabulary.md")\np.write_text("x")\n'
+    in_vault = f"cd {vault} && python3 - <<'PY'\n{code}PY"
+    assert g.always_ask(in_vault, safe_dirs=(str(vault),)) is None
+    from_home = f"cd ~ && python3 - <<'PY'\n{code}PY"
+    assert g.always_ask(from_home, safe_dirs=(str(vault),)) == "writes a file from code"
+    climbs_out = in_vault.replace('"3-Resources/Vocabulary.md"', '"../elsewhere.md"')
+    assert g.always_ask(climbs_out, safe_dirs=(str(vault),)) == "writes a file from code"

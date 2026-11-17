@@ -1,7 +1,13 @@
 """The live view (spec Part 1): the user's turn in Odie's browser. The phone sees the tab's frames and drives it with
 taps and its own keyboard; the model gets nothing of it (no frame is saved, no page is read, no input is logged), and
 every browser tool on the tab waits while the user holds it. One device holds a tab; another can take over. A dropped
-connection keeps the tab for GRACE seconds (the phone sleeping), and IDLE seconds without input hand it back."""
+connection keeps the tab for GRACE seconds (the phone sleeping), and IDLE seconds without input hand it back.
+
+Watching is the other way in (a hello with "watch": true, from the chat's Watch button): the user sees Odie's page as
+Odie works on it. Nothing is held, the page keeps its shape and its fence, and no tap or key reaches it. Take control
+turns the view into the user's turn above. It ends as that turn does, with the words the bar uses there: Hand back
+(Cancel: nothing recorded) or "I signed in" (Done: the site is recorded, so its order and pay clicks ask). Close ends
+a view that only watched."""
 from __future__ import annotations
 
 import asyncio
@@ -26,7 +32,10 @@ TEXT_CAP = 2000  # one paste at most
 
 
 def clean(msg: Any) -> dict | None:
-    """The phone's input, checked: what reaches the browser, or None for anything else."""
+    """The phone's input, checked: what reaches the browser, or None for anything else.
+    {"t": "tap", "x": 120, "y": 300} -> the same; {"t": "forward"} -> the same; {"t": "control"} and {"t": "close"} ->
+    the same (the view acts on those two itself, they never reach the page); {"t": "eval", "js": "…"} -> None;
+    {"t": "key", "k": "F12"} -> None."""
     if not isinstance(msg, dict):
         return None
 
@@ -42,7 +51,7 @@ def clean(msg: Any) -> dict | None:
         return {"t": t, "s": msg["s"][:TEXT_CAP]}
     if t == "key" and msg.get("k") in KEYS:
         return {"t": t, "k": msg["k"]}
-    if t in ("back", "reload"):
+    if t in ("back", "forward", "reload", "control", "close"):
         return {"t": t}
     if t == "go" and isinstance(msg.get("url"), str) and msg["url"].strip():
         return {"t": t, "url": msg["url"].strip()[:2000]}
@@ -60,6 +69,8 @@ class View:
     origins: set = field(default_factory=set)  # where the page went while the user drove (for Sign out)
     timer: asyncio.Task | None = None  # the drop grace, while no phone is connected
     watch: asyncio.Task | None = None  # the idle check
+    watching: bool = False  # the user only watches Odie at work: nothing held, no input, until they take control
+    size: tuple[int, int] = (390, 844)  # the phone's size from its hello, kept for Take control
 
 
 class LiveViews:
@@ -119,10 +130,13 @@ class LiveViews:
                 await old.close()
         b = self.browser()
         self._listen(b)
+        wants_to_watch = hello.get("watch") is True
         if view is None:
-            view = View(tab, secrets.token_hex(6))
+            view = View(tab, secrets.token_hex(6), watching=wants_to_watch)
             self._views[tab] = view
-            b.hold(tab, view.holder)
+            if not view.watching:
+                b.hold(tab, view.holder)
+        view.size = (w, h)
         if view.timer:
             view.timer.cancel()
             view.timer = None
@@ -137,12 +151,21 @@ class LiveViews:
                 view.origins.add(o)
             await self._send(view, {"t": "page", "url": view.url, "title": view.title, "loading": bool(info.get("loading"))})
         try:
-            await b.live_start(tab, w, h, on_frame, on_page)
+            if view.watching:  # the page stays as Odie has it, until Take control
+                await b.live_start(tab, w, h, on_frame, on_page, emulate=False)
+            else:
+                await b.live_start(tab, w, h, on_frame, on_page)
         except Exception as e:  # noqa: BLE001
             log.warning("live view couldn't start", exc_info=True)
             await self._send(view, {"t": "bye", "why": f"The browser couldn't show the page ({type(e).__name__})."})
             await self.end(tab, None)
             return
+        # A view that already existed (another device, or within the drop grace) takes the mode this hello asks for:
+        # a driver on a watched view takes control; a watcher on a driven view is told it drives.
+        if view.watching and not wants_to_watch:
+            await self._take_control(view, b, tab)
+        elif not view.watching and wants_to_watch:
+            await self._send(view, {"t": "control"})
         if view.watch is None:
             view.watch = asyncio.get_running_loop().create_task(self._watch(view))
         try:
@@ -156,6 +179,14 @@ class LiveViews:
                     continue
                 if (step := clean(msg)) is None:
                     continue  # nothing else reaches the browser
+                if step["t"] == "close":  # a watcher closes: the view ends now (a driver ends with Done or Cancel)
+                    await self.end(tab, None)
+                    return
+                if step["t"] == "control":
+                    await self._take_control(view, b, tab)
+                    continue
+                if view.watching:
+                    continue  # watching: the page is Odie's until the user takes control
                 try:
                     await b.live_input(tab, step)
                 except Exception as e:  # noqa: BLE001 (a page that didn't take a tap shouldn't end the view)
@@ -166,6 +197,20 @@ class LiveViews:
             if self._views.get(tab) is view and view.socket is ws:
                 view.socket = None
                 view.timer = asyncio.get_running_loop().create_task(self._later(view))
+
+    async def _take_control(self, view: View, b, tab: str) -> None:
+        """A watcher takes control: the tab is held (Odie's next browser step on it is told the user is using the
+        browser, engine.HELD, until they hand back) and goes phone-shaped for the user's fingers. Already in control ->
+        nothing."""
+        if not view.watching:
+            return
+        b.hold(tab, view.holder)
+        view.watching = False
+        try:
+            await b.live_control(tab, *view.size)
+        except Exception as e:  # noqa: BLE001
+            await self._send(view, {"t": "error", "why": str(e)[:200] or type(e).__name__})
+        await self._send(view, {"t": "control"})
 
     async def _later(self, view: View) -> None:
         await asyncio.sleep(self.grace)
@@ -202,12 +247,16 @@ class LiveViews:
         return view
 
     async def finish(self, tab: str, done: bool) -> dict:
-        """Done (record the site now open) or Cancel. LookupError if nothing is live on the tab."""
+        """Done (record the site now open) or Cancel. After Take control the bar says "I signed in" for Done and Hand
+        back for Cancel. A view that only watched records nothing, whatever is sent: the user never touched the page.
+        LookupError if nothing is live on the tab.
+        Done on amazon.in after driving -> amazon.in recorded; Cancel -> nothing; Done on a watch-only view -> nothing."""
         view = await self.end(tab, "done" if done else "cancel")
         if view is None:
             raise LookupError(tab)
         site = sites.site_of(view.url)
-        if done and site:
+        user_drove = not view.watching
+        if done and site and user_drove:
             sites.record(self.store, site, datetime.now().astimezone(), origins=view.origins)
             self.store.audit("user", "signin_done", result_summary=site)  # the site only: never what was typed
         return {"site": site}

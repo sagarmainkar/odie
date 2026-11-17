@@ -1,6 +1,7 @@
 """The live view (spec Part 1), server side: the phone gets the tab's frames and page, and its taps, typing and keys
 become engine calls; one device holds a tab, another can take over; Done records the site; a dropped or idle view hands
-the tab back; nothing typed is logged or saved; and while signed-in browsing is off, there's no live view at all."""
+the tab back; nothing typed is logged or saved; and while signed-in browsing is off, there's no live view at all.
+Watching: the user sees Odie's page while Odie works, holds nothing and sends nothing, until they take control."""
 import time
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -23,6 +24,7 @@ class FakeEngine:
         self.calls = []
         self.holds = {}
         self.upi = []
+        self.watched = []  # tabs opened only to watch (emulate=False)
 
     def hold(self, tab, holder):
         self.holds[tab] = holder
@@ -36,10 +38,15 @@ class FakeEngine:
     def on_upi(self, fn):
         self.upi.append(fn)
 
-    async def live_start(self, tab, width, height, on_frame, on_page):
+    async def live_start(self, tab, width, height, on_frame, on_page, emulate=True):
         self.calls.append(("start", tab, width, height))
+        if not emulate:
+            self.watched.append(tab)
         await on_page({"url": "https://www.amazon.in/ap/signin", "title": "Amazon Sign-In", "loading": False})
         await on_frame("/9j/AAAA", {"deviceWidth": width, "deviceHeight": height})
+
+    async def live_control(self, tab, width, height):
+        self.calls.append(("control", tab, width, height))
 
     async def live_input(self, tab, msg):
         self.calls.append(("input", tab, msg))
@@ -183,6 +190,114 @@ def test_live_input_is_never_logged(app, store, engine, isolated_settings):
     assert not media.exists() or not any(media.iterdir())  # no frame is ever saved
 
 
+WATCH = {**HELLO, "watch": True}
+TAB = "chat-2026-10-08"
+
+
+def inputs(engine):
+    return [c[2] for c in engine.calls if c[0] == "input"]
+
+
+def test_watching_holds_nothing_until_take_control(app, engine):
+    """Watch from the chat: Odie keeps the tab (no hold) and the user's taps go nowhere. Take control holds it and
+    makes it the user's to drive; Close hands it back."""
+    from odie.signin import live
+    c = app.state.client
+    with c.websocket_connect(URL) as ws:
+        ws.send_json(WATCH)
+        assert ws.receive_json()["t"] == "page" and ws.receive_json()["t"] == "frame"
+        assert engine.watched == [TAB] and engine.held_by(TAB) is None  # Odie keeps working on its page
+        ws.send_json({"t": "tap", "x": 10, "y": 10})
+        ws.send_json({"t": "go", "url": "https://evil.example/"})
+        settle(ws)
+        assert inputs(engine) == []  # watching: nothing reaches the page
+        ws.send_json({"t": "control"})
+        assert ws.receive_json() == {"t": "control"}
+        assert engine.held_by(TAB) and ("control", TAB, 390, 844) in engine.calls  # Odie's browser steps wait now
+        ws.send_json({"t": "control"})  # already in control: nothing more
+        ws.send_json({"t": "forward"})
+        settle(ws)
+        assert inputs(engine) == [{"t": "forward"}]
+        assert [c for c in engine.calls if c[0] == "control"] == [("control", TAB, 390, 844)]
+        ws.send_json({"t": "close"})
+    assert engine.held_by(TAB) is None and engine.calls[-1] == ("stop", TAB)  # handed back
+    for step in ({"t": "forward"}, {"t": "control"}, {"t": "close"}):
+        assert live.clean(step) == step
+    assert live.clean({"t": "control", "js": "alert(1)"}) == {"t": "control"}  # nothing rides along
+
+
+def test_after_control_i_signed_in_records_the_site_and_hand_back_does_not(app, store, engine):
+    """After Take control the bar has two ways back: Hand back (Cancel) records nothing, "I signed in" (Done) records
+    the site, so its order and pay clicks ask. Done on a view that only watched records nothing: the user never
+    touched the page."""
+    c = app.state.client
+    with c.websocket_connect(URL) as ws:
+        ws.send_json(WATCH)
+        ws.receive_json(), ws.receive_json()
+        assert c.post(f"{URL}/done").json() == {"site": "amazon.in"}  # only watched
+    assert sites.listing(store) == []
+    with c.websocket_connect(URL) as ws:
+        ws.send_json(WATCH)
+        ws.receive_json(), ws.receive_json()
+        ws.send_json({"t": "control"})
+        assert ws.receive_json() == {"t": "control"}
+        assert c.post(f"{URL}/cancel").json() == {"site": "amazon.in"}  # Hand back
+        assert ws.receive_json() == {"t": "bye", "why": "cancel"}
+    assert sites.listing(store) == [] and engine.held_by(TAB) is None
+    with c.websocket_connect(URL) as ws:
+        ws.send_json(WATCH)
+        ws.receive_json(), ws.receive_json()
+        ws.send_json({"t": "control"})
+        assert ws.receive_json() == {"t": "control"}
+        assert c.post(f"{URL}/done").json() == {"site": "amazon.in"}  # I signed in
+        assert ws.receive_json() == {"t": "bye", "why": "done"}
+    assert [s["domain"] for s in sites.listing(store)] == ["amazon.in"]
+    assert sites.is_signed_in(store, "https://www.amazon.in/gp/buy")
+    assert engine.held_by(TAB) is None
+
+
+def test_a_watcher_who_only_watched_hands_nothing_back_but_the_view(app, engine):
+    """Close without ever taking control: the view stops, and there was never a hold to release."""
+    c = app.state.client
+    with c.websocket_connect(URL) as ws:
+        ws.send_json(WATCH)
+        ws.receive_json(), ws.receive_json()
+        ws.send_json({"t": "close"})
+    assert engine.held_by(TAB) is None and engine.calls[-1] == ("stop", TAB)
+    assert not [c for c in engine.calls if c[0] in ("control", "input")]
+
+
+def test_a_driver_joining_a_watched_view_takes_control(app, engine):
+    """The watcher's socket dropped without Close; within the grace a Sign in card opens the same tab to drive it:
+    the view becomes the user's turn (held, phone-shaped), not a watch that ignores their taps."""
+    c = app.state.client
+    with c.websocket_connect(URL) as ws:
+        ws.send_json(WATCH)
+        ws.receive_json(), ws.receive_json()
+    assert engine.held_by(TAB) is None
+    with c.websocket_connect(URL) as ws:
+        ws.send_json(HELLO)
+        got = [ws.receive_json() for _ in range(3)]
+        assert {"t": "control"} in got
+        assert engine.held_by(TAB) and ("control", TAB, 390, 844) in engine.calls
+        ws.send_json({"t": "tap", "x": 5, "y": 5})
+        settle(ws)
+        assert inputs(engine) == [{"t": "tap", "x": 5, "y": 5}]
+
+
+def test_a_watcher_joining_a_driven_view_is_told_it_drives(app, engine):
+    """The other way round: the user is mid sign-in (the tab is theirs), the socket drops, and Watch opens the same
+    tab. The view is still the user's turn, so the phone is told it drives, and the hold stays."""
+    c = app.state.client
+    with c.websocket_connect(URL) as ws:
+        opened(ws)
+    with c.websocket_connect(URL) as ws:
+        ws.send_json(WATCH)
+        got = [ws.receive_json() for _ in range(3)]
+        assert {"t": "control"} in got and engine.held_by(TAB)
+        assert engine.watched == []  # the page was never opened watch-only
+
+
 def test_off_means_403(app, store, engine):
     c = app.state.client
     state.turn_off(store)
@@ -201,6 +316,12 @@ TAP_PAGE = """<!doctype html><meta name="viewport" content="width=device-width">
 <div style="height:4000px"></div></body>"""
 
 
+# A page that never stops changing, so the live view keeps taking pictures of it (most real pages do: a clock, an ad,
+# a spinner). The tab's shape must still change when the user takes control and when they hand back.
+BUSY_PAGE = """<!doctype html><meta name="viewport" content="width=device-width"><title>busy</title><body style="margin:0">
+<div id="c" style="font-size:40px"></div><script>setInterval(() => { c.textContent = Date.now(); }, 30);</script></body>"""
+
+
 DESKTOP_PAGE = """<!doctype html><title>Desktop sign-in</title><body style="margin:0;width:980px">
 <div style="height:260px;background:#eee">header</div>
 <form style="margin-left:380px"><label>Email <input id="e" style="width:300px;height:30px;font-size:13px"></label></form></body>"""
@@ -217,7 +338,7 @@ def tap_site():
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.end_headers()
             port = self.server.server_port
-            pages = {"/desktop": DESKTOP_PAGE,
+            pages = {"/desktop": DESKTOP_PAGE, "/busy": BUSY_PAGE,
                      "/framed": f'<!doctype html><title>X sign-in</title><main>Sign in to X</main><iframe src="http://localhost:{port}/button"></iframe>',
                      "/button": '<!doctype html><title>Sign in with Google</title><script>setTimeout(() => location.reload(), 400);</script>'}
             self.wfile.write(pages.get(self.path, TAP_PAGE).encode())
@@ -276,6 +397,113 @@ async def test_real_frames_and_a_tap(tmp_path, tap_site):
         assert await _until(lambda: _gt(lambda: b._eval(s, "window.scrollY"), 100))
         await b.live_stop("chat")
         assert await b._eval(s, "window.innerWidth") == 1280  # desktop-shaped again
+    finally:
+        await b.close()
+
+
+@pytest.mark.skipif(__import__("odie.browser.find", fromlist=["installed"]).installed() is None, reason="no Chrome here")
+async def test_watching_leaves_the_real_page_as_it_is_until_control(tmp_path, tap_site):
+    """In real Chrome, on a page that never stops changing: a watched tab keeps its desktop shape and its fence while
+    frames arrive; Take control makes it phone-shaped and lifts the fence; forward goes forward; stopping puts the
+    desktop shape back. A tab that was only watched is never reshaped at all.
+    (Found on the way: Chrome puts a page's old shape back after a screenshot, so a new shape sent while a live picture
+    was being taken was lost. Take control left the page desktop-shaped, and a stop left it phone-shaped.)"""
+    from odie.browser import find
+    from odie.browser.engine import Browser, BrowserError
+
+    async def allow_all(url):
+        return True
+    b = Browser(tmp_path / "profile", find.installed(), policy=allow_all, ip_ok=lambda ip: True)
+    frames = []
+
+    async def on_frame(jpeg, meta):
+        frames.append((jpeg, meta))
+
+    async def on_page(info):
+        pass
+
+    async def many_frames():
+        return len(frames) >= 10
+    try:
+        await b.open("chat", f"http://127.0.0.1:{tap_site}/busy")
+        s = b._tabs["chat"]
+
+        async def title():
+            return await b._eval(s, "document.title")
+
+        async def width():
+            return await b._eval(s, "window.innerWidth")
+        with pytest.raises(BrowserError):
+            await b.live_control("chat", 390, 844)  # nothing is live on the tab yet
+        b.fence("chat", {"127.0.0.1"})
+        await b.live_start("chat", 390, 844, on_frame, on_page, emulate=False)
+        assert await _until(many_frames)  # pictures keep being taken
+        assert frames[0][0].startswith("/9j/") and _jpeg_size(frames[-1][0])[0] == 1280
+        assert await width() == 1280 and b._fences.get("chat") == {"127.0.0.1"}  # watching changed nothing
+        assert b.held_by("chat") is None
+
+        await b.live_control("chat", 390, 844)
+        assert await _until(lambda: _eq(width, 390))  # the user's to drive now, even with a picture in flight
+        assert "chat" not in b._fences
+        frames.clear()
+        assert await _until(many_frames)
+        assert _jpeg_size(frames[-1][0])[0] == 780  # and the pictures are phone-shaped, at 2x
+        await b.live_input("chat", {"t": "go", "url": f"http://127.0.0.1:{tap_site}/desktop"})
+        assert await _until(lambda: _eq(title, "Desktop sign-in"))
+        await b.live_input("chat", {"t": "back"})
+        assert await _until(lambda: _eq(title, "busy"))
+        await b.live_input("chat", {"t": "forward"})
+        assert await _until(lambda: _eq(title, "Desktop sign-in"))
+        await b.live_input("chat", {"t": "back"})
+        assert await _until(lambda: _eq(title, "busy"))
+        frames.clear()
+        assert await _until(many_frames)
+        await b.live_stop("chat")
+        assert await _until(lambda: _eq(width, 1280))  # desktop-shaped again, for Odie's next step
+
+        await b.live_start("chat", 390, 844, on_frame, on_page, emulate=False)  # watched, never driven
+        await b.live_stop("chat")
+        assert await width() == 1280 and "chat" not in b._emulated
+    finally:
+        await b.close()
+
+
+@pytest.mark.skipif(__import__("odie.browser.find", fromlist=["installed"]).installed() is None, reason="no Chrome here")
+async def test_a_still_page_sends_one_picture_not_a_stream(tmp_path, tap_site):
+    """Taking the live picture makes Chrome cast the page again, and that echo used to be answered with another
+    picture: a still page being watched sent about 25 a second for as long as it was watched. Now the echo is dropped;
+    a real change still arrives, and a phone that joins again still gets its first picture."""
+    import asyncio
+
+    from odie.browser import find
+    from odie.browser.engine import Browser
+
+    async def allow_all(url):
+        return True
+    b = Browser(tmp_path / "profile", find.installed(), policy=allow_all, ip_ok=lambda ip: True)
+    frames = []
+
+    async def on_frame(jpeg, meta):
+        frames.append(jpeg)
+
+    async def on_page(info):
+        pass
+    try:
+        await b.open("chat", f"http://127.0.0.1:{tap_site}/")
+        s = b._tabs["chat"]
+        await b.live_start("chat", 390, 844, on_frame, on_page, emulate=False)
+        assert await _until(lambda: _true(frames))
+        await asyncio.sleep(1.5)
+        assert len(frames) <= 3, f"{len(frames)} pictures of a page that didn't change"
+
+        frames.clear()
+        await b._eval(s, "document.body.style.background = 'crimson'")
+        assert await _until(lambda: _true(frames))  # a change on the page reaches the phone
+
+        await asyncio.sleep(0.5)
+        frames.clear()
+        await b.live_start("chat", 390, 844, on_frame, on_page, emulate=False)  # the phone joins again
+        assert await _until(lambda: _true(frames))  # and gets a picture, though nothing changed
     finally:
         await b.close()
 

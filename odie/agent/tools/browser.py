@@ -138,8 +138,11 @@ def _shot_title(page) -> str:
     return f"{site(page.url)} · {page.title}"
 
 
-def _save_screenshot(page, step_text: str) -> dict:
+def _save_screenshot(page, step_text: str, tab: str = "") -> dict:
+    """The step's screenshot for the chat, with the tab it came from (the chat's Watch opens that tab live)."""
     meta = {"url": page.url, "page_title": page.title, "step": step_text}
+    if tab:
+        meta["tab"] = tab
     return media.save(page.shot, "screenshot", "jpg", "image/jpeg", _shot_title(page), meta)
 
 
@@ -311,7 +314,7 @@ def make_browser_tools(store, browser_for: Callable[[], object] | None = None) -
                 return {"error": str(e)}
 
         # 3. The screenshot the user sees
-        screenshot = _save_screenshot(page, label(page))
+        screenshot = _save_screenshot(page, label(page), tab)
         guard.LAST_URL[tab], guard.LAST_SHOT[tab] = page.url, screenshot["id"]
 
         # 4. A signed-in page read: the rest of this turn, and chat, is private

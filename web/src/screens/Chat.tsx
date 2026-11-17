@@ -211,6 +211,7 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
   }, []);
   const you = useProfile()?.user_name ?? "";
   const caps = useCaps();
+  const signedInBrowsing = has(caps, "signin");  // the live view exists only with it on: Watch shows only then
   const [msgs, setMsgs] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
@@ -742,7 +743,7 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
                             </PrivateReply.Provider>
                           );
                         })()}
-                        {m.media && m.media.length > 0 && <MediaList items={m.media} live={streaming && m.id === lastOdie?.id} autoplay={m.autoplay} />}
+                        {m.media && m.media.length > 0 && <MediaList items={m.media} live={streaming && m.id === lastOdie?.id} autoplay={m.autoplay} tab={m.sid ?? thread?.id ?? undefined} watchable={signedInBrowsing} who={name} />}
                         {m.text && splitConnect(m.text).connect && <ConnectCard since={m.ts} />}
                         {m.error && (
                           <div className="flex items-center gap-3 bg-warn-tint rounded-[18px] px-3.5 py-2.5 text-[13px] leading-[18px] text-ink-2">
