@@ -215,11 +215,30 @@ class PluginMcpToolset(McpToolset):
     It is called on every listing, and ADK lists the tools again at each step of a turn, so switching the mode mid-chat
     shows on the next step."""
 
-    def __init__(self, *args, reads_free: bool = False, smart: Callable[[str | None], bool] | None = None, **kwargs):
+    def __init__(self, *args, reads_free: bool = False, smart: Callable[[str | None], bool] | None = None,
+                 allowed: Callable[[str | None], bool] | None = None, **kwargs):
         # smart: reads the live mode for a chat (the session id, or None outside one) on every listing; see runs_free.
+        # allowed: whether the chat (the session id, or None outside one) may use this server at all
+        # (odie.plugins.access); None: every chat may.
         super().__init__(*args, **kwargs)
         self.reads_free = reads_free
         self.smart = smart
+        self.allowed = allowed
+
+    def _allowed_in(self, session_id: str | None) -> bool:
+        """Whether this chat may use the server, read live on every listing (a switch flipped in Settings counts from
+        the next step). A reader that fails counts as no: an app's tools are never listed in a thread where they might
+        be off.
+          no reader                         -> True
+          Mira's thread, the server off for her -> False
+          the reader raises                 -> False (logged)"""
+        if self.allowed is None:
+            return True
+        try:
+            return bool(self.allowed(session_id))
+        except Exception:
+            log.warning("could not read who may use an app; its tools are left out", exc_info=True)
+            return False
 
     def _smart_now(self, session_id: str | None) -> bool:
         """Whether the approvals mode is Smart right now; Careful when there is no reader or it fails (a locked database
@@ -233,8 +252,11 @@ class PluginMcpToolset(McpToolset):
             return False
 
     async def get_tools(self, readonly_context=None):
+        session_id = _session_id_of(readonly_context)
+        if not self._allowed_in(session_id):
+            return []  # switched off for whoever this thread belongs to: none of its tools exist there
         tools = await super().get_tools(readonly_context)
-        smart_now = self._smart_now(_session_id_of(readonly_context))
+        smart_now = self._smart_now(session_id)
         for t in tools:  # per tool; ADK's toolset option can't see annotations
             tool = {"name": t.name, "read_only": is_read_only(t), "destructive": is_destructive(t)}
             t._require_confirmation = asks(tool, self.reads_free, smart=smart_now)
@@ -243,20 +265,45 @@ class PluginMcpToolset(McpToolset):
         return tools
 
 
-def toolset_for(name: str, spec: dict, timeout: float = 30, smart: Callable[[str | None], bool] | None = None) -> PluginMcpToolset:
+def toolset_for(name: str, spec: dict, timeout: float = 30, smart: Callable[[str | None], bool] | None = None,
+                allowed: Callable[[str | None], bool] | None = None) -> PluginMcpToolset:
     if spec.get("url"):
         params = StreamableHTTPConnectionParams(url=spec["url"], headers=dict(spec.get("headers") or {}), timeout=timeout)
     else:
         env = {**server_env(), **(spec.get("env") or {})}
         params = StdioConnectionParams(server_params=StdioServerParameters(command=spec["command"], args=list(spec.get("args") or []), env=env),
                                        timeout=timeout)
-    return PluginMcpToolset(connection_params=params, reads_free=bool(spec.get("readsFree")), smart=smart)
+    return PluginMcpToolset(connection_params=params, reads_free=bool(spec.get("readsFree")), smart=smart, allowed=allowed)
 
 
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 MASK = "••••"
 TOOL_APP: dict[str, str] = {}  # tool name -> the app (server title) it comes from, for approval cards
 TOOL_SKILL: dict[str, str] = {}  # tool name -> the skill that loads it (mcp-<server>), to point a model that skipped it
+TOOL_SERVER: dict[str, str] = {}  # tool name -> the server (its name in mcp.json) it comes from, for who may use it
+
+
+def skill_name_of(server: str) -> str:
+    """The on-demand skill that brings a server's tools: "work-mail" -> "mcp-work-mail"."""
+    return f"mcp-{server}"
+
+
+def server_of_skill(skill: str) -> str | None:
+    """The server whose skill this is, or None for any other skill: "mcp-work-mail" -> "work-mail"; "trackers" -> None."""
+    if not skill.startswith("mcp-"):
+        return None
+    return skill.removeprefix("mcp-")
+
+
+def _set_tool_servers(entries: list) -> None:
+    """Which server each working server's tools come from, after a load; nothing stale stays."""
+    names: dict[str, str] = {}
+    for e in entries:
+        if e.status == "ok":
+            for tool in e.tools:
+                names.setdefault(tool, e.name)
+    TOOL_SERVER.clear()
+    TOOL_SERVER.update(names)
 
 
 def _set_tool_apps(entries: list[tuple]) -> None:
@@ -519,7 +566,7 @@ def reads_mail(tools: list[str]) -> bool:
 
 
 def _skill_for(name: str, description: str, tools: list[str]) -> Skill:
-    fm = Frontmatter(name=f"mcp-{name}", description=description, metadata={"adk_additional_tools": tools})
+    fm = Frontmatter(name=skill_name_of(name), description=description, metadata={"adk_additional_tools": tools})
     instructions = f"Tools from the {name} MCP server: {', '.join(tools)}. Use them for: {description}"
     if reads_mail(tools):
         instructions += SHOW_MAIL
@@ -587,9 +634,12 @@ async def probe_tools(spec: dict, timeout: float) -> list[dict]:
 
 
 async def load_servers(timeout: float = 15, reserved: dict[str, str] | None = None,
-                       smart: Callable[[str | None], bool] | None = None) -> list[ServerEntry]:
+                       smart: Callable[[str | None], bool] | None = None,
+                       allowed: Callable[[str, str | None], bool] | None = None) -> list[ServerEntry]:
     """Every server in mcp.json with its status. `reserved` maps tool names Odie already has (built-ins, skill
-    tools) to their owner, so a server can't shadow them. `smart` reads the live approvals mode for each server's toolset."""
+    tools) to their owner, so a server can't shadow them. `smart` reads the live approvals mode for each server's
+    toolset. `allowed(server, session_id)` says whether a chat may use a server (odie.plugins.access), read on every
+    listing."""
     servers, err = read_config()
     if err:
         log.warning(err)
@@ -622,10 +672,21 @@ async def load_servers(timeout: float = 15, reserved: dict[str, str] | None = No
             continue
         for t in e.tools:
             seen[t] = name
-        e.toolset = toolset_for(name, spec, smart=smart)  # connects lazily, the first time a tool is needed
+        e.toolset = toolset_for(name, spec, smart=smart, allowed=_allowed_for(name, allowed))  # connects lazily
         if not e.description:
             e.description = f"Tools from {name}: {', '.join(e.tools[:8])}"
         if not e.always_on:
             e.skill = _skill_for(name, e.description, e.tools)
     _set_tool_apps([(e.title or e.name, e.status, e.tools, e.skill.name if e.skill else None) for e in out])
+    _set_tool_servers(out)
     return out
+
+
+def _allowed_for(server: str, allowed: Callable[[str, str | None], bool] | None) -> Callable[[str | None], bool] | None:
+    """load_servers' `allowed`, for one server: what its toolset asks with a chat's session id."""
+    if allowed is None:
+        return None
+
+    def for_this_server(session_id: str | None) -> bool:
+        return allowed(server, session_id)
+    return for_this_server

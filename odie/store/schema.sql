@@ -29,6 +29,10 @@ CREATE TABLE IF NOT EXISTS threads(session_id TEXT PRIMARY KEY, title TEXT, pinn
 -- other ways for the assistant to be (odie.personalities): a name and a picture each; its SOUL and its memories
 -- are files. A thread's and a task's `personality` column (added in Store.init_schema) says whose it is; NULL = Odie
 CREATE TABLE IF NOT EXISTS personalities(id TEXT PRIMARY KEY, name TEXT NOT NULL, avatar TEXT, created_at TEXT NOT NULL);
+-- which connected apps (MCP servers) each one may use (odie.plugins.access): a row only where a switch was set;
+-- no row = on. personality '' = everyday Odie
+CREATE TABLE IF NOT EXISTS app_access(server TEXT NOT NULL, personality TEXT NOT NULL, allowed INTEGER NOT NULL,
+  PRIMARY KEY(server, personality));
 
 create table if not exists trackers (
   id integer primary key autoincrement,

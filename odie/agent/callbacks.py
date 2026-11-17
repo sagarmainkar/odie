@@ -263,15 +263,25 @@ class OdiePlugin(BasePlugin):
     async def on_tool_error_callback(self, *, tool, tool_args: dict[str, Any], tool_context, error: Exception) -> dict | None:
         """An app's tool called before its skill was loaded: say which skill, so the model loads it and goes on (a bare
         "no tool with that name" made it tell the user the app had dropped off)."""
+        from odie.plugins import access
         from odie.plugins.mcp import TOOL_APP, TOOL_SKILL
         skill = TOOL_SKILL.get(tool.name)
         if skill is None or "not found" not in str(error).lower():
             return None
+        off_here = access.refusal(self.store, tool.name, tool_args, session_id_of(tool_context))
+        if off_here:  # not listed here because it's off for this thread: loading its skill wouldn't help
+            return {"error": off_here}
         return {"error": f"{tool.name} is one of {TOOL_APP.get(tool.name, 'a connected app')}'s tools, and they load with "
                          f"their skill: call load_skill(\"{skill}\") first, then call {tool.name} again."}
 
     async def before_tool_callback(self, *, tool, tool_args: dict[str, Any], tool_context) -> dict | None:
         from odie import personalities
+        from odie.plugins import access
+        off_here = access.refusal(self.store, tool.name, tool_args, session_id_of(tool_context))
+        if off_here:  # a connected app switched off for whoever this thread belongs to: it never runs here
+            self.store.audit("agent", "tool_refused", tool=tool.name, result_summary="app switched off here",
+                             session_id=session_id_of(tool_context))
+            return {"error": off_here}
         if tool.name in personalities.ODIE_ONLY_TOOLS:
             session_id = session_id_of(tool_context)
             in_a_personalitys_thread = personalities.of_session(self.store, session_id) != personalities.ODIE

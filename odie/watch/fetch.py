@@ -426,12 +426,17 @@ class Fetcher:
         self._servers = None
 
     def _spec(self, src: Source) -> dict:
+        """The saved spec of a source's server, for a call. The watch is everyday Odie's: a server switched off for Odie
+        (odie.plugins.access) is never called, even when an older save of the sources still lists it."""
+        from odie.plugins import access
         if self._servers is None:
             from odie.plugins.mcp import read_config
             self._servers = read_config()[0]
         spec = self._servers.get(src.server)
         if not isinstance(spec, dict):
             raise CallError(f"{src.app} isn't connected any more")
+        if not access.allowed(self.store, src.server, access.ODIE):
+            raise CallError(f"{src.app} is switched off for Odie")
         return spec
 
     async def _call(self, src: Source, tool: str, args: dict, timeout: float | None = None):

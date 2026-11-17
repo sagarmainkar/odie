@@ -1,5 +1,6 @@
 """Personalities: other ways for the assistant to be, each with its own name, picture, instructions (its own SOUL),
-threads and memory. Tools, skills and the model are the same for all of them; only who the assistant is changes.
+threads and memory, and optionally a brain of its own (odie.brains) and its own set of connected apps
+(odie.plugins.access). Tools and skills are the same for all of them.
 
 Everyday Odie is not one of them: it has no row here and its id is the empty string (ODIE). Its name and picture stay
 in odie.persona, its SOUL in SOUL.md and its memory in memories.md, so an install with no personalities is unchanged.
@@ -91,6 +92,8 @@ def create(store: Store, name: str) -> Personality:
     pid = uuid.uuid4().hex[:12]
     store.execute("insert into personalities(id, name, avatar, created_at) values (?,?,?,?)",
                   (pid, clean_name(name), None, now_iso()))
+    from odie.plugins import access
+    access.copy_odies(store, pid)  # it starts with the connected apps everyday Odie has on now
     made = get(store, pid)
     assert made is not None
     return made
@@ -364,7 +367,8 @@ async def delete(store: Store, runner, pid: str) -> dict:
     log, saved ticks, Think harder); its reminders; its passages in recall; the files made in its threads (their
     cards, their copies in the workspace, its making jobs' folders) and the pictures uploaded into them; its SOUL and
     memories; its picture; the record itself; and the debug copies of the last few model requests (all of them: they
-    carry no thread id, so the ones from its threads can't be told apart), and the brain picked for it.
+    carry no thread id, so the ones from its threads can't be told apart), the brain picked for it and its
+    connected apps' switches.
     Not erased, because Odie can't reach them from here: log lines, and anything already sent to a tracing service.
     The record goes first, so no new turn can start in its threads while they are erased (the runner then refuses
     them: SessionGone)."""
@@ -395,7 +399,9 @@ async def delete(store: Store, runner, pid: str) -> dict:
     store.execute("delete from tasks where personality=?", (pid,))
     store.execute("delete from settings where key=?", (f"current:{pid}",))
     from odie import brains
+    from odie.plugins import access
     brains.same_as_odie(store, pid)  # its own brain pick
+    access.forget_personality(store, pid)  # its connected apps' switches
     await runner.forget_personality(pid)  # again: a turn that was finishing may have noted itself meanwhile
     shutil.rmtree(folder(pid), ignore_errors=True)
     (config.settings.data_dir / f"memory-{pid}.lock").unlink(missing_ok=True)

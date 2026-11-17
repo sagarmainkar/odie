@@ -234,10 +234,24 @@ async def detect(servers: dict[str, dict]) -> list[Source]:
     return out
 
 
-def _config_hash() -> str:
+def _config_hash(store) -> str:
+    """A short fingerprint of the connected apps the watch may use: mcp.json, and which of its servers are switched
+    off for everyday Odie (odie.plugins.access), so a flipped switch finds the sources again."""
+    from odie.plugins import access
     from odie.plugins.mcp import read_config
     servers, _ = read_config()
-    return hashlib.sha256(json.dumps(servers, sort_keys=True).encode()).hexdigest()[:16]
+    off = sorted(access.off_for(store, access.ODIE))
+    fingerprinted: object = servers
+    if off:  # with nothing off for Odie the fingerprint is the one it always was: no needless search after an update
+        fingerprinted = [servers, off]
+    return hashlib.sha256(json.dumps(fingerprinted, sort_keys=True).encode()).hexdigest()[:16]
+
+
+def odies_servers(store, servers: dict[str, dict]) -> dict[str, dict]:
+    """The servers the watch may read: the watch is everyday Odie's background work, so only those on for Odie.
+    {"home-mail": …, "work-mail": … (Mira's alone)} -> {"home-mail": …}"""
+    from odie.plugins import access
+    return {name: spec for name, spec in servers.items() if access.allowed(store, name, access.ODIE)}
 
 
 def native_sources(available=None, status=None) -> list[Source]:
@@ -267,11 +281,11 @@ async def detect_and_save(store) -> list[Source]:
     from odie import addons
     from odie.plugins.mcp import read_config
     servers, _ = read_config()
-    found = await detect(servers)
+    found = await detect(odies_servers(store, servers))
     for got in addons.call("watch_sources", store):
         found += list(got or [])
     found += native_sources()
-    store.set_setting(KEY, {"at": datetime.now(UTC).isoformat(timespec="seconds"), "config": _config_hash(), "v": VERSION,
+    store.set_setting(KEY, {"at": datetime.now(UTC).isoformat(timespec="seconds"), "config": _config_hash(store), "v": VERSION,
                             "sources": [s.as_dict() for s in found]})
     return found
 
@@ -293,6 +307,6 @@ def stale(store, now: datetime) -> bool:
         return True
     if got.get("v") != VERSION:
         return True  # detection has learned something since
-    if got.get("config") != _config_hash():
-        return True  # the connected apps changed
+    if got.get("config") != _config_hash(store):
+        return True  # the connected apps changed, or which of them Odie may use
     return now - at > timedelta(hours=24)

@@ -1028,15 +1028,18 @@ class OdieRunner:
         return hello["summary"]
 
     def who(self, personality: str = "") -> Who:
-        """Who the prompt is for: the profile's name, this computer, the local currency, what this install can do, and
-        the assistant's name: the one the user chose for Odie, or a personality's own."""
+        """Who the prompt is for: the profile's name, this computer, the local currency, what this install can do with
+        the connected apps this one may use (odie.plugins.access), and the assistant's name: the one the user chose for
+        Odie, or a personality's own."""
         from odie import capabilities, persona, personalities, profile, region
+        from odie.plugins import access
         assistant = persona.get(self.store)["name"]
         picked = personalities.get(self.store, personality)
         if picked is not None:
             assistant = picked.name
+        its_servers = [e for e in self.plugins.get("servers", []) if access.allowed(self.store, e.name, personality)]
         return Who(user=profile.get(self.store)["user_name"], machine=profile.machine_kind(),
-                   currency=region.currency_symbol(config.settings.currency), caps=capabilities.detect(self.plugins.get("servers", []), self.store),
+                   currency=region.currency_symbol(config.settings.currency), caps=capabilities.detect(its_servers, self.store),
                    assistant=assistant)
 
     async def chat(self, text: str, thinking: bool | None = None, session_id: str | None = None,
@@ -1409,7 +1412,8 @@ class OdieRunner:
             return whole_instruction
 
         agent = LlmAgent(name="odie_tracker", model=model_for(sel, False), tools=[] if bare else free_tools([*chat_only, *(tools or [])], free),
-                         before_tool_callback=guard or trackers_guard, after_tool_callback=background_after_tool(self.plugin),
+                         before_tool_callback=[self._apps_stop, guard or trackers_guard],
+                         after_tool_callback=background_after_tool(self.plugin),
                          instruction=as_written,
                          generate_content_config=types.GenerateContentConfig(temperature=BACKGROUND_TEMPERATURE))
         sessions = InMemorySessionService()
@@ -1675,10 +1679,11 @@ class OdieRunner:
                 for e in skills:
                     if e.status == "ok":
                         reserved.update({t: f"the {e.name} skill" for t in e.tools})
-                servers = await load_servers(reserved=reserved, smart=lambda session_id: approvals_mode.runs_free(self.store, session_id))
+                servers = await load_servers(reserved=reserved, smart=lambda session_id: approvals_mode.runs_free(self.store, session_id),
+                                             allowed=self._app_allowed)
                 ok = [e for e in servers if e.status == "ok"]
                 skill_ts = build_skill_toolset(skills, extra_skills=[e.skill for e in ok if e.skill],
-                                               extra_tools=[e.toolset for e in ok if e.skill])
+                                               extra_tools=[e.toolset for e in ok if e.skill], left_out_in=self._skills_off)
             except Exception:  # noqa: BLE001
                 log.warning("loading plugins failed", exc_info=True)
                 return self.plugins
@@ -1697,6 +1702,28 @@ class OdieRunner:
             if failed and self._retries_left > 0:
                 self._spawn(self._retry_later())
             return self.plugins
+
+    def _apps_stop(self, tool, args, tool_context) -> dict | None:
+        """A background turn's first check before a tool runs: a connected app switched off for everyday Odie, whose
+        background work it is, never runs (odie.plugins.access.refusal); anything else goes on to the turn's guard.
+          echo, its server on for Mira alone -> {"error": "tester is switched off for Odie, …"}
+          now, or an app on for Odie         -> None"""
+        from odie.plugins import access
+        off_here = access.refusal(self.store, tool.name, args, session_id_of(tool_context))
+        if off_here is None:
+            return None
+        self.store.audit("agent", "tool_refused", tool=tool.name, result_summary="app switched off for Odie")
+        return {"error": off_here}
+
+    def _app_allowed(self, server: str, session_id: str | None) -> bool:
+        """Whether a chat may use a connected app: the switch of whoever the thread belongs to (odie.plugins.access)."""
+        from odie.plugins import access
+        return access.allowed_in(self.store, server, session_id)
+
+    def _skills_off(self, session_id: str | None) -> frozenset[str]:
+        """The apps' skills a chat's catalog leaves out: those of the apps off for its owner (odie.plugins.access)."""
+        from odie.plugins import access
+        return access.skills_off_in(self.store, session_id)
 
     async def reload_addon_tools(self, name: str) -> None:
         """Rebuild one add-on's tools (after its login changed, say), swap them in, and close the old ones so a
