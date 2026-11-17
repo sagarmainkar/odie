@@ -45,13 +45,17 @@ def off_for(store: Store, pid: str) -> frozenset[str]:
 
 
 def allowed_in(store: Store, server: str, session_id: str | None) -> bool:
-    """Whether a thread may use this server: its owner's switch (allowed). No thread, or one with no row (a background
-    check) -> everyday Odie's switch."""
+    """Whether a thread may use this server: its owner's switch (allowed).
+      work-mail, a thread of Mira's, on for her alone       -> True
+      work-mail, an everyday thread ("chat-2026-11-17")     -> False (Odie's switch is off)
+      work-mail, no thread or one with no row (a background check) -> False (everyday Odie's switch)"""
     return allowed(store, server, personalities.of_session(store, session_id))
 
 
 def off_in(store: Store, session_id: str | None) -> frozenset[str]:
-    """The servers off in this thread: its owner's (off_for)."""
+    """The servers off in this thread: its owner's (off_for).
+      a thread of Mira's, home-mail off for her -> {"home-mail"}
+      an everyday thread, nothing off for Odie  -> {}"""
     return off_for(store, personalities.of_session(store, session_id))
 
 
@@ -123,11 +127,17 @@ def server_called(tool_name: str, args: dict) -> str | None:
     app's skill (which would list its tools).
       echo (a tool of the tester server)  -> "tester"
       load_skill("mcp-tester")            -> "tester"
-      load_skill("trackers"), run_shell   -> None"""
+      load_skill("trackers"), run_shell   -> None
+      load_skill with no skill_name       -> None"""
     from odie.plugins.mcp import TOOL_SERVER, server_of_skill
-    if tool_name == "load_skill":
-        return server_of_skill(str((args or {}).get("skill_name") or ""))
-    return TOOL_SERVER.get(tool_name)
+    if tool_name != "load_skill":
+        return TOOL_SERVER.get(tool_name)
+    if not args:
+        return None
+    skill = args.get("skill_name")
+    if not isinstance(skill, str):
+        return None
+    return server_of_skill(skill)
 
 
 def refusal(store: Store, tool_name: str, args: dict, session_id: str | None) -> str | None:

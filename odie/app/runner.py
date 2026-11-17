@@ -1712,12 +1712,17 @@ class OdieRunner:
         return {"error": off_here}
 
     def _app_allowed(self, server: str, session_id: str | None) -> bool:
-        """Whether a chat may use a connected app: the switch of whoever the thread belongs to (odie.plugins.access)."""
+        """Whether a chat may use a connected app: the switch of whoever the thread belongs to (odie.plugins.access).
+          ("work-mail", a thread of Mira's), on for her alone -> True
+          ("work-mail", an everyday thread)                  -> False
+          ("home-mail", None: a listing outside any chat)     -> everyday Odie's switch"""
         from odie.plugins import access
         return access.allowed_in(self.store, server, session_id)
 
     def _skills_off(self, session_id: str | None) -> frozenset[str]:
-        """The apps' skills a chat's catalog leaves out: those of the apps off for its owner (odie.plugins.access)."""
+        """The apps' skills a chat's catalog leaves out: those of the apps off for its owner (odie.plugins.access).
+          a thread of Mira's, home-mail off for her -> {"mcp-home-mail"}
+          an everyday thread, nothing off for Odie  -> {}"""
         from odie.plugins import access
         return access.skills_off_in(self.store, session_id)
 

@@ -412,3 +412,14 @@ async def test_deleting_the_one_an_app_belonged_to_gives_it_back_to_odie(store):
     assert not access.allowed(store, "coach-app", ODIE)  # Coach still uses it: Odie's switch is left alone
     said = [row["result_summary"] for row in store.query("select result_summary from audit_log where event='app_access'")]
     assert said == ["work-mail on for everyday Odie: no one else could use it"]
+
+
+def test_which_app_a_tool_call_reaches(monkeypatch):
+    from odie.plugins import mcp
+    monkeypatch.setattr(mcp, "TOOL_SERVER", {"echo": "tester"})
+    assert access.server_called("echo", {"text": "x"}) == "tester"
+    assert access.server_called("load_skill", {"skill_name": "mcp-tester"}) == "tester"
+    assert access.server_called("load_skill", {"skill_name": "trackers"}) is None
+    assert access.server_called("load_skill", {}) is None
+    assert access.server_called("load_skill", None) is None
+    assert access.server_called("run_shell", {"command": "ls"}) is None
