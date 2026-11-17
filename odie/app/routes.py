@@ -2464,12 +2464,16 @@ _resuming: set[asyncio.Task] = set()  # strong refs to turns resuming after a ta
 def chat_pass_kind(store, row) -> str | None:
     """The kind a tap on "don't ask again in this chat" may pass for this card, or None when the card doesn't offer it.
     Offered only on a shell card that Odie itself marked as offering it (its detail, written when the card was made),
-    for a kind that may have a pass, while the mode is Smart.
+    for a kind that may have a pass, while the mode is Smart, and never on a card raised just after Odie read mail (the
+    mail may have asked for it; Careful's 30-minute pass isn't offered there either).
       Smart, run_shell card {"asks_because": "deletes or stops something", "chat_pass": true} -> that kind;
-      the same card in Careful -> None;  a card that says "reads secrets" -> None;  a mail card -> None."""
+      the same card in Careful -> None;  a card that says "reads secrets" -> None;  a mail card -> None;
+      the same shell card with risk "from_email" -> None."""
     from odie import approvals_mode
     from odie.agent import shell_grant
     if row["tool"] != "run_shell" or not approvals_mode.is_smart(store):
+        return None
+    if row["risk"] in ("from_email", "unknown"):
         return None
     try:
         detail = json.loads(row["detail_json"] or "{}")

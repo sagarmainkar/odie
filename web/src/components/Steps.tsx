@@ -46,13 +46,13 @@ export function stepsSummary(tools: Tool[]): string {
 
 /** The pill's colours by who let the step run: your tap in the brand's tint, a pass in green, a refusal in red, a
  * lapsed card muted.
- *    allowed {by: "you"} -> brand tint (even when it never ran);  allowed {by: "pass"} -> green;
+ *    allowed {by: "you"} -> brand tint (even when it never ran);  allowed {by: "pass"} or {by: "chat"} -> green;
  *    allowed {by: "lapsed"} -> muted;  allowed {by: "no"}, or state "no" alone -> red */
 function pillTone(t: Tool): string {
   const by = t.allowed?.by;
   if (by === "you") return "bg-ember-tint text-ember-text";
   if (by === "lapsed") return "bg-well text-muted";
-  if (by === "pass") return "bg-good-tint text-good";
+  if (by === "pass" || by === "chat") return "bg-good-tint text-good";
   return "bg-bad-tint text-bad";
 }
 

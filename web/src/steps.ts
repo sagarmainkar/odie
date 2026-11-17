@@ -2,9 +2,10 @@
 // The pure functions here change a list of steps; Chat.tsx only calls them.
 import { userLocale } from "./locale";
 
-/** Who let a step run: "you" tapped Allow, "no" tapped Don't, "pass" ran under a pass (no card), "lapsed": nobody
- * tapped the card in time. `at` is the tap (or lapse) time. */
-export type Allowed = { by: "you" | "no" | "pass" | "lapsed"; at?: string };
+/** Who let a step run: "you" tapped Allow, "no" tapped Don't, "pass" ran under a pass (no card), "chat" ran under
+ * this chat's "don't ask again" pass for its kind, "lapsed": nobody tapped the card in time. `at` is the tap (or lapse)
+ * time. */
+export type Allowed = { by: "you" | "no" | "pass" | "chat" | "lapsed"; at?: string };
 
 /** What became of a step: "done" it ran, "wait" it needs your tap, "no" it never ran (you refused it, or its card
  * lapsed), "lost" its answer never came (Odie restarted while it ran). */
@@ -129,7 +130,8 @@ export function fromHistory(item: HistoryItem): Tool[] {
  *    allowed {by: "you"} (no time known)        -> You allowed
  *    allowed {by: "lapsed"}                     -> Lapsed  (nobody tapped the card in time)
  *    allowed {by: "no"}, or state "no" alone    -> You said no
- *    allowed {by: "pass"}                       -> pass   (a shell command under the pass: no card)
+ *    allowed {by: "pass"}                       -> ran on its own   (a shell command under the pass: no card)
+ *    allowed {by: "chat"}                       -> allowed for this chat   (its kind was allowed for this chat)
  *    no allowed (no tap was needed)             -> ""     (no pill) */
 export function allowedPill(t: Tool): string {
   const by = t.allowed?.by;
@@ -141,6 +143,7 @@ export function allowedPill(t: Tool): string {
   if (by === "lapsed") return "Lapsed";
   if (by === "no" || t.state === "no") return "You said no";
   if (by === "pass") return "ran on its own";  // a 30-minute pass or Smart mode; the activity log says which
+  if (by === "chat") return "allowed for this chat";
   return "";
 }
 

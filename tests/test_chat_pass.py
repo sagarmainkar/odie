@@ -235,3 +235,14 @@ def test_the_receipt_says_allowed_for_this_chat(tmp_path):
         {"name": "run_shell", "id": "c8", "args": {}, "result": "", "allowed": {"by": "pass"}, "state": "done"}]}]
     steps = steps_with_allowed(s, "chat-a", lines)[0]["steps"]
     assert [step["allowed"] for step in steps] == [{"by": "chat"}, {"by": "pass"}]
+
+
+async def test_no_pass_on_a_card_raised_right_after_reading_mail(client):
+    """Like Careful's 30-minute pass, the chat pass is never offered on a card raised just after Odie read mail: the
+    mail may have asked for the command."""
+    c, s = client
+    aid = s.create_approval("chat-a", "inv", "req-m", "run_shell", {"command": "rm ~/work/old.txt"}, summary="Run rm",
+                            detail={"asks_because": DELETES, "chat_pass": True}, provenance=[{"from": "a@example.com"}],
+                            risk="from_email", call_id="c1")
+    r = await c.post(f"/api/approvals/{aid}/decide", json={"approve": True, "allow_chat": True})
+    assert r.status_code == 400 and s.get_setting("shell_kinds:chat-a") is None
