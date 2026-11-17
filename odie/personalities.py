@@ -236,3 +236,44 @@ def quiet_push(name: str, what: str) -> tuple[str, str]:
       ("Mira", "reminder") -> ("Mira", "A reminder is waiting.")"""
     title, body = _QUIET[what]
     return title.format(name=name), body
+
+
+# ── the live stream (/api/events): who hears what ──
+
+def owner_of_event(store: Store, event: dict) -> str:
+    """Whose thread a live event is about, from its "session_id"; ODIE for an everyday thread and for an event about
+    no thread at all (a task changed, the watch's card)."""
+    return of_session(store, event.get("session_id"))
+
+
+def event_for_stream(event: dict, owner: str, pick: str | None) -> dict | None:
+    """What one open stream gets for a live event, or None for nothing. `owner` is whose thread the event is about
+    (owner_of_event); `pick` is the personality the stream's app is talking to: "" for a web app on everyday Odie, an
+    id for one on a personality, and None for an app that named nobody (the Mac app, the terminal, an older web app).
+      an everyday event, any stream                 -> the event, as it is
+      Mira's event, a stream that named nobody      -> None (her words never reach it)
+      Mira's event, the stream that picked Mira     -> the event, with "personality": her id
+      Mira's reply, or her "answered" notice, to a stream on Odie or Coach
+                                                    -> {"type": "elsewhere", "personality": her id, "what": "reply"}
+      Mira's card waiting for a tap, to that stream -> {"type": "elsewhere", "personality": her id, "what": "card"}
+      anything else of Mira's, to that stream       -> None
+    An "elsewhere" notice carries no words: it only lets the other chat's header show that she has something."""
+    if owner == ODIE:
+        return event
+    if pick is None:
+        return None
+    if pick == owner:
+        return {**event, "personality": owner}
+    kind = event.get("type")
+    if kind in ("message", "answered"):
+        return {"type": "elsewhere", "personality": owner, "what": "reply"}
+    is_a_waiting_card = kind == "approval" and event.get("status") == "pending"
+    if is_a_waiting_card:
+        return {"type": "elsewhere", "personality": owner, "what": "card"}
+    return None
+
+
+def stream_view(store: Store, event: dict, pick: str | None) -> dict | None:
+    """event_for_stream, with the event's owner read from the store."""
+    return event_for_stream(event, owner_of_event(store, event), pick)
+

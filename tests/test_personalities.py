@@ -836,3 +836,124 @@ async def test_the_terminals_key_never_reaches_a_personality(runner, monkeypatch
         assert (await c.post(f"/api/chat?personality={mira.id}", json={"text": "hi"})).status_code == 403
         assert (await c.post("/api/chat", json={"text": "hi", "session_id": hers})).status_code == 404
         assert (await c.get("/api/personalities")).status_code == 403
+
+
+# ── what the server sends on its own: live updates, cards, pushes ──
+
+def test_event_for_stream():
+    event_for = personalities.event_for_stream
+    everyday = {"type": "message", "text": "hi", "session_id": "chat-2026-11-17"}
+    hers = {"type": "message", "text": "the lighthouse plan", "session_id": "chat-2026-11-17-2"}
+    card = {"type": "approval", "id": 7, "status": "pending", "summary": "Run ls", "session_id": "chat-2026-11-17-2"}
+    decided = {**card, "status": "approved"}
+    answered = {"type": "answered", "session_id": "chat-2026-11-17-2"}
+    thinking = {"type": "thinking", "session_id": "chat-2026-11-17-2", "on": True}
+    for pick in (None, "", "mira", "coach"):  # an everyday event reaches every stream, as it is
+        assert event_for(everyday, "", pick) == everyday
+    for event in (hers, card, decided, answered, thinking):  # hers never reaches a stream that named nobody
+        assert event_for(event, "mira", None) is None
+    assert event_for(hers, "mira", "mira") == {**hers, "personality": "mira"}  # her own stream: the event, marked hers
+    assert event_for(card, "mira", "mira") == {**card, "personality": "mira"}
+    for pick in ("", "coach"):  # another pick hears only that something of hers waits: no words, no summary
+        assert event_for(hers, "mira", pick) == {"type": "elsewhere", "personality": "mira", "what": "reply"}
+        assert event_for(answered, "mira", pick) == {"type": "elsewhere", "personality": "mira", "what": "reply"}
+        assert event_for(card, "mira", pick) == {"type": "elsewhere", "personality": "mira", "what": "card"}
+        assert event_for(decided, "mira", pick) is None
+        assert event_for(thinking, "mira", pick) is None
+
+
+async def test_a_stream_that_named_nobody_gets_only_everyday_events(runner):
+    from odie.app import routes
+    mira, hers = await _mira_with_a_thread(runner)
+
+    def request(query: dict) -> SimpleNamespace:
+        return SimpleNamespace(query_params=query, app=SimpleNamespace(state=SimpleNamespace(store=runner.store)))
+
+    assert routes._stream_pick(request({})) is None  # the Mac app, the terminal, an older web app
+    assert routes._stream_pick(request({"personality": ""})) == ""  # a web app that knows of personalities, on Odie
+    assert routes._stream_pick(request({"personality": mira.id})) == mira.id
+    assert routes._stream_pick(request({"personality": "gone"})) == ""  # one that was deleted: it hears as Odie's does
+    her_event = {"type": "message", "text": "the lighthouse plan", "session_id": hers}
+    everyday = {"type": "message", "text": "hi", "session_id": f"chat-{D}"}
+    no_thread = {"type": "task", "id": 3}
+    assert personalities.stream_view(runner.store, her_event, None) is None
+    assert personalities.stream_view(runner.store, everyday, None) == everyday
+    assert personalities.stream_view(runner.store, no_thread, None) == no_thread
+    assert personalities.stream_view(runner.store, her_event, mira.id) == {**her_event, "personality": mira.id}
+    assert personalities.stream_view(runner.store, her_event, "") == {"type": "elsewhere", "personality": mira.id, "what": "reply"}
+
+
+async def test_her_reminder_and_late_messages_carry_their_thread_on_the_live_stream(runner):
+    mira, hers = await _mira_with_a_thread(runner)
+    listening = runner.bus.queue()
+    await runner.post_message("A late reply", session_id=hers, kind="reply")
+    event = listening.get_nowait()
+    assert event["session_id"] == hers
+    assert personalities.stream_view(runner.store, event, None) is None  # never to the Mac app or the terminal
+
+
+async def test_her_lapsed_card_is_said_in_her_thread(runner, monkeypatch):
+    from datetime import UTC, datetime, timedelta
+
+    from odie.app import main
+    from odie.push import send as push
+    mira, hers = await _mira_with_a_thread(runner)
+    await _say(runner, f"chat-{D}", "user", "Everyday question", time.time())
+    her_card = _card(runner.store, hers, "Delete the lighthouse notes")
+    two_days_ago = (datetime.now(UTC) - timedelta(hours=48)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    runner.store.execute("update approvals set created_at=? where id=?", (two_days_ago, her_card))
+    pushed = []
+    monkeypatch.setattr(push, "send_to_all", lambda store, title, body, url="/", tag=None: pushed.append((title, body)) or 1)
+    await main.expire_approvals(runner.store, runner)
+    assert runner.store.get_approval(her_card)["status"] == "expired"
+    her_lines = _odie_said(await runner.session_history(hers))
+    assert len(her_lines) == 1 and "Delete the lighthouse notes" in her_lines[0]  # said where it was asked
+    assert _odie_said(await runner.history(D)) == []  # and not in the everyday chat
+    assert pushed == [("Mira: a request lapsed", "Open Odie to see it.")]  # no summary on the lock screen
+
+
+async def test_her_card_goes_out_with_its_thread_and_a_quiet_push(runner, monkeypatch):
+    from google.genai import types
+
+    from odie.app import runner as runner_module
+    mira, hers = await _mira_with_a_thread(runner)
+    pushed = []
+    monkeypatch.setattr(runner_module, "send_to_all", lambda store, title, body, url="/", tag=None: pushed.append((title, body)) or 1)
+    call = types.FunctionCall(id="req-1", name=runner_module.CONFIRM, args={
+        "originalFunctionCall": {"id": "c1", "name": "run_shell", "args": {"command": "rm lighthouse.txt"}},
+        "toolConfirmation": {"hint": "Run rm lighthouse.txt"}})
+    event = SimpleNamespace(partial=False, invocation_id="inv-1", content=types.Content(role="model", parts=[types.Part(function_call=call)]))
+    cards = runner._approvals_in(event, hers)
+    assert len(cards) == 1 and cards[0]["session_id"] == hers  # the live stream can tell whose card it is
+    assert pushed == [("Mira needs you", "Open Odie to answer.")]
+    everyday_cards = runner._approvals_in(SimpleNamespace(partial=False, invocation_id="inv-2", content=event.content), f"chat-{D}")
+    assert everyday_cards[0]["session_id"] == f"chat-{D}"
+    assert pushed[1][0] == "Odie needs your tap"  # an everyday card: as before
+
+
+async def test_her_reply_while_away_is_a_quiet_push_and_a_wordless_notice(api, runner, monkeypatch):
+    from odie.push import send as push
+    mira, hers = await _mira_with_a_thread(runner)
+    pushed = []
+    monkeypatch.setattr(push, "send_to_all", lambda store, title, body, url="/", tag=None: pushed.append((title, body)) or 1)
+    from odie.app import routes
+    listening = runner.bus.queue()
+    routes.say_answered_while_away(runner.store, runner.bus, hers, "The lighthouse plan is ready.")
+    routes.say_answered_while_away(runner.store, runner.bus, f"chat-{D}", "It is 9:31.")
+    assert pushed == [("Mira replied", "Open Odie to read it."), ("Odie answered", "It is 9:31.")]
+    events = []
+    while not listening.empty():
+        events.append(listening.get_nowait())
+    assert events == [{"type": "answered", "session_id": hers}]  # the dot for her; nothing new for an everyday reply
+
+
+async def test_a_made_thing_in_her_thread_is_a_quiet_push(runner, monkeypatch):
+    from odie.making import jobs
+    mira, hers = await _mira_with_a_thread(runner)
+    pushed = []
+    monkeypatch.setattr(jobs, "send_to_all", lambda store, title, body, url="/", tag=None: pushed.append((title, body)) or 1)
+    jobs.hooks.update(runner=runner, store=runner.store)
+    await jobs.tell("video-lighthouse", hers, "Your video about the lighthouse is ready.")
+    await jobs.tell("video-kettles", f"chat-{D}", "Your video about kettles is ready.")
+    assert pushed == [("Mira replied", "Open Odie to read it."), ("Odie", "Your video about kettles is ready.")]
+    assert _odie_said(await runner.session_history(hers)) == ["Your video about the lighthouse is ready."]

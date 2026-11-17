@@ -1178,13 +1178,19 @@ class OdieRunner:
             aid = self.store.create_approval(session_id, inv, a["request_id"], a["tool"], a["args"], a["summary"], a["detail"], a["provenance"], a["risk"],
                                              call_id=a["call_id"])
             self.store.audit("agent", "approval_requested", tool=a["tool"], args=a["args"], result_summary=a["summary"], session_id=session_id, invocation_id=inv, approval_id=aid)
+            # session_id: the live stream sends a card only where its thread's personality is picked (odie.personalities)
             card = {"type": "approval", "id": aid, "tool": a["tool"], "summary": a["summary"], "detail": a["detail"],
-                    "provenance": a["provenance"], "risk": a["risk"], "status": "pending"}
+                    "provenance": a["provenance"], "risk": a["risk"], "status": "pending", "session_id": session_id}
             cards.append(card)
             try:
-                body = push_body(a)  # nothing sensitive on the lock screen
-                from odie import persona
-                send_to_all(self.store, f"{persona.get(self.store)['name']} needs your tap", body, url="/#chat", tag=f"approval-{aid}")
+                from odie import persona, personalities
+                owner = personalities.get(self.store, personalities.of_session(self.store, session_id))
+                if owner is None:
+                    title = f"{persona.get(self.store)['name']} needs your tap"
+                    body = push_body(a)  # nothing sensitive on the lock screen
+                else:  # a personality's card: who, and not even what kind of thing
+                    title, body = personalities.quiet_push(owner.name, "needs you")
+                send_to_all(self.store, title, body, url="/#chat", tag=f"approval-{aid}")
             except Exception:  # noqa: BLE001
                 log.warning("approval push failed", exc_info=True)
         return cards
@@ -1200,7 +1206,8 @@ class OdieRunner:
         row = self.store.get_approval(approval_id)  # again, so it carries decided_at
         self.store.audit("user", "approval_" + ("approved" if approve else "rejected"), tool=row["tool"], session_id=row["session_id"],
                          invocation_id=row["invocation_id"], approval_id=approval_id)
-        await self.bus.publish({"type": "approval", "id": approval_id, "status": "approved" if approve else "rejected", "summary": row["summary"], "tool": row["tool"]})
+        await self.bus.publish({"type": "approval", "id": approval_id, "status": "approved" if approve else "rejected", "summary": row["summary"], "tool": row["tool"],
+                                "session_id": row["session_id"]})
         msg = types.Content(role="user", parts=[types.Part(function_response=types.FunctionResponse(
             id=row["request_id"], name=CONFIRM, response={"confirmed": bool(approve)}))])
         final: list[str] = []  # each reply the model wrote after the tap (one event's text parts make one reply)
@@ -1236,7 +1243,8 @@ class OdieRunner:
                 log.exception("resume failed")
                 text = f"I couldn't finish that: {type(e).__name__}: {str(e)[:160]}"
                 self.store.set_approval_result(approval_id, text)
-                await self.bus.publish({"type": "approval_done", "id": approval_id, "status": "approved" if approve else "rejected", "error": text})
+                await self.bus.publish({"type": "approval_done", "id": approval_id, "status": "approved" if approve else "rejected", "error": text,
+                                        "session_id": row["session_id"]})
                 return {"error": text}
             finally:
                 turn.USER_TEXT.reset(words)
@@ -1251,7 +1259,8 @@ class OdieRunner:
             from odie.signin import guard as signin_guard
             await self.bus.publish({"type": "message", "kind": "reply", "text": text, "ts": time.time(), "session_id": row["session_id"],
                                     "inv": row["invocation_id"], **({"private": True} if signin_guard.private_of(self.store, row["session_id"]) else {})})
-        await self.bus.publish({"type": "approval_done", "id": approval_id, "status": "approved" if approve else "rejected", "text": text})
+        await self.bus.publish({"type": "approval_done", "id": approval_id, "status": "approved" if approve else "rejected", "text": text,
+                                "session_id": row["session_id"]})
         return {"text": text}
 
     async def reconcile_approvals(self) -> int:

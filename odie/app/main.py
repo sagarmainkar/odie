@@ -28,12 +28,22 @@ async def expire_approvals(store: Store, runner=None) -> None:
     from odie.push import send as push
     from odie.store.db import approval_dict
     before = (datetime.now(UTC) - timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+    from odie import personalities
     for row in store.expire_approvals(before):
         store.audit("job", "approval_expired", tool=row["tool"], approval_id=row["id"])
-        if runner is not None:
-            await runner.post_message(f"I let this lapse after a day without your tap: {row['summary']}. Ask again if you still want it.")
+        # A personality's card lapses in its own thread, and its push says only who: the summary is that thread's.
+        owner = personalities.get(store, personalities.of_session(store, row["session_id"]))
+        said = f"I let this lapse after a day without your tap: {row['summary']}. Ask again if you still want it."
+        if runner is not None and owner is None:
+            await runner.post_message(said)
+        if runner is not None and owner is not None:
+            await runner.post_message(said, session_id=row["session_id"])
         try:
-            push.send_to_all(store, f"{persona.get(store)['name']}: approval lapsed", push_body(approval_dict(row)), url="/#chat",
+            if owner is None:
+                title, body = f"{persona.get(store)['name']}: approval lapsed", push_body(approval_dict(row))
+            else:
+                title, body = personalities.quiet_push(owner.name, "lapsed")
+            push.send_to_all(store, title, body, url="/#chat",
                              tag=f"expired-{row['id']}")
         except Exception:  # noqa: BLE001
             logging.getLogger("odie").warning("expiry push failed", exc_info=True)

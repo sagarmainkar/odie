@@ -116,15 +116,30 @@ def reply_preview(text: str, limit: int = 140) -> str:
     return plain if len(plain) <= limit else plain[: limit - 1].rstrip() + "…"
 
 
+def say_answered_while_away(store, bus, session_id: str | None, text: str) -> None:
+    """A reply finished after the app had gone away: a push. An everyday reply: its first words, as before. A reply
+    in a personality's thread: who, never the words (odie.personalities.quiet_push), and a wordless "answered" notice
+    on the live stream, so a chat with someone else can show that she has something new."""
+    from odie import personalities
+    from odie.push.send import send_to_all
+    owner = personalities.get(store, personalities.of_session(store, session_id))
+    if owner is None:
+        send_to_all(store, f"{persona.get(store)['name']} answered", reply_preview(text) or "Your answer is ready.",
+                    url="/#chat", tag="reply")
+        return
+    title, body = personalities.quiet_push(owner.name, "replied")
+    send_to_all(store, title, body, url="/#chat", tag="reply")
+    if bus is not None:
+        bus.emit({"type": "answered", "session_id": session_id})
+
+
 @router.post("/chat")
 async def chat(body: ChatIn, request: Request):
     from odie.app.detached import detached
-    from odie.push.send import send_to_all
     store = request.app.state.store
 
     def answered_while_away(text: str) -> None:
-        send_to_all(store, f"{persona.get(store)['name']} answered", reply_preview(text) or "Your answer is ready.",
-                    url="/#chat", tag="reply")
+        say_answered_while_away(store, getattr(request.app.state, "bus", None), session_id, text)
 
     from odie import threads
     if body.session_id is not None and not threads.valid_id(body.session_id):
@@ -723,12 +738,30 @@ async def task_snooze(task_id: int, body: SnoozeIn, request: Request):
 PING_EVERY = 25  # seconds between pings on the live stream
 
 
+def _stream_pick(request: Request) -> str | None:
+    """Who the app that opened a live stream is talking to, for odie.personalities.event_for_stream:
+      no `personality` parameter at all (the Mac app, the terminal, an older web app) -> None
+      ?personality=        (a web app that knows of personalities, on everyday Odie) -> ""
+      ?personality=ab12cd  (Mira's id)                                                -> "ab12cd"
+      ?personality=<one that was deleted>                                             -> "" (it hears as Odie's does)"""
+    from odie import personalities
+    if "personality" not in request.query_params:
+        return None
+    pick = request.query_params.get("personality") or ""
+    if pick and personalities.get(request.app.state.store, pick) is None:
+        return ""
+    return pick
+
+
 @router.get("/events")
 async def events(request: Request):
     """Live stream: pings, Odie-originated messages, task changes. A device removed while its stream is open loses it
-    at the next event or ping."""
+    at the next event or ping. Each stream gets what its app may see (odie.personalities.event_for_stream): a
+    personality's events go only to an app that picked it."""
+    from odie import personalities
     bus = getattr(request.app.state, "bus", None)
     store, key = request.app.state.store, request.cookies.get(devices.COOKIE)
+    pick = _stream_pick(request)
 
     def still_in() -> bool:
         return not devices.pairing_on(store) or devices.device_for(store, key) is not None
@@ -744,7 +777,10 @@ async def events(request: Request):
             while still_in() and not await request.is_disconnected():
                 try:
                     e = await asyncio.wait_for(q.get(), PING_EVERY)
-                    yield {"data": json.dumps(e, default=str)}
+                    seen = personalities.stream_view(store, e, pick)
+                    if seen is None:  # another personality's: not for this app
+                        continue
+                    yield {"data": json.dumps(seen, default=str)}
                 except asyncio.TimeoutError:
                     yield {"data": json.dumps({"type": "ping"})}
         finally:
