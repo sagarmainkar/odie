@@ -129,11 +129,17 @@ async def chat(body: ChatIn, request: Request):
     from odie import threads
     if body.session_id is not None and not threads.valid_id(body.session_id):
         raise HTTPException(422, "not a chat thread")
+    pick = _personality(request)  # who the app is talking to: everyday Odie, or a personality
+    session_id = body.session_id
+    if session_id is not None:
+        _own_thread(request, session_id)  # a thread named with someone else's pick is "not found"
+    elif pick:
+        session_id = await request.app.state.runner.session_for(pick, _today())  # its current thread, made if none
     if body.thinking is not None:  # an app that still sends it: the same as choosing it in the menu, then the turn
-        await _set_chat_thinking(request, _chat_meant(request, body.session_id), body.thinking)
+        await _set_chat_thinking(request, session_id or _chat_meant(request, None), body.thinking)
     kw: dict[str, Any] = {}
-    if body.session_id:
-        kw["session_id"] = body.session_id
+    if session_id:
+        kw["session_id"] = session_id
     if body.via:
         kw["via"] = body.via
     turn = request.app.state.runner.chat(body.text, thinking=body.thinking, images=body.images or None, **kw)
@@ -184,6 +190,10 @@ async def media_file(mid: str):
 
 @router.get("/history")
 async def history(date: str, request: Request, limit: int | None = None, before: int | None = None):
+    """The chat as it opens: everyday Odie's day, or (with a pick) that personality's current thread."""
+    pick = _personality(request)
+    if pick:
+        return await request.app.state.runner.history(date, limit=limit, before=before, personality=pick)
     return await request.app.state.runner.history(date, limit=limit, before=before)
 
 
@@ -196,35 +206,75 @@ class TitleIn(BaseModel):
     title: str
 
 
-def _thread_id(sid: str) -> str:
-    from odie import threads
+def _today() -> str:
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    return datetime.now(ZoneInfo(config.settings.timezone)).strftime("%Y-%m-%d")
+
+
+def _personality(request: Request) -> str:
+    """Which personality a request is for (odie.personalities): its `personality` query parameter. The web app sends
+    the one picked on that device; the Mac app, the terminal and an older web app send none.
+      ?personality=ab12cd (Mira's id) -> "ab12cd";  none, or empty -> "" (everyday Odie);  an id nobody has -> 404"""
+    from odie import personalities
+    pick = request.query_params.get("personality", "")
+    if not pick:
+        return personalities.ODIE
+    if personalities.get(request.app.state.store, pick) is None:
+        raise HTTPException(404, "no such personality")
+    return pick
+
+
+def _own_thread(request: Request, sid: str) -> str:
+    """A thread id the request may use: a chat thread that belongs to the request's personality. Anything else is "no
+    such thread", so a thread can't be reached by naming it with another pick, or with none. Whose thread it is comes
+    from the thread's own row, never from the request.
+      Mira's thread with Mira's pick -> the id;  Mira's thread with no pick (the terminal, the Mac app) -> 404;
+      an everyday thread with Mira's pick -> 404;  "voice-2026-11-17" -> 404"""
+    from odie import personalities, threads
     if not threads.valid_id(sid):
         raise HTTPException(404, "no such thread")
+    owner = personalities.of_session(request.app.state.store, sid)
+    if owner != _personality(request):
+        raise HTTPException(404, "no such thread")
     return sid
+
+
+def _own_approval(request: Request, approval_id: int):
+    """The approval card with this id, when its thread belongs to the request's personality; otherwise "no such
+    approval": a personality's card is seen and answered only from that personality's chat."""
+    from odie import personalities
+    store = request.app.state.store
+    row = store.get_approval(approval_id)
+    if row is None:
+        raise HTTPException(404, "no such approval")
+    if personalities.of_session(store, row["session_id"]) != _personality(request):
+        raise HTTPException(404, "no such approval")
+    return row
 
 
 @router.get("/threads")
 async def threads_list(request: Request, q: str | None = None):
     from odie import threads
-    return {"threads": await asyncio.to_thread(threads.list_threads, request.app.state.store, q)}
+    return {"threads": await asyncio.to_thread(threads.list_threads, request.app.state.store, q, _personality(request))}
 
 
 @router.get("/threads/{sid}/history")
 async def thread_history(sid: str, request: Request, limit: int | None = None, before: int | None = None):
-    return await request.app.state.runner.session_history(_thread_id(sid), limit=limit, before=before)
+    return await request.app.state.runner.session_history(_own_thread(request, sid), limit=limit, before=before)
 
 
 @router.post("/threads/{sid}/pin")
 async def thread_pin(sid: str, body: PinIn, request: Request):
     from odie import threads
-    threads.set_pinned(request.app.state.store, _thread_id(sid), body.pinned)
+    threads.set_pinned(request.app.state.store, _own_thread(request, sid), body.pinned)
     return {"ok": True, "pinned": body.pinned}
 
 
 @router.post("/threads/{sid}/rename")
 async def thread_rename(sid: str, body: TitleIn, request: Request):
     from odie import threads
-    threads.rename(request.app.state.store, _thread_id(sid), body.title)
+    threads.rename(request.app.state.store, _own_thread(request, sid), body.title)
     return {"ok": True, "title": " ".join(body.title.split())[:threads.TITLE_MAX]}
 
 
@@ -237,14 +287,18 @@ class ThinkingIn(BaseModel):
     session_id: str | None = None  # a chat thread; None = today's current chat
 
 
-def _chat_meant(request: Request, session_id: str | None) -> str:
-    """The chat a request means: the session it names, else today's current one (as /api/chat picks it)."""
-    from datetime import datetime
-    from zoneinfo import ZoneInfo
+def _chat_meant(request: Request, session_id: str | None) -> str | None:
+    """The chat a request means: the thread it names (which must belong to its personality: _own_thread), else the
+    current chat of whoever it is for: everyday Odie's chat of today (as /api/chat picks it), or a personality's
+    current thread, which is None while it has no thread yet."""
     if session_id:
-        return session_id
-    today = datetime.now(ZoneInfo(config.settings.timezone)).strftime("%Y-%m-%d")
-    current = getattr(request.app.state.runner, "current_session_id", None)
+        return _own_thread(request, session_id)
+    runner = request.app.state.runner
+    pick = _personality(request)
+    if pick:
+        return runner.current_thread(pick)
+    today = _today()
+    current = getattr(runner, "current_session_id", None)
     if current is None:
         return f"chat-{today}"
     return current(today)
@@ -268,6 +322,8 @@ async def chat_thinking_get(request: Request, session_id: str | None = None):
     if session_id is not None and not threads.valid_id(session_id):
         raise HTTPException(422, "not a chat thread")
     sid = _chat_meant(request, session_id)
+    if sid is None:  # a personality with no thread yet: what its first thread will start with
+        return {"session_id": None, "on": thinking.default(request.app.state.store)}
     return {"session_id": sid, "on": thinking.get(request.app.state.store, sid)}
 
 
@@ -277,22 +333,22 @@ async def chat_thinking_put(body: ThinkingIn, request: Request):
     from odie import threads
     if body.session_id is not None and not threads.valid_id(body.session_id):
         raise HTTPException(422, "not a chat thread")
-    return await _set_chat_thinking(request, _chat_meant(request, body.session_id), body.on)
+    sid = _chat_meant(request, body.session_id)
+    if sid is None:  # a personality with no thread yet: the choice is made on its first thread
+        sid = await request.app.state.runner.session_for(_personality(request), _today())
+    return await _set_chat_thinking(request, sid, body.on)
 
 
 @router.post("/chat/stop")
 async def chat_stop(body: StopIn, request: Request):
     """The user tapped Stop: the running turn in this chat (today's, or the open thread) ends at its next safe step."""
-    from datetime import datetime
-    from zoneinfo import ZoneInfo
-
     from odie import threads
     runner = request.app.state.runner
     if body.session_id is not None and not threads.valid_id(body.session_id):
         raise HTTPException(422, "not a chat thread")
-    today = datetime.now(ZoneInfo(config.settings.timezone)).strftime("%Y-%m-%d")
-    current = getattr(runner, "current_session_id", None)
-    sid = body.session_id or (current(today) if current else f"chat-{today}")
+    sid = _chat_meant(request, body.session_id)
+    if sid is None:  # a personality with no thread yet: nothing is running there
+        return {"ok": True, "session_id": None}
     stop = getattr(runner, "request_stop", None)
     if stop:
         stop(sid)
@@ -304,6 +360,9 @@ async def chat_context(request: Request):
     from datetime import datetime
     from zoneinfo import ZoneInfo
     today = datetime.now(ZoneInfo(config.settings.timezone)).strftime("%Y-%m-%d")
+    pick = _personality(request)
+    if pick:
+        return await request.app.state.runner.context_usage(today, personality=pick)
     return await request.app.state.runner.context_usage(today)
 
 
@@ -312,6 +371,9 @@ async def chat_new(request: Request):
     from datetime import datetime
     from zoneinfo import ZoneInfo
     today = datetime.now(ZoneInfo(config.settings.timezone)).strftime("%Y-%m-%d")
+    pick = _personality(request)
+    if pick:
+        return {"session_id": await request.app.state.runner.new_chat(today, pick)}
     return {"session_id": await request.app.state.runner.new_chat(today)}
 
 
@@ -1909,40 +1971,117 @@ def _persona_out(p: dict) -> dict:
     return {"name": p["name"], "avatar_url": f"/api/persona/avatar/{p['avatar']}" if p.get("avatar") else None}
 
 
+def _personality_out(p) -> dict:
+    """A personality's name and picture, in the shape /persona gives for everyday Odie."""
+    return _persona_out({"name": p.name, "avatar": p.avatar})
+
+
+def _picked(request: Request):
+    """The personality a request picked (odie.personalities.Personality), or None when it is for everyday Odie."""
+    from odie import personalities
+    return personalities.get(request.app.state.store, _personality(request))
+
+
+def _forget_prompts(request: Request) -> None:
+    """A name or a SOUL changed: every thread builds its prompt again on its next message."""
+    inv = getattr(request.app.state.runner, "invalidate_prompt", None)
+    if inv:
+        inv()
+
+
+# The name, picture and SOUL routes below serve whoever the app is talking to: everyday Odie, or (with a pick) that
+# personality. Settings shows and edits the picked one with the same boxes.
 @router.get("/persona")
 async def persona_get(request: Request):
     from odie import persona
+    picked = _picked(request)
+    if picked is not None:
+        return _personality_out(picked)
     return _persona_out(persona.get(request.app.state.store))
 
 
 @router.put("/persona")
 async def persona_put(body: PersonaIn, request: Request):
-    from odie import persona
-    p = persona.set_name(request.app.state.store, body.name)
-    inv = getattr(request.app.state.runner, "invalidate_prompt", None)
-    if inv:
-        inv()
-    request.app.state.store.audit("user", "persona_renamed", result_summary=p["name"])
+    from odie import persona, personalities
+    store = request.app.state.store
+    picked = _picked(request)
+    if picked is not None:
+        try:
+            renamed = personalities.rename(store, picked.id, body.name)
+        except ValueError as problem:  # empty, Odie's own name, or one another personality has
+            raise HTTPException(422, str(problem))
+        _forget_prompts(request)
+        store.audit("user", "personality_renamed", result_summary=renamed.name)
+        return _personality_out(renamed)
+    p = persona.set_name(store, body.name)
+    _forget_prompts(request)
+    store.audit("user", "persona_renamed", result_summary=p["name"])
     return _persona_out(p)
 
 
 @router.post("/persona/avatar")
 async def persona_avatar(request: Request, file: UploadFile = File(...)):
-    from odie import persona
+    from odie import persona, personalities
+    store = request.app.state.store
+    picked = _picked(request)
     data = await file.read()
     if len(data) > 15 * 1024 * 1024:
         raise HTTPException(413, "Photo too large (15 MB max)")
     try:
-        p = persona.save_avatar(request.app.state.store, data)
+        if picked is None:
+            return _persona_out(persona.save_avatar(store, data))
+        picture = persona.store_picture(data)
     except Exception as e:  # noqa: BLE001
         raise HTTPException(400, f"Not an image I can read: {type(e).__name__}")
-    return _persona_out(p)
+    with_picture = personalities.set_avatar(store, picked.id, picture)
+    persona.delete_picture(picked.avatar)  # the picture it had before
+    return _personality_out(with_picture)
 
 
 @router.delete("/persona/avatar")
 async def persona_avatar_clear(request: Request):
-    from odie import persona
-    return _persona_out(persona.clear_avatar(request.app.state.store))
+    from odie import persona, personalities
+    store = request.app.state.store
+    picked = _picked(request)
+    if picked is None:
+        return _persona_out(persona.clear_avatar(store))
+    with_the_orb = personalities.set_avatar(store, picked.id, None)
+    persona.delete_picture(picked.avatar)
+    return _personality_out(with_the_orb)
+
+
+# --- Personalities: other ways for the assistant to be (odie.personalities) ---
+class PersonalityIn(BaseModel):
+    name: str
+
+
+def _personality_row(store, p) -> dict:
+    """One personality for the switcher: its name and picture, how many threads it has, and how many of its cards are
+    waiting for a tap (the switcher says "needs you")."""
+    from odie import personalities
+    its_threads = set(personalities.sessions_of(store, p.id))
+    waiting = [a for a in store.pending_approvals() if a["session_id"] in its_threads]
+    return {"id": p.id, **_personality_out(p), "threads": len(its_threads), "waiting": len(waiting)}
+
+
+@router.get("/personalities")
+async def personalities_list(request: Request):
+    from odie import personalities
+    store = request.app.state.store
+    return {"personalities": [_personality_row(store, p) for p in personalities.list_all(store)]}
+
+
+@router.post("/personalities")
+async def personalities_create(body: PersonalityIn, request: Request):
+    """A new personality, with the orb and the default instructions; the app then switches to it."""
+    from odie import personalities
+    store = request.app.state.store
+    try:
+        made = personalities.create(store, body.name)
+    except ValueError as problem:
+        raise HTTPException(422, str(problem))
+    store.audit("user", "personality_made", result_summary=made.name)
+    return _personality_row(store, made)
 
 
 @router.get("/persona/avatar/{aid}")
@@ -1985,7 +2124,13 @@ class SoulIn(BaseModel):
 @router.get("/soul")
 async def soul_get(request: Request):
     """The user's SOUL.md, or (none yet) the default personality with their name and the assistant's filled in."""
-    from odie import profile
+    from odie import personalities, profile
+    picked = _picked(request)
+    if picked is not None:  # a personality's own instructions, or the default personality under its name
+        own = personalities.load_soul(picked.id)
+        text = own or identity(Who(user=profile.get(request.app.state.store)["user_name"], assistant=picked.name))
+        path = personalities.folder(picked.id) / "SOUL.md"
+        return {"text": text, "custom": own is not None, "path": str(path)}
     custom = SOUL_PATH.exists() and SOUL_PATH.read_text().strip() != ""
     if custom:
         text = SOUL_PATH.read_text()
@@ -1997,6 +2142,13 @@ async def soul_get(request: Request):
 
 @router.put("/soul")
 async def soul_put(body: SoulIn, request: Request):
+    from odie import personalities
+    picked = _picked(request)
+    if picked is not None:
+        custom = personalities.save_soul(picked.id, body.text)
+        _forget_prompts(request)
+        request.app.state.store.audit("user", "soul_updated", result_summary=f"a personality's ({picked.name})")
+        return {"ok": True, "custom": custom}
     text = body.text.strip()
     if text:
         SOUL_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -2200,15 +2352,16 @@ class DecideIn(BaseModel):
 
 @router.get("/approvals")
 async def approvals_pending(request: Request):
-    return [_approval_dict(r) for r in request.app.state.store.pending_approvals()]
+    from odie import personalities
+    store = request.app.state.store
+    pick = _personality(request)
+    waiting = store.pending_approvals()
+    return [_approval_dict(r) for r in waiting if personalities.of_session(store, r["session_id"]) == pick]
 
 
 @router.get("/approvals/{approval_id}")
 async def approval_get(approval_id: int, request: Request):
-    r = request.app.state.store.get_approval(approval_id)
-    if r is None:
-        raise HTTPException(404, "no such approval")
-    return _approval_dict(r)
+    return _approval_dict(_own_approval(request, approval_id))
 
 
 _resuming: set[asyncio.Task] = set()  # strong refs to turns resuming after a tap
@@ -2218,9 +2371,7 @@ _resuming: set[asyncio.Task] = set()  # strong refs to turns resuming after a ta
 async def approval_decide(approval_id: int, body: DecideIn, request: Request):
     """Answer at once so the card collapses; the paused turn resumes in its own task (it can take minutes) and
     reports through the live stream (approval, message, approval_done)."""
-    row = request.app.state.store.get_approval(approval_id)
-    if row is None:
-        raise HTTPException(404, "no such approval")
+    row = _own_approval(request, approval_id)
     if row["status"] != "pending":
         raise HTTPException(409, f"already {row['status']}")
     out: dict[str, Any] = {"status": "approved" if body.approve else "rejected"}

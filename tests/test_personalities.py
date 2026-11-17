@@ -649,3 +649,190 @@ async def test_a_tracker_asked_of_a_personality_is_refused(runner):
         assert allowed is None
     listing = await runner.plugin.before_tool_callback(tool=by_name["list_trackers"], tool_args={}, tool_context=_ctx(hers))
     assert listing is None  # reading Odie's trackers is fine: she reads the everyday side
+
+
+# ── the routes and the terminal ──
+
+@pytest.fixture
+async def api(runner, monkeypatch):
+    """The real app around the real runner, with no background jobs."""
+    import httpx
+
+    from odie.app.main import create_app
+    monkeypatch.setenv("ODIE_SCHEDULER", "0")
+    app = create_app(runner=runner, store=runner.store)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c, app.router.lifespan_context(app):
+        yield c
+
+
+def _card(store, session_id: str, summary: str) -> int:
+    """A card waiting for the user's tap in this thread."""
+    return store.create_approval(session_id, "inv-" + summary, "req-" + summary, "run_shell", {"command": "ls"}, summary,
+                                 None, None)
+
+
+async def test_the_personalities_list_and_making_one(api, runner):
+    assert (await api.get("/api/personalities")).json() == {"personalities": []}
+    made = await api.post("/api/personalities", json={"name": "Mira"})
+    assert made.status_code == 200
+    pid = made.json()["id"]
+    assert made.json() == {"id": pid, "name": "Mira", "avatar_url": None, "threads": 0, "waiting": 0}
+    refused = await api.post("/api/personalities", json={"name": "odie"})
+    assert refused.status_code == 422 and refused.json()["detail"] == "That is the everyday one's name."
+    hers = await runner.session_for(pid, D)
+    _card(runner.store, hers, "Run ls")
+    listed = (await api.get("/api/personalities")).json()["personalities"]
+    assert listed == [{"id": pid, "name": "Mira", "avatar_url": None, "threads": 1, "waiting": 1}]
+
+
+async def test_a_chat_with_a_pick_goes_to_its_thread(api, runner, monkeypatch):
+    mira, hers = await _mira_with_a_thread(runner)
+    sent = []
+
+    async def fake_chat(text, thinking=None, session_id=None, images=None, via=None):
+        sent.append(session_id)
+        yield {"type": "done", "text": "ok"}
+
+    monkeypatch.setattr(runner, "chat", fake_chat)
+    async with api.stream("POST", f"/api/chat?personality={mira.id}", json={"text": "hi"}) as r:
+        await r.aread()
+    async with api.stream("POST", "/api/chat", json={"text": "hi"}) as r:
+        await r.aread()
+    assert sent == [hers, None]  # with no pick the runner takes today's everyday chat, as before
+
+
+async def test_a_thread_named_with_the_wrong_pick_is_not_found(api, runner):
+    mira, hers = await _mira_with_a_thread(runner)
+    odies = f"chat-{D}"
+    await _say(runner, odies, "user", "Everyday question", time.time())
+    await _say(runner, hers, "user", "The lighthouse plan", time.time())
+    assert (await api.get(f"/api/threads/{hers}/history")).status_code == 404  # hers, with no pick
+    assert (await api.get(f"/api/threads/{odies}/history?personality={mira.id}")).status_code == 404  # Odie's, her pick
+    assert (await api.get(f"/api/threads/{hers}/history?personality={mira.id}")).status_code == 200
+    assert (await api.post("/api/chat", json={"text": "hi", "session_id": hers})).status_code == 404
+    assert (await api.post(f"/api/threads/{hers}/pin", json={"pinned": True})).status_code == 404
+    assert (await api.post(f"/api/threads/{hers}/rename", json={"title": "x"})).status_code == 404
+    assert (await api.post(f"/api/threads/{hers}/pin?personality={mira.id}", json={"pinned": True})).status_code == 200
+    assert personalities.of_session(runner.store, hers) == mira.id  # pinning it didn't change whose it is
+    assert [t["id"] for t in (await api.get("/api/threads")).json()["threads"]] == [odies]
+    assert [t["id"] for t in (await api.get(f"/api/threads?personality={mira.id}")).json()["threads"]] == [hers]
+    assert _said((await api.get(f"/api/history?date={D}")).json()) == ["Everyday question"]
+    her_day = (await api.get(f"/api/history?date={D}&personality={mira.id}")).json()
+    assert _said(her_day) == ["The lighthouse plan"] and her_day["thread"] == hers
+
+
+async def test_new_chat_with_a_pick_is_a_new_thread_of_hers(api, runner):
+    mira, hers = await _mira_with_a_thread(runner)
+    made = (await api.post(f"/api/chat/new?personality={mira.id}")).json()["session_id"]
+    assert made != hers and personalities.of_session(runner.store, made) == mira.id
+    assert runner.current_thread(mira.id) == made
+
+
+async def test_soul_name_and_picture_follow_the_pick(api, runner, odies_soul):
+    mira, hers = await _mira_with_a_thread(runner)
+    pick = f"?personality={mira.id}"
+    got = (await api.get("/api/soul" + pick)).json()
+    assert got["text"] == MIRAS_SOUL and got["custom"] is True
+    assert got["path"].endswith(f"personalities/{mira.id}/SOUL.md")
+    assert runner._prompt_of(_ctx(hers)).startswith(MIRAS_SOUL)
+    assert (await api.put("/api/soul" + pick, json={"text": "You are Mira. Warm."})).json() == {"ok": True, "custom": True}
+    assert personalities.load_soul(mira.id) == "You are Mira. Warm."
+    assert runner._prompt_of(_ctx(hers)).startswith("You are Mira. Warm.")  # her next message talks the new way
+    assert odies_soul.read_text() == "You are Odie, the everyday one. Sunny."  # Odie's SOUL.md is untouched
+    await api.put("/api/soul" + pick, json={"text": ""})
+    blank = (await api.get("/api/soul" + pick)).json()
+    assert blank["custom"] is False and blank["text"].startswith("You are Mira,")
+    # her name
+    assert (await api.get("/api/persona" + pick)).json() == {"name": "Mira", "avatar_url": None}
+    bad = await api.put("/api/persona" + pick, json={"name": "Odie"})
+    assert bad.status_code == 422 and bad.json()["detail"] == "That is the everyday one's name."
+    assert (await api.put("/api/persona" + pick, json={"name": "Mira B"})).json()["name"] == "Mira B"
+    assert (await api.get("/api/persona")).json()["name"] == "Odie"
+    # her picture
+    up = await api.post("/api/persona/avatar" + pick, files={"file": ("m.jpg", _jpeg(), "image/jpeg")})
+    first_picture = up.json()["avatar_url"]
+    assert first_picture.startswith("/api/persona/avatar/")
+    assert (await api.get(first_picture)).status_code == 200
+    assert (await api.get("/api/persona")).json()["avatar_url"] is None  # Odie keeps the orb
+    assert (await api.delete("/api/persona/avatar" + pick)).json()["avatar_url"] is None
+    assert (await api.get(first_picture)).status_code == 404  # her old picture's file went with it
+
+
+async def test_an_unknown_pick_is_404(api):
+    for url in ("/api/threads?personality=nope", f"/api/history?date={D}&personality=nope",
+                "/api/persona?personality=nope", "/api/soul?personality=nope", "/api/approvals?personality=nope"):
+        assert (await api.get(url)).status_code == 404, url
+
+
+async def test_cards_are_listed_and_answered_only_with_their_own_pick(api, runner):
+    mira, hers = await _mira_with_a_thread(runner)
+    pick = f"?personality={mira.id}"
+    her_card = _card(runner.store, hers, "Run ls")
+    odies_card = _card(runner.store, f"chat-{D}", "Run pwd")
+    assert [a["id"] for a in (await api.get("/api/approvals")).json()] == [odies_card]
+    assert [a["id"] for a in (await api.get("/api/approvals" + pick)).json()] == [her_card]
+    assert (await api.get(f"/api/approvals/{her_card}")).status_code == 404
+    assert (await api.get(f"/api/approvals/{her_card}" + pick)).status_code == 200
+    assert (await api.get(f"/api/approvals/{odies_card}" + pick)).status_code == 404
+    assert (await api.post(f"/api/approvals/{her_card}/decide", json={"approve": False})).status_code == 404
+    assert runner.store.get_approval(her_card)["status"] == "pending"  # nobody answered it from the everyday side
+
+
+async def test_think_harder_stop_and_context_follow_the_pick(api, runner, monkeypatch):
+    mira = personalities.create(runner.store, "Mira")
+    pick = f"?personality={mira.id}"
+    assert (await api.get("/api/chat/thinking" + pick)).json() == {"session_id": None, "on": False}  # no thread yet
+    assert (await api.post("/api/chat/stop" + pick, json={})).json() == {"ok": True, "session_id": None}
+    hers = await runner.session_for(mira.id, D)
+    assert (await api.get("/api/chat/thinking" + pick)).json() == {"session_id": hers, "on": False}
+    assert (await api.put("/api/chat/thinking" + pick, json={"on": True})).json() == {"session_id": hers, "on": True}
+    assert (await api.post("/api/chat/stop" + pick, json={})).json() == {"ok": True, "session_id": hers}
+    assert (await api.get(f"/api/chat/thinking?session_id={hers}")).status_code == 404  # hers, named with no pick
+    asked = []
+
+    async def fake_usage(date, personality=""):
+        asked.append(personality)
+        return {"used": 1, "limit": 2}
+
+    monkeypatch.setattr(runner, "context_usage", fake_usage)
+    assert (await api.get("/api/chat/context" + pick)).json() == {"used": 1, "limit": 2}
+    assert asked == [mira.id]
+
+
+async def test_context_usage_of_a_personality_is_its_current_threads(runner):
+    mira, hers = await _mira_with_a_thread(runner)
+    runner._history_limits[hers] = 1000
+    assert await runner.context_usage(D, personality=mira.id) == {"used": 0, "limit": 1000}
+
+
+def test_the_terminal_may_never_name_a_personality():
+    from odie import devices
+    assert devices.terminal_may("POST", "/api/chat", "")
+    assert devices.terminal_may("GET", "/api/threads", "q=goa")
+    assert not devices.terminal_may("GET", "/api/threads", "personality=abc")
+    assert not devices.terminal_may("GET", "/api/threads", "q=goa&personality=abc")
+    assert not devices.terminal_may("POST", "/api/chat", "personality=abc")
+    assert not devices.terminal_may("GET", "/api/threads/chat-2026-11-17-2/history", "limit=5&personality=abc")
+    assert not devices.terminal_may("POST", "/api/chat/new", "personality=")  # naming it at all, even empty
+
+
+async def test_the_terminals_key_never_reaches_a_personality(runner, monkeypatch):
+    import httpx
+
+    from odie import devices
+    from odie.app.main import create_app
+    monkeypatch.setenv("ODIE_PAIRING", "on")
+    monkeypatch.setenv("ODIE_SCHEDULER", "0")
+    mira, hers = await _mira_with_a_thread(runner)
+    await _say(runner, hers, "user", "The lighthouse plan", time.time())
+    terminal = devices.add_terminal(runner.store)
+    app = create_app(runner=runner, store=runner.store)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c, app.router.lifespan_context(app):
+        c.cookies.set(devices.COOKIE, terminal)
+        assert (await c.get("/api/threads")).json()["threads"] == []  # hers is not listed
+        assert (await c.get(f"/api/threads?personality={mira.id}")).status_code == 403
+        assert (await c.get(f"/api/threads/{hers}/history")).status_code == 404
+        assert (await c.get(f"/api/threads/{hers}/history?personality={mira.id}")).status_code == 403
+        assert (await c.post(f"/api/chat?personality={mira.id}", json={"text": "hi"})).status_code == 403
+        assert (await c.post("/api/chat", json={"text": "hi", "session_id": hers})).status_code == 404
+        assert (await c.get("/api/personalities")).status_code == 403

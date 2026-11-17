@@ -137,12 +137,26 @@ def is_terminal(device: dict | None) -> bool:
     return device is not None and device.get("name") == TERMINAL_NAME
 
 
-def terminal_may(method: str, path: str) -> bool:
+def names_a_personality(query: str) -> bool:
+    """Whether a request's query string has a `personality` parameter at all (odie.personalities: the web app names
+    the personality it is talking to this way): "q=goa" -> False; "personality=ab12cd" -> True;
+    "q=goa&personality=" -> True (naming it, even empty); "" -> False."""
+    from urllib.parse import parse_qsl
+    pairs = parse_qsl(query, keep_blank_values=True)
+    return any(name == "personality" for name, _ in pairs)
+
+
+def terminal_may(method: str, path: str, query: str = "") -> bool:
     """Whether the terminal's key may make this call: chatting and reading threads, nothing else. So an agent holding
-    the key can't approve its own card, change the approvals mode, or touch pairing.
+    the key can't approve its own card, change the approvals mode, or touch pairing. And it reaches everyday Odie
+    only: a call that names a personality is refused whatever its path, and a personality's thread named by its id is
+    "not found" in the route itself (odie.app.routes._own_thread).
       POST /api/chat -> True;  POST /api/chat/new -> True;  GET /api/threads -> True;
       GET /api/threads/chat-2026-11-15/history -> True;  POST /api/approvals/7/decide -> False;
-      POST /api/threads/chat-2026-11-15/pin -> False;  PUT /api/approvals/mode -> False"""
+      POST /api/threads/chat-2026-11-15/pin -> False;  PUT /api/approvals/mode -> False;
+      GET /api/threads?personality=ab12cd -> False;  POST /api/chat?personality=ab12cd -> False"""
+    if names_a_personality(query):
+        return False
     if method == "POST":
         return path in ("/api/chat", "/api/chat/new")
     if method != "GET":

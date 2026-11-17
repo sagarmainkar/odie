@@ -1447,11 +1447,17 @@ class OdieRunner:
             self.history_limit = history_limit_for(window)
         return self.history_limit
 
-    async def context_usage(self, date: str) -> dict[str, int]:
-        """How full today's current segment is: the tokens the model read last time (after any cut) against the
-        history limit, past which older turns go as words only."""
+    async def context_usage(self, date: str, personality: str = "") -> dict[str, int]:
+        """How full the current chat is: the tokens the model read last time (after any cut) against the history
+        limit, past which older turns go as words only. Everyday Odie: today's current segment. A personality: its
+        current thread (nothing used when it has no thread yet)."""
         s = config.settings
-        sid = self.current_session_id(date)
+        if personality:
+            sid = self.current_thread(personality)
+            if sid is None:
+                return {"used": 0, "limit": await self.refresh_history_limit()}
+        else:
+            sid = self.current_session_id(date)
         limit = self._history_limits.get(sid) or await self.refresh_history_limit()  # this chat's, once pinned
         sess = await self.session_service.get_session(app_name=s.app_name, user_id=s.user_id, session_id=sid)
         return {"used": self.context_tokens(sess.events) if sess else 0, "limit": limit}

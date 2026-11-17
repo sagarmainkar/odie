@@ -138,7 +138,8 @@ class DeviceGate:
         """The odie command's key: only its own calls (devices.terminal_may), never a websocket."""
         if scope["type"] != "http":
             return False
-        return devices.terminal_may(scope["method"], scope["path"])
+        query = scope.get("query_string", b"").decode("latin-1")
+        return devices.terminal_may(scope["method"], scope["path"], query)
 
     @staticmethod
     async def refuse_terminal(scope, receive, send) -> None:
