@@ -635,6 +635,28 @@ export function Settings() {
         <div className="contents lg:flex lg:flex-col lg:gap-6 lg:min-w-0">
           <AssistantSection />
 
+          {/* How the picked one talks: what the owner edits after a switch, so it sits right under who it is. */}
+          <div className="glass rounded-[26px] overflow-hidden shrink-0 -mt-3">
+            <button onClick={() => setSoulOpen((v) => !v)} className="w-full text-left active:bg-well" aria-expanded={soulOpen}>
+              <Row icon={{ icon: "spark", color: "pink" }} ok={soul ? true : "loading"} title={`How ${picked.name} talks`} sub={soul?.custom ? "Your own words in use" : "The default personality"} chevron />
+            </button>
+            <AnimatePresence initial={false}>
+              {soulOpen && (
+                <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.2 }} className="overflow-hidden">
+                  <div className="px-4 pb-4 pt-1 flex flex-col gap-2.5">
+                    <textarea value={soulDraft} onChange={(e) => setSoulDraft(e.target.value)} rows={7} spellCheck={false}
+                      className="w-full bg-well border border-line rounded-[12px] p-3 text-[14px] leading-[22px] outline-none focus:border-line-2" />
+                    <div className="flex gap-2 items-center">
+                      <button onClick={() => saveSoul(soulDraft)} className="h-11 px-4 rounded-[14px] bg-ember text-on-ember font-semibold text-[15px]">Save</button>
+                      <button onClick={() => saveSoul("")} className="h-11 px-4 rounded-[14px] border border-line-2 text-[15px]">Reset</button>
+                      <AnimatePresence>{soulSaved && <motion.span initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="text-[13px] text-moss-text">{soulSaved}</motion.span>}</AnimatePresence>
+                    </div>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+
           <Section title="Connections">
             {has(caps, "google") && <GoogleRows g={g} flash={flash} setupAction={g && !g.client_configured ? googleAction : null} reload={() => getJSON<Google>("/api/google/status").then(setG).catch(() => {})} />}
             <a href="#brain" className="block active:bg-well">
@@ -671,27 +693,6 @@ export function Settings() {
           </Section>
 
           <VoiceSection />
-
-          <Section title="Personality">
-            <button onClick={() => setSoulOpen((v) => !v)} className="w-full text-left active:bg-well" aria-expanded={soulOpen}>
-              <Row icon={{ icon: "spark", color: "pink" }} ok={soul ? true : "loading"} title={`How ${picked.name} talks`} sub={soul?.custom ? "Your own words in use" : "The default personality"} chevron />
-            </button>
-            <AnimatePresence initial={false}>
-              {soulOpen && (
-                <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.2 }} className="overflow-hidden">
-                  <div className="px-4 pb-4 pt-1 flex flex-col gap-2.5">
-                    <textarea value={soulDraft} onChange={(e) => setSoulDraft(e.target.value)} rows={7} spellCheck={false}
-                      className="w-full bg-well border border-line rounded-[12px] p-3 text-[14px] leading-[22px] outline-none focus:border-line-2" />
-                    <div className="flex gap-2 items-center">
-                      <button onClick={() => saveSoul(soulDraft)} className="h-11 px-4 rounded-[14px] bg-ember text-on-ember font-semibold text-[15px]">Save</button>
-                      <button onClick={() => saveSoul("")} className="h-11 px-4 rounded-[14px] border border-line-2 text-[15px]">Reset</button>
-                      <AnimatePresence>{soulSaved && <motion.span initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="text-[13px] text-moss-text">{soulSaved}</motion.span>}</AnimatePresence>
-                    </div>
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </Section>
 
           <Section title="Memory">
             <NotesRow />
