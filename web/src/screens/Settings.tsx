@@ -24,6 +24,7 @@ import { Switcher } from "../components/Switcher";
 import { profileChanged, useProfile } from "../profile";
 import { has, useCaps } from "../capabilities";
 import { EMBED_EVERY_CHOICES, embedEveryLabel, notesRow, type VaultInfo } from "../vault";
+import { memoryPlace } from "../memoryPlace";
 import { photosRow, type PhotosInfo } from "../photos";
 import { engineLine, previewUrl, voiceGroups, voiceSection, withPhononVoices, type PhononAnswer } from "../voiceSettings";
 import { AnotherVoice } from "../components/AnotherVoice";
@@ -342,10 +343,15 @@ function MemoryRow() {
   const file = v?.memory_file ?? "";
   const dir = v?.settings.dir ?? "";
   const inVault = !!dir && file.startsWith(dir);
-  const home = file.replace(/^\/Users\/[^/]+/, "~");
+  const place = memoryPlace(file, dir);  // the file's name, then its folder shortened; the whole path is the title
+  const where = (
+    <span title={file} className="block">
+      <span className="block truncate text-muted">{place.name}</span>
+      <span className="block truncate">{place.folder}</span>
+    </span>
+  );
   return <Row icon={{ icon: "brain", color: "violet" }} ok={true} title="Long-term memory" sub="Reviewed every 10 turns"
-    meta={<span className="font-mono [overflow-wrap:anywhere]">{inVault ? file.slice(dir.length).replace(/^\//, "") : home}</span>}
-    right={inVault ? <Pill tone="moss">Obsidian</Pill> : undefined} />;
+    meta={where} right={inVault ? <Pill tone="moss">Obsidian</Pill> : undefined} />;
 }
 
 function skippedList(steps: Step[]): string {
