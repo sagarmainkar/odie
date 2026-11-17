@@ -144,3 +144,14 @@ def test_smart_runs_free_even_after_mail_this_turn(store, monkeypatch):
     assert approvals_mode.plain_write_asks(title="Dentist", tool_context=ctx) is False
     approvals_mode.set_mode(store, "careful")
     assert approvals_mode.runs_free(store, "chat-1") is False
+
+
+def test_the_smart_line_names_what_still_asks(store):
+    """17 Nov 2026: Smart's line says what still asks, in the design's words, so the model never promises a card for
+    reading Odie's code or posting to a server on this computer."""
+    approvals_mode.set_mode(store, "smart")
+    line = approvals_mode.context_line(store)
+    for words in ("deleting or stopping things", "sending data off this computer", "installing software",
+                  "reading secrets", "changing Odie itself", "what runs later or at login", "code it can't read",
+                  "writing outside ordinary folders", "payments"):
+        assert words in line, words

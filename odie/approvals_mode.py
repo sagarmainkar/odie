@@ -112,11 +112,12 @@ def plain_write_asks(tool_context=None, **_) -> bool:
 
 def context_line(store) -> str:
     """The one line of each turn's context that tells the model which mode is on, so it never promises a tap that
-    won't come (or the reverse): Smart -> "Approvals: smart (commands and app tools run without a tap; installs,
-    deletes outside Odie's folders, sends, payments and secrets still ask)"; Careful -> "Approvals: careful (changes
-    ask first)"."""
+    won't come (or the reverse): Smart -> "Approvals: smart (commands and app tools run without a tap; deleting or
+    stopping things, sending data off this computer, … and reading secrets still ask; …)"; Careful -> "Approvals:
+    careful (changes ask first)"."""
     if is_smart(store):
-        return ("Approvals: smart (commands and app tools run without a tap; installs, deletes outside Odie's folders, "
-                "sends, payments and secrets still ask; where a rule or a skill says a tool asks first, that now means "
-                "only those)")
+        return ("Approvals: smart (commands and app tools run without a tap; deleting or stopping things, sending data "
+                "off this computer, installing software, changing Odie itself or what runs later or at login, code it "
+                "can't read, writing outside ordinary folders, sending and payments in apps, and reading secrets still "
+                "ask; where a rule or a skill says a tool asks first, that now means only those)")
     return "Approvals: careful (changes ask first)"
