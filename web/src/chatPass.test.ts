@@ -10,8 +10,6 @@ const card: Approval = {
 describe("kindWords", () => {
   it("says each kind a pass may cover in plain words", () => {
     expect(kindWords("deletes or stops something")).toBe("deleting or stopping things");
-    expect(kindWords("installs software (runs its install scripts)")).toBe("installing software");
-    expect(kindWords("runs text as commands")).toBe("running text as commands");
     expect(kindWords("writes a file from code")).toBe("writing files from code");
     expect(kindWords("sets something to run later or at login")).toBe("setting things to run later or at login");
     expect(kindWords("edits files in place")).toBe("editing files in place");
@@ -20,6 +18,8 @@ describe("kindWords", () => {
   });
   it("knows no words for a kind that never gets a pass, or for nothing", () => {
     expect(kindWords("reads secrets")).toBeNull();
+    expect(kindWords("installs software (runs its install scripts)")).toBeNull();
+    expect(kindWords("runs text as commands")).toBeNull();
     expect(kindWords("sends data out")).toBeNull();
     expect(kindWords("touches Odie's own files")).toBeNull();
     expect(kindWords(undefined)).toBeNull();

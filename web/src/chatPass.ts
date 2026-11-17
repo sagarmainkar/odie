@@ -5,13 +5,12 @@ import type { Approval } from "./components/ApprovalCard";
 
 export const CHAT_PASS_BUTTON = "Run it, and don't ask again in this chat for 30 min";
 
-// The kinds a pass may cover (the server's own reasons), in words for the owner.
+// The kinds a pass may cover (the server's own reasons), in words for the owner. Running text as commands and
+// installing software never get one: either can do anything.
 const KIND_WORDS: Record<string, string> = {
   "deletes or stops something": "deleting or stopping things",
-  "runs text as commands": "running text as commands",
   "writes a file from code": "writing files from code",
   "sets something to run later or at login": "setting things to run later or at login",
-  "installs software (runs its install scripts)": "installing software",
   "edits files in place": "editing files in place",
   "writes a file outside /tmp": "writing files outside ordinary folders",
   "replaces a file": "replacing files",
@@ -20,6 +19,7 @@ const KIND_WORDS: Record<string, string> = {
 /** A kind a pass may cover, in plain words; null for any other kind (those never get the button).
  *    "deletes or stops something" -> "deleting or stopping things"
  *    "reads secrets"              -> null
+ *    "installs software (…)"      -> null
  *    undefined                    -> null */
 export function kindWords(kind: unknown): string | null {
   if (typeof kind !== "string") return null;

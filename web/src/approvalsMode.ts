@@ -10,7 +10,7 @@ export const MODE_COPY: Record<ApprovalsMode, { title: string; line: string }> =
   careful: { title: "Careful", line: "Every command and every change asks first; a 30-minute pass is offered on each shell card." },
   smart: {
     title: "Smart",
-    line: "Commands, reads and plain writes run on their own and show in each reply's steps. Deleting, installing and other risky commands ask, and their card can stop asking for that kind in that chat for 30 minutes; sending, paying or ordering, changing Odie, and reading secrets always ask.",
+    line: "Commands, reads and plain writes run on their own and show in each reply's steps. Deleting and other risky commands ask, and their card can stop asking for that kind in that chat for 30 minutes; installing, sending, paying or ordering, changing Odie, and reading secrets always ask.",
   },
 };
 
