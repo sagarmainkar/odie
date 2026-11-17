@@ -127,6 +127,7 @@ describe("allowedPill", () => {
     expect(allowedPill({ name: "run_shell", done: true, allowed: { by: "you", at } })).toBe("You allowed · 10:42");
     expect(allowedPill({ name: "run_shell", done: true, allowed: { by: "you" } })).toBe("You allowed");
     expect(allowedPill({ name: "run_shell", done: true, allowed: { by: "pass" } })).toBe("ran on its own");
+    expect(allowedPill({ name: "run_shell", done: true, allowed: { by: "chat" } })).toBe("allowed for this chat");
     expect(allowedPill({ name: "run_shell", done: true, state: "no", allowed: { by: "no", at } })).toBe("You said no");
     expect(allowedPill({ name: "run_shell", done: true, state: "no" })).toBe("You said no");
   });

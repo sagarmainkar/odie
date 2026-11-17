@@ -103,7 +103,7 @@ describe("a card in the chat", () => {
 // Chat.tsx's own wiring in miniature: the message holds the approval, and onDecided updates it with `answered`.
 function ChatSlot({ first }: { first: Approval }) {
   const [a, setA] = useState(first);
-  return <ChatApproval a={a} onDecided={(_id, status, until) => setA((was) => answered(was, status, until))} />;
+  return <ChatApproval a={a} onDecided={(_id, status, until, chatPass) => setA((was) => answered(was, status, until, chatPass))} />;
 }
 
 describe("the shell pass on a stamp", () => {
@@ -112,6 +112,7 @@ describe("the shell pass on a stamp", () => {
     const view = await mount(<ChatApproval a={{ ...card, status: "approved", decided_at: decidedAt, allowed_until: until }} />);
     expect(view.host.textContent).toContain("You allowed · 12:01 · commands run without asking until ");
     expect(view.host.textContent).toMatch(/until 12:31|until 0?12:31/);
+    expect(view.host.textContent).toContain("or a restart");
     await view.done();
   });
   it("is not said on a refused card, even if a pass came along", async () => {
@@ -145,5 +146,63 @@ describe("answered", () => {
   it("changes nothing when there is no new status", () => {
     expect(answered(card, undefined)).toBe(card);
     expect(answered(card, "pending")).toBe(card);
+  });
+});
+
+describe("don't ask again in this chat (Smart)", () => {
+  const passable: Approval = { ...card, detail: { ...card.detail, asks_because: "deletes or stops something", chat_pass: true } };
+  const until = new Date(2026, 10, 5, 12, 31).toISOString();
+  async function inSmart(node: React.ReactNode) {
+    forgetMode();
+    vi.mocked(getJSON).mockResolvedValue({ mode: "smart" });
+    const view = await mount(node);
+    await act(async () => { await Promise.resolve(); });
+    return view;
+  }
+  async function after(view: { done: () => unknown }) {
+    forgetMode();
+    vi.mocked(getJSON).mockReset();
+    await view.done();
+  }
+
+  it("offers the second button with the kind in words", async () => {
+    const view = await inSmart(<ChatApproval a={passable} />);
+    const buttons = [...view.host.querySelectorAll("button")].map((b) => b.textContent);
+    expect(buttons).toContain("Run it, and don't ask again in this chat for 30 min");
+    expect(view.host.textContent).toContain("Only for deleting or stopping things, only in this chat.");
+    expect(buttons.some((b) => b?.includes("allow commands for 30 min"))).toBe(false);
+    await after(view);
+  });
+
+  it("is not offered for a card the server didn't mark, nor in Careful", async () => {
+    const view = await inSmart(<ChatApproval a={card} />);
+    expect(view.host.textContent).not.toContain("don't ask again");
+    await after(view);
+    forgetMode();
+    vi.mocked(getJSON).mockResolvedValue({ mode: "careful" });
+    const careful = await mount(<ChatApproval a={passable} />);
+    await act(async () => { await Promise.resolve(); });
+    expect(careful.host.textContent).not.toContain("don't ask again");
+    await after(careful);
+  });
+
+  it("asks the server for the chat pass and keeps its note on the stamp", async () => {
+    vi.mocked(postJSON).mockResolvedValueOnce({ status: "approved", chat_pass: { kind: "deletes or stops something", until } });
+    const view = await inSmart(<ChatSlot first={passable} />);
+    const button = [...view.host.querySelectorAll("button")].find((b) => b.textContent?.includes("don't ask again"));
+    await act(async () => { button!.click(); });
+    expect(vi.mocked(postJSON)).toHaveBeenLastCalledWith("/api/approvals/7/decide", { approve: true, allow_chat: true });
+    expect(view.host.querySelector("button")).toBeNull();
+    expect(view.host.textContent).toContain("You allowed");
+    expect(view.host.textContent).toMatch(/won't ask again for deleting or stopping things until 0?12:31.*or a restart/);
+    await after(view);
+  });
+});
+
+describe("answered keeps a chat pass", () => {
+  it("puts the pass the tap gave on the card", () => {
+    const pass = { kind: "deletes or stops something", until: "2026-11-05T12:31:00Z" };
+    expect(answered(card, "approved", undefined, pass).chat_pass).toEqual(pass);
+    expect(answered({ ...card, chat_pass: pass }, "approved").chat_pass).toEqual(pass);
   });
 });

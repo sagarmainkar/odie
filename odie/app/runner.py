@@ -236,6 +236,21 @@ def events_to_history(events: list[Any]) -> list[dict[str, Any]]:
     return out
 
 
+def marked_chat_pass(store: Store, session_id: str, item: dict[str, Any]) -> dict[str, Any]:
+    """A finished shell step that ran under this chat's "don't ask again" pass for its kind says so: its allowed
+    becomes {"by": "chat"}; any other item is returned as it was.
+      tool_done run_shell c7 {"by": "pass"}, c7 ran under a deletes pass -> allowed {"by": "chat"}
+      tool_done run_shell c8 {"by": "pass"}, ran because Smart needs no tap for it -> unchanged
+      tool_done web_search -> unchanged"""
+    from odie.agent import shell_grant
+    allowed = item.get("allowed") or {}
+    if item.get("type") != "tool_done" or item.get("tool") != "run_shell" or allowed.get("by") != "pass":
+        return item
+    if item.get("id") in shell_grant.calls_allowed_for_chat(store, session_id):
+        item["allowed"] = {"by": "chat"}
+    return item
+
+
 def steps_with_allowed(store: Store, session_id: str, lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Fill each step's `allowed` from the session's approval rows, and end a wait that can no longer end. A row for the
     call wins over what the history alone could tell (a shell command that ran with no row stays "pass"). A step still
@@ -245,13 +260,19 @@ def steps_with_allowed(store: Store, session_id: str, lines: list[dict[str, Any]
       c3 card pending, step "wait"          -> stays "wait", allowed None (the card can still be tapped)
       c4 card lapsed, step "wait"           -> state "no" (Not run), allowed {"by": "lapsed", "at": <when>}
       c5 approved, step still "wait"        -> state "no" (Not run), allowed {"by": "you", ...} (the resume never finished)
-      web_search, no row                    -> allowed None"""
+      web_search, no row                    -> allowed None
+      run_shell c7 "pass", ran under this chat's pass for its kind -> allowed {"by": "chat"}"""
     rows = store.approvals_for_calls(session_id)
+    from odie.agent import shell_grant
+    chat_passed = shell_grant.calls_allowed_for_chat(store, session_id)
     for item in lines:
         for step in item.get("steps", []):
             # response None: only a row can answer here; the "pass" rule was already applied when the step was built
             decided = allowed_of(step["name"], step["id"], item.get("inv", ""), step["args"], None, rows)
             if decided is None:
+                ran_on_its_own = (step.get("allowed") or {}).get("by") == "pass"
+                if step["name"] == "run_shell" and ran_on_its_own and step["id"] in chat_passed:
+                    step["allowed"] = {"by": "chat"}
                 continue
             step["allowed"] = decided
             if step["state"] == "wait":
@@ -392,9 +413,13 @@ def approval_from_confirmation(fc: Any, invocation_id: str, session_id: str, sto
         same = str(targs.get("version", "")) == builder.staged_version(name)
         risk = "normal" if detail["body"].startswith("──") and same else "unknown"
     elif tool == "run_shell":
+        from odie.agent import shell_grant
         cwd = targs.get("cwd") or "~"
         detail["cwd"] = cwd
         summary = f"Run in {cwd}: {targs.get('command', '')}"
+        # Smart: why it asks, and whether its second button ("don't ask again in this chat") is offered
+        detail.update(shell_grant.card_offer(store, session_id, str(targs.get("command", "")), targs.get("cwd"),
+                                             datetime.now()))
     elif tool in signin_guard.GUARDED:
         summary, extra = signin_guard.card(tool, targs, session_id, store)
         detail.update({k: v for k, v in extra.items() if v})
@@ -1127,6 +1152,7 @@ class OdieRunner:
                                                           run_config=chat_run_config())) as events:
                     async for ev in events:
                         for item in event_to_sse(ev, asked):
+                            item = marked_chat_pass(self.store, session_id, item)
                             if item["type"] in ("token", "text") and not said_private and turn_words.private_sites():
                                 said_private = True
                                 yield {"type": "private"}  # the app holds web images in this reply until a tap
@@ -1344,7 +1370,7 @@ class OdieRunner:
             try:
                 async for ev in self.runner.run_async(user_id=s.user_id, session_id=row["session_id"], invocation_id=row["invocation_id"],
                                                       new_message=msg, run_config=chat_run_config()):
-                    items = event_to_sse(ev, asked)
+                    items = [marked_chat_pass(self.store, row["session_id"], item) for item in event_to_sse(ev, asked)]
                     reply = "".join(item["text"] for item in items if item["type"] == "text")
                     if reply:
                         final.append(reply)

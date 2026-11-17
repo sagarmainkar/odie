@@ -53,11 +53,11 @@ def test_risky_commands_always_ask(cmd):
 def test_grant_lasts_thirty_minutes_for_its_conversation_only(tmp_path):
     s = Store(tmp_path / "a.db")
     s.init_schema()
-    assert not g.active(s, "chat-2026-10-04-3", NOW)
-    g.grant(s, "chat-2026-10-04-3", NOW)
-    assert g.active(s, "chat-2026-10-04-3", NOW + timedelta(minutes=29))
-    assert not g.active(s, "chat-2026-10-04-3", NOW + timedelta(minutes=31))
-    assert not g.active(s, "chat-2026-10-04-4", NOW)  # a New chat starts without it
+    assert not g.active("chat-2026-10-04-3", NOW)
+    g.grant("chat-2026-10-04-3", NOW)
+    assert g.active("chat-2026-10-04-3", NOW + timedelta(minutes=29))
+    assert not g.active("chat-2026-10-04-3", NOW + timedelta(minutes=31))
+    assert not g.active("chat-2026-10-04-4", NOW)  # a New chat starts without it
 
 
 def test_needs_tap_uses_grant_and_list(tmp_path):
@@ -67,7 +67,7 @@ def test_needs_tap_uses_grant_and_list(tmp_path):
     ctx = SimpleNamespace(session=SimpleNamespace(id="chat-x"))
     check = g.make_check(s, clock=lambda: NOW)
     assert check(command="ls ~", tool_context=ctx) is True            # no grant: ask
-    g.grant(s, "chat-x", NOW)
+    g.grant("chat-x", NOW)
     assert check(command="ls ~", tool_context=ctx) is False           # granted: runs
     assert check(command="cat ~/.env", tool_context=ctx) is True      # still asks
     assert check(command="ls ~", tool_context=None) is True           # no conversation known: ask
@@ -82,7 +82,7 @@ async def test_run_shell_tool_asks_adk_per_command_with_the_conversation(tmp_pat
     tool = make_shell_tool(home=tmp_path, store=s)
     ctx = SimpleNamespace(session=SimpleNamespace(id="chat-y"))
     assert await tool.check_require_confirmation({"command": "ls"}, ctx) is True   # through ADK's own path
-    g.grant(s, "chat-y", datetime.now())
+    g.grant("chat-y", datetime.now())
     assert await tool.check_require_confirmation({"command": "ls"}, ctx) is False
     assert await tool.check_require_confirmation({"command": "cat .env"}, ctx) is True
     assert "tool_context" not in str(tool._get_declaration())  # the model never sees it
@@ -148,7 +148,7 @@ def test_the_check_knows_the_workspace_and_the_vault(tmp_path, isolated_settings
     vault_settings.put(s, dir=str(vault))
     ctx = SimpleNamespace(session=SimpleNamespace(id="chat-x"))
     check = g.make_check(s, clock=lambda: NOW)
-    g.grant(s, "chat-x", NOW)
+    g.grant("chat-x", NOW)
     workspace = isolated_settings.data_dir / "workspace"
     assert check(command=f"echo hi > '{workspace}/a.md'", tool_context=ctx) is False
     assert check(command=f"echo hi > '{vault}/a.md'", tool_context=ctx) is False
@@ -317,7 +317,7 @@ def test_smart_with_a_pass_still_says_smart(tmp_path):
     from types import SimpleNamespace
     s = _smart_store(tmp_path)
     ctx = SimpleNamespace(session=SimpleNamespace(id="chat-x"))
-    g.grant(s, "chat-x", NOW)
+    g.grant("chat-x", NOW)
     check = g.make_check(s, clock=lambda: NOW)
     assert check(command="ls ~", tool_context=ctx) is False
     assert [r["result_summary"] for r in _shell_audit(s, "shell_auto_approved")] == ["allowed by smart mode"]
@@ -333,7 +333,7 @@ def test_careful_is_unchanged_with_the_mode_set_explicitly(tmp_path):
     ctx = SimpleNamespace(session=SimpleNamespace(id="chat-x"))
     check = g.make_check(s, clock=lambda: NOW)
     assert check(command="ls ~/Downloads", tool_context=ctx) is True  # no pass: card
-    g.grant(s, "chat-x", NOW)
+    g.grant("chat-x", NOW)
     assert check(command="ls ~/Downloads", tool_context=ctx) is False
     assert [r["result_summary"] for r in _shell_audit(s, "shell_auto_approved")] == ["allowed for 30 min"]
 

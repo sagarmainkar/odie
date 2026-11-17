@@ -359,6 +359,8 @@ def erase_rows_of(store: Store, session_id: str) -> None:
     # settings kept per thread are named "<what>.<the thread's id>": the key ends with the whole id
     store.execute("delete from settings where length(key) > length(?) and substr(key, -length(?)) = ?",
                   (session_id, session_id, session_id))
+    from odie.agent import shell_grant
+    shell_grant.forget_chat(session_id)  # its shell passes live in memory, not in the settings
 
 
 async def delete(store: Store, runner, pid: str) -> dict:

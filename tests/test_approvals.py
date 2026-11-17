@@ -348,10 +348,10 @@ async def test_allow_for_30_min_grants_the_conversation(client):
     aid = s.create_approval("chat-z", "inv", "req", "run_shell", {"command": "ls"}, summary="Run ls", detail={}, provenance=[])
     r = await c.post(f"/api/approvals/{aid}/decide", json={"approve": True, "allow_minutes": 30})
     assert r.status_code == 200 and r.json()["allowed_until"]
-    assert shell_grant.active(s, "chat-z", datetime.now())
+    assert shell_grant.active("chat-z", datetime.now())
     other = s.create_approval("chat-z2", "inv", "req2", "gmail_trash", {}, summary="Trash", detail={}, provenance=[])
     r = await c.post(f"/api/approvals/{other}/decide", json={"approve": True, "allow_minutes": 30})
-    assert "allowed_until" not in r.json() and not shell_grant.active(s, "chat-z2", datetime.now())  # shell only
+    assert "allowed_until" not in r.json() and not shell_grant.active("chat-z2", datetime.now())  # shell only
 
 
 async def test_allow_for_30_min_approves_one_card_only(isolated_settings, tmp_path):
