@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from "framer-motion";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { getJSON, postJSON, todayISO } from "../api";
 import { groupThreads, sameAsTopRow, whenText, type Thread } from "../threads";
 import { usePick } from "../pick";
@@ -107,6 +107,18 @@ export function ThreadsSheet({ open, current, pickThread, onClose, onOpen }: {
   open: boolean; current: string | null; pickThread: string | null; onClose: () => void; onOpen: (t: Thread | null) => void;
 }) {
   const threads = useThreadList(open, 0);
+  // The drawer belongs to the chat, which stays mounted under other screens: a change of screen (the hash: a tab, a
+  // link, #settings typed in) closes it, so it never stays open over Settings or Today. One listener for as long as
+  // it is open, calling the newest onClose: App redraws the chat on the same hash change before this listener runs,
+  // and a listener swapped during that redraw would be skipped by the browser for that event.
+  const closeRef = useRef(onClose);
+  useEffect(() => { closeRef.current = onClose; });  // after every redraw: the newest onClose
+  useEffect(() => {
+    if (!open) return;
+    const close = () => closeRef.current();
+    window.addEventListener("hashchange", close);
+    return () => window.removeEventListener("hashchange", close);
+  }, [open]);
   return (
     <ToBody>
       <AnimatePresence>
