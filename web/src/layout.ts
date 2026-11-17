@@ -45,10 +45,28 @@ export function railItems(caps: Caps): RailItem[] {
   return items.filter((item) => item.tab !== "money" || has(caps, "money"));
 }
 
-/** Which rail tab lights up for a screen. The sample chat is reached from Settings, so "sample" -> "settings";
- *  "brain" -> "brain"; "today" -> "today". */
+/** Which rail tab lights up for a screen. The sample chat and Voice are reached from Settings, so "sample" -> "settings"
+ *  and "voice" -> "settings"; "brain" -> "brain" (it has its own tab); "today" -> "today". */
 export function railTabFor(tab: Tab): Tab {
-  return tab === "sample" ? "settings" : tab;
+  if (tab === "sample" || tab === "voice") return "settings";
+  return tab;
+}
+
+// Every screen an address can name; anything else opens Today.
+const TABS: Tab[] = ["chat", "today", "settings", "brain", "voice", "sample", "money", "setup"];
+
+/** The screen the address names, with anything after "?" ignored. "#voice" -> "voice"; "#chat?q=hello" -> "chat";
+ *  "#nowhere" or "" -> "today". */
+export function tabFromHash(hash: string): Tab {
+  const name = hash.replace("#", "").split("?")[0];
+  const known = TABS.find((tab) => tab === name);
+  return known ?? "today";
+}
+
+/** Whether a screen opens while setup isn't done yet; every other screen shows Setup instead. Settings and the screens
+ *  reached from it stay open, to do a step by hand: "settings", "brain", "voice" -> true; "today", "chat" -> false. */
+export function opensDuringSetup(tab: Tab): boolean {
+  return tab === "settings" || tab === "brain" || tab === "voice";
 }
 
 type MediaWindow = { matchMedia: (query: string) => MediaQueryList };

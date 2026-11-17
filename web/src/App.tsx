@@ -4,6 +4,7 @@ import type { OrbState } from "./components/Orb";
 import { Chat } from "./screens/Chat";
 import { Settings } from "./screens/Settings";
 import { Brain } from "./screens/Brain";
+import { Voice } from "./screens/Voice";
 import { SampleChat } from "./screens/SampleChat";
 import { Money } from "./screens/Money";
 import { Today } from "./screens/Today";
@@ -20,14 +21,9 @@ import { usePersona } from "./persona";
 import { has, tabFor, useCaps } from "./capabilities";
 import { useUpdate } from "./update";
 import { PRIVATE_EVENT, codeFromHash, needsPairing, type PairStatus } from "./devices";
-import { columnWidth, showsRail } from "./layout";
+import { columnWidth, opensDuringSetup, showsRail, tabFromHash } from "./layout";
 
-export type Tab = "chat" | "today" | "settings" | "brain" | "sample" | "money" | "setup";
-
-function tabFromHash(): Tab {
-  const h = location.hash.replace("#", "").split("?")[0];
-  return h === "chat" || h === "settings" || h === "brain" || h === "sample" || h === "money" || h === "setup" ? (h as Tab) : "today";
-}
+export type Tab = "chat" | "today" | "settings" | "brain" | "voice" | "sample" | "money" | "setup";
 
 /** While pairing is on, a browser that isn't paired sees only the Private screen (nothing else mounts, so nothing
  * else asks the server). An API that answers "private" later (this browser was removed) brings it back. A pairing
@@ -47,12 +43,12 @@ export default function App() {
 }
 
 function Main() {
-  const [hashTab, setTab] = useState<Tab>(tabFromHash());
+  const [hashTab, setTab] = useState<Tab>(tabFromHash(location.hash));
   const caps = useCaps();
   const [setupDone, setSetupDone] = useState(true);
   useEffect(() => { getJSON<{ done: boolean }>("/api/setup").then((s) => setSetupDone(s.done)).catch(() => {}); }, []);
-  // A new install opens on Setup (Settings and Brain stay reachable, to do a step by hand).
-  const wanted = !setupDone && hashTab !== "settings" && hashTab !== "brain" ? "setup" : hashTab;
+  // A new install opens on Setup (Settings, Brain and Voice stay reachable, to do a step by hand).
+  const wanted = !setupDone && !opensDuringSetup(hashTab) ? "setup" : hashTab;
   const tab = tabFor(wanted, caps);  // a tab for something this install doesn't have opens Today
   const [orb, setOrb] = useState<OrbState>("idle");
   const [pending, setPending] = useState(0);
@@ -65,7 +61,7 @@ function Main() {
     getJSON<unknown[]>(everyday("/api/approvals")).then((a) => setPending(a.length)).catch(() => {});
   }, []);
   useEffect(() => {
-    const on = () => setTab(tabFromHash());
+    const on = () => setTab(tabFromHash(location.hash));
     window.addEventListener("hashchange", on);
     loadPending();
     return () => window.removeEventListener("hashchange", on);
@@ -84,6 +80,7 @@ function Main() {
           {tab === "today" && <Today />}
           {tab === "settings" && <Settings />}
           {tab === "brain" && <Brain />}
+          {tab === "voice" && <Voice />}
           {tab === "sample" && <SampleChat />}
           {tab === "money" && <Money />}
           {tab === "setup" && <Setup />}

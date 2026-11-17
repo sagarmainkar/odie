@@ -11,7 +11,6 @@ import { PluginsSection } from "../components/PluginsSection";
 import { googleRows, renewBy, type GoogleCheck } from "../google";
 import { ProvidersSection } from "../components/ProvidersSection";
 import { SearchSection } from "../components/SearchSection";
-import { Switch } from "../components/Switch";
 import { DevicesSection } from "../components/DevicesSection";
 import { UpdateSection } from "../components/UpdateSection";
 import { BrowserSection } from "../components/BrowserSection";
@@ -26,8 +25,7 @@ import { has, useCaps } from "../capabilities";
 import { EMBED_EVERY_CHOICES, embedEveryLabel, notesRow, type VaultInfo } from "../vault";
 import { memoryPlace } from "../memoryPlace";
 import { photosRow, type PhotosInfo } from "../photos";
-import { engineLine, previewUrl, voiceGroups, voiceSection, withPhononVoices, type PhononAnswer } from "../voiceSettings";
-import { AnotherVoice } from "../components/AnotherVoice";
+import { voiceRow, type VoiceInfo } from "../voiceSettings";
 import { afterTurnOn, sendPosition, type LocationInfo } from "../location";
 import { LocationRowView } from "../components/LocationRow";
 import { LABEL, type Panel, type Step, type Turn } from "../setup";
@@ -206,8 +204,6 @@ function AssistantSection() {
   );
 }
 
-type VoiceInfo = import("../voiceSettings").VoiceInfo;  // the shape /api/voice answers (voiceSettings.ts)
-
 /** The phone, after setup: the same block as the setup step (is Tailscale here, does it pass the phone to Odie, the
  *  address and the pairing code), so a skipped phone can be set up from here. Check again asks the server to look. */
 function PhoneSection() {
@@ -225,114 +221,17 @@ function PhoneSection() {
   );
 }
 
-function VoiceSection() {
+/** Settings' Voice row: the chosen voice in words; a tap opens the Voice screen (screens/Voice.tsx), where it is picked. */
+function VoiceRowLink() {
   const [v, setV] = useState<VoiceInfo | null>(null);
-  const [playing, setPlaying] = useState<string | null>(null);
-  const audio = useRef<HTMLAudioElement | null>(null);
-  const load = () => getJSON<VoiceInfo>("/api/voice").then(setV).catch(() => {});
-  useEffect(() => { load(); return () => audio.current?.pause(); }, []);
-  function play(engine: string, id: string) {
-    audio.current?.pause();
-    const key = `${engine}/${id}`;
-    if (playing === key) { setPlaying(null); return; }
-    const a = new Audio(previewUrl(engine, id));
-    audio.current = a; setPlaying(key);
-    a.onended = () => setPlaying(null); a.onerror = () => setPlaying(null);
-    void a.play().catch(() => setPlaying(null));
-  }
-  function kept(answer: PhononAnswer) {
-    setV((x) => (x ? withPhononVoices(x, answer) : x));
-    play("phonon", answer.voice);  // the line the check spoke is the new voice's preview
-  }
-  async function forget(voiceId: string) {
-    const r = await fetch(`/api/voice/phonon/voices/${encodeURIComponent(voiceId)}`, { method: "DELETE" });
-    if (r.ok) { const answer = await r.json() as PhononAnswer; setV((x) => (x ? withPhononVoices(x, answer) : x)); }
-  }
-  async function save(body: { engine?: string; voice?: string; reminders_spoken?: boolean }) {
-    const r = await fetch("/api/voice", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-    if (r.ok) { const j = await r.json(); setV((x) => (x ? { ...x, engine: j.engine, voice: j.voice, reminders_spoken: j.reminders_spoken } : x)); }
-  }
-  if (!v) return null;
-  const shown = voiceSection(v);  // no engine at all: one plain line, and nothing below reads an engine that isn't there
-  // Odie's own voice needs Apple Silicon; on an Intel Mac the server offers no local engine and says so here.
-  const noLocal = v.local_voice === false;
-  const about = (
-    <div className="text-[13px] leading-[18px] text-muted px-1">
-      Read-aloud (the speaker under each reply).{" "}
-      {noLocal && <>Odie's own voice (Kokoro) needs Apple Silicon, so it isn't offered on this Mac.{" "}</>}
-      {v.engines.some((e) => e.id === "openai") ? <>With your OpenAI key: its voices, and dictation that writes as you speak.</> : <>Add an OpenAI key in Providers for OpenAI voices and live dictation.</>}
-    </div>
-  );
-  if (!shown.picker) {
-    // No engine at all (the voice worker off, no OpenAI key): the phone's own voice still reads replies.
-    return (
-      <Section title="Voice">
-        <div className="p-3 flex flex-col gap-3">
-          {about}
-          <div className="text-[13px] leading-[18px] text-muted px-1">{shown.note} Until then, replies are read with the browser's own voice.</div>
-        </div>
-      </Section>
-    );
-  }
-  const eng = shown.engine;
-  const line = engineLine(eng);  // on this computer or not, and what to do when it can't speak (Phonon: ollama pull)
+  useEffect(() => { getJSON<VoiceInfo>("/api/voice").then(setV).catch(() => {}); }, []);
+  if (!v) return <Row icon={{ icon: "speaker", color: "yellow" }} ok="loading" title="Voice" sub="…" chevron />;
+  const row = voiceRow(v);
+  const ok: Dot = row.state === "ok" ? true : "warn";
   return (
-    <Section title="Voice">
-      <div className="p-3 flex flex-col gap-3">
-        {about}
-        <div className="bg-well rounded-[14px] p-1 flex gap-1" role="radiogroup" aria-label="Read-aloud engine">
-          {v.engines.map((e) => (
-            <button key={e.id} role="radio" aria-checked={e.id === v.engine} disabled={!e.available} onClick={() => void save({ engine: e.id })}
-              className={`relative flex-1 h-11 rounded-[10px] text-[14px] font-medium disabled:opacity-40 ${e.id === v.engine ? "text-ink" : "text-muted"}`}>
-              {e.id === v.engine && <motion.span layoutId="engine-seg" transition={{ duration: 0.2 }} className="absolute inset-0 rounded-[10px] bg-surface" style={{ boxShadow: "var(--t-shadow-card)" }} />}
-              <span className="relative">{e.label}</span>
-            </button>
-          ))}
-        </div>
-        <div className="text-[13px] leading-[18px] px-1 flex items-start gap-2">
-          {line.pill && <Pill tone={line.pill === "on this computer" ? "moss" : "ember"}>{line.pill}</Pill>}
-          <span className="text-muted">{line.text}</span>
-        </div>
-        {voiceGroups(eng).map((g) => {
-          const list = g.voices;
-          return (
-            <div key={g.key}>
-              {g.title && <div className="px-1 pb-1.5 text-[13px] font-semibold text-muted">{g.title}</div>}
-              <div className="grid grid-cols-2 gap-2">
-                {list.map((x) => {
-                  const on = x.id === v.voice;
-                  const key = `${eng.id}/${x.id}`;
-                  return (
-                    <div key={x.id} className={`flex items-center gap-1 rounded-[14px] border pl-3 pr-1 min-h-12 ${on ? "border-ember-text bg-ember-tint" : "border-line"}`}>
-                      <button onClick={() => { void save({ voice: x.id }); play(eng.id, x.id); }} className="flex-1 text-left py-1.5 min-w-0">
-                        <span className={`block text-[15px] leading-5 ${on ? "font-semibold text-ember-text" : ""}`}>{x.label}</span>
-                        {x.note && <span className="block text-[12px] leading-4 text-dim line-clamp-2">{x.note}</span>}
-                      </button>
-                      <button onClick={() => play(eng.id, x.id)} aria-label={`Hear ${x.label}`} className="w-10 h-10 rounded-full flex items-center justify-center text-muted shrink-0">
-                        {playing === key ? <span className="spinner" /> : <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z" /></svg>}
-                      </button>
-                      {x.kept && <button onClick={() => void forget(x.id)} aria-label={`Remove ${x.label}`} className="w-8 h-10 flex items-center justify-center text-dim shrink-0">×</button>}
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          );
-        })}
-        {eng.id === "phonon" && eng.available && <AnotherVoice onKept={kept} />}
-        {eng.id === "maya1" && <div className="text-[12px] leading-4 text-muted px-1">The first preview loads Maya1 (about half a minute). Replies are read with laughs, sighs and other expressions where they fit.</div>}
-        <div className="flex items-start gap-3 pt-1">
-          <div className="flex-1 min-w-0">
-            <div className="text-[14.5px] font-medium">Speak reminders</div>
-            <div className="text-[12.5px] leading-[18px] text-muted">{eng.available
-              ? "Each reminder also arrives as a voice message in this voice, and plays if Odie is open."
-              : "Needs a voice that's ready: this one isn't available right now."}</div>
-          </div>
-          <Switch label="Speak reminders" on={!!v.reminders_spoken} disabled={!eng.available && !v.reminders_spoken}
-            onChange={(on) => void save({ reminders_spoken: on })} />
-        </div>
-      </div>
-    </Section>
+    <a href="#voice" className="block active:bg-well">
+      <Row icon={{ icon: "speaker", color: "yellow" }} ok={ok} title="Voice" sub={row.sub} chevron />
+    </a>
   );
 }
 
@@ -692,7 +591,9 @@ export function Settings() {
             <div className="px-4 pb-3 text-[12.5px] text-muted">Auto follows your phone: dark in dark mode; in light mode the colour follows the time of day, warm in the morning, sky at noon, rose in the evening.</div>
           </Section>
 
-          <VoiceSection />
+          <Section title="Voice">
+            <VoiceRowLink />
+          </Section>
 
           <Section title="Memory">
             <NotesRow />

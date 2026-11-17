@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { columnWidth, mediaMatches, railItems, railTabFor, showsRail, watchMedia, WIDE_QUERY } from "./layout";
+import { columnWidth, mediaMatches, opensDuringSetup, railItems, railTabFor, showsRail, tabFromHash, watchMedia, WIDE_QUERY } from "./layout";
 
 describe("columnWidth", () => {
   it("keeps every screen's phone width as it always was", () => {
-    for (const tab of ["chat", "today", "settings", "brain", "sample", "money"] as const) {
+    for (const tab of ["chat", "today", "settings", "brain", "voice", "sample", "money"] as const) {
       expect(columnWidth(tab).split(" ")[0]).toBe("max-w-[520px]");
     }
     expect(columnWidth("setup")).toBe("max-w-[780px]");
@@ -14,6 +14,7 @@ describe("columnWidth", () => {
     expect(columnWidth("today")).toContain("lg:max-w-[1160px]");
     expect(columnWidth("settings")).toContain("lg:max-w-[1040px]");
     expect(columnWidth("brain")).toContain("lg:max-w-[820px]");
+    expect(columnWidth("voice")).toContain("lg:max-w-[820px]");  // one column, like Brain
   });
 });
 
@@ -31,6 +32,31 @@ describe("the desktop rail", () => {
   it("lights Settings for the blocks gallery, which opens from Settings", () => {
     expect(railTabFor("sample")).toBe("settings");
     expect(railTabFor("brain")).toBe("brain");
+  });
+  it("lights Settings for Voice, which has no tab of its own and opens from a Settings row", () => {
+    expect(railTabFor("voice")).toBe("settings");
+  });
+});
+
+describe("tabFromHash", () => {
+  it("opens the screen the address names, and Today for anything else", () => {
+    expect(tabFromHash("#settings")).toBe("settings");
+    expect(tabFromHash("#brain")).toBe("brain");
+    expect(tabFromHash("#voice")).toBe("voice");
+    expect(tabFromHash("#chat?q=hello")).toBe("chat");
+    expect(tabFromHash("#settings?google=connected")).toBe("settings");
+    expect(tabFromHash("#nowhere")).toBe("today");
+    expect(tabFromHash("")).toBe("today");
+  });
+});
+
+describe("opensDuringSetup", () => {
+  it("lets Settings and the screens reached from it open before setup is done, and nothing else", () => {
+    expect(opensDuringSetup("settings")).toBe(true);
+    expect(opensDuringSetup("brain")).toBe(true);
+    expect(opensDuringSetup("voice")).toBe(true);
+    expect(opensDuringSetup("today")).toBe(false);
+    expect(opensDuringSetup("chat")).toBe(false);
   });
 });
 

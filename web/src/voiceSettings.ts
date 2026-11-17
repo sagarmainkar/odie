@@ -19,6 +19,27 @@ export function voiceSection(v: VoiceInfo): VoiceSection {
   return { picker: true, engine: chosen };
 }
 
+export type VoiceRow = { sub: string; state: "ok" | "warn" };
+
+/** Settings' Voice row, which opens the Voice screen: the chosen voice and its engine by the names the picker shows,
+ *  and whether that engine can speak right now.
+ *    Phonon, voice "Zoey", available           -> "Zoey · Phonon (Ollama)", ok
+ *    the same with reminders spoken            -> "Zoey · Phonon (Ollama) · speaks reminders", ok
+ *    a voice the list no longer has ("Gone")   -> "Gone · Phonon (Ollama)", ok
+ *    Phonon not pulled in Ollama               -> "Zoey · Phonon (Ollama)", warn
+ *    no engine at all                          -> "No voice yet: the browser's own voice reads replies", warn */
+export function voiceRow(v: VoiceInfo): VoiceRow {
+  const shown = voiceSection(v);
+  if (!shown.picker) return { sub: "No voice yet: the browser's own voice reads replies", state: "warn" };
+  const engine = shown.engine;
+  const listed = engine.voices.find((x) => x.id === v.voice);
+  const voiceName = listed ? listed.label : v.voice;
+  const parts = [voiceName, engine.label];
+  if (v.reminders_spoken) parts.push("speaks reminders");
+  const state = engine.available ? "ok" : "warn";
+  return { sub: parts.join(" · "), state };
+}
+
 export const PULL_PHONON_TEXT = "Ollama doesn't have Phonon yet: run `ollama pull phonon` (113 MB), then open Settings again.";
 export type VoiceGroup = { key: string; title: string; voices: VoiceItem[] };
 export type EngineLine = { pill: "on this computer" | "leaves this computer" | null; text: string };
