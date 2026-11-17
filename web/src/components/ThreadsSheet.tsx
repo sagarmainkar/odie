@@ -1,8 +1,9 @@
 import { AnimatePresence, motion } from "framer-motion";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode, type Ref } from "react";
 import { getJSON, postJSON, todayISO } from "../api";
 import { groupThreads, sameAsTopRow, whenText, type Thread } from "../threads";
 import { usePick } from "../pick";
+import { onApple, shortcutText, showsThreadsPill } from "../threadsSidebar";
 import { Icon } from "./Tile";
 import { ToBody } from "./ToBody";
 
@@ -138,17 +139,45 @@ export function ThreadsSheet({ open, current, pickThread, onClose, onOpen }: {
   );
 }
 
-/** Threads on a desktop: always open, a column on the chat's left. `reload` changes after each reply and new chat. */
-export function ThreadsSidebar({ current, pickThread, onOpen, onNewChat, reload }: {
+/** Threads on a desktop: a column on the chat's left, open unless this device hid it (threadsSidebar.ts). Hidden, it
+ *  folds to no width (styles.css .threads-sidebar) but stays mounted, so the fold animates and the search is kept.
+ *  `reload` changes after each reply and new chat; a hidden list waits and loads when it opens again. */
+export function ThreadsSidebar({ open, onHide, hideRef, current, pickThread, onOpen, onNewChat, reload }: {
+  open: boolean; onHide: () => void; hideRef?: Ref<HTMLButtonElement>;
   current: string | null; pickThread: string | null; onOpen: (t: Thread | null) => void; onNewChat: () => void; reload: number;
 }) {
-  const threads = useThreadList(true, reload);
-  return (
-    <aside aria-label="Threads" className="shrink-0 w-[300px] h-full flex flex-col safe-top border-r border-line bg-overlay backdrop-blur-xl">
-      <ThreadsPanel threads={threads} current={current} pickThread={pickThread} onOpen={onOpen}
-        actions={<button onClick={onNewChat} className="pill pill-flat h-10 text-[13.5px]"><Icon name="plus" size={16} /> New chat</button>} />
-    </aside>
+  const threads = useThreadList(open, reload);
+  const hideTitle = `Hide threads (${shortcutText(onApple())})`;
+  const actions = (
+    <>
+      <button onClick={onNewChat} className="pill pill-flat h-10 text-[13.5px]"><Icon name="plus" size={16} /> New chat</button>
+      <button ref={hideRef} onClick={onHide} aria-label="Hide threads" title={hideTitle}
+        className="w-9 h-9 -mr-1.5 grid place-items-center rounded-full text-muted hover:text-ink hover:bg-well">
+        <Icon name="sidebar" size={18} />
+      </button>
+    </>
   );
+  // inert: while hidden its rows and buttons can't be tabbed to or read out.
+  return (
+    <div className="threads-sidebar shrink-0 h-full" data-open={open} inert={!open}>
+      <aside aria-label="Threads" className="w-[300px] h-full flex flex-col safe-top border-r border-line bg-overlay backdrop-blur-xl">
+        <ThreadsPanel threads={threads} current={current} pickThread={pickThread} onOpen={onOpen} actions={actions} />
+      </aside>
+    </div>
+  );
+}
+
+/** The chat header's Threads pill. Below 1024px it opens the sheet, as it always has; on a desktop it shows only while
+ *  the sidebar is hidden, and brings it back (showsThreadsPill). */
+export function ThreadsPill({ wide, sidebarOpen, onPress, pillRef }: { wide: boolean; sidebarOpen: boolean; onPress: () => void; pillRef?: Ref<HTMLButtonElement> }) {
+  if (!showsThreadsPill(wide, sidebarOpen)) return null;
+  let label = "Threads";
+  let title = "Threads";
+  if (wide) {
+    label = "Show threads";
+    title = `Show threads (${shortcutText(onApple())})`;
+  }
+  return <button ref={pillRef} onClick={onPress} aria-label={label} title={title} className="pill w-11 px-0"><Icon name="menu" size={18} /></button>;
 }
 
 export { Star };

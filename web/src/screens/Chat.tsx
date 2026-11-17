@@ -48,7 +48,8 @@ import type { OrbState } from "../components/Orb";
 import { streamChat, type ChatEvent } from "../sse";
 import { ConnectCard } from "../components/ConnectCard";
 import { splitConnect } from "../google";
-import { Star, ThreadsSheet, ThreadsSidebar } from "../components/ThreadsSheet";
+import { Star, ThreadsPill, ThreadsSheet, ThreadsSidebar } from "../components/ThreadsSheet";
+import { useThreadsSidebar } from "../threadsSidebar";
 import { useWide } from "../layout";
 import { belongsHere, type Thread } from "../threads";
 import { drawnText } from "../blocks/drawnText";
@@ -204,7 +205,7 @@ function TimeDivider({ ts }: { ts: number }) {
   );
 }
 
-export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => void }) {
+export function Chat({ orb, setOrb, showing }: { orb: OrbState; setOrb: (s: OrbState) => void; showing: boolean }) {
   // The count on Back to Today: what the background watch flagged that Today hasn't shown yet. Chat stays mounted, so it's
   // read again each time chat comes back into view.
   const [needYou, setNeedYou] = useState(0);
@@ -259,8 +260,25 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
   useEffect(() => { if (!busy) setStopping(false); }, [busy]);  // eslint-disable-line react-hooks/exhaustive-deps
   const [thread, setThread] = useState<Thread | null>(null);  // null = today's chat
   const [threadsOpen, setThreadsOpen] = useState(false);
-  // On a desktop Threads stays open beside the chat instead of sliding in (layout.ts); it reloads after each reply.
+  // On a desktop Threads is a sidebar beside the chat instead of sliding in (layout.ts); it reloads after each reply.
   const wide = useWide();
+  // There the sidebar can be hidden (this device remembers it) and brought back; Cmd+\ / Ctrl+\ toggles it while the
+  // chat is the screen showing. Focus follows the change to the button that undoes it.
+  const sidebar = useThreadsSidebar(wide && showing);
+  const threadsPillRef = useRef<HTMLButtonElement>(null);
+  const hideThreadsRef = useRef<HTMLButtonElement>(null);
+  function hideSidebar() {
+    sidebar.setOpen(false);
+    requestAnimationFrame(() => threadsPillRef.current?.focus());
+  }
+  function pressThreadsPill() {
+    if (!wide) {
+      setThreadsOpen(true);
+      return;
+    }
+    sidebar.setOpen(true);
+    requestAnimationFrame(() => hideThreadsRef.current?.focus());
+  }
   const [threadsReload, setThreadsReload] = useState(0);
   const threadRef = useRef<Thread | null>(null);
   const [chatKey, setChatKey] = useState(0);  // a new segment of today's chat: its Think harder is read again
@@ -664,7 +682,8 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
 
   return (
     <div className="flex h-full">
-      {wide && <ThreadsSidebar current={thread?.id ?? null} pickThread={pickThread} onOpen={setThread} onNewChat={() => void newChat()} reload={threadsReload} />}
+      {wide && <ThreadsSidebar open={sidebar.open} onHide={hideSidebar} hideRef={hideThreadsRef} current={thread?.id ?? null} pickThread={pickThread}
+        onOpen={setThread} onNewChat={() => void newChat()} reload={threadsReload} />}
       <div className="relative flex flex-col h-full flex-1 min-w-0">
         <AnimatePresence>{talking && <TalkMode onClose={() => setTalking(false)} />}</AnimatePresence>
         <Switcher open={switcherOpen} onClose={() => setSwitcherOpen(false)} />
@@ -695,7 +714,7 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
             </div>
           </button>
           <div className="flex items-center gap-1.5">
-            {!wide && <button onClick={() => setThreadsOpen(true)} aria-label="Threads" title="Threads" className="pill w-11 px-0"><Glyph name="menu" size={18} /></button>}
+            <ThreadsPill wide={wide} sidebarOpen={sidebar.open} onPress={pressThreadsPill} pillRef={threadsPillRef} />
             {ctx && ctxKnown && !thread && ctxWorthShowing(ctx.used, ctx.limit) && (
               <button onClick={() => { setCtxNote(true); setTimeout(() => setCtxNote(false), 4000); }} aria-label={`Conversation ${ctxText}`} title={ctxText}
                 className="pill h-11 px-2.5 text-[12px] font-bold"><ContextRing used={ctx.used} limit={ctx.limit} /></button>

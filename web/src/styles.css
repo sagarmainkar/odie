@@ -446,3 +446,10 @@ figure.chart:not(.chart-wide) { max-width: 720px; }
   .flip-face, .flip-back { transform: none; backface-visibility: visible; transition: opacity .2s; }
   .flip-inner:not(.is-turned) .flip-back, .flip-inner.is-turned .flip-front { opacity: 0; pointer-events: none; }
 }
+
+/* The desktop Threads sidebar (threadsSidebar.ts) folds away to the left and comes back. Its width moves briefly, so
+   the chat's reading column (.chat-col, centred on the room left) slides to its new centre; the list inside keeps
+   its 300px, so nothing in it reflows while it moves. With reduced motion it simply jumps. */
+.threads-sidebar { width: 300px; overflow: hidden; transition: width 180ms cubic-bezier(.2, .8, .2, 1); }
+.threads-sidebar[data-open="false"] { width: 0; }
+@media (prefers-reduced-motion: reduce) { .threads-sidebar { transition: none; } }
