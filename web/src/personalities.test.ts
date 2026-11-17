@@ -23,6 +23,7 @@ describe("odieLine", () => {
     expect(odieLine(undefined)).toBe("everyday");
     expect(odieLine("card")).toBe("needs you");
     expect(odieLine("reply")).toBe("new");
+    expect(odieLine(undefined, 2)).toBe("needs you");  // everyday cards the server counted
   });
 });
 
@@ -35,6 +36,8 @@ describe("somethingElsewhere", () => {
   it("is true when everyday Odie has something while a personality is on screen", () => {
     expect(somethingElsewhere([mira()], { "": "card" }, "abc")).toBe(true);
     expect(somethingElsewhere([mira()], { "": "card" }, "")).toBe(false);  // Odie is the one on screen
+    expect(somethingElsewhere([mira()], {}, "abc", 1)).toBe(true);  // an everyday card the server counted (after a reload)
+    expect(somethingElsewhere([mira()], {}, "", 1)).toBe(false);
   });
 
   it("is false for the one on screen, and when nothing waits", () => {

@@ -27,7 +27,7 @@ function Row({ who, line, picked, waiting, onPick }: { who: Persona; line: strin
 export function Switcher({ open, onClose }: { open: boolean; onClose: () => void }) {
   const pick = usePick();
   const odie = usePersona();
-  const { list, reload } = usePersonalities();
+  const { list, everydayWaiting, reload } = usePersonalities();
   const seen = useElsewhere();
   const [naming, setNaming] = useState(false);
   const [name, setName] = useState("");
@@ -53,6 +53,7 @@ export function Switcher({ open, onClose }: { open: boolean; onClose: () => void
   }
 
   const odieNote = pick === "" ? undefined : seen[""];
+  const odieCards = pick === "" ? 0 : everydayWaiting;  // while someone else is on screen, Odie's waiting cards count
   return (
     <ToBody>
       <AnimatePresence>
@@ -67,7 +68,7 @@ export function Switcher({ open, onClose }: { open: boolean; onClose: () => void
                 <button onClick={onClose} aria-label="Close" className="pill w-10 h-10 px-0"><Icon name="x" size={16} /></button>
               </div>
               <div className="flex-1 overflow-y-auto no-scrollbar px-2 pb-2">
-                <Row who={odie} line={odieLine(odieNote)} picked={pick === ""} waiting={odieNote !== undefined} onPick={() => choose("")} />
+                <Row who={odie} line={odieLine(odieNote, odieCards)} picked={pick === ""} waiting={odieNote !== undefined || odieCards > 0} onPick={() => choose("")} />
                 {list.map((p) => {
                   const note = p.id === pick ? undefined : seen[p.id];
                   const line = rowLine(p, note);

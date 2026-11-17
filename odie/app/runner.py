@@ -1245,13 +1245,15 @@ class OdieRunner:
             cards.append(card)
             try:
                 from odie import persona, personalities
-                owner = personalities.get(self.store, personalities.of_session(self.store, session_id))
-                if owner is None:
+                owner_id, owner = personalities.whose_thread(self.store, session_id)
+                if owner_id == personalities.ODIE:
                     title = f"{persona.get(self.store)['name']} needs your tap"
                     body = push_body(a)  # nothing sensitive on the lock screen
-                else:  # a personality's card: who, and not even what kind of thing
+                    send_to_all(self.store, title, body, url="/#chat", tag=f"approval-{aid}")
+                elif owner is not None:  # a personality's card: who, and not even what kind of thing
                     title, body = personalities.quiet_push(owner.name, "needs you")
-                send_to_all(self.store, title, body, url="/#chat", tag=f"approval-{aid}")
+                    send_to_all(self.store, title, body, url="/#chat", tag=f"approval-{aid}")
+                # else: its personality was deleted while the turn ran: no push at all
             except Exception:  # noqa: BLE001
                 log.warning("approval push failed", exc_info=True)
         return cards
@@ -1544,10 +1546,13 @@ class OdieRunner:
             self.store.audit("user", "new_chat", result_summary=f"{before or '-'} -> {new_thread}", session_id=new_thread)
             return new_thread
         sid = self.current_session_id(date)
-        async with self.lock_for(sid):
-            new_sid = threads.next_free_id(self.store, date)  # above every number in use that day, a personality's too
-            self._set_segment(date, threads.segment_of(new_sid))
-        await self._ensure_session(new_sid)
+        # The number is taken and its session made under the same lock a personality's new thread takes, so the two can
+        # never be handed the same id (a personality's thread would otherwise become Odie's current chat).
+        async with self._new_thread_lock:
+            async with self.lock_for(sid):
+                new_sid = threads.next_free_id(self.store, date)  # above every number in use that day, a personality's too
+                self._set_segment(date, threads.segment_of(new_sid))
+            await self._ensure_session(new_sid)
         self.invalidate_prompt()
         await self.post_message(NEW_CHAT, session_id=new_sid)
         self.store.audit("user", "new_chat", result_summary=f"{sid} -> {new_sid}")

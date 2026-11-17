@@ -1,3 +1,4 @@
+import { everyday } from "../pick";
 import { AnimatePresence, motion } from "framer-motion";
 import { NeedsYou } from "../components/NeedsYou";
 import { footer, type WatchCardData } from "../watch";
@@ -91,7 +92,7 @@ export function Today() {
     void postJSON("/api/watch/seen", {}).catch(() => {});
   }, []);
   useEffect(loadNeeds, [loadNeeds]);
-  const loadApprovals = useCallback(() => { getJSON<Approval[]>("/api/approvals").then(setApprovals).catch(() => {}); }, []);
+  const loadApprovals = useCallback(() => { getJSON<Approval[]>(everyday("/api/approvals")).then(setApprovals).catch(() => {}); }, []);
   const loadTasks = useCallback(() => {
     loadNeeds();
     getJSON<WatchClosedItem[]>("/api/tasks/closed_by_watch").then(setWatchClosed).catch(() => {});

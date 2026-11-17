@@ -1,3 +1,4 @@
+import { everyday } from "./pick";
 import { useCallback, useEffect, useState } from "react";
 import type { OrbState } from "./components/Orb";
 import { Chat } from "./screens/Chat";
@@ -61,7 +62,7 @@ function Main() {
   // Once an hour, and on coming back to the app: is a newer Odie on origin? (Only the installed copy can update.)
   const update = useUpdate(has(caps, "update") && caps !== null);
   const loadPending = useCallback(() => {
-    getJSON<unknown[]>("/api/approvals").then((a) => setPending(a.length)).catch(() => {});
+    getJSON<unknown[]>(everyday("/api/approvals")).then((a) => setPending(a.length)).catch(() => {});
   }, []);
   useEffect(() => {
     const on = () => setTab(tabFromHash());

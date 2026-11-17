@@ -65,6 +65,12 @@ export function withPickOf(url: string, pick: string, always = false): string {
   return `${url}${joiner}personality=${encodeURIComponent(pick)}`;
 }
 
+/** A call for everyday Odie's, whoever is picked: Today and the Ask bar are Odie's screens, so their count of cards
+ *  waiting is Odie's even while the chat is with a personality:  "/api/approvals" -> "/api/approvals?personality=". */
+export function everyday(url: string): string {
+  return withPickOf(url, "", true);
+}
+
 export function withPick(url: string, always = false): string {
   return withPickOf(url, getPick(), always);
 }

@@ -32,7 +32,9 @@ async def expire_approvals(store: Store, runner=None) -> None:
     for row in store.expire_approvals(before):
         store.audit("job", "approval_expired", tool=row["tool"], approval_id=row["id"])
         # A personality's card lapses in its own thread, and its push says only who: the summary is that thread's.
-        owner = personalities.get(store, personalities.of_session(store, row["session_id"]))
+        owner_id, owner = personalities.whose_thread(store, row["session_id"])
+        if owner_id != personalities.ODIE and owner is None:
+            continue  # its personality was deleted: the card lapses without a word
         said = f"I let this lapse after a day without your tap: {row['summary']}. Ask again if you still want it."
         if runner is not None and owner is None:
             await runner.post_message(said)

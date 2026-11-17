@@ -19,6 +19,7 @@ import contextvars
 import importlib
 import json
 import logging
+import shutil
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -199,10 +200,13 @@ async def tell(tag: str, session_id: str | None, text: str, media: list[dict] | 
     """Post the message into the chat and push it to the phone (one push per message, with the job's tag). In a
     personality's thread the push says only who (odie.personalities.quiet_push): the words stay in that thread."""
     from odie import personalities
-    await hooks["runner"].post_message(text, session_id, media=media, kind="job")
     store = hooks["store"]
+    owner_id, owner = personalities.whose_thread(store, session_id)
+    thread_is_being_erased = owner_id != personalities.ODIE and owner is None
+    if thread_is_being_erased:  # its personality was deleted while the job ran: nothing is said anywhere
+        return
+    await hooks["runner"].post_message(text, session_id, media=media, kind="job")
     try:
-        owner = personalities.get(store, personalities.of_session(store, session_id))
         if owner is None:
             title, body = persona.get(store)["name"], text
         else:
@@ -293,6 +297,23 @@ async def stop() -> None:
     _worker = None
 
 
+def erase_jobs_of(session_ids) -> int:
+    """Remove the job folders of these threads (odie.personalities.delete): everything a job kept there, its brief,
+    script, research notes, the made file and job.json. A job belongs to the thread its job.json names. Returns how
+    many folders went; a job.json that can't be read is left alone."""
+    wanted = set(session_ids)
+    removed = 0
+    for path in workspace().glob("*/*/job.json"):
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if data.get("session_id") in wanted:
+            shutil.rmtree(path.parent, ignore_errors=True)
+            removed += 1
+    return removed
+
+
 async def recover(store=None) -> int:
     """At startup: every job file, in every kind's folder, still saying queued, writing or making (or a video's old
     "running") was cut off by the restart. Tell its chat once, naming the kind of the folder it is in, and mark it
@@ -323,6 +344,13 @@ async def tell_if_interrupted(path: Path, kind_name: str, kind: Kind) -> bool:
         log.warning("job file %s can't be read; skipped", path)
         return False
     if not is_interrupted(data):
+        return False
+    from odie import personalities
+    store = hooks.get("store")
+    if store is not None and personalities.is_erased(store, data.get("session_id")):
+        # The thread was erased with its personality while this job ran: there is no chat to tell, and what the job
+        # wrote is that personality's. The folder goes, so the next start finds nothing.
+        shutil.rmtree(path.parent, ignore_errors=True)
         return False
     slug = data.get("slug") or path.parent.name
     title = data.get("title") or slug

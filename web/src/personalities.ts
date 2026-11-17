@@ -21,17 +21,21 @@ export function rowLine(p: Personality, note: "reply" | "card" | undefined): str
 }
 
 /** The line under everyday Odie's name in the switcher: what waits there while someone else is on screen, else
- *  "everyday":  "card" -> "needs you";  "reply" -> "new";  nothing -> "everyday". */
-export function odieLine(note: "reply" | "card" | undefined): string {
-  if (note === "card") return "needs you";
+ *  "everyday":  "card" -> "needs you";  "reply" -> "new";  nothing -> "everyday". `everydayWaiting`: Odie's cards as
+ *  the server counted them (the live note is lost on a reload):  (nothing, 2) -> "needs you". */
+export function odieLine(note: "reply" | "card" | undefined, everydayWaiting = 0): string {
+  if (note === "card" || everydayWaiting > 0) return "needs you";
   if (note === "reply") return "new";
   return "everyday";
 }
 
 /** Whether the chat's header shows its dot: someone who isn't on screen has a card or a new reply. That is a
- *  personality other than the picked one, or everyday Odie (noted under "") while a personality is picked. */
-export function somethingElsewhere(list: Personality[], seen: Elsewhere, pick: string): boolean {
-  const odieWaits = pick !== "" && seen[""] !== undefined;
+ *  personality other than the picked one, or everyday Odie while a personality is picked (a live note under "", or
+ *  `everydayWaiting`, Odie's waiting cards as the server counted them):
+ *    Mira has a card, Odie on screen -> true;  Mira has a card, Mira on screen -> false;
+ *    Odie has a card, Mira on screen -> true;  nothing waits -> false. */
+export function somethingElsewhere(list: Personality[], seen: Elsewhere, pick: string, everydayWaiting = 0): boolean {
+  const odieWaits = pick !== "" && (seen[""] !== undefined || everydayWaiting > 0);
   return odieWaits || list.some((p) => p.id !== pick && (p.waiting > 0 || seen[p.id] !== undefined));
 }
 
@@ -65,12 +69,14 @@ export function personalitiesChanged(): void { window.dispatchEvent(new Event(LI
 
 /** Every personality, for the switcher. It loads at the start, after one is made, renamed or deleted, when the pick
  *  changes and when a card starts waiting somewhere; a pick whose personality is gone falls back to everyday Odie. */
-export function usePersonalities(): { list: Personality[]; reload: () => void } {
+export function usePersonalities(): { list: Personality[]; everydayWaiting: number; reload: () => void } {
   const [list, setList] = useState<Personality[]>([]);
+  const [everydayWaiting, setEverydayWaiting] = useState(0);  // everyday Odie's own cards waiting for a tap
   const reload = useCallback(() => {
     fetch("/api/personalities").then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
-      .then((d: { personalities: Personality[] }) => {
+      .then((d: { personalities: Personality[]; everyday_waiting?: number }) => {
         setList(d.personalities);
+        setEverydayWaiting(d.everyday_waiting ?? 0);
         const kept = settlePick(getPick(), d.personalities.map((p) => p.id));
         if (kept !== getPick()) setPick(kept);
       }).catch(() => { /* an older server, or offline: no personalities to show */ });
@@ -82,7 +88,7 @@ export function usePersonalities(): { list: Personality[]; reload: () => void } 
     const stop = onPickChange(reload);
     return () => { window.removeEventListener(LIST_CHANGED, reload); window.removeEventListener(NOTES_CHANGED, reload); stop(); };
   }, [reload]);
-  return { list, reload };
+  return { list, everydayWaiting, reload };
 }
 
 /** Make a personality. A name the server won't take throws its own words ("You already have one called Mira."). */

@@ -248,7 +248,7 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
   pickThreadRef.current = pickThread;
   const personalities = usePersonalities();
   const elsewhere = useElsewhere();
-  const someoneElseWaits = somethingElsewhere(personalities.list, elsewhere, pick);  // the header's dot
+  const someoneElseWaits = somethingElsewhere(personalities.list, elsewhere, pick, personalities.everydayWaiting);  // the header's dot
   const stopDictate = useRef<(() => void) | null>(null);
   const bottom = useRef<HTMLDivElement>(null);
   const field = useRef<HTMLTextAreaElement>(null);

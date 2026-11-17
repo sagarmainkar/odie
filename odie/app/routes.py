@@ -122,10 +122,12 @@ def say_answered_while_away(store, bus, session_id: str | None, text: str) -> No
     on the live stream, so a chat with someone else can show that she has something new."""
     from odie import personalities
     from odie.push.send import send_to_all
-    owner = personalities.get(store, personalities.of_session(store, session_id))
-    if owner is None:
+    owner_id, owner = personalities.whose_thread(store, session_id)
+    if owner_id == personalities.ODIE:
         send_to_all(store, f"{persona.get(store)['name']} answered", reply_preview(text) or "Your answer is ready.",
                     url="/#chat", tag="reply")
+        return
+    if owner is None:  # its personality was deleted while the turn finished: nothing is said
         return
     title, body = personalities.quiet_push(owner.name, "replied")
     send_to_all(store, title, body, url="/#chat", tag="reply")
@@ -2104,7 +2106,10 @@ def _personality_row(store, p) -> dict:
 async def personalities_list(request: Request):
     from odie import personalities
     store = request.app.state.store
-    return {"personalities": [_personality_row(store, p) for p in personalities.list_all(store)]}
+    # everyday_waiting: everyday Odie's own cards, so a chat with a personality can show that Odie needs a tap
+    everyday_cards = [a for a in store.pending_approvals() if personalities.of_session(store, a["session_id"]) == personalities.ODIE]
+    return {"personalities": [_personality_row(store, p) for p in personalities.list_all(store)],
+            "everyday_waiting": len(everyday_cards)}
 
 
 @router.post("/personalities")

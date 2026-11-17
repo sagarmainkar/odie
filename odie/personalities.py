@@ -194,6 +194,17 @@ def is_erased(store: Store, session_id: str | None) -> bool:
     return get(store, owner) is None
 
 
+def whose_thread(store: Store, session_id: str | None) -> tuple[str, Personality | None]:
+    """Whose thread this is, for code that speaks about a thread outside it (a push, a line posted by a job): the
+    owner's id and its record. The record is None for an everyday thread and also for a thread whose personality is
+    gone, which is why the id comes too: a thread that is being erased must never be taken for an everyday one.
+      an everyday thread, or none          -> ("", None):       speak as everyday Odie
+      a thread of Mira's                   -> (her id, Mira):   speak quietly, as Mira (quiet_push)
+      a thread of Mira's, Mira just deleted -> (her id, None):  say nothing at all"""
+    owner_id = of_session(store, session_id)
+    return owner_id, get(store, owner_id)
+
+
 def claim(store: Store, session_id: str, pid: str) -> None:
     """Write that this new thread belongs to this personality. It is called before the thread's session is made, and
     the answer never changes afterwards: a thread that already belongs to someone else, or that Odie already has a
@@ -296,6 +307,31 @@ def stream_view(store: Store, event: dict, pick: str | None) -> dict | None:
 
 # ── deleting one ──
 
+def remove_workspace_copy(mid: str) -> bool:
+    """A file made in a chat is first written into Odie's workspace and then copied for its card (odie.media). Remove
+    that workspace file too, when it is still the file the chat made: the name the card kept, at the top of the
+    workspace, with the same bytes. True when it was removed.
+      "lighthouse notes.md", untouched since                 -> removed
+      "plan.md", since written over with something else      -> left alone (it is no longer that file)
+      a card with no file name, or no such file any more     -> nothing to do"""
+    from odie import media
+    from odie.agent.tools.files import workspace
+    found = media.get(mid)
+    if found is None:
+        return False
+    copy, described = found
+    name = described.get("filename")
+    if not name:
+        return False
+    original = workspace() / Path(name).name
+    if not original.is_file():
+        return False
+    if original.read_bytes() != copy.read_bytes():
+        return False
+    original.unlink()
+    return True
+
+
 def tables_with_a_thread_column(store: Store) -> list[str]:
     """Every table of the app's database that has a `session_id` column (approvals, the activity log, a reply's saved
     ticks…), found by asking the database, so a table added later is covered without touching this file."""
@@ -325,8 +361,9 @@ def erase_rows_of(store: Store, session_id: str) -> None:
 async def delete(store: Store, runner, pid: str) -> dict:
     """Erase a personality and everything Odie keeps for it, for good; there is no bin. Returns {"threads": how many
     threads it had}. Erased: its threads' messages; every row and setting kept for those threads (cards, the activity
-    log, saved ticks, Think harder); its reminders; its passages in recall; the files made in its threads and the
-    pictures uploaded into them; its SOUL and memories; its picture; the record itself.
+    log, saved ticks, Think harder); its reminders; its passages in recall; the files made in its threads (their
+    cards, their copies in the workspace, its making jobs' folders) and the pictures uploaded into them; its SOUL and
+    memories; its picture; the record itself.
     Not erased, because Odie can't reach them from here: the rolling debug copies of model requests (they age out),
     log lines, and anything already sent to a tracing service.
     The record goes first, so no new turn can start in its threads while they are erased (the runner then refuses
@@ -342,6 +379,7 @@ async def delete(store: Store, runner, pid: str) -> dict:
     for session_id in its_threads:
         made, uploads = await runner.erase_thread(session_id)  # waits for a turn still running there
         for mid in made:
+            remove_workspace_copy(mid)
             media.delete(mid)
         for iid in uploads:
             images.delete_upload(iid)
@@ -351,6 +389,8 @@ async def delete(store: Store, runner, pid: str) -> dict:
         recall_index().drop_sessions(its_threads)
     except Exception:  # noqa: BLE001 (an index that won't open holds nothing we could remove now)
         log.warning("recall: a deleted personality's passages couldn't be removed", exc_info=True)
+    from odie.making import jobs
+    jobs.erase_jobs_of(its_threads)  # what its making jobs kept in the workspace: briefs, scripts, the made files
     thinking.forget(store, its_threads)
     store.execute("delete from tasks where personality=?", (pid,))
     store.execute("delete from settings where key=?", (f"current:{pid}",))

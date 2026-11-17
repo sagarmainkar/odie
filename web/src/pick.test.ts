@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { followsPick, getPick, settlePick, withPickOf } from "./pick";
+import { everyday, followsPick, getPick, settlePick, withPickOf } from "./pick";
 
 afterEach(() => { vi.unstubAllGlobals(); });
 
@@ -24,6 +24,11 @@ describe("withPickOf", () => {
     expect(withPickOf("/api/persona", "abc", true)).toBe("/api/persona?personality=abc");  // Settings asks for the picked one's
     expect(followsPick("/api/watch")).toBe(false);
     expect(followsPick("/api/chats")).toBe(false);  // only the path itself or what is under it
+  });
+
+  it("lets an everyday screen ask for everyday Odie's, whoever is picked", () => {
+    expect(everyday("/api/approvals")).toBe("/api/approvals?personality=");  // Today and the Ask bar: Odie's cards
+    expect(withPickOf(everyday("/api/approvals"), "abc")).toBe("/api/approvals?personality=");  // the pick is not added on top
   });
 
   it("never names it twice", () => {

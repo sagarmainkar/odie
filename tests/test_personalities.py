@@ -672,7 +672,7 @@ def _card(store, session_id: str, summary: str) -> int:
 
 
 async def test_the_personalities_list_and_making_one(api, runner):
-    assert (await api.get("/api/personalities")).json() == {"personalities": []}
+    assert (await api.get("/api/personalities")).json() == {"personalities": [], "everyday_waiting": 0}
     made = await api.post("/api/personalities", json={"name": "Mira"})
     assert made.status_code == 200
     pid = made.json()["id"]
@@ -1064,7 +1064,7 @@ async def test_nothing_comes_back_after_delete(api, runner):
     assert hers not in threads.session_ids_on(D)
     assert _odie_said(await runner.history(D)) == []  # and its words didn't land in the everyday chat
     assert (await api.delete(f"/api/personalities/{mira.id}")).status_code == 404
-    assert (await api.get("/api/personalities")).json() == {"personalities": []}
+    assert (await api.get("/api/personalities")).json() == {"personalities": [], "everyday_waiting": 0}
     assert (await api.get(f"/api/threads?personality={mira.id}")).status_code == 404
 
 
@@ -1083,3 +1083,112 @@ async def test_deleting_stops_a_review_of_her_turns(runner):
     await personalities.delete(runner.store, runner, mira.id)
     assert runner._review_task.cancelled()  # it can no longer write her memory file back
     assert not personalities.folder(mira.id).exists()
+
+
+# ── what the final review found ──
+
+async def test_the_switcher_is_told_how_many_everyday_cards_wait(api, runner):
+    mira, hers = await _mira_with_a_thread(runner)
+    _card(runner.store, f"chat-{D}", "Send the invoice")
+    _card(runner.store, hers, "Run ls")
+    got = (await api.get("/api/personalities")).json()
+    assert got["everyday_waiting"] == 1  # so a chat with Mira can show that Odie needs a tap, even after a reload
+    assert got["personalities"][0]["waiting"] == 1
+    everyday = (await api.get("/api/approvals?personality=")).json()  # what Today and the Ask bar ask for, whoever is picked
+    assert [a["summary"] for a in everyday] == ["Send the invoice"]
+
+
+async def test_whose_thread(runner):
+    mira, hers = await _mira_with_a_thread(runner)
+    assert personalities.whose_thread(runner.store, f"chat-{D}") == (ODIE, None)
+    assert personalities.whose_thread(runner.store, None) == (ODIE, None)
+    assert personalities.whose_thread(runner.store, hers) == (mira.id, personalities.get(runner.store, mira.id))
+    runner.store.execute("delete from personalities where id=?", (mira.id,))  # being deleted: the record goes first
+    assert personalities.whose_thread(runner.store, hers) == (mira.id, None)
+
+
+async def test_while_a_personality_is_being_deleted_nothing_of_its_goes_out_under_odies_name(runner, monkeypatch):
+    from datetime import UTC, datetime, timedelta
+
+    from google.genai import types
+
+    from odie.app import main, routes
+    from odie.app import runner as runner_module
+    from odie.push import send as push
+    mira, hers = await _mira_with_a_thread(runner)
+    lapsing = _card(runner.store, hers, "Delete the lighthouse notes")
+    two_days_ago = (datetime.now(UTC) - timedelta(hours=48)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    runner.store.execute("update approvals set created_at=? where id=?", (two_days_ago, lapsing))
+    pushed = []
+    monkeypatch.setattr(push, "send_to_all", lambda store, title, body, url="/", tag=None: pushed.append((title, body)) or 1)
+    monkeypatch.setattr(runner_module, "send_to_all", lambda store, title, body, url="/", tag=None: pushed.append((title, body)) or 1)
+    # delete() removes the record first; for a moment her threads still stand, with a turn finishing in one
+    runner.store.execute("delete from personalities where id=?", (mira.id,))
+    routes.say_answered_while_away(runner.store, runner.bus, hers, "The lighthouse plan is ready.")
+    call = types.FunctionCall(id="req-1", name=runner_module.CONFIRM, args={
+        "originalFunctionCall": {"id": "c1", "name": "run_shell", "args": {"command": "rm lighthouse.txt"}},
+        "toolConfirmation": {"hint": "Run rm lighthouse.txt"}})
+    event = SimpleNamespace(partial=False, invocation_id="inv-1", content=types.Content(role="model", parts=[types.Part(function_call=call)]))
+    runner._approvals_in(event, hers)
+    await main.expire_approvals(runner.store, runner)  # her lapsed card: no line anywhere, no push, and no error
+    assert pushed == []  # not "Odie answered: The lighthouse plan…", not "Odie needs your tap"
+    assert _odie_said(await runner.history(D)) == []
+
+
+async def test_odies_new_chat_and_a_personalitys_first_thread_never_take_the_same_id(runner):
+    import asyncio
+    mira = personalities.create(runner.store, "Mira")
+    await _say(runner, f"chat-{D}", "user", "Morning", time.time())
+    odies, hers = await asyncio.gather(runner.new_chat(D), runner.session_for(mira.id, D))  # two devices, the same moment
+    assert odies != hers
+    assert personalities.of_session(runner.store, odies) == ODIE
+    assert personalities.of_session(runner.store, hers) == mira.id
+    assert runner.current_session_id(D) == odies
+
+
+async def test_delete_removes_the_files_its_chats_left_in_the_workspace(runner):
+    import json
+
+    from odie.agent.tools.files import hand_over, workspace
+    mira, hers = await _mira_with_a_thread(runner)
+    odies = f"chat-{D}"
+    her_file = workspace() / "lighthouse notes.md"
+    her_file.write_text("The lighthouse plan")
+    await runner.post_message("Here it is.", session_id=hers, media=[hand_over(her_file)["media"]])
+    rewritten = workspace() / "plan.md"  # made in her chat, then written over with something else
+    rewritten.write_text("Her first draft")
+    await runner.post_message("And this.", session_id=hers, media=[hand_over(rewritten)["media"]])
+    rewritten.write_text("An everyday rewrite")
+    odies_file = workspace() / "kettles.md"
+    odies_file.write_text("Steel kettles")
+    await runner.post_message("Yours.", session_id=odies, media=[hand_over(odies_file)["media"]])
+    her_job = workspace() / "podcasts" / "lighthouse"
+    odies_job = workspace() / "podcasts" / "kettles"
+    for folder, sid in ((her_job, hers), (odies_job, odies)):
+        folder.mkdir(parents=True)
+        (folder / "job.json").write_text(json.dumps({"status": "done", "session_id": sid, "title": folder.name, "slug": folder.name}))
+        (folder / "brief.md").write_text("what it was asked to make")
+
+    await personalities.delete(runner.store, runner, mira.id)
+
+    assert not her_file.exists() and not her_job.exists()
+    assert rewritten.read_text() == "An everyday rewrite"  # no longer the file her chat made: left alone
+    assert odies_file.exists() and (odies_job / "brief.md").exists()
+
+
+async def test_an_interrupted_job_of_an_erased_thread_is_removed_not_told(runner):
+    import json
+
+    from odie.agent.tools.files import workspace
+    from odie.making import jobs
+    mira, hers = await _mira_with_a_thread(runner)
+    await personalities.delete(runner.store, runner, mira.id)
+    jobs.hooks.update(runner=runner, store=runner.store)
+    jobs.load_kinds()
+    kind_name, kind = next(iter(jobs.KINDS.items()))
+    folder = workspace() / kind.folder / "lighthouse"  # a job that was still running when she was deleted wrote it back
+    folder.mkdir(parents=True)
+    (folder / "job.json").write_text(json.dumps({"status": "making", "session_id": hers, "title": "The lighthouse", "slug": "lighthouse"}))
+    assert await jobs.tell_if_interrupted(folder / "job.json", kind_name, kind) is False
+    assert not folder.exists()  # so the next start has nothing to trip over, and nothing of hers is left
+
