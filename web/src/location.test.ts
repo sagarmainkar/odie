@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ASK_TEXT, NOTE_TEXT, afterAllow, afterTurnOn, locationRow, seenText, shouldAsk, shouldRefresh, type LocationInfo } from "./location";
+import { NOTE_TEXT, askText, afterAllow, afterTurnOn, locationRow, seenText, shouldAsk, shouldRefresh, type LocationInfo } from "./location";
 
 const base: LocationInfo = { on: null, place: "", seen: "", home: "", home_set_by_user: false };
 
@@ -21,9 +21,15 @@ describe("location", () => {
   });
 
   it("says the place name goes to the model, not that it stays home", () => {
-    expect(ASK_TEXT).toContain("place name, not coordinates");
-    expect(ASK_TEXT.toLowerCase()).not.toContain("leave");
-    expect(ASK_TEXT.toLowerCase()).not.toContain("stays on");
+    expect(askText("Odie")).toContain("place name, not coordinates");
+    expect(askText("Odie").toLowerCase()).not.toContain("leave");
+    expect(askText("Odie").toLowerCase()).not.toContain("stays on");
+  });
+  it("names whoever the chat is with", () => {
+    expect(askText("Odie")).toBe("Share where you are, for better answers? Odie uses the place name, not coordinates, in what it sends to your chat model.");
+    expect(askText("Mira")).toContain("? Mira uses the place name");
+    expect(askText("Mira")).not.toContain("Odie");
+    expect(askText("")).toContain("? Odie uses the place name");  // the name not loaded yet
   });
 
   it("writes the row", () => {
