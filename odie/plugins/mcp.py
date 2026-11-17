@@ -712,9 +712,15 @@ async def load_servers(timeout: float = 15, reserved: dict[str, str] | None = No
             e.description = f"Tools from {name}: {', '.join(e.tools[:8])}"
         if not e.always_on:
             e.skill = _skill_for(name, e.description, e.tools)
-    _set_tool_apps([(e.title or e.name, e.status, e.tools, e.skill.name if e.skill else None) for e in out])
-    _set_tool_servers(out)
+    remember_loaded(out)
     return out
+
+
+def remember_loaded(entries: list[ServerEntry]) -> None:
+    """After a load: which app, server and skill each tool name belongs to (TOOL_APP, TOOL_SKILL, TOOL_SERVERS,
+    SERVER_TITLE, SERVER_SKILL), from the loaded entries."""
+    _set_tool_apps([(e.title or e.name, e.status, e.tools, e.skill.name if e.skill else None) for e in entries])
+    _set_tool_servers(entries)
 
 
 def _clash(tools: list[str], server: str, reserved: dict[str, str], by_servers: dict[str, list[str]],

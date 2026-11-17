@@ -157,25 +157,37 @@ def _tool_fields(tool) -> set[str] | None:
     return set(props.keys()) if props else None
 
 
-def _close_skills(result: Any, asked: str) -> Any:
+def _close_skills(result: Any, asked: str, store: Store, session_id: str | None) -> Any:
     """A skill name that doesn't exist (mcp-zapier for mcp-zapier-2): the names like it, so the model loads the right
-    one instead of giving up."""
+    one instead of giving up. Only skills usable in this thread are offered: an app's when it is on for the thread's
+    owner (odie.plugins.access), and Odie's own skills.
+      "tides" in everyday Odie's thread, mcp-tides Mira's and mcp-tides-home his -> "…names like it: mcp-tides-home."
+      the same in Mira's thread                                                -> "…names like it: mcp-tides."
+      a found skill, or nothing like it                                        -> unchanged"""
     if not (isinstance(result, dict) and result.get("error_code") == "SKILL_NOT_FOUND"):
         return result
     import difflib
 
-    from odie.plugins.mcp import SERVER_SKILL, TOOL_SKILL
-    names = set(TOOL_SKILL.values()) | set(SERVER_SKILL.values())  # every app's, a second connection's too
+    from odie.plugins import access
+    from odie.plugins.mcp import SERVER_SKILL
+    names = {skill for server, skill in SERVER_SKILL.items() if access.allowed_in(store, server, session_id)}
     try:
         from odie.about import hooks
         names |= {e.name for e in (getattr(hooks.get("runner"), "plugins", None) or {}).get("skills", [])}
     except Exception:  # noqa: BLE001 (a hint, never a failure)
         pass
-    close = [n for n in sorted(names) if asked and (n.startswith(asked) or asked.startswith(n))]
+    close = [n for n in sorted(names) if asked and _named_like(n, asked)]
     close += [n for n in difflib.get_close_matches(asked, sorted(names), n=3, cutoff=0.6) if n not in close]
     if not close:
         return result
     return {**result, "error": f"{result.get('error', 'No such skill.')} Skills with names like it: {', '.join(close[:3])}."}
+
+
+def _named_like(name: str, asked: str) -> bool:
+    """Whether a skill's name starts like the one asked for, or the other way round, with or without an app's "mcp-":
+    ("mcp-zapier-2", "mcp-zapier") -> True; ("mcp-tides-home", "tides") -> True; ("trackers", "tides") -> False."""
+    bare = name.removeprefix("mcp-")
+    return name.startswith(asked) or asked.startswith(name) or bare.startswith(asked)
 
 
 SKILL_STAYS = ("These instructions stay in this conversation: use them for questions this skill is for, without loading it "
@@ -252,7 +264,10 @@ class OdiePlugin(BasePlugin):
         addons.call("after_tool", tool.name, tool_args, result, self.store, session_id, inv)  # e.g. provenance for cards
         out = _drop_duplicate_structured(result)
         if tool.name == "load_skill":
-            out = _close_skills(out, str((tool_args or {}).get("skill_name") or ""))
+            asked = (tool_args or {}).get("skill_name")
+            if not isinstance(asked, str):
+                asked = ""
+            out = _close_skills(out, asked, self.store, session_id)
             out = _skill_stays(out)
         limit = CLAMP.get(tool.name) or addons.clamps().get(tool.name)
         if limit:

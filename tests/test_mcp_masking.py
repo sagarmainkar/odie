@@ -41,15 +41,16 @@ def test_stdio_servers_get_a_usable_environment(monkeypatch):
         assert d in env["PATH"]
 
 
-def test_app_tool_approval_names_the_app_and_keeps_args_off_the_lock_screen(tmp_path):
+def test_app_tool_approval_names_the_app_and_keeps_args_off_the_lock_screen(tmp_path, monkeypatch):
     from odie.app.runner import approval_from_confirmation, push_body
     from odie.plugins import mcp
     from odie.store.db import Store
     s = Store(tmp_path / "a.db")
     s.init_schema()
-    mcp.TOOL_APP.clear()
-    mcp.TOOL_SERVERS.clear()  # nothing left from another test's load (the tester server has a write_note too)
-    mcp.TOOL_APP["write_note"] = "Obsidian notes"
+    for registry in ("TOOL_APP", "TOOL_SKILL", "TOOL_SERVERS", "SERVER_TITLE", "SERVER_SKILL"):
+        monkeypatch.setattr(mcp, registry, {})  # this test's own, filled as a load fills them
+    mcp.remember_loaded([mcp.ServerEntry("obsidian", "stdio", "Notes", "ok", tools=["write_note"], title="Obsidian notes",
+                                         skill=mcp._skill_for("obsidian", "Notes", ["write_note"]))])
 
     class FC:
         id = "c1"
@@ -57,8 +58,8 @@ def test_app_tool_approval_names_the_app_and_keeps_args_off_the_lock_screen(tmp_
     a = approval_from_confirmation(FC(), "i1", "s1", s)
     assert a["summary"].startswith("Write note in Obsidian notes: path: Inbox/idea.md")
     assert a["detail"]["app"] == "Obsidian notes"
+    assert a["detail"]["server"] == "obsidian"
     assert push_body(a) == "Write note in Obsidian notes" and "private" not in push_body(a)
-    mcp.TOOL_APP.clear()
 
 
 

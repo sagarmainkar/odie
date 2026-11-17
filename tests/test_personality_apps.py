@@ -879,3 +879,30 @@ async def test_reconnecting_with_a_new_code_replaces_ones_own_connection_of_a_sh
     assert set(saved) == {"zapier", "zapier-2"}
     assert saved["zapier"]["headers"] == {"Authorization": "Bearer business-1234"}  # hers untouched
     assert saved["zapier-2"]["headers"] == {"Authorization": "Bearer personal-5678"}
+
+
+async def test_a_wrong_skill_name_is_answered_only_with_skills_usable_in_that_thread(store, monkeypatch):
+    from odie.agent.callbacks import OdiePlugin
+    from odie.plugins import mcp
+    for registry in ("TOOL_APP", "TOOL_SKILL", "TOOL_SERVERS", "SERVER_TITLE", "SERVER_SKILL"):
+        monkeypatch.setattr(mcp, registry, {})
+    tools = ["tide_times"]
+    mcp.remember_loaded([mcp.ServerEntry("tides", "stdio", "Tides", "ok", tools=tools, title="Work tides",
+                                         skill=mcp._skill_for("tides", "Tides", tools)),
+                         mcp.ServerEntry("tides-home", "stdio", "Tides", "ok", tools=tools, title="Home tides",
+                                         skill=mcp._skill_for("tides-home", "Tides", tools))])
+    mira = personalities.create(store, "Mira")
+    access.added(store, "tides", mira.id)  # hers
+    access.set_allowed(store, "tides-home", mira.id, False)  # his
+    personalities.claim(store, "chat-2026-11-17-2", mira.id)
+    plugin = OdiePlugin(store)
+    not_found = {"error": "Skill 'tides' not found.", "error_code": "SKILL_NOT_FOUND"}
+
+    async def hint_in(session_id: str) -> str:
+        out = await plugin.after_tool_callback(tool=SimpleNamespace(name="load_skill"), tool_args={"skill_name": "tides"},
+                                               tool_context=_ctx(session_id), result=dict(not_found))
+        return out["error"]
+    odies_hint = await hint_in("chat-2026-11-17")
+    assert "mcp-tides-home" in odies_hint and "mcp-tides," not in odies_hint and not odies_hint.endswith("mcp-tides.")
+    hers = await hint_in("chat-2026-11-17-2")
+    assert "mcp-tides" in hers and "mcp-tides-home" not in hers
