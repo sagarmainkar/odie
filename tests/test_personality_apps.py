@@ -535,19 +535,14 @@ async def test_the_load_hint_points_to_her_connections_skill(runner, store):
     assert 'load_skill("mcp-mail-2")' in hint["error"] and "Work mail" in hint["error"]
 
 
-def _mail_entries(**always_on: bool) -> list:
-    """The loaded entries of home mail (mail) and work mail (mail-2), as runner.plugins holds them."""
-    from odie.plugins.mcp import ServerEntry
-    tools = ["find_email", "send_email"]
-    return [ServerEntry("mail", "stdio", "Home mail", "ok", tools=tools, always_on=always_on.get("mail", False)),
-            ServerEntry("mail-2", "stdio", "Work mail", "ok", tools=tools, always_on=always_on.get("mail_2", False))]
+MAIL_TOOLS = {"mail": ["find_email", "send_email"], "mail-2": ["find_email", "send_email"]}  # what each listed
 
 
-@pytest.mark.parametrize("always_on", [{}, {"mail": True, "mail_2": True}])
+@pytest.mark.parametrize("always_on", [False, True], ids=["on demand", "always on"])
 async def test_switching_on_a_second_connection_for_one_owner_is_refused_in_words(api, runner, store, always_on):
     from odie.plugins import mcp
-    mcp.write_config({"mail": HOME_MAIL, "mail-2": WORK_MAIL})
-    runner.plugins = {"skills": [], "servers": _mail_entries(**always_on)}
+    mcp.write_config({"mail": {**HOME_MAIL, "alwaysOn": bool(always_on)}, "mail-2": {**WORK_MAIL, "alwaysOn": bool(always_on)}})
+    access.remember_tools(store, MAIL_TOOLS)
     mira = personalities.create(store, "Mira")
     access.added(store, "mail-2", mira.id)
     access.set_allowed(store, "mail", mira.id, False)
@@ -562,22 +557,25 @@ async def test_switching_on_a_second_connection_for_one_owner_is_refused_in_word
 
 def test_a_new_personality_never_starts_with_a_clash(store):
     """She copies everyday Odie's switches, and Odie never has two connections of a service on: neither does she."""
-    tools_of = {"mail": ["send_email"], "mail-2": ["send_email"], "notes": ["read_note"]}
+    configured = {"mail": HOME_MAIL, "mail-2": WORK_MAIL, "notes": {"url": "https://notes.example.invalid/mcp"}}
+    access.remember_tools(store, {**MAIL_TOOLS, "notes": ["read_note"]})
     access.added(store, "mail-2", "")  # an old pick of Odie's: mail-2 his alone
     access.set_allowed(store, "mail", ODIE, False)
     mira = personalities.create(store, "Mira")
-    on_for_her = [s for s in tools_of if access.allowed(store, s, mira.id)]
+    on_for_her = [s for s in configured if access.allowed(store, s, mira.id)]
     assert on_for_her == ["mail-2", "notes"]
-    assert all(access.clash_for(store, s, mira.id, tools_of) is None for s in on_for_her)
+    assert all(access.clash_for(store, s, mira.id, configured) is None for s in on_for_her)
 
 
 async def test_deleting_her_doesnt_give_odie_a_second_connection_of_his_service(store):
     from odie.app.runner import OdieRunner
+    from odie.plugins import mcp
+    mcp.write_config({"mail": HOME_MAIL, "mail-2": WORK_MAIL})
+    access.remember_tools(store, MAIL_TOOLS)
     mira = personalities.create(store, "Mira")
     access.added(store, "mail-2", mira.id)
     access.set_allowed(store, "mail", mira.id, False)
     r = OdieRunner(store)
-    r.plugins = {"skills": [], "servers": _mail_entries()}
     try:
         await personalities.delete(store, r, mira.id)
     finally:
@@ -777,3 +775,51 @@ async def test_an_apps_tools_are_listed_again_at_each_step_and_carry_their_serve
     assert first["echo"]._odie_server == "tester" and second["echo"]._odie_server == "tester"
     assert first["echo"] is not second["echo"]  # listed again, not ADK's copy from the turn's first step
     assert first["echo"]._require_confirmation is True and second["echo"]._require_confirmation is False
+
+
+# ── what a server could clash with, when its listing failed or it is off ──
+
+async def _deleting_mira_after(runner, store, odies_mail: dict) -> None:
+    """Home mail (Odie's) and work mail (Mira's) both listed once; then home mail is changed to `odies_mail` (broken,
+    or switched off) and loaded again, and Mira is deleted."""
+    from odie.plugins import mcp
+    await _home_and_work_mail(runner, store)
+    mcp.write_config({"mail": odies_mail, "mail-2": WORK_MAIL})
+    await runner.load_plugins()
+    mira = next(p for p in personalities.list_all(store) if p.name == "Mira")
+    await personalities.delete(store, runner, mira.id)
+
+
+@pytest.mark.parametrize("odies_mail", [{**HOME_MAIL, "command": "/nonexistent/mail-server"}, {**HOME_MAIL, "enabled": False}],
+                         ids=["home mail failed to list", "home mail switched off"])
+async def test_her_mail_isnt_given_to_odie_while_his_own_is_configured(runner, store, odies_mail):
+    await _deleting_mira_after(runner, store, odies_mail)
+    status = {e.name: e.status for e in runner.plugins["servers"]}
+    assert status["mail"] in ("failed", "disabled")
+    assert not access.allowed(store, "mail-2", ODIE)  # her business mail never becomes everyday Odie's
+    assert access.allowed(store, "mail", ODIE)
+
+
+async def test_switching_on_is_judged_by_the_last_known_tools(api, runner, store):
+    from odie.plugins import mcp
+    mira = await _home_and_work_mail(runner, store)
+    mcp.write_config({"mail": {**HOME_MAIL, "command": "/nonexistent/mail-server"}, "mail-2": WORK_MAIL})
+    await runner.load_plugins()  # home mail fails to list now: its tools are still known
+    refused = await api.post(f"/api/mcp/mail/access?personality={mira.id}", json={"on": True})
+    assert refused.status_code == 409
+    assert refused.json()["detail"] == "Mira already has these tools from 'mail-2'; switch that one off for Mira first."
+
+
+def test_with_nothing_known_two_connections_of_one_service_count_as_clashing(store):
+    """Tools never listed (both failed since they were added): the same link's host, title, preset or program means
+    the same service, so switching the second on is refused rather than risked."""
+    configured = {"mail": {"url": "https://mail.example.invalid/mcp/home"},
+                  "mail-2": {"url": "https://mail.example.invalid/mcp/work"},
+                  "notes": {"url": "https://notes.example.invalid/mcp"}}
+    mira = personalities.create(store, "Mira")
+    access.added(store, "mail-2", mira.id)
+    assert access.clash_for(store, "mail", mira.id, configured) == \
+        "Mira already has these tools from 'mail-2'; switch that one off for Mira first."
+    assert access.clash_for(store, "notes", mira.id, configured) is None
+    same_program = {"mail": HOME_MAIL, "mail-2": WORK_MAIL}  # one program, two accounts
+    assert access.clash_for(store, "mail", mira.id, same_program) is not None

@@ -87,8 +87,11 @@ def added(store: Store, server: str, pid: str) -> None:
 
 
 def forget_server(store: Store, server: str) -> None:
-    """The server was removed from mcp.json: its switches go with it."""
+    """The server was removed from mcp.json: its switches and its known tool names go with it."""
     store.execute("delete from app_access where server=?", (server,))
+    known = known_tools(store)
+    if known.pop(server, None) is not None:
+        store.set_setting(KNOWN_TOOLS, known)
 
 
 def forget_personality(store: Store, pid: str) -> None:
@@ -96,15 +99,19 @@ def forget_personality(store: Store, pid: str) -> None:
     store.execute("delete from app_access where personality=?", (pid,))
 
 
-def give_back_to_odie(store: Store, gone: str, tools_of: dict[str, list[str]] | None = None) -> list[str]:
+def give_back_to_odie(store: Store, gone: str) -> list[str]:
     """A personality was just deleted (its record is gone, its switches not yet): every server it could use that is off
-    for everyday Odie and that no one left may use goes back on for Odie. It was off for Odie only because it was the
-    deleted one's, and otherwise nothing could use it. Returns their names, for the log.
-      work-mail added with Mira picked, Mira deleted, no one else uses it -> on for Odie again: ["work-mail"]
-      coach-app added with Coach picked, Mira deleted, Coach still there -> left off for Odie
-      home-mail Odie switched off for himself, Mira had it off too      -> left off for Odie (it was never hers)
-      zapier-2 hers, Odie still has zapier (the same tools) on          -> left off for Odie (clash_for); its switch shows
-    `tools_of`: each loaded server's tool names, for that last check."""
+    for everyday Odie, that no one left may use, and that could clash with no other configured server goes back on for
+    Odie. It was off for Odie only because it was the deleted one's, and otherwise nothing could use it. Returns their
+    names, for the log.
+      work-mail added with Mira picked, Mira deleted, nothing like it configured -> on for Odie again: ["work-mail"]
+      coach-app added with Coach picked, Mira deleted, Coach still there      -> left off for Odie
+      home-mail Odie switched off for himself, Mira had it off too           -> left off for Odie (it was never hers)
+      mail-2 hers, Odie's mail configured (on, failed or switched off)       -> left off for Odie (could_clash); its
+                                                                               switch shows"""
+    from odie.plugins.mcp import read_config
+    configured, _ = read_config()
+    known = known_tools(store)
     others = [p.id for p in personalities.list_all(store)]
     given_back = []
     for server in sorted(off_for(store, ODIE)):
@@ -112,7 +119,8 @@ def give_back_to_odie(store: Store, gone: str, tools_of: dict[str, list[str]] | 
         someone_uses_it = any(allowed(store, server, who) for who in others)
         if not was_hers or someone_uses_it:
             continue
-        if clash_for(store, server, ODIE, tools_of or {}) is not None:
+        like_another = any(could_clash(server, other, configured, known) for other in configured if other != server)
+        if like_another:
             continue
         set_allowed(store, server, ODIE, True)
         given_back.append(server)
@@ -269,24 +277,75 @@ def no_one_has_both(store: Store, first: str, second: str) -> bool:
 
 
 TAKEN = "{name} already has these tools from '{other}'; switch that one off for {name} first."
+KNOWN_TOOLS = "mcp.known_tools"  # server -> the tool names it listed last time it listed any
 
 
-def clash_for(store: Store, server: str, pid: str, tools_of: dict[str, list[str]]) -> str | None:
-    """Why this server can't be switched on for this one, in words, or None when it can: another server on for it
-    already lists one of the same tool names (each owner has one connection of a service at a time). `tools_of`:
-    each loaded server's tool names.
+def remember_tools(store: Store, listed: dict[str, list[str]]) -> None:
+    """Keep each server's tool names from a load where it listed some. A server that failed to list or is switched
+    off keeps the names it listed before, so a clash with it can still be seen (clash_for)."""
+    known = dict(store.get_setting(KNOWN_TOOLS) or {})
+    for server, tools in listed.items():
+        if tools:
+            known[server] = list(tools)
+    store.set_setting(KNOWN_TOOLS, known)
+
+
+def known_tools(store: Store) -> dict[str, list[str]]:
+    return dict(store.get_setting(KNOWN_TOOLS) or {})
+
+
+def _host(spec: dict) -> str:
+    from urllib.parse import urlsplit
+    return (urlsplit(str(spec.get("url") or "")).hostname or "").lower()
+
+
+def same_service(first: dict, second: dict) -> bool:
+    """Whether two servers' specs look like two connections of one service, for when nothing is known of their tools:
+    the same preset, the same title, the same link's host, or the same program and arguments.
+      two Zapier links                                    -> True
+      https://mail.example.invalid/home and …/work        -> True (the same host)
+      "Home mail" and "Work mail", one program, two envs  -> True (the same program)
+      a mail server and a notes server, nothing in common -> False"""
+    from odie.plugins.presets import preset_of
+    first_preset = preset_of(str(first.get("url") or ""))
+    if first_preset is not None and first_preset == preset_of(str(second.get("url") or "")):
+        return True
+    first_title = str(first.get("title") or "").strip().casefold()
+    if first_title and first_title == str(second.get("title") or "").strip().casefold():
+        return True
+    if _host(first) and _host(first) == _host(second):
+        return True
+    first_program = (first.get("command"), list(first.get("args") or []))
+    return bool(first.get("command")) and first_program == (second.get("command"), list(second.get("args") or []))
+
+
+def could_clash(first: str, second: str, configured: dict[str, dict], known: dict[str, list[str]]) -> bool:
+    """Whether two servers could list the same tool names: by the names they last listed when both are known, else
+    by looking like one service (same_service), so an unknown is never taken for "no clash".
+      mail and mail-2, both listed send_email          -> True
+      mail and notes, both known, nothing in common    -> False
+      mail failed to list ever, mail-2 the same host   -> True"""
+    first_tools, second_tools = set(known.get(first) or ()), set(known.get(second) or ())
+    if first_tools and second_tools:
+        return bool(first_tools & second_tools)
+    return same_service(configured.get(first) or {}, configured.get(second) or {})
+
+
+def clash_for(store: Store, server: str, pid: str, configured: dict[str, dict]) -> str | None:
+    """Why this server can't be switched on for this one, in words, or None when it can: another configured server on
+    for it could list the same tool names (could_clash: the last known names, else the same service), and each owner
+    has one connection of a service at a time. `configured`: mcp.json's servers.
       mail on for Mira, while mail-2 (the same tools) is on for her
                            -> "Mira already has these tools from 'mail-2'; switch that one off for Mira first."
-      mail on for Mira, mail-2 off for her, or nothing in common -> None"""
-    mine = set(tools_of.get(server, []))
-    for other, tools in tools_of.items():
+      the same, mail-2 failed at the last load but listed them before -> the same words
+      mail on for Mira, mail-2 off for her, or nothing in common       -> None"""
+    known = known_tools(store)
+    for other in configured:
         if other == server or not allowed(store, other, pid):
             continue
-        if mine & set(tools):
-            name = _name_of(store, pid)
-            return TAKEN.format(name=name, other=other)
+        if could_clash(server, other, configured, known):
+            return TAKEN.format(name=_name_of(store, pid), other=other)
     return None
-
 
 def _name_of(store: Store, pid: str) -> str:
     """Who a thread belongs to, by name: a personality's, or the name the user gave everyday Odie."""

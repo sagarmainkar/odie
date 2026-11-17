@@ -1733,6 +1733,8 @@ class OdieRunner:
             self._plugin_toolsets = [e.toolset for e in ok]
             self._spawn(self._close_later([*old, *old_connections], self.close_grace))
             self.plugins = {"skills": skills, "servers": servers}
+            from odie.plugins import access
+            access.remember_tools(self.store, {e.name: list(e.tools) for e in servers})  # kept if one fails later
             self.invalidate_prompt()
             failed = any(e.status == "failed" for e in servers)
             self._retries_left = self._retries_left - 1 if failed else 8
