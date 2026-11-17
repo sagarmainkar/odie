@@ -179,9 +179,9 @@ async def test_review_triggers_every_n_turns(isolated_settings, tmp_path, monkey
     r = OdieRunner(s)
     r.review_every = 3
     for i in range(3):
-        r._note_turn(f"u{i}", f"a{i}")
+        r._note_turn("chat-2026-10-01", f"u{i}", f"a{i}")
     await asyncio.sleep(0)
-    assert calls == [3] and r._turns == []
+    assert calls == [3] and r._turns[""] == []  # everyday Odie's pending turns ("" is its id)
     await r.close()
 
 

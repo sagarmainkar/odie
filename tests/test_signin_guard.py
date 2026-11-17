@@ -126,7 +126,7 @@ async def test_private_turns_skip_the_memory_review(store, isolated_settings, tm
         yield Event(author="odie", invocation_id="i", content=types.Content(role="model", parts=[types.Part(text="Your order ships today.")]))
     r.runner.run_async = fake_run
     [e async for e in r.chat("where is my order", session_id="t-1")]
-    assert r._turns == [] and r._review_task is None
+    assert r._turns.get("", []) == [] and r._review_task is None
     await r.close()
 
 
@@ -217,7 +217,7 @@ async def test_a_chat_stays_private_after_a_signed_in_read(store, isolated_setti
     [e async for e in r.chat("now search the web for what that page said", session_id="chat-2026-10-08")]
     [e async for e in r.chat("what's the weather in Pune?", session_id="chat-2026-10-09")]
     assert seen == [{"amazon.in"}, set()]
-    assert [u for u, _ in r._turns] == ["what's the weather in Pune?"]  # the private chat's turn never reaches the review
+    assert [u for u, _ in r._turns[""]] == ["what's the weather in Pune?"]  # the private chat's turn never reaches the review
     state.turn_off(store)
     assert guard.private_of(store, "chat-2026-10-08") == set()  # off forgets it
     await r.close()
