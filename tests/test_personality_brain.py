@@ -358,3 +358,63 @@ async def test_deleting_her_removes_her_brain_pick(runner, store):
     brains.choose(store, mira.id, "work-box", "miras-model")
     await personalities.delete(store, runner, mira.id)
     assert store.one("select key from settings where key like 'brain:%'") is None
+
+
+# ── Settings → Brain, for whoever is picked ──
+
+@pytest.fixture
+async def api(runner, monkeypatch):
+    """The real app around the runner, with no background jobs, and every provider's model list made up."""
+    import httpx
+
+    from odie.app import routes
+    from odie.app.main import create_app
+
+    async def listing(providers, transport=None):
+        return [{"id": p.id, "name": p.name, "local": p.local, "models": [{"id": "odies-model", "local": True},
+                                                                           {"id": "miras-model", "local": True}],
+                 "error": None, "base_url": p.base_url, "base_url_env": None} for p in providers]
+    monkeypatch.setattr(routes, "list_models", listing)
+    monkeypatch.setenv("ODIE_SCHEDULER", "0")
+    app = create_app(runner=runner, store=runner.store)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c, \
+            app.router.lifespan_context(app):
+        yield c
+
+
+async def test_the_brain_screen_answers_for_whoever_is_picked(api, store):
+    mira = personalities.create(store, "Mira")
+    odies = (await api.get("/api/models")).json()["selection"]["chat"]
+    assert (odies["provider"], odies["model"]) == ("lmstudio", "odies-model")
+    assert "same_as_odie" not in odies  # everyday Odie's answer is as it always was
+    hers = (await api.get(f"/api/models?personality={mira.id}")).json()
+    assert hers["selection"]["chat"]["model"] == "odies-model" and hers["selection"]["chat"]["same_as_odie"] is True
+    assert hers["odie"] == {"provider": "lmstudio", "model": "odies-model", "leaves_mini": False}
+
+    picked = await api.put(f"/api/models/selection?personality={mira.id}",
+                           json={"slot": "chat", "provider": "work-box", "model": "miras-model"})
+    assert picked.status_code == 200 and picked.json()["model"] == "miras-model"
+    assert brains.own_pick(store, mira.id) == {"provider": "work-box", "model": "miras-model"}
+    assert store.get_setting("model.chat") == {"provider": "lmstudio", "model": "odies-model"}  # Odie's untouched
+    hers = (await api.get(f"/api/models?personality={mira.id}")).json()["selection"]["chat"]
+    assert (hers["provider"], hers["model"], hers["same_as_odie"], hers["reachable"]) == ("work-box", "miras-model", False, True)
+
+    store.set_setting("providers.custom", [])  # the work box was removed
+    hers = (await api.get(f"/api/models?personality={mira.id}")).json()["selection"]["chat"]
+    assert hers["gone"] is True and hers["reachable"] is False and hers["model"] == "miras-model"
+
+    assert (await api.delete(f"/api/models/selection?personality={mira.id}")).status_code == 200
+    assert brains.own_pick(store, mira.id) is None
+    assert (await api.get(f"/api/models?personality={mira.id}")).json()["selection"]["chat"]["same_as_odie"] is True
+    assert (await api.delete("/api/models/selection")).status_code == 422  # Odie can't be "the same as Odie"
+    nobody = await api.put("/api/models/selection?personality=nobody", json={"slot": "chat", "provider": "lmstudio",
+                                                                            "model": "x"})
+    assert nobody.status_code == 404
+
+
+def test_the_terminals_key_cant_reach_these_routes():
+    from odie import devices
+    for method, path in (("GET", "/api/models"), ("PUT", "/api/models/selection"), ("DELETE", "/api/models/selection"),
+                         ("GET", "/api/mcp"), ("POST", "/api/mcp/work-mail/access"), ("POST", "/api/mcp")):
+        assert not devices.terminal_may(method, path, "personality=abc")
+        assert not devices.terminal_may(method, path, "")

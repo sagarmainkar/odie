@@ -274,3 +274,72 @@ async def test_a_background_check_uses_only_odies_apps(runner, store):
     assert "error" in last["results"]["load_skill"]
     assert not APP_TOOLS & last["tools"]
     assert "echo" not in last["results"] or "error" in last["results"]["echo"]  # never ran
+
+
+# ── Settings → Connected apps, for whoever is picked ──
+
+@pytest.fixture
+async def api(runner, monkeypatch):
+    import httpx
+
+    from odie.app.main import create_app
+    monkeypatch.setenv("ODIE_SCHEDULER", "0")
+    app = create_app(runner=runner, store=runner.store)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c, \
+            app.router.lifespan_context(app):
+        yield c
+
+
+def _can_use(listing: dict) -> dict[str, bool]:
+    return {row["name"]: row["canUse"] for row in listing["servers"]}
+
+
+async def test_the_apps_list_and_switch_follow_the_pick(api, runner, store, monkeypatch):
+    from odie.plugins import mcp
+
+    async def no_reload():
+        return runner.plugins
+    monkeypatch.setattr(runner, "load_plugins", no_reload)  # no servers are started here
+    mcp.write_config({"home-mail": {"url": "https://mail.invalid/mcp"}})
+    mira = personalities.create(store, "Mira")
+    assert _can_use((await api.get("/api/mcp")).json()) == {"home-mail": True}
+    off = await api.post(f"/api/mcp/home-mail/access?personality={mira.id}", json={"on": False})
+    assert off.status_code == 200
+    assert _can_use((await api.get(f"/api/mcp?personality={mira.id}")).json()) == {"home-mail": False}
+    assert _can_use((await api.get("/api/mcp")).json()) == {"home-mail": True}  # Odie's stays on
+    assert (await api.post("/api/mcp/nothing/access", json={"on": False})).status_code == 404
+    assert (await api.post("/api/mcp/home-mail/access?personality=nobody", json={"on": False})).status_code == 404
+
+    added = await api.post(f"/api/mcp?personality={mira.id}", json={"name": "work-mail",
+                                                                    "spec": {"url": "https://work.invalid/mcp"}})
+    assert added.status_code == 200
+    assert _can_use((await api.get(f"/api/mcp?personality={mira.id}")).json()) == {"home-mail": False, "work-mail": True}
+    assert _can_use((await api.get("/api/mcp")).json()) == {"home-mail": True, "work-mail": False}
+    edited = await api.post("/api/mcp", json={"name": "work-mail", "spec": {"url": "https://work2.invalid/mcp"}})
+    assert edited.status_code == 200  # editing it with Odie picked doesn't hand it to Odie
+    assert _can_use((await api.get("/api/mcp")).json())["work-mail"] is False
+
+    assert (await api.delete("/api/mcp/work-mail")).status_code == 200
+    assert store.one("select * from app_access where server='work-mail'") is None
+
+
+async def test_connecting_a_service_while_she_is_picked_is_hers(api, runner, store, monkeypatch):
+    from odie.app import routes
+    from odie.plugins import mcp
+
+    async def no_reload():
+        return runner.plugins
+
+    async def answers(spec, smart=False):
+        return {"ok": True, "tools": []}
+    monkeypatch.setattr(runner, "load_plugins", no_reload)
+    monkeypatch.setattr(routes, "_check", answers)
+    mira = personalities.create(store, "Mira")
+    made = await api.post(f"/api/mcp/connect?personality={mira.id}",
+                          json={"preset": "zapier", "url": "https://mcp.zapier.com/api/mcp/s/abc/mcp"})
+    assert made.status_code == 200
+    name = made.json()["name"]
+    assert access.allowed(store, name, mira.id) and not access.allowed(store, name, ODIE)
+    again = await api.post("/api/mcp/connect", json={"preset": "zapier", "url": "https://mcp.zapier.com/api/mcp/s/new/mcp"})
+    assert again.json()["replaced"] is True and not access.allowed(store, name, ODIE)  # a new link keeps the switches
+    assert mcp.read_config()[0][name]["url"].endswith("/new/mcp")

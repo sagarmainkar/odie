@@ -458,7 +458,12 @@ async def skills_enabled(name: str, body: EnabledIn, request: Request):
 
 @router.get("/mcp")
 async def mcp_list(request: Request):
+    """The connected apps, each with its whole-server switches and `canUse`: whether whoever the request picked (a
+    personality, or everyday Odie with none) may use it (odie.plugins.access)."""
+    from odie.plugins import access
     from odie.plugins.mcp import masked, read_config
+    pick = _personality(request)
+    store = request.app.state.store
     servers, err = read_config()
     live = {e.name: e for e in request.app.state.runner.plugins.get("servers", [])}
     out = []
@@ -466,7 +471,7 @@ async def mcp_list(request: Request):
         e = live.get(name)
         out.append({"name": name, "spec": masked(spec), "status": e.status if e else "not loaded", "tools": e.tools if e else [],
                     "reason": e.reason if e else "", "alwaysOn": bool(spec.get("alwaysOn")), "enabled": spec.get("enabled", True) is not False,
-                    "readsFree": bool(spec.get("readsFree"))})
+                    "readsFree": bool(spec.get("readsFree")), "canUse": access.allowed(store, name, pick)})
     return {"servers": out, "error": err}
 
 
@@ -485,11 +490,23 @@ async def mcp_save(body: ServerIn, request: Request):
     problem = command_problem(edit)
     if problem:
         raise HTTPException(422, problem)
+    pick = _personality(request)
+    is_new = body.name not in servers
     keep = {k: v for k, v in old.items() if k not in (("command", "args", "env") if edit.get("url") else ("url", "headers"))}
     servers[body.name] = {**keep, **edit}  # switches (enabled, alwaysOn) and hand-written keys stay
     write_config(servers)
+    if is_new:
+        _app_added(request, body.name, pick)
     await request.app.state.runner.load_plugins()
     return {"ok": True}
+
+
+def _app_added(request: Request, name: str, pick: str) -> None:
+    """A connected app was just added: it is for whoever is picked alone (odie.plugins.access.added)."""
+    from odie.plugins import access
+    store = request.app.state.store
+    access.added(store, name, pick)
+    store.audit("user", "app_added", result_summary=f"{name} for {pick or 'everyday Odie'}")
 
 
 class CheckIn(BaseModel):
@@ -566,9 +583,12 @@ async def mcp_connect(body: ConnectIn, request: Request) -> dict[str, Any]:
         name = same[0] if same else None
     replaced = name is not None
     name = name or next(n for n in (body.preset, *(f"{body.preset}-{i}" for i in range(2, 100))) if n not in servers)
+    pick = _personality(request)
     old = servers.get(name) or {}
     servers[name] = {**{k: v for k, v in old.items() if k in ("enabled", "alwaysOn", "readsFree")}, **spec}
     write_config(servers)
+    if not replaced:
+        _app_added(request, name, pick)
     await request.app.state.runner.load_plugins()
     return {"ok": True, "name": name, "tools": checked["tools"], "replaced": replaced}
 
@@ -600,13 +620,32 @@ async def _mcp_flag(request: Request, name: str, key: str, value: bool):
     return {"ok": True}
 
 
+@router.post("/mcp/{name}/access")
+async def mcp_access(name: str, body: OnIn, request: Request):
+    """Whether whoever the request picked (a personality, or everyday Odie with none) may use this app: "Mira can use
+    this" in Settings (odie.plugins.access). Read live: no reload is needed."""
+    from odie.plugins import access
+    from odie.plugins.mcp import read_config
+    pick = _personality(request)
+    servers, _ = read_config()
+    if name not in servers:
+        raise HTTPException(404, "no such server")
+    store = request.app.state.store
+    access.set_allowed(store, name, pick, body.on)
+    store.audit("user", "app_access", result_summary=f"{name} {'on' if body.on else 'off'} for {pick or 'everyday Odie'}")
+    _forget_prompts(request)  # the prompt's capabilities (mail, the vault) follow the apps it may use
+    return {"ok": True}
+
+
 @router.delete("/mcp/{name}")
 async def mcp_delete(name: str, request: Request):
+    from odie.plugins import access
     from odie.plugins.mcp import read_config, write_config
     servers, _ = read_config()
     if servers.pop(name, None) is None:
         raise HTTPException(404, "no such server")
     write_config(servers)
+    access.forget_server(request.app.state.store, name)
     await request.app.state.runner.load_plugins()
     return {"ok": True}
 
@@ -2471,15 +2510,43 @@ def _creativity(store) -> dict:
 
 @router.get("/models")
 async def models_get(request: Request):
+    """Settings → Brain: every provider's models and the brain of whoever the request picked. With a personality
+    picked, the brain says whether it is "Same as Odie" (same_as_odie) or one of its own that is no longer set up
+    (gone), and `odie` is everyday Odie's, for the "Same as Odie" choice."""
     store = request.app.state.store
+    pick = _personality(request)
     providers = all_providers(store)
     listed = await list_models(providers)
     r = resolve_selection(store, "chat")
-    row = next((p for p in listed if p["id"] == r.provider.id), None)
-    reachable = row is not None and row["error"] is None
     chat = {"provider": r.provider.id, "model": r.model, "leaves_mini": r.leaves_mini,
-            "chosen": brain_chosen(store), "reachable": reachable}
-    return {"providers": listed, "selection": {"chat": chat}, "creativity": _creativity(store)}
+            "chosen": brain_chosen(store), "reachable": _answers(listed, r.provider.id)}
+    out = {"providers": listed, "selection": {"chat": chat}, "creativity": _creativity(store)}
+    if pick:
+        out["selection"]["chat"] = _its_brain(store, pick, chat, listed)
+        out["odie"] = {"provider": r.provider.id, "model": r.model, "leaves_mini": r.leaves_mini}
+    return out
+
+
+def _answers(listed: list[dict], provider_id: str) -> bool:
+    """Whether a provider answered the model listing: listed without an error -> True; failed, or not listed -> False."""
+    row = next((p for p in listed if p["id"] == provider_id), None)
+    return row is not None and row["error"] is None
+
+
+def _its_brain(store, pick: str, odies: dict, listed: list[dict]) -> dict:
+    """A personality's brain as Settings → Brain shows it: everyday Odie's with same_as_odie when it has none of its
+    own; its own otherwise, and `gone` (never reachable) when that one's provider is no longer set up."""
+    from odie import brains
+    own = brains.own_pick(store, pick)
+    if own is None:
+        return {**odies, "same_as_odie": True, "gone": False}
+    try:
+        sel = brains.for_personality(store, pick)
+    except brains.BrainGone:
+        return {"provider": own["provider"], "model": own["model"], "leaves_mini": True, "chosen": True,
+                "reachable": False, "same_as_odie": False, "gone": True}
+    return {"provider": sel.provider.id, "model": sel.model, "leaves_mini": sel.leaves_mini, "chosen": True,
+            "reachable": _answers(listed, sel.provider.id), "same_as_odie": False, "gone": False}
 
 
 class CreativityIn(BaseModel):
@@ -2506,11 +2573,21 @@ async def models_usage(request: Request):
 
 @router.put("/models/selection")
 async def models_select(body: SelectionIn, request: Request):
+    """Choose the brain of whoever the request picked: everyday Odie's (model.chat), or with a personality picked, a
+    brain of its own (odie.brains), which leaves Odie's as it is."""
+    from odie import brains
     store = request.app.state.store
+    pick = _personality(request)
     if body.slot != "chat":
         raise HTTPException(422, "There's one model now: slot is chat.")
     if body.provider not in {p.id for p in all_providers(store)}:
         raise HTTPException(404, "unknown provider")
+    if pick:
+        brains.choose(store, pick, body.provider, body.model)
+        store.audit("user", "model_selected", result_summary=f"{pick}: {body.provider}/{body.model}")
+        _apply_models(request)
+        sel = brains.for_personality(store, pick)
+        return {"ok": True, "slot": "chat", "provider": sel.provider.id, "model": sel.model, "leaves_mini": sel.leaves_mini}
     store.set_setting(f"model.{body.slot}", {"provider": body.provider, "model": body.model})
     store.audit("user", "model_selected", result_summary=f"{body.slot}: {body.provider}/{body.model}")
     apply = getattr(request.app.state.runner, "apply_model_selection", None)
@@ -2518,6 +2595,27 @@ async def models_select(body: SelectionIn, request: Request):
         apply()
     sel = resolve_selection(store, body.slot)
     return {"ok": True, "slot": body.slot, "provider": sel.provider.id, "model": sel.model, "leaves_mini": sel.leaves_mini}
+
+
+@router.delete("/models/selection")
+async def models_same_as_odie(request: Request):
+    """A personality's brain back to "Same as Odie". Everyday Odie's own can't be: it is the one the others follow."""
+    from odie import brains
+    store = request.app.state.store
+    pick = _personality(request)
+    if not pick:
+        raise HTTPException(422, "Everyday Odie's brain is chosen, not followed.")
+    brains.same_as_odie(store, pick)
+    store.audit("user", "model_selected", result_summary=f"{pick}: same as Odie")
+    _apply_models(request)
+    return {"ok": True}
+
+
+def _apply_models(request: Request) -> None:
+    """A brain changed: the runner builds its models again from the next message."""
+    apply = getattr(request.app.state.runner, "apply_model_selection", None)
+    if apply:
+        apply()
 
 
 @router.post("/models/providers")
