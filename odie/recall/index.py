@@ -122,6 +122,18 @@ class RecallIndex:
                 written += 1
         return written
 
+    def drop_sessions(self, session_ids) -> int:
+        """Remove every chat passage of these threads, with its words and its vector (a personality that was deleted:
+        odie.personalities). Returns how many passages went."""
+        dropped = 0
+        with self._db() as c:
+            for session_id in session_ids:
+                rows = c.execute("select ref from passages where kind='chat' and session_id=?", (session_id,)).fetchall()
+                for row in rows:
+                    self._drop(c, "chat", row["ref"])
+                    dropped += 1
+        return dropped
+
     def chats_read_until(self) -> float:
         """The time the chats were last read up to (a local midnight), or 0.0 when they never were."""
         with self._db() as c:
@@ -135,14 +147,17 @@ class RecallIndex:
             self._set(c, "recall_chats_until", repr(ts))
 
     # ── searching by words ──
-    def keyword(self, query: str, k: int = 8, since: str | None = None, until: str | None = None) -> list[RecallHit]:
+    def keyword(self, query: str, k: int = 8, since: str | None = None, until: str | None = None,
+                hidden_sessions: frozenset[str] = frozenset()) -> list[RecallHit]:
         """The best word matches, best first, and on equal scores the newest day first. since / until are ISO days
-        (inclusive): since="2026-11-04" drops a 3 Nov chat; a query of only stopwords finds nothing."""
+        (inclusive): since="2026-11-04" drops a 3 Nov chat; a query of only stopwords finds nothing.
+        hidden_sessions: threads the asker may not read (odie.personalities.hidden_from). Their passages are passed
+        over before the cut to k, so nine hidden matches ahead of one allowed one still give that one."""
         words = [w.lower() for w in _WORD.findall(query or "") if w.lower() not in STOPWORDS]
         if not words:
             return []
         match = " OR ".join(f'"{w}"' + ("*" if len(w) >= 4 else "") for w in dict.fromkeys(words))
-        sql = ("select p.kind, p.ref, p.day, p.title, p.text, -bm25(passages_fts) as score from passages_fts "
+        sql = ("select p.kind, p.ref, p.day, p.title, p.text, p.session_id, -bm25(passages_fts) as score from passages_fts "
                "join passages p on p.rowid = passages_fts.rowid where passages_fts match ?")
         args: list = [match]
         if since:
@@ -151,11 +166,16 @@ class RecallIndex:
         if until:
             sql += " and p.day <= ?"
             args.append(until)
-        sql += " order by bm25(passages_fts), p.day desc, p.ref desc limit ?"
-        args.append(k)
+        sql += " order by bm25(passages_fts), p.day desc, p.ref desc"
+        hits: list[RecallHit] = []
         with self._db() as c:
-            rows = c.execute(sql, args).fetchall()
-        return [RecallHit(r["kind"], r["ref"], r["day"], r["title"], r["text"], r["score"]) for r in rows]
+            for r in c.execute(sql, args):  # best first: read on until k allowed ones are found
+                if r["session_id"] in hidden_sessions:
+                    continue
+                hits.append(RecallHit(r["kind"], r["ref"], r["day"], r["title"], r["text"], r["score"]))
+                if len(hits) == k:
+                    break
+        return hits
 
     # ── searching by meaning ──
     def _meta(self, c: sqlite3.Connection) -> dict[str, str]:
@@ -286,22 +306,23 @@ class RecallIndex:
             return None
 
     async def search(self, query: str, k: int = 8, embedder=None, since: str | None = None,
-                     until: str | None = None) -> list[RecallHit]:
+                     until: str | None = None, hidden_sessions: frozenset[str] = frozenset()) -> list[RecallHit]:
         """Passages nearest the question by meaning when an embedder and vectors are there, else the word matches.
         Never both (the owner's D-057: mixed scores pulled in noise).
           "bill payment", embedder fits, vectors exist -> the invoice chat and the rent memory, by likeness
           same question, no embedder / another model / embedder down / no vectors -> keyword("bill payment")
-        since / until are ISO days, inclusive, as in keyword."""
+        since / until are ISO days, inclusive, and hidden_sessions the threads the asker may not read, as in keyword."""
         q = await self._query_vector(query, embedder)
         if q is None:
-            return self.keyword(query, k=k, since=since, until=until)
+            return self.keyword(query, k=k, since=since, until=until, hidden_sessions=hidden_sessions)
         # Scoring is plain Python over every vector: it runs in a thread so the chats on the event loop keep moving.
-        return await asyncio.to_thread(self._nearest, query, q, k, since, until)
+        return await asyncio.to_thread(self._nearest, query, q, k, since, until, hidden_sessions)
 
-    def _nearest(self, query: str, q: list[float], k: int, since: str | None, until: str | None) -> list[RecallHit]:
-        """The k passages nearest the question's vector `q` within the days, or the word matches when no vector
-        passes the day filter."""
-        days = self._days(since, until)
+    def _nearest(self, query: str, q: list[float], k: int, since: str | None, until: str | None,
+                 hidden_sessions: frozenset[str] = frozenset()) -> list[RecallHit]:
+        """The k passages nearest the question's vector `q` within the days (and not of a hidden thread), or the word
+        matches when no vector passes the filter."""
+        days = self._days(since, until, hidden_sessions)
         scored: list[tuple[float, str, str]] = []
         for kind in KINDS:
             refs, vecs = self._vectors_of(kind)
@@ -309,7 +330,7 @@ class RecallIndex:
                 if (kind, ref) in days and len(v) == len(q):
                     scored.append((math.sumprod(q, v), kind, ref))
         if not scored:
-            return self.keyword(query, k=k, since=since, until=until)
+            return self.keyword(query, k=k, since=since, until=until, hidden_sessions=hidden_sessions)
         # best likeness first; on equal scores the newest day, then the newest ref
         scored.sort(key=lambda s: (s[0], days[(s[1], s[2])], s[2]), reverse=True)
         best = scored[:k]
@@ -321,9 +342,11 @@ class RecallIndex:
                 hits.append(RecallHit(r["kind"], r["ref"], r["day"], r["title"], r["text"], score))
         return hits
 
-    def _days(self, since: str | None, until: str | None) -> dict[tuple[str, str], str]:
-        """The passages that pass the day filter, each with its day: since="2026-11-04" leaves out a 3 Nov chat."""
-        sql = "select kind, ref, day from passages where kind in ('chat', 'memory')"
+    def _days(self, since: str | None, until: str | None,
+              hidden_sessions: frozenset[str] = frozenset()) -> dict[tuple[str, str], str]:
+        """The passages that pass the day filter and aren't of a hidden thread, each with its day:
+        since="2026-11-04" leaves out a 3 Nov chat; a thread in hidden_sessions leaves out all its passages."""
+        sql = "select kind, ref, day, session_id from passages where kind in ('chat', 'memory')"
         args: list = []
         if since:
             sql += " and day >= ?"
@@ -332,4 +355,5 @@ class RecallIndex:
             sql += " and day <= ?"
             args.append(until)
         with self._db() as c:
-            return {(r["kind"], r["ref"]): r["day"] for r in c.execute(sql, args)}
+            rows = c.execute(sql, args).fetchall()
+        return {(r["kind"], r["ref"]): r["day"] for r in rows if r["session_id"] not in hidden_sessions}

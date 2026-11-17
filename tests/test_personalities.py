@@ -437,3 +437,116 @@ async def test_a_personality_that_never_saved_anything(runner):
     assert "nothing yet" in index and "Rent day" in index
     assert "Paid on the first." in runner.prefetch("when is rent day", mira.id)
     assert tools["fetch_memory"]("Nope", tool_context=_ctx(hers)).startswith("Nothing remembered under")
+
+
+# ── recall and the morning hello ──
+
+def _exchange(session_id: str, text: str, day: int = 3, hour: int = 10):
+    from datetime import UTC, datetime
+
+    from odie.recall.chats import Exchange
+    ts = datetime(2026, 11, day, hour, tzinfo=UTC).timestamp()
+    return Exchange(session_id=session_id, ts=ts, day=f"2026-11-{day:02d}", text=text)
+
+
+def _recall(runner):
+    """The recall tool as the chat agent has it."""
+    from odie.recall.tools import make_recall_tool
+    return make_recall_tool(runner.store, runner.memory, memory_for=runner._memory_for_chat).func
+
+
+async def test_a_word_said_only_to_mira_is_not_in_odies_recall(runner):
+    from odie.recall.fill import recall_index
+    from odie.recall.tools import NOTHING
+    mira, hers = await _mira_with_a_thread(runner)
+    recall_index().add_exchanges([_exchange(hers, "you: the lighthouse plan\nOdie: kept between us")])
+    recall = _recall(runner)
+    assert await recall(query="lighthouse", tool_context=_ctx(f"chat-{D}")) == NOTHING
+    assert await recall(query="lighthouse") == NOTHING  # a background turn, in no chat at all
+    hers_found = await recall(query="lighthouse", tool_context=_ctx(hers))
+    assert hers_found.startswith("[chat 3 Nov] you: the lighthouse plan")
+
+
+async def test_mira_recalls_everyday_chats_too_but_another_personality_cannot_recall_hers(runner):
+    from odie.recall.fill import recall_index
+    from odie.recall.tools import NOTHING
+    mira, hers = await _mira_with_a_thread(runner)
+    coach = personalities.create(runner.store, "Coach")
+    coachs = await runner.session_for(coach.id, D)
+    recall_index().add_exchanges([_exchange(hers, "you: the lighthouse plan\nOdie: kept between us"),
+                                  _exchange(f"chat-{D}", "you: which kettle\nOdie: the steel kettle", hour=11)])
+    recall = _recall(runner)
+    assert "steel kettle" in await recall(query="kettle", tool_context=_ctx(hers))
+    assert "steel kettle" in await recall(query="kettle", tool_context=_ctx(coachs))
+    assert await recall(query="lighthouse", tool_context=_ctx(coachs)) == NOTHING
+
+
+async def test_hidden_hits_do_not_use_up_the_answer(runner):
+    from odie.recall.fill import recall_index
+    mira, hers = await _mira_with_a_thread(runner)
+    ix = recall_index()
+    ix.add_exchanges([_exchange(hers, f"you: lighthouse note {i}\nOdie: ok", hour=i) for i in range(9)])
+    ix.add_exchanges([_exchange(f"chat-{D}", "you: the lighthouse museum hours\nOdie: ten to five", day=2)])
+    hidden = personalities.hidden_from(runner.store, ODIE)
+    assert len(ix.keyword("lighthouse", k=8)) == 8  # with nothing hidden: the eight best, as before
+    everyday = ix.keyword("lighthouse", k=8, hidden_sessions=hidden)
+    assert [h.text for h in everyday] == ["you: the lighthouse museum hours\nOdie: ten to five"]
+    assert len(await ix.search("lighthouse", k=8, hidden_sessions=hidden)) == 1
+    # the meaning path scores only the passages _days lets through: her nine are not among them
+    refs = ix._days(None, None, hidden)
+    assert len(refs) == 1 and len(ix._days(None, None)) == 10
+
+
+async def test_her_own_memory_is_found_only_by_her(runner):
+    from odie.recall.tools import NOTHING
+    mira, hers = await _mira_with_a_thread(runner)
+    runner.memory_of(mira.id).update("The lighthouse plan", "Kept between us.", topic="Private")
+    recall = _recall(runner)
+    assert (await recall(query="lighthouse plan", tool_context=_ctx(hers))).startswith("[memory] The lighthouse plan")
+    assert await recall(query="lighthouse plan", tool_context=_ctx(f"chat-{D}")) == NOTHING
+
+
+async def test_with_no_index_the_memory_files_answer_and_hers_stays_hers(runner, monkeypatch):
+    def no_index():
+        raise OSError("the index won't open")
+
+    monkeypatch.setattr("odie.recall.fill.recall_index", no_index)
+    mira, hers = await _mira_with_a_thread(runner)
+    runner.memory_of(mira.id).update("The lighthouse plan", "Kept between us.", topic="Private")
+    runner.memory.update("Rent day", "Paid on the first.", topic="Finance")
+    recall = _recall(runner)
+    assert "[memory] The lighthouse plan" in await recall(query="lighthouse plan", tool_context=_ctx(hers))
+    assert "[memory] Rent day" in await recall(query="rent day", tool_context=_ctx(hers))
+    assert "lighthouse" not in await recall(query="lighthouse plan", tool_context=_ctx(f"chat-{D}"))
+
+
+async def test_dropping_a_threads_passages(runner):
+    from odie.recall.fill import recall_index
+    ix = recall_index()
+    ix.add_exchanges([_exchange("chat-2026-11-03-2", "you: the lighthouse plan\nOdie: kept"),
+                      _exchange("chat-2026-11-03", "you: which kettle\nOdie: the steel kettle", hour=11)])
+    assert ix.drop_sessions(["chat-2026-11-03-2"]) == 1
+    assert ix.keyword("lighthouse") == [] and len(ix.keyword("kettle")) == 1
+
+
+async def test_the_morning_hello_does_not_read_her_chats(runner, monkeypatch):
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from odie.jobs.brief import BriefInputs
+    from odie.morning import gather as morning
+    mira, hers = await _mira_with_a_thread(runner)
+    t = time.time()
+    await _say(runner, f"chat-{D}", "user", "Remind me about the dentist", t - 60)
+    await _say(runner, hers, "user", "The lighthouse plan stays between us", t - 30)
+    now = datetime.now(ZoneInfo(config.settings.timezone))
+    assert "lighthouse" in morning.recent_chats(now)  # with nothing hidden it would be read
+    everyday = morning.recent_chats(now, personalities.owned_sessions(runner.store))
+    assert "dentist" in everyday and "lighthouse" not in everyday
+
+    async def no_weather(store):
+        return None
+
+    monkeypatch.setattr(morning, "today_weather", no_weather)
+    gathered = await morning.gather(runner.store, now, BriefInputs(tasks=""))
+    assert "dentist" in gathered.chats and "lighthouse" not in gathered.chats

@@ -77,7 +77,7 @@ def build_agent(store: Store, instruction: str | Callable | None = None,
     from odie.agent.tools.media import make_media_tools
     from odie.browser import find, shared
     browser = find.browser_binary() is not None  # the browser capability: tools only when there's a browser to drive
-    core = [*make_memory_tools(memory, on_memory_change, memory_for), make_recall_tool(store, memory), make_shell_tool(store=store),
+    core = [*make_memory_tools(memory, on_memory_change, memory_for), make_recall_tool(store, memory, memory_for), make_shell_tool(store=store),
             *make_web_tools(store=store, browser_for=shared if browser else None),
             *make_local_tools(store, config.settings.timezone, source_done=source_done), *make_watch_item_tools(store),
             *make_media_tools(store), *make_file_tools(),
