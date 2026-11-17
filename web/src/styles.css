@@ -47,7 +47,8 @@
   --t-ground: #F7F3EE; --w1: #FFD3BD; --w2: #FFE7A3; --w3: #F9C6D6;
   --t-surface: rgba(255,255,255,.72); --t-surface-2: rgba(255,255,255,.92); --t-edge: rgba(255,255,255,.9);
   --t-well: rgba(40,28,16,.045); --t-line: rgba(40,28,16,.07); --t-line-2: rgba(40,28,16,.12);
-  --t-ink: #1C1B22; --t-ink-2: #3C3A45; --t-muted: #85828F; --t-dim: #AAA7B3;
+  /* Muted text reaches 4.5:1 and dim 3:1 on a white card and on every light ground (textContrast.test.ts). */
+  --t-ink: #1C1B22; --t-ink-2: #3C3A45; --t-muted: #6E6B78; --t-dim: #8C8898;
   --t-brand: #7D8CFF; --t-brand-text: #5B62E8; --t-brand-tint: rgba(125,140,255,.14); --t-on-brand: #FFFFFF;
   --t-action: #1C1B22; --t-solid: #1C1B22; --t-on-solid: #FFFFFF;
   --t-bubble: linear-gradient(150deg, #EEF0FF, #F4EAFF);

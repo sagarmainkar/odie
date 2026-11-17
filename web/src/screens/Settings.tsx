@@ -319,7 +319,7 @@ function VoiceSection() {
           );
         })}
         {eng.id === "phonon" && eng.available && <AnotherVoice onKept={kept} />}
-        {eng.id === "maya1" && <div className="text-[12px] leading-4 text-dim px-1">The first preview loads Maya1 (about half a minute). Replies are read with laughs, sighs and other expressions where they fit.</div>}
+        {eng.id === "maya1" && <div className="text-[12px] leading-4 text-muted px-1">The first preview loads Maya1 (about half a minute). Replies are read with laughs, sighs and other expressions where they fit.</div>}
         <div className="flex items-start gap-3 pt-1">
           <div className="flex-1 min-w-0">
             <div className="text-[14.5px] font-medium">Speak reminders</div>

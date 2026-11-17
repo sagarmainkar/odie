@@ -149,7 +149,7 @@ export function ApprovalCard({ a, onDecided, showResult = true }: { a: Approval;
           Run it, and allow commands for 30 min
         </button>
       )}
-      <div className="text-[12px] leading-4 text-dim -mt-1">
+      <div className="text-[12px] leading-4 text-muted -mt-1">
         {smart ? "Smart mode: this one always asks." : "Sending, deleting, invites, commands, app actions and new code always ask first; reading your own notes and mail doesn't. Every action is logged."}
         {expiresIn(a.created_at) && <> · {expiresIn(a.created_at)}</>}
       </div>

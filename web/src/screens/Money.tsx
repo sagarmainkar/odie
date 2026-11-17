@@ -99,7 +99,7 @@ function DetailPanel({ d }: { d: Detail }) {
       <button type="button" onClick={() => { location.hash = `#chat?q=${encodeURIComponent(ask)}`; }} className="pill pill-solid h-11 self-start text-[14.5px] shadow-none">
         <Icon name="spark" size={15} /> Analyze with Odie
       </button>
-      <div className="text-[11.5px] text-dim -mt-1">The view above is worked out on this computer. Analyze sends this account's transactions to your chat model.</div>
+      <div className="text-[11.5px] text-muted -mt-1">The view above is worked out on this computer. Analyze sends this account's transactions to your chat model.</div>
     </motion.div>
   );
 }

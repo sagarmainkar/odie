@@ -57,11 +57,11 @@ export function Private({ status }: { status: PairStatus | null }) {
             {withPasscode ? "Use a pairing code instead" : "Use the recovery passcode instead"}
           </button>
         ) : status.devices > 0 && (
-          <div className="text-[12.5px] leading-[18px] text-dim text-center">No recovery passcode was made, so a code from a paired device is the way in.</div>
+          <div className="text-[12.5px] leading-[18px] text-muted text-center">No recovery passcode was made, so a code from a paired device is the way in.</div>
         )}
       </form>
       {status?.devices === 0 && (
-        <p className="text-[13px] leading-[19px] text-dim text-center max-w-[340px]">Nothing is paired yet. On the computer Odie runs on, open the setup link the installer gave you.</p>
+        <p className="text-[13px] leading-[19px] text-muted text-center max-w-[340px]">Nothing is paired yet. On the computer Odie runs on, open the setup link the installer gave you.</p>
       )}
     </div>
   );
