@@ -33,9 +33,11 @@ class Store:
         self._lock = threading.RLock()
 
     TASK_COLUMNS = {"delivered_at": "TEXT", "snoozed_until": "TEXT", "last_seen_at": "TEXT", "detail": "TEXT",
-                    "seen_at": "TEXT", "notice_media": "TEXT"}  # the curtain: when the user acted or dismissed; a spoken memo, as JSON
+                    "seen_at": "TEXT", "notice_media": "TEXT",  # the curtain: when the user acted or dismissed; a spoken memo, as JSON
+                    "personality": "TEXT"}  # whose reminder it is (odie.personalities); NULL = everyday Odie
     APPROVAL_COLUMNS = {"risk": "TEXT", "call_id": "TEXT"}  # call_id: the tool call this approval answered
     PUSH_COLUMNS = {"device_id": "INTEGER"}  # the paired device that subscribed (none before pairing)
+    THREAD_COLUMNS = {"personality": "TEXT"}  # whose thread it is (odie.personalities); NULL = everyday Odie
     TRACKER_COLUMNS = {"page_url": "TEXT", "signin_allowed": "INTEGER NOT NULL DEFAULT 0"}  # a signed-in tracker's page and the user's Allow
 
     def init_schema(self) -> None:
@@ -58,6 +60,10 @@ class Store:
             for col, typ in self.PUSH_COLUMNS.items():
                 if col not in have:
                     self._conn.execute(f"alter table push_subscriptions add column {col} {typ}")
+            have = {r["name"] for r in self._conn.execute("pragma table_info(threads)")}
+            for col, typ in self.THREAD_COLUMNS.items():
+                if col not in have:
+                    self._conn.execute(f"alter table threads add column {col} {typ}")
             have = {r["name"] for r in self._conn.execute("pragma table_info(trackers)")}
             for col, typ in self.TRACKER_COLUMNS.items():
                 if col not in have:

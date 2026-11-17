@@ -26,6 +26,9 @@ CREATE TABLE IF NOT EXISTS push_subscriptions(id INTEGER PRIMARY KEY, endpoint T
 CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value_json TEXT NOT NULL);
 -- chat threads the user pinned or renamed (odie.threads); the conversations themselves live in the session store
 CREATE TABLE IF NOT EXISTS threads(session_id TEXT PRIMARY KEY, title TEXT, pinned_at TEXT);
+-- other ways for the assistant to be (odie.personalities): a name and a picture each; its SOUL and its memories
+-- are files. A thread's and a task's `personality` column (added in Store.init_schema) says whose it is; NULL = Odie
+CREATE TABLE IF NOT EXISTS personalities(id TEXT PRIMARY KEY, name TEXT NOT NULL, avatar TEXT, created_at TEXT NOT NULL);
 
 create table if not exists trackers (
   id integer primary key autoincrement,
