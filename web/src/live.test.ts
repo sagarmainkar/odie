@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { connectLive } from "./live";
+import { connectLive, shareLive } from "./live";
 
 class FakeSource {
   static made: FakeSource[] = [];
@@ -32,5 +32,36 @@ describe("connectLive", () => {
     expect(FakeSource.made.filter((s) => !s.closed).length).toBe(1);
     stop();
     expect(FakeSource.made.every((s) => s.closed)).toBe(true);
+  });
+});
+
+describe("shareLive", () => {
+  it("keeps one stream for every listener and closes it with the last", () => {
+    const subscribe = shareLive(() => new FakeSource() as unknown as EventSource);
+    const heard: string[] = [];
+    const stopA = subscribe({ onEvent: () => heard.push("a") });
+    const stopB = subscribe({ onEvent: () => heard.push("b") });
+    expect(FakeSource.made.length).toBe(1);
+    FakeSource.made[0].onmessage?.({ data: JSON.stringify({ type: "message", text: "hi", ts: 1, session_id: "s" }) });
+    expect(heard).toEqual(["a", "b"]);
+    stopA();
+    expect(FakeSource.made[0].closed).toBe(false);
+    stopB();
+    expect(FakeSource.made[0].closed).toBe(true);
+    subscribe({ onEvent: () => {} });         // a new listener later opens a fresh one
+    expect(FakeSource.made.length).toBe(2);
+  });
+
+  it("tells every listener when the stream comes back", () => {
+    vi.useFakeTimers();
+    const subscribe = shareLive(() => new FakeSource() as unknown as EventSource);
+    const back: string[] = [];
+    subscribe({ onEvent: () => {}, onReconnect: () => back.push("a") });
+    subscribe({ onEvent: () => {}, onReconnect: () => back.push("b") });
+    FakeSource.made[0].onopen?.();
+    FakeSource.made[0].onerror?.();
+    vi.advanceTimersByTime(3000);
+    FakeSource.made[1].onopen?.();
+    expect(back).toEqual(["a", "b"]);
   });
 });

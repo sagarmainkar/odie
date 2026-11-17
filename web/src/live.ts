@@ -22,10 +22,34 @@ export function connectLive(make: () => EventSource, onEvent: (e: LiveEvent) => 
   return () => { stopped = true; if (retry !== null) clearTimeout(retry); es?.close(); };
 }
 
-/** Subscribe to /api/events (SSE). Reconnects automatically; the handler sees every non-ping event. */
+type Listener = { onEvent: (e: LiveEvent) => void; onReconnect?: () => void };
+
+/** One stream for the whole app, shared by every listener: opened with the first, closed with the last. A stream
+ * each used to be one connection each: Today held five (the app, the chat, the reminder curtain, Today, Tracking), one
+ * short of the six a browser allows a host over plain HTTP, after which every tap and fetch waits. `make` is for tests.
+ *   subscribe(a), subscribe(b) -> one EventSource, both hear each event; both stop -> it closes. */
+export function shareLive(make: () => EventSource) {
+  const listeners = new Set<Listener>();
+  let stop: (() => void) | null = null;
+  return function subscribe(listener: Listener): () => void {
+    listeners.add(listener);
+    if (stop === null) {
+      stop = connectLive(make, (e) => listeners.forEach((l) => l.onEvent(e)), () => listeners.forEach((l) => l.onReconnect?.()));
+    }
+    return () => {
+      listeners.delete(listener);
+      if (listeners.size === 0 && stop !== null) { stop(); stop = null; }
+    };
+  };
+}
+
+const subscribeLive = shareLive(() => new EventSource("/api/events"));
+
+/** Subscribe to /api/events (SSE), on the app's one shared stream. Reconnects automatically; the handler sees every
+ * non-ping event. */
 export function useLive(onEvent: (e: LiveEvent) => void, onReconnect?: () => void) {
   useEffect(() => {
-    const stop = connectLive(() => new EventSource("/api/events"), onEvent, onReconnect);
+    const stop = subscribeLive({ onEvent, onReconnect });
     const onVisible = () => { if (document.visibilityState === "visible") onReconnect?.(); };
     document.addEventListener("visibilitychange", onVisible);
     return () => { stop(); document.removeEventListener("visibilitychange", onVisible); };
