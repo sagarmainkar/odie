@@ -108,7 +108,7 @@ export function ApprovalCard({ a, onDecided, showResult = true }: { a: Approval;
           <Tile icon={ok ? "check" : "x"} color={ok ? "green" : "ink"} small />
           <span className="text-[14px] text-muted flex-1 min-w-0 truncate"><b className={`font-bold ${ok ? "text-good" : "text-ink-2"}`}>{st.label}</b> · {a.summary}</span>
         </div>
-        {allowedUntil && <div className="text-[13px] leading-[18px] text-muted pl-[42px]">Commands in this chat run without asking until {allowedUntil}, except ones that read secrets, delete, or send data out.</div>}
+        {allowedUntil && <div className="text-[13px] leading-[18px] text-muted pl-[42px]">Commands in this chat run without asking until {allowedUntil} (or until Odie restarts), except ones that read secrets, delete, or send data out.</div>}
         {chatPass && <div className="text-[13px] leading-[18px] text-muted pl-[42px]">{chatPassNote(chatPass.kind, clockTime(chatPass.until))}</div>}
         {showResult && result && <div className="text-[13px] leading-[18px] text-muted pl-[42px]">{result}</div>}
       </motion.div>
@@ -185,9 +185,10 @@ export function ApprovalCard({ a, onDecided, showResult = true }: { a: Approval;
  *    approved at 12:01                    -> "You allowed · 12:01"    (no time known -> "You allowed")
  *    rejected at 12:01                    -> "You said no · 12:01"
  *    expired                              -> "Lapsed"                  (nobody tapped, so there is no time to give)
- *    approved with a pass until 12:31     -> "You allowed · 12:01 · commands run without asking until 12:31"
+ *    approved with a pass until 12:31     -> "You allowed · 12:01 · commands run without asking until 12:31 or a restart"
  *    approved with a chat pass for deletes until 12:31
- *                                         -> "You allowed · 12:01 · won't ask again for deleting or stopping things until 12:31" */
+ *                                         -> "You allowed · 12:01 · won't ask again for deleting or stopping things until 12:31
+ *                                             or a restart"  (passes live in the running server, so a restart ends them) */
 function stampWords(a: Approval): string {
   if (a.status === "expired") return "Lapsed";
   const time = tapTime(a.decided_at);
@@ -196,10 +197,10 @@ function stampWords(a: Approval): string {
   if (a.status !== "approved") return tapped;
   if (a.chat_pass) {
     const kind = kindWords(a.chat_pass.kind) ?? "this kind of command";
-    return `${tapped} · won't ask again for ${kind} until ${clockTime(a.chat_pass.until)}`;
+    return `${tapped} · won't ask again for ${kind} until ${clockTime(a.chat_pass.until)} or a restart`;
   }
   if (!a.allowed_until) return tapped;
-  return `${tapped} · commands run without asking until ${clockTime(a.allowed_until)}`;
+  return `${tapped} · commands run without asking until ${clockTime(a.allowed_until)} or a restart`;
 }
 
 // How each decided status looks on its stamp: its colour, and the mark before the words.

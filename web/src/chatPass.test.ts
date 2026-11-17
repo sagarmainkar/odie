@@ -47,9 +47,9 @@ describe("chatPassScope", () => {
 
 describe("chatPassNote", () => {
   it("says until when this chat won't ask for that kind", () => {
-    expect(chatPassNote("deletes or stops something", "12:31")).toBe("Until 12:31, this chat won't ask again for deleting or stopping things.");
+    expect(chatPassNote("deletes or stops something", "12:31")).toBe("Until 12:31 (or until Odie restarts), this chat won't ask again for deleting or stopping things.");
   });
   it("falls back to plain words for a kind it doesn't know", () => {
-    expect(chatPassNote("something new", "12:31")).toBe("Until 12:31, this chat won't ask again for this kind of command.");
+    expect(chatPassNote("something new", "12:31")).toBe("Until 12:31 (or until Odie restarts), this chat won't ask again for this kind of command.");
   });
 });

@@ -41,9 +41,10 @@ export function chatPassScope(a: Approval, smart: boolean): string | null {
 }
 
 /** What an answered card says about the pass it gave, with the time it ends in this device's own clock.
- *    ("deletes or stops something", "12:31") -> "Until 12:31, this chat won't ask again for deleting or stopping things."
+ *    ("deletes or stops something", "12:31") -> "Until 12:31 (or until Odie restarts), this chat won't ask again for
+ *                                               deleting or stopping things."  (passes live in the running server)
  *    a kind with no words                    -> "... for this kind of command." */
 export function chatPassNote(kind: string, until: string): string {
   const words = kindWords(kind) ?? "this kind of command";
-  return `Until ${until}, this chat won't ask again for ${words}.`;
+  return `Until ${until} (or until Odie restarts), this chat won't ask again for ${words}.`;
 }

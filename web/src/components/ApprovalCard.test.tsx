@@ -112,6 +112,7 @@ describe("the shell pass on a stamp", () => {
     const view = await mount(<ChatApproval a={{ ...card, status: "approved", decided_at: decidedAt, allowed_until: until }} />);
     expect(view.host.textContent).toContain("You allowed · 12:01 · commands run without asking until ");
     expect(view.host.textContent).toMatch(/until 12:31|until 0?12:31/);
+    expect(view.host.textContent).toContain("or a restart");
     await view.done();
   });
   it("is not said on a refused card, even if a pass came along", async () => {
@@ -193,7 +194,7 @@ describe("don't ask again in this chat (Smart)", () => {
     expect(vi.mocked(postJSON)).toHaveBeenLastCalledWith("/api/approvals/7/decide", { approve: true, allow_chat: true });
     expect(view.host.querySelector("button")).toBeNull();
     expect(view.host.textContent).toContain("You allowed");
-    expect(view.host.textContent).toMatch(/won't ask again for deleting or stopping things until 0?12:31/);
+    expect(view.host.textContent).toMatch(/won't ask again for deleting or stopping things until 0?12:31.*or a restart/);
     await after(view);
   });
 });
