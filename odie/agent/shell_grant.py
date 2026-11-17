@@ -281,7 +281,7 @@ def write_reason(shell: str, safe_dirs: tuple[str, ...], cwd: str | None, smart:
             if name is None:
                 return OUTSIDE
             path = _resolved(name, here)
-            if path is None:
+            if path is None or read_as_instructions(name):
                 return OUTSIDE
             if is_safe_place(path, safe_dirs):
                 continue
@@ -364,10 +364,18 @@ _MAKES_FOLDERS_OR_LINKS = re.compile(
     r"\bgit\b[^|;&\n]*\b(checkout|switch|worktree|clone|restore|stash|reset|pull|merge|am|apply)\b|"
     # and from code: node's symlinkSync / mkdirSync, Python's os.symlink, os.makedirs, Path(…).symlink_to, .mkdir(
     r"\b(symlink\w*|link\w*Sync|mkdir\w*|makedirs|mkdtemp\w*|symlink_to|hardlink_to|cpSync|renameSync)\b")
-# Notes that other tools read as instructions or as what to install, named in any case: writing one asks.
+# Files that other tools read as instructions or as what to install, named in any case: writing one asks wherever it
+# is, safe places too (an agent reads ~/vault/CLAUDE.md as its orders), in every mode.
 _READ_AS_INSTRUCTIONS = re.compile(
-    r"^(claude|agents|gemini|conventions|copilot-instructions)\.md$|rules|instructions|"
-    r"^(requirements|constraints)[\w.-]*\.txt$|^brewfile|\.lock$", re.IGNORECASE)
+    r"^(claude|agents|gemini|conventions)[\w.-]*\.md$|instructions[\w.-]*\.md$|rules|^llms[\w.-]*\.txt$|"
+    r"(requirements|constraints)[\w.-]*\.(txt|in)$|^brewfile|\.lock$", re.IGNORECASE)
+
+
+def read_as_instructions(name: str) -> bool:
+    """Whether a file's name says other tools read it as instructions or an install list, so writing it asks wherever
+    it is: "CLAUDE.md" -> True; "~/vault/CLAUDE.local.md" -> True; "dev-requirements.txt" -> True; "house-rules.md" ->
+    True; "requirements.in" -> True; "llms.txt" -> True; "notes.md" -> False; "README.md" -> False."""
+    return _READ_AS_INSTRUCTIONS.search(os.path.basename(name.rstrip("/"))) is not None
 
 
 def ordinary_write(name: str, here: str | None, appending: bool, odie_dirs: tuple[str, ...],
@@ -874,7 +882,7 @@ def is_local_address(word: str, own_port: int | None) -> bool:
       "http://localhost.evil.example/" -> False;  "http://localhost@evil.example/" -> False;
       "http://{localhost,evil.example}/" -> False;  "http://localhost:8000/" with Odie on 8000 -> False;
       "http://localhost:5173/x" -> False;  "http://localhost:9000/api/approvals/5/decide" -> False;
-      "http://localhost:5174/API/chat" -> False."""
+      "http://localhost:5174/API/chat" -> False;  "http://localhost:9000/api;x/approvals" -> False."""
     rest = word.replace("[::1]", "", 1)
     if re.search(r"[\[\]{}*?$`\\\s@]", rest):
         return False
@@ -898,7 +906,7 @@ def is_local_address(word: str, own_port: int | None) -> bool:
     if "%" in path:
         return False  # encoded twice: can't say where it lands
     path = posixpath.normpath(re.sub(r"/+", "/", "/" + path)).lower()  # //api/x and /x/../api are /api/…
-    return not (path == _ODIE_API_PATH or path.startswith(_ODIE_API_PATH + "/"))
+    return not path.startswith(_ODIE_API_PATH)  # /api/x, and /api;x/… or /apix too: when unsure, it asks
 
 
 def _addresses(args: list[str], flags: frozenset[str], values: frozenset[str], flag_letters: str,
@@ -961,28 +969,48 @@ def is_local_send(words: list[str], own_port: int | None) -> bool:
 
 # What makes a whole command unfit for a free local send or piped program: it sets a variable (a proxy, CURL_HOME,
 # WGETRC, PYTHONINSPECT, NODE_OPTIONS …) or names a curl or wget config, which could send it elsewhere or run code.
-# Read as whole words anywhere outside quotes, so no wrapper hides it: builtin export, noglob export, inside if/for,
-# after ! or ||.
+# Read as whole words, as written and with quotes and backslashes taken out (ex''port, "export", e\xport all export), so
+# no wrapper hides it: builtin export, noglob export, inside if/for, after ! or ||. zsh's other ways count too:
+# setopt allexport (then any assignment exports), ${X:=v}, read, print -v / printf -v, getopts, zparseopts, vared, let.
 _SETS_A_VARIABLE = re.compile(
-    r"(?<![\w./-])(export|typeset|declare|local|readonly|env|setenv|unset)(?![\w./-])|"
-    r"(?<![\w./-])set\s+[-+]|"
+    r"(?<![\w./-])(export|typeset|declare|local|readonly|integer|float|env|setenv|unset|setopt|unsetopt|emulate|read|"
+    r"getopts|zparseopts|vared|let)(?![\w./-])|"
+    r"(?<![\w./-])set\s+[-+]|(?<![\w./-])(print|printf)\s+(-\w+\s+)*-\w*v|\$\{[^}]*=|"
     r"(?<![\w./=:@?-])[A-Za-z_]\w*\+?=")
 _NAMES_A_CONFIG = re.compile(r"curlrc|wgetrc|CURL_HOME|WGETRC|XDG_CONFIG_HOME|--config\b|(^|\s)-K", re.IGNORECASE)
+# Variables that change where curl and wget send, or what python and node load and run. Named anywhere in the command,
+# in any case and however spelled, they keep both loosenings off: set some other way, they would still apply.
+_CHANGES_HOW_TOOLS_RUN = re.compile(
+    r"\w*_proxy\b|\bsocks\w*|\bcurl_\w+|\bwgetrc\b|\bssl_cert_\w+|\w*ca_bundle\b|\bpython[a-z_]+|\bnode_[a-z_]+|"
+    r"\bld_\w+|\bdyld_\w+", re.IGNORECASE)
 
 
 def sets_variables(shell: str) -> bool:
-    """Whether the command sets a variable anywhere, however wrapped (export, typeset, declare, local, readonly, env,
-    set with an option, or a NAME=value word), reading only what is outside quotes; or names a curl or wget config.
-    Then a send it makes, or a program it runs, may not do what its words say.
-      `export ALL_PROXY=…; curl …` -> True;  `builtin export X=1; curl …` -> True;  `if true; then export X=1; fi` ->
-      True;  `X=1 curl …` -> True;  `curl -d a=1 http://localhost:9000/` -> True (a NAME= word: fail closed);
-      `curl -d 'a=1' http://localhost:9000/` -> False;  `… | python3 -c 'import json; d=json.load(…)'` -> False (inside
-      the quoted program);  `export WGETRC=w; wget …` -> True."""
-    if _NAMES_A_CONFIG.search(shell):
+    """Whether the command sets a variable anywhere, however wrapped or spelled (export, typeset, declare, local,
+    readonly, env, setopt, set with an option, ${X:=v}, read, print -v, a NAME=value word …), read both outside quotes
+    and with quotes and backslashes squeezed out (the quoted program a pipe feeds is left out of the squeezed reading);
+    or names a curl or wget config; or names a variable that changes how curl, wget, python or node run
+    (_CHANGES_HOW_TOOLS_RUN). Then a send it makes, or a program it runs, may not do what its words say.
+      `export ALL_PROXY=…; curl …` -> True;  `ex''port "ALL_PROXY=…"; curl …` -> True;  `e\\xport X=1` -> True;
+      `setopt allexport; : ${X::=1}; curl …` -> True;  `X=1 curl …` -> True;  `echo $all_proxy; curl …` -> True;
+      `curl -d a=1 http://localhost:9000/` -> True (a NAME= word: fail closed);  `curl -d '{}' http://localhost:9000/`
+      -> False;  `… | python3 -c 'import json; d=json.load(…)'` -> False (the quoted program)."""
+    if _NAMES_A_CONFIG.search(shell) or _CHANGES_HOW_TOOLS_RUN.search(squeezed(shell)):
         return True
     contexts = char_contexts(shell)
     unquoted = "".join(char if contexts[i] == "plain" else " " for i, char in enumerate(shell))
-    return _SETS_A_VARIABLE.search(unquoted) is not None
+    spelled = squeezed(_without_piped_programs(shell))
+    return _SETS_A_VARIABLE.search(unquoted) is not None or _SETS_A_VARIABLE.search(spelled) is not None
+
+
+def _without_piped_programs(shell: str) -> str:
+    """The shell text with the quoted program of each pipe into python3 -c / node -e blanked: its own `d = …` is the
+    program's, not the shell's. `curl u | python3 -c 'd=1'` -> `curl u | python3 -c      `."""
+    out = list(shell)
+    for pipe in _PIPE_INTO_PROGRAM.finditer(shell):
+        group = 1 if pipe.group(1) is not None else 2
+        out[pipe.start(group):pipe.end(group)] = " " * (pipe.end(group) - pipe.start(group))
+    return "".join(out)
 
 
 # A pipe into python3 -c / node -e whose program is written right there, in one quoted word (double quotes only when
@@ -1014,7 +1042,7 @@ _NEVER_IN_PLAIN_PYTHON = re.compile(
 _NEVER_IN_PLAIN_NODE = re.compile(
     r"\b(globalThis|global|this|Function|prototype|Reflect|Proxy|module|import|vm|child_process|fetch|WebSocket|"
     r"XMLHttpRequest|callee|caller|with)\b|"
-    r"[\w$)\]]\s*\[|"  # member access by [ ]: fs[k], o["x"]; an array literal [1, 2] is fine
+    r"\[|\bObject\s*\.|\beval\b|"  # any [ at all: fs[k], {[k]: w}, ([n, f]) => …; Object.entries(fs)
     r"\.(call|apply|bind)\s*\(")
 _PY_OPEN = re.compile(r"\bopen\s*\(")
 _PY_PLAIN_OPEN = re.compile(r"\bopen\s*\(\s*(['\"])[\w./ -]*\1\s*\)")  # a file named right there, read, never written
@@ -1468,6 +1496,8 @@ def destination_reason(shell: str, cwd: str | None, safe_dirs: tuple[str, ...],
         if in_login_folder and changes_it:
             return RUN_LATER  # cwd LaunchAgents, `cp ~/x.plist com.x.plist`: whatever the verb
         for name, how in written_paths(words):
+            if how != "folder" and read_as_instructions(name):
+                return OUTSIDE  # cp notes.md ~/vault/CLAUDE.md: its new name is read as orders
             target = name
             if how == "folder":
                 target = os.path.join(name, "a-new-file")
