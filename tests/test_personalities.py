@@ -4,6 +4,7 @@ import io
 import re
 import sqlite3
 import time
+from types import SimpleNamespace
 
 import pytest
 from PIL import Image
@@ -29,6 +30,33 @@ async def runner(store):
     r = OdieRunner(store)
     yield r
     await r.close()
+
+
+@pytest.fixture
+def odies_soul(monkeypatch, tmp_path):
+    """Everyday Odie with a SOUL.md of its own, in this test's folder."""
+    from odie.app import routes
+    path = tmp_path / "SOUL.md"
+    path.write_text("You are Odie, the everyday one. Sunny.")
+    monkeypatch.setattr(routes, "SOUL_PATH", path)
+    return path
+
+
+MIRAS_SOUL = "You are Mira. Dry and brief."
+
+
+async def _mira_with_a_thread(runner, soul: str = MIRAS_SOUL):
+    """A personality called Mira, her instructions, and her first thread."""
+    mira = personalities.create(runner.store, "Mira")
+    if soul:
+        personalities.save_soul(mira.id, soul)
+    sid = await runner.session_for(mira.id, D)
+    return mira, sid
+
+
+def _ctx(session_id: str) -> SimpleNamespace:
+    """What ADK hands a callback or a tool, as far as Odie reads it: the chat it is running in."""
+    return SimpleNamespace(session=SimpleNamespace(id=session_id))
 
 
 def _said(history: dict) -> list[str]:
@@ -252,3 +280,81 @@ async def test_an_imported_thread_stays_out_of_the_day_and_does_not_push_the_num
     assert threads.is_imported(f"chat-{D}-101") and not threads.is_imported(f"chat-{D}-3")
     assert threads.next_free_id(runner.store, D) == f"chat-{D}-2"  # not 102
     assert _said(await runner.history(D)) == ["Good morning"]
+
+
+# ── a prompt per thread ──
+
+async def test_two_threads_keep_their_own_prompts(runner, odies_soul):
+    mira, hers = await _mira_with_a_thread(runner)
+    odies = f"chat-{D}"
+    runner._prepare_prompt(hers, "hi")  # her turn starts
+    runner._prepare_prompt(odies, "hi")  # then Odie's, while hers is still running
+    her_prompt = runner._prompt_of(_ctx(hers))
+    odie_prompt = runner._prompt_of(_ctx(odies))
+    assert her_prompt.startswith(MIRAS_SOUL) and "Sunny" not in her_prompt
+    assert odie_prompt.startswith("You are Odie, the everyday one. Sunny.") and "Dry and brief" not in odie_prompt
+
+
+async def test_a_tap_resumes_as_the_threads_own_personality(runner, odies_soul):
+    mira, hers = await _mira_with_a_thread(runner)
+    runner._prepare_prompt(hers, "hi")
+    runner._prepare_prompt(f"chat-{D}", "hi")  # Odie's turn ran after hers paused on a card
+    assert runner._prompt_of(_ctx(hers)).startswith(MIRAS_SOUL)  # the tap resumes her turn: still hers
+    runner._prompts.clear()  # a restart: nothing built is remembered
+    assert runner._prompt_of(_ctx(hers)).startswith(MIRAS_SOUL)  # read from the thread's own row, not from memory
+
+
+async def test_a_personality_keeps_odies_rules(runner, odies_soul):
+    mira, hers = await _mira_with_a_thread(runner)
+    her_prompt = runner._prompt_of(_ctx(hers))
+    assert "\n\nRules:\n" in her_prompt and "<<<UNTRUSTED EMAIL>>>" in her_prompt
+    assert re.search(r"\bOdie\b", her_prompt) is None  # where Odie's prompt says Odie, hers says Mira
+    assert re.search(r"\bOdie\b", runner._prompt_of(_ctx(f"chat-{D}"))) is not None
+
+
+async def test_blank_instructions_fall_back(runner):
+    mira, hers = await _mira_with_a_thread(runner, soul="")
+    assert runner._prompt_of(_ctx(hers)).startswith("You are Mira,")
+    assert runner.who(mira.id).assistant == "Mira" and runner.who().assistant == "Odie"
+
+
+def test_joined_index():
+    assert personalities.joined_index("", "## Finance\n- Rent day") == (
+        "Yours alone (what you save goes here):\nnothing yet\n\n"
+        "Shared, the everyday memory (read it, don't change it):\n## Finance\n- Rent day")
+    assert personalities.joined_index("## Private\n- The plan", "").startswith(
+        "Yours alone (what you save goes here):\n## Private\n- The plan\n\nShared, the everyday memory")
+
+
+async def test_her_index_lists_hers_then_the_shared(runner):
+    mira, hers = await _mira_with_a_thread(runner)
+    runner.memory.update("Rent day", "Paid on the first.", topic="Finance")
+    runner.memory_of(mira.id).update("The lighthouse plan", "Kept between us.", topic="Private")
+    index = runner.memory_index(mira.id)
+    places = [index.index("Yours alone (what you save goes here):"), index.index("The lighthouse plan"),
+              index.index("Shared, the everyday memory (read it, don't change it):"), index.index("Rent day")]
+    assert places == sorted(places)  # hers first, under her label; then the shared ones under theirs
+    assert "Rent day" in runner.memory_index() and "lighthouse" not in runner.memory_index()
+    her_prompt = runner._prompt_of(_ctx(hers))
+    assert "The lighthouse plan" in her_prompt and "Rent day" in her_prompt
+    assert "lighthouse" not in runner._prompt_of(_ctx(f"chat-{D}"))
+
+
+async def test_prefetch_reads_hers_and_the_shared_but_odies_reads_only_the_shared(runner):
+    mira, hers = await _mira_with_a_thread(runner)
+    runner.memory.update("Rent day", "Paid on the first.", topic="Finance")
+    runner.memory_of(mira.id).update("The lighthouse plan", "Kept between us.", topic="Private")
+    assert "Kept between us." in runner.prefetch("what was the lighthouse plan", mira.id)
+    assert "Paid on the first." in runner.prefetch("when is rent day", mira.id)
+    assert "Kept between us." not in runner.prefetch("what was the lighthouse plan")
+    assert "Kept between us." in runner._prepare_prompt(hers, "what was the lighthouse plan")  # her message's trailer
+    assert "Kept between us." not in runner._prepare_prompt(f"chat-{D}", "what was the lighthouse plan")
+
+
+async def test_a_thread_that_lives_for_days_gets_todays_date(runner):
+    mira, hers = await _mira_with_a_thread(runner)
+    first = runner._static_prompt(hers)
+    assert runner._static_prompt(hers) is first  # the same day: built once
+    first.day = "2000-01-01"  # as if it had been built on an earlier day
+    again = runner._static_prompt(hers)
+    assert again is not first and again.day != "2000-01-01"

@@ -161,7 +161,7 @@ async def test_memory_index_in_static_prompt_and_prefetch_in_trailer(isolated_se
     r = OdieRunner(s)
     r.memory.update("Flight Seat Preference", "Asha prefers aisle seats.", topic="Identity", source="test")
     trailer = r._prepare_prompt("chat-2026-10-01", "book me a seat on the flight")
-    assert "- Flight Seat Preference (" in r._current_prompt and "aisle" not in r._current_prompt
+    assert "- Flight Seat Preference (" in r._prompts["chat-2026-10-01"].text and "aisle" not in r._prompts["chat-2026-10-01"].text
     assert "aisle" in trailer and trailer.startswith("[context: now ")
     assert r._prepare_prompt("chat-2026-10-01", "hello") .startswith("[context: now ") and "aisle" not in r._prepare_prompt("chat-2026-10-01", "hello")
     await r.close()
@@ -207,14 +207,14 @@ async def test_a_memory_update_keeps_this_chats_system_prompt(isolated_settings,
     s.init_schema()
     r = OdieRunner(s)
     r._prepare_prompt("chat-2026-10-01", "hello")
-    before = r._current_prompt
+    before = r._prompts["chat-2026-10-01"].text
     tool = next(t for t in r.agent.tools if getattr(t, "name", "") == "update_memory")
     tool.func(title="Dentist", content="Smile Dental, Baner.", topic="Health")
     trailer = r._prepare_prompt("chat-2026-10-01", "Which dentist do I go to?")
-    assert r._current_prompt == before and "Dentist" not in before
+    assert r._prompts["chat-2026-10-01"].text == before and "Dentist" not in before
     assert "Smile Dental" in trailer
     r._prepare_prompt("chat-2026-10-02", "hi")
-    assert "Dentist" in r._current_prompt
+    assert "Dentist" in r._prompts["chat-2026-10-02"].text
     await r.close()
 
 
@@ -485,7 +485,7 @@ async def test_a_chat_starts_from_the_days_summary_and_drops_the_brief_block(iso
     _save_hello(s, r, "Dev wrote about the studio lease; nothing on the calendar before noon.")
     _save_brief(s, r, "Brief: sunny, two mails.")
     trailer = r._prepare_prompt("chat-2026-11-04", "hello")
-    assert r._current_prompt.endswith("Dev wrote about the studio lease; nothing on the calendar before noon.")
+    assert r._prompts["chat-2026-11-04"].text.endswith("Dev wrote about the studio lease; nothing on the calendar before noon.")
     assert "today's brief" not in trailer
     await r.close()
 
@@ -497,7 +497,7 @@ async def test_with_no_hello_the_brief_stays_in_the_turn(isolated_settings, tmp_
     r = OdieRunner(s)
     _save_brief(s, r, "Brief: sunny, two mails.")
     trailer = r._prepare_prompt("chat-2026-11-04", "hello")
-    assert "summary of the user's day" not in r._current_prompt
+    assert "summary of the user's day" not in r._prompts["chat-2026-11-04"].text
     assert "[today's brief" in trailer and "sunny, two mails" in trailer
     await r.close()
 
@@ -509,13 +509,13 @@ async def test_the_prompt_stays_byte_identical_within_a_chat(isolated_settings, 
     r = OdieRunner(s)
     _save_hello(s, r, "A quiet day.")
     r._prepare_prompt("chat-2026-11-04", "first")
-    first = r._current_prompt
+    first = r._prompts["chat-2026-11-04"].text
     s.execute("update mornings set summary = ?", ("Changed behind the chat's back.",))
     r._prepare_prompt("chat-2026-11-04", "second")
-    assert r._current_prompt == first and first.endswith("A quiet day.")
+    assert r._prompts["chat-2026-11-04"].text == first and first.endswith("A quiet day.")
     r.invalidate_prompt()  # what the morning round does after saving a hello
     r._prepare_prompt("chat-2026-11-04", "third")
-    assert r._current_prompt.endswith("Changed behind the chat's back.")
+    assert r._prompts["chat-2026-11-04"].text.endswith("Changed behind the chat's back.")
     await r.close()
 
 
@@ -531,5 +531,5 @@ async def test_a_broken_hello_lookup_means_no_summary(isolated_settings, tmp_pat
     monkeypatch.setattr(morning_round, "hello_for", boom)
     _save_brief(s, r, "Brief: sunny.")
     trailer = r._prepare_prompt("chat-2026-11-04", "hello")
-    assert "summary of the user's day" not in r._current_prompt and "[today's brief" in trailer
+    assert "summary of the user's day" not in r._prompts["chat-2026-11-04"].text and "[today's brief" in trailer
     await r.close()

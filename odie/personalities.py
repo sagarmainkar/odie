@@ -151,6 +151,19 @@ def memory_file(p: Personality) -> MemoryFile:
     return MemoryFile(folder(p.id) / "memories.md", lock, p.name)
 
 
+OWN_LABEL = "Yours alone (what you save goes here):"
+# No name in this label: the prompt's "Odie" is swapped for the personality's own name (persona.apply_name).
+SHARED_LABEL = "Shared, the everyday memory (read it, don't change it):"
+
+
+def joined_index(own: str, shared: str) -> str:
+    """The memory titles a personality's prompt lists: its own first, then the shared ones, each under a line that says
+    whose they are, so the model knows a new memory is saved among its own. With nothing of its own yet, its part
+    reads "nothing yet"."""
+    own_part = own.strip() or "nothing yet"
+    return f"{OWN_LABEL}\n{own_part}\n\n{SHARED_LABEL}\n{shared.strip()}"
+
+
 # ── who a thread belongs to ──
 
 def of_session(store: Store, session_id: str | None) -> str:

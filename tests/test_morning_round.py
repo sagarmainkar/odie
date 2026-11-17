@@ -273,7 +273,7 @@ async def test_a_brief_after_an_early_hello_reaches_the_chats(tmp_path, monkeypa
     summary = hello_for(s, day.isoformat())["summary"]
     assert summary == "The day: a design review, the reporter open.\n\nThe morning brief: The invoice is due Friday."
     trailer = runner._prepare_prompt(f"chat-{day.isoformat()}", "hello")  # the same chat, rebuilt
-    assert runner._current_prompt.endswith("The morning brief: The invoice is due Friday.")
+    assert runner._prompts[f"chat-{day.isoformat()}"].text.endswith("The morning brief: The invoice is due Friday.")
     assert "today's brief" not in trailer
     assert "The invoice is due Friday" not in trailer
     await runner.close()

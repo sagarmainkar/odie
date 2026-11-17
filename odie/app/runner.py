@@ -12,6 +12,7 @@ import json
 from google.adk.events import Event
 from collections.abc import AsyncIterator, Callable
 from contextlib import aclosing
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -25,7 +26,7 @@ from google.genai import types
 from odie import addons, approvals_mode, config
 from odie.agent.agent import build_agent, chat_generate_config, memory_file
 from odie.agent.callbacks import OdiePlugin
-from odie.agent.context import parts_of
+from odie.agent.context import parts_of, session_id_of
 from odie.agent.model import WRITER_REPLY_TOKENS, chat_effort_think_harder, model_for, think_harder_words
 from odie.making.writer import MAX_LLM_CALLS as WRITER_MAX_LLM_CALLS
 from odie.models import chat_completion, context_window, history_limit_for, resolve_selection
@@ -577,14 +578,25 @@ def previous_questions(history: list[dict]) -> list[str]:
         said.append(without_form_answers(h["text"]))
     return said[-2:][::-1]
 
+@dataclass
+class SessionPrompt:
+    """One thread's system prompt, built once for that thread and that day (so a provider's cache can reuse it), and
+    what the per-message trailer needs to know about it."""
+    text: str
+    caps: frozenset  # what this install could do when it was built (the trailer's wording follows it)
+    day_summary: str  # the morning's summary it carries ("" when it carries none: the trailer then brings the brief)
+    day: str  # the local day it was built on: a thread that lives for days gets a new one each day
+
+
 class OdieRunner:
     def __init__(self, store: Store):
         s = config.settings
         self.store = store
         self.tz = ZoneInfo(s.timezone)
-        self._current_prompt = ""
-        self._prompt_session = ""
-        self._day_summary = ""  # the summary the current static prompt carries
+        # Each thread's own prompt. It used to be one slot for the whole app, which the thread that started last set
+        # for every turn then running: harmless with one personality, but with several a turn could have run with
+        # another's instructions and memory titles.
+        self._prompts: dict[str, SessionPrompt] = {}
         self._model_key: tuple | None = None
         self.gated = True  # approval-gated tools are loaded (send, trash, invites, shell)
         self.memory = memory_file()
@@ -617,7 +629,7 @@ class OdieRunner:
         self.review_every = config.settings.review_every_turns
         self._turns: list[tuple[str, str]] = []   # (user, assistant) pairs since the last review
         self._review_task: asyncio.Task | None = None
-        self.agent = build_agent(store, instruction=lambda ctx: self._current_prompt, memory=self.memory,
+        self.agent = build_agent(store, instruction=self._prompt_of, memory=self.memory,
                                  on_memory_change=self._memory_changed)
         self.plugin = OdiePlugin(store)
         from odie.agent.usage import CACHE
@@ -737,17 +749,43 @@ class OdieRunner:
             await self.session_service.create_session(app_name=s.app_name, user_id=s.user_id, session_id=session_id)
         return session_id
 
-    def memory_index(self) -> str:
-        try:
-            return build_index(self.memory.load(), max_chars=5000)
-        except OSError:
-            return ""
+    def memory_of(self, personality: str):
+        """The memory file a personality saves to: everyday Odie -> the shared memories.md; Mira -> her own."""
+        if not personality:
+            return self.memory
+        from odie import personalities
+        found = personalities.get(self.store, personality)
+        if found is None:
+            raise ValueError("no such personality")
+        return personalities.memory_file(found)
 
-    def prefetch(self, text: str) -> str:
+    def memory_index(self, personality: str = "") -> str:
+        """The memory titles a prompt lists. Everyday Odie: the shared memory's. A personality: its own first, then the
+        shared ones (it reads both and saves only to its own)."""
         try:
-            hits = prefetch_hits(self.memory.load().entries(), text, limit=4)
+            shared = build_index(self.memory.load(), max_chars=5000)
+        except OSError:
+            shared = ""
+        if not personality:
+            return shared
+        from odie import personalities
+        try:
+            own = build_index(self.memory_of(personality).load(), max_chars=5000)
+        except OSError:
+            own = ""
+        return personalities.joined_index(own, shared)
+
+    def prefetch(self, text: str, personality: str = "") -> str:
+        """The remembered entries that fit this message, for its [memories] block: from the shared memory, and for a
+        personality from its own memory first."""
+        entries: list = []
+        try:
+            if personality:
+                entries += self.memory_of(personality).load().entries()
+            entries += self.memory.load().entries()
         except OSError:
             return ""
+        hits = prefetch_hits(entries, text, limit=4)
         rendered, _ = render_prefetch(hits, max_entries=4, max_chars=2500)
         return rendered
 
@@ -789,9 +827,13 @@ class OdieRunner:
         self.agent.tools = signin_tools(self.store) + tools
         self.invalidate_prompt()
 
-    def invalidate_prompt(self) -> None:
-        """Rebuild the static prompt on the next message (SOUL.md or memory index changed)."""
-        self._prompt_session = ""
+    def invalidate_prompt(self, session_id: str | None = None) -> None:
+        """Rebuild the static prompt on the next message (a SOUL, a name or the memory index changed): one thread's, or
+        every thread's when none is named."""
+        if session_id is None:
+            self._prompts.clear()
+        else:
+            self._prompts.pop(session_id, None)
 
     def apply_model_selection(self) -> None:
         """Settings changed the chat model: the next message builds the agent's model from the new selection."""
@@ -811,28 +853,57 @@ class OdieRunner:
             return None
         return txt or None
 
-    def _prepare_prompt(self, session_id: str, text: str) -> str:
-        """Static system prompt once per session (cache-friendly); returns the per-turn context trailer."""
+    def _static_prompt(self, session_id: str) -> SessionPrompt:
+        """This thread's system prompt, built on its first message of the day and kept (cache-friendly). It opens with
+        the instructions and name of whoever the thread belongs to (everyday Odie's SOUL.md, or a personality's own);
+        the rules, visual blocks, day and day summary after it are the same for everyone."""
         now = datetime.now(self.tz)
-        if session_id != self._prompt_session:
-            from odie import persona
-            who = self.who()
-            self._caps = who.caps
-            from odie.morning.round import morning_day
-            self._day_summary = self.day_summary(now)
-            static = build_static_prompt(now, self.load_soul(), self.memory_index(), gated=self.gated, who=who,
-                                         day_summary=self._day_summary, summary_day=morning_day(now))
-            self._current_prompt = persona.apply_name(static, persona.get(self.store)["name"])
-            self._prompt_session = session_id
+        today = now.strftime("%Y-%m-%d")
+        built = self._prompts.get(session_id)
+        if built is not None and built.day == today:
+            return built
+        from odie import persona, personalities
+        from odie.morning.round import morning_day
+        personality = personalities.of_session(self.store, session_id)
+        who = self.who(personality)
+        if personality:
+            soul = personalities.load_soul(personality)
+        else:
+            soul = self.load_soul()
+        day_summary = self.day_summary(now)
+        static = build_static_prompt(now, soul, self.memory_index(personality), gated=self.gated, who=who,
+                                     day_summary=day_summary, summary_day=morning_day(now))
+        text = persona.apply_name(static, who.assistant)
+        built = SessionPrompt(text=text, caps=who.caps, day_summary=day_summary, day=today)
+        self._prompts[session_id] = built
+        return built
+
+    def _prompt_of(self, ctx) -> str:
+        """The chat agent's instruction: the prompt of the thread this model call belongs to, read from ADK's context.
+        A turn resumed by a tap, or the first call after a restart, finds nothing built and builds it from the
+        thread's own row, so it still talks as whoever the thread belongs to."""
+        session_id = session_id_of(ctx)
+        if not session_id:  # no chat in the context: today's everyday chat
+            today = datetime.now(self.tz).strftime("%Y-%m-%d")
+            session_id = self.current_session_id(today)
+        return self._static_prompt(session_id).text
+
+    def _prepare_prompt(self, session_id: str, text: str) -> str:
+        """Makes sure this thread's static prompt is built (once per thread and day), and returns the per-turn
+        context trailer."""
+        from odie import personalities
+        now = datetime.now(self.tz)
+        built = self._static_prompt(session_id)
+        personality = personalities.of_session(self.store, session_id)
         rows = self.store.open_tasks(now.isoformat(timespec="minutes"))[:10]
         # The day summary already carries the brief's news, so a chat that has the summary doesn't get the brief too.
         brief = None
-        if not self._day_summary:
+        if not built.day_summary:
             brief = self.store.one("select text from briefs where date=? order by id desc limit 1", (now.strftime("%Y-%m-%d"),))
         from odie import location
         place, seen, home = location.location_bits(location.get(self.store), now)  # a place name and home, never coordinates
-        return build_turn_context(now, self.prefetch(text), threads_summary(self.store), format_open_threads(rows),
-                                  brief["text"] if brief else "", caps=getattr(self, "_caps", ALL_CAPS), place=place, seen=seen, home=home,
+        return build_turn_context(now, self.prefetch(text, personality), threads_summary(self.store), format_open_threads(rows),
+                                  brief["text"] if brief else "", caps=built.caps, place=place, seen=seen, home=home,
                                   approvals=approvals_mode.context_line(self.store))
 
     def day_summary(self, now: datetime) -> str:
@@ -848,13 +919,17 @@ class OdieRunner:
             return ""
         return hello["summary"]
 
-    def who(self) -> Who:
+    def who(self, personality: str = "") -> Who:
         """Who the prompt is for: the profile's name, this computer, the local currency, what this install can do, and
-        the assistant's chosen name."""
-        from odie import capabilities, persona, profile, region
+        the assistant's name: the one the user chose for Odie, or a personality's own."""
+        from odie import capabilities, persona, personalities, profile, region
+        assistant = persona.get(self.store)["name"]
+        picked = personalities.get(self.store, personality)
+        if picked is not None:
+            assistant = picked.name
         return Who(user=profile.get(self.store)["user_name"], machine=profile.machine_kind(),
                    currency=region.currency_symbol(config.settings.currency), caps=capabilities.detect(self.plugins.get("servers", []), self.store),
-                   assistant=persona.get(self.store)["name"])
+                   assistant=assistant)
 
     async def chat(self, text: str, thinking: bool | None = None, session_id: str | None = None,
                    images: list[str] | None = None, via: str | None = None) -> AsyncIterator[dict[str, Any]]:
