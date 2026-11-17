@@ -414,12 +414,199 @@ async def test_deleting_the_one_an_app_belonged_to_gives_it_back_to_odie(store):
     assert said == ["work-mail on for everyday Odie: no one else could use it"]
 
 
-def test_which_app_a_tool_call_reaches(monkeypatch):
+def test_which_app_a_tool_call_reaches(store, monkeypatch):
     from odie.plugins import mcp
-    monkeypatch.setattr(mcp, "TOOL_SERVER", {"echo": "tester"})
-    assert access.server_called("echo", {"text": "x"}) == "tester"
-    assert access.server_called("load_skill", {"skill_name": "mcp-tester"}) == "tester"
-    assert access.server_called("load_skill", {"skill_name": "trackers"}) is None
-    assert access.server_called("load_skill", {}) is None
-    assert access.server_called("load_skill", None) is None
-    assert access.server_called("run_shell", {"command": "ls"}) is None
+    monkeypatch.setattr(mcp, "TOOL_SERVERS", {"echo": ["tester"]})
+    odies = "chat-2026-11-17"
+    assert access.server_called(store, "echo", {"text": "x"}, odies) == "tester"
+    assert access.server_called(store, "load_skill", {"skill_name": "mcp-tester"}, odies) == "tester"
+    assert access.server_called(store, "load_skill", {"skill_name": "trackers"}, odies) is None
+    assert access.server_called(store, "load_skill", {}, odies) is None
+    assert access.server_called(store, "load_skill", None, odies) is None
+    assert access.server_called(store, "run_shell", {"command": "ls"}, odies) is None
+
+
+# ── two connections of one service, one for each owner ──
+
+MAIL = str(Path(__file__).parent / "fixtures" / "mcp_account_mail.py")
+HOME_MAIL = {"command": sys.executable, "args": [MAIL], "env": {"MAIL_ACCOUNT": "home"}, "title": "Home mail"}
+WORK_MAIL = {"command": sys.executable, "args": [MAIL], "env": {"MAIL_ACCOUNT": "work"}, "title": "Work mail"}
+
+
+async def _home_and_work_mail(runner, store):
+    """Everyday Odie's home mail (`mail`) and Mira's work mail (`mail-2`): the same tool names, one owner each."""
+    from odie.plugins import mcp
+    mcp.write_config({"mail": HOME_MAIL, "mail-2": WORK_MAIL})
+    mira = personalities.create(store, "Mira")
+    access.added(store, "mail-2", mira.id)  # hers alone
+    access.set_allowed(store, "mail", mira.id, False)  # and Odie's isn't hers
+    await runner.load_plugins()
+    return mira
+
+
+def _sent(steps: list[dict]) -> str:
+    """What the send_email call of a turn answered, as text."""
+    return str(steps[-1]["results"]["send_email"])
+
+
+async def test_two_connections_with_the_same_tools_both_load_and_each_thread_reaches_its_own(runner, store):
+    mira = await _home_and_work_mail(runner, store)
+    status = {e.name: (e.status, e.reason) for e in runner.plugins["servers"]}
+    assert status == {"mail": ("ok", ""), "mail-2": ("ok", "")}
+    miras = await runner.session_for(mira.id, D)
+    Plays.script = {"Mira": [("load_skill", {"skill_name": "mcp-mail-2"}), ("send_email", {"text": "hi"}), "Sent."],
+                    "Odie": [("load_skill", {"skill_name": "mcp-mail"}), ("send_email", {"text": "hi"}), "Sent."]}
+    await asyncio.gather(_say(runner, "Mira sends a mail", miras),
+                         _say(runner, "Odie sends a mail", runner.current_session_id(D)))
+    assert {s["who"] for s in Plays.seen[:2]} == {"Mira", "Odie"}  # side by side
+    assert "the work account" in _sent(_of("Mira")) and "home" not in _sent(_of("Mira"))
+    assert "the home account" in _sent(_of("Odie")) and "work" not in _sent(_of("Odie"))
+    assert "mcp-mail-2" in _of("Mira")[0]["system"] and "mcp-mail\n" not in _of("Mira")[0]["system"]
+
+
+async def test_two_connections_both_on_for_one_owner_still_clash_as_before(runner, store):
+    from odie.plugins import mcp
+    mcp.write_config({"mail": HOME_MAIL, "mail-2": WORK_MAIL})  # nobody switched anything: both are everyday Odie's
+    await runner.load_plugins()
+    status = {e.name: (e.status, e.reason) for e in runner.plugins["servers"]}
+    assert status["mail"] == ("ok", "")
+    assert status["mail-2"] == ("error", "tool names clash with find_email (mail)")  # today's words
+
+
+async def test_a_remembered_call_resolves_to_the_owners_own_connection(runner, store):
+    mira = await _home_and_work_mail(runner, store)
+    miras = await runner.session_for(mira.id, D)
+    odies = runner.current_session_id(D)
+    send = SimpleNamespace(name="send_email")
+    assert access.server_of_tool(store, "send_email", odies) == "mail"
+    assert access.server_of_tool(store, "send_email", miras) == "mail-2"
+    assert await runner.plugin.before_tool_callback(tool=send, tool_args={"text": "x"}, tool_context=_ctx(odies)) is None
+    assert await runner.plugin.before_tool_callback(tool=send, tool_args={"text": "x"}, tool_context=_ctx(miras)) is None
+    access.set_allowed(store, "mail", ODIE, False)  # now both are off for Odie
+    refused = await runner.plugin.before_tool_callback(tool=send, tool_args={"text": "x"}, tool_context=_ctx(odies))
+    assert refused == {"error": access.OFF_HERE.format(app="mail", name="Odie")}
+
+
+async def test_the_card_and_the_log_name_her_connection(runner, store):
+    from odie.app.runner import approval_from_confirmation
+    mira = await _home_and_work_mail(runner, store)
+    miras = await runner.session_for(mira.id, D)
+
+    call = SimpleNamespace(id="c1", args={"originalFunctionCall": {"name": "send_email", "args": {"text": "hi"}}})
+    assert approval_from_confirmation(call, "inv-1", miras, store)["detail"]["app"] == "Work mail"
+    assert approval_from_confirmation(call, "inv-1", runner.current_session_id(D), store)["detail"]["app"] == "Home mail"
+    await runner.plugin.after_tool_callback(tool=SimpleNamespace(name="send_email"), tool_args={"text": "hi"},
+                                            tool_context=_ctx(miras), result={"content": []})
+    logged = store.one("select result_summary from audit_log where event='tool_call' and session_id=?", (miras,))
+    assert logged["result_summary"].startswith("mail-2: ")
+
+
+async def test_the_load_hint_points_to_her_connections_skill(runner, store):
+    mira = await _home_and_work_mail(runner, store)
+    miras = await runner.session_for(mira.id, D)
+    hint = await runner.plugin.on_tool_error_callback(tool=SimpleNamespace(name="send_email"), tool_args={},
+                                                      tool_context=_ctx(miras), error=ValueError("Tool 'send_email' not found."))
+    assert 'load_skill("mcp-mail-2")' in hint["error"] and "Work mail" in hint["error"]
+
+
+def _mail_entries(**always_on: bool) -> list:
+    """The loaded entries of home mail (mail) and work mail (mail-2), as runner.plugins holds them."""
+    from odie.plugins.mcp import ServerEntry
+    tools = ["find_email", "send_email"]
+    return [ServerEntry("mail", "stdio", "Home mail", "ok", tools=tools, always_on=always_on.get("mail", False)),
+            ServerEntry("mail-2", "stdio", "Work mail", "ok", tools=tools, always_on=always_on.get("mail_2", False))]
+
+
+@pytest.mark.parametrize("always_on", [{}, {"mail": True, "mail_2": True}])
+async def test_switching_on_a_second_connection_for_one_owner_is_refused_in_words(api, runner, store, always_on):
+    from odie.plugins import mcp
+    mcp.write_config({"mail": HOME_MAIL, "mail-2": WORK_MAIL})
+    runner.plugins = {"skills": [], "servers": _mail_entries(**always_on)}
+    mira = personalities.create(store, "Mira")
+    access.added(store, "mail-2", mira.id)
+    access.set_allowed(store, "mail", mira.id, False)
+    refused = await api.post(f"/api/mcp/mail/access?personality={mira.id}", json={"on": True})
+    assert refused.status_code == 409
+    assert refused.json()["detail"] == "Mira already has these tools from 'mail-2'; switch that one off for Mira first."
+    assert not access.allowed(store, "mail", mira.id)  # nothing changed
+    assert (await api.post(f"/api/mcp/mail-2/access?personality={mira.id}", json={"on": False})).status_code == 200
+    assert (await api.post(f"/api/mcp/mail/access?personality={mira.id}", json={"on": True})).status_code == 200
+    assert (await api.post(f"/api/mcp/mail/access?personality={mira.id}", json={"on": False})).status_code == 200  # off: never refused
+
+
+def test_a_new_personality_never_starts_with_a_clash(store):
+    """She copies everyday Odie's switches, and Odie never has two connections of a service on: neither does she."""
+    tools_of = {"mail": ["send_email"], "mail-2": ["send_email"], "notes": ["read_note"]}
+    access.added(store, "mail-2", "")  # an old pick of Odie's: mail-2 his alone
+    access.set_allowed(store, "mail", ODIE, False)
+    mira = personalities.create(store, "Mira")
+    on_for_her = [s for s in tools_of if access.allowed(store, s, mira.id)]
+    assert on_for_her == ["mail-2", "notes"]
+    assert all(access.clash_for(store, s, mira.id, tools_of) is None for s in on_for_her)
+
+
+async def test_deleting_her_doesnt_give_odie_a_second_connection_of_his_service(store):
+    from odie.app.runner import OdieRunner
+    mira = personalities.create(store, "Mira")
+    access.added(store, "mail-2", mira.id)
+    access.set_allowed(store, "mail", mira.id, False)
+    r = OdieRunner(store)
+    r.plugins = {"skills": [], "servers": _mail_entries()}
+    try:
+        await personalities.delete(store, r, mira.id)
+    finally:
+        await r.close()
+    assert not access.allowed(store, "mail-2", ODIE)  # Odie has mail on: its switch shows instead (off for him)
+    assert access.allowed(store, "mail", ODIE)
+
+
+async def test_the_watch_reads_only_odies_connection_of_a_service(runner, store):
+    """Home mail is Odie's, work mail Mira's, with the same tools: the watch, Odie's background work, finds and calls
+    only the home one."""
+    from datetime import UTC, datetime
+
+    from odie.watch import sources
+    from odie.watch.calls import CallError
+    from odie.watch.fetch import Fetcher
+    await _home_and_work_mail(runner, store)
+    looked_at = []
+    real_detect = sources.detect
+
+    async def detect(servers):
+        looked_at.extend(servers)
+        return await real_detect(servers)
+    sources.detect, saved = detect, sources.detect
+    try:
+        await sources.detect_and_save(store)
+    finally:
+        sources.detect = saved
+    assert looked_at == ["mail"]
+    fetcher = Fetcher(store, datetime.now(UTC))
+    work = sources.Source("mail", "mail-2", "Work mail", "plain", "find_email", {})
+    with pytest.raises(CallError, match="switched off for Odie"):
+        fetcher._spec(work)
+
+
+async def test_her_own_connected_service_loads_and_is_the_one_her_thread_uses(api, runner, store, monkeypatch):
+    """Fix 1's flow end to end: Odie has zapier; Mira connects her own link; both load, and her thread's calls go to
+    hers."""
+    from odie.app import routes
+    from odie.plugins import mcp
+
+    async def answers(spec, smart=False):
+        return {"ok": True, "tools": []}
+
+    async def zapier_lists(spec, timeout):
+        return [{"name": "inspect_zapier_actions"}, {"name": "execute_zapier_read_action"}]
+    monkeypatch.setattr(routes, "_check", answers)
+    monkeypatch.setattr(mcp, "probe_tools", zapier_lists)
+    mcp.write_config({"zapier": {"url": ODIES_LINK, "title": "Zapier"}})
+    mira = personalities.create(store, "Mira")
+    made = await api.post(f"/api/mcp/connect?personality={mira.id}", json={"preset": "zapier", "url": MIRAS_LINK})
+    assert made.json()["name"] == "zapier-2"
+    status = {e.name: e.status for e in runner.plugins["servers"]}
+    assert status == {"zapier": "ok", "zapier-2": "ok"}
+    miras = await runner.session_for(mira.id, D)
+    assert access.server_of_tool(store, "execute_zapier_read_action", miras) == "zapier-2"
+    assert access.server_of_tool(store, "execute_zapier_read_action", runner.current_session_id(D)) == "zapier"
+    assert access.skills_off_in(store, miras) == frozenset({"mcp-zapier"})  # her catalog shows only her own

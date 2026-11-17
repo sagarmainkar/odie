@@ -280,7 +280,12 @@ NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 MASK = "••••"
 TOOL_APP: dict[str, str] = {}  # tool name -> the app (server title) it comes from, for approval cards
 TOOL_SKILL: dict[str, str] = {}  # tool name -> the skill that loads it (mcp-<server>), to point a model that skipped it
-TOOL_SERVER: dict[str, str] = {}  # tool name -> the server (its name in mcp.json) it comes from, for who may use it
+# Tool name -> every working server that lists it (its name in mcp.json), in load order. Two connections of one service
+# list the same names; they both load when no one has both switched on (load_servers), and which one a call reaches is
+# the one on for the thread's owner (odie.plugins.access.server_of_tool).
+TOOL_SERVERS: dict[str, list[str]] = {}
+SERVER_TITLE: dict[str, str] = {}  # server -> the app's title, for approval cards and hints
+SERVER_SKILL: dict[str, str] = {}  # server -> the skill that loads its tools (mcp-<server>); none for an always-on one
 
 
 def skill_name_of(server: str) -> str:
@@ -296,14 +301,28 @@ def server_of_skill(skill: str) -> str | None:
 
 
 def _set_tool_servers(entries: list) -> None:
-    """Which server each working server's tools come from, after a load; nothing stale stays."""
-    names: dict[str, str] = {}
+    """Which servers each tool name comes from, and each working server's title and skill, after a load; nothing stale
+    stays."""
+    by_tool: dict[str, list[str]] = {}
+    titles: dict[str, str] = {}
+    skills: dict[str, str] = {}
     for e in entries:
-        if e.status == "ok":
-            for tool in e.tools:
-                names.setdefault(tool, e.name)
-    TOOL_SERVER.clear()
-    TOOL_SERVER.update(names)
+        if e.status != "ok":
+            continue
+        titles[e.name] = e.title or e.name
+        if e.skill is not None:
+            skills[e.name] = e.skill.name
+        for tool in e.tools:
+            by_tool.setdefault(tool, []).append(e.name)
+    for registry, fresh in ((TOOL_SERVERS, by_tool), (SERVER_TITLE, titles), (SERVER_SKILL, skills)):
+        registry.clear()
+        registry.update(fresh)
+
+
+def servers_with_tool(tool_name: str) -> list[str]:
+    """Every working server that lists this tool, in load order: send_email from home and work mail -> ["mail",
+    "mail-2"]; a tool no server lists -> []."""
+    return list(TOOL_SERVERS.get(tool_name, []))
 
 
 def _set_tool_apps(entries: list[tuple]) -> None:
@@ -635,16 +654,19 @@ async def probe_tools(spec: dict, timeout: float) -> list[dict]:
 
 async def load_servers(timeout: float = 15, reserved: dict[str, str] | None = None,
                        smart: Callable[[str | None], bool] | None = None,
-                       allowed: Callable[[str, str | None], bool] | None = None) -> list[ServerEntry]:
+                       allowed: Callable[[str, str | None], bool] | None = None,
+                       may_share: Callable[[str, str], bool] | None = None) -> list[ServerEntry]:
     """Every server in mcp.json with its status. `reserved` maps tool names Odie already has (built-ins, skill
     tools) to their owner, so a server can't shadow them. `smart` reads the live approvals mode for each server's
     toolset. `allowed(server, session_id)` says whether a chat may use a server (odie.plugins.access), read on every
-    listing."""
+    listing. `may_share(a, b)` says whether two servers may list the same tool names (no one has both switched on);
+    None: never, as before personalities."""
     servers, err = read_config()
     if err:
         log.warning(err)
     out: list[ServerEntry] = []
-    seen: dict[str, str] = dict(reserved or {})  # tool name -> who owns it
+    seen: dict[str, str] = dict(reserved or {})  # tool name -> the built-in or skill that owns it
+    by_servers: dict[str, list[str]] = {}  # tool name -> the servers loaded so far that list it
     for name, spec in servers.items():
         spec = spec if isinstance(spec, dict) else {}
         e = ServerEntry(name, "http" if spec.get("url") else "stdio", spec.get("description") or "", "ok",
@@ -666,12 +688,12 @@ async def load_servers(timeout: float = 15, reserved: dict[str, str] | None = No
             continue
         e.tools = [t["name"] for t in listed]
         e.title = spec.get("title") or name
-        clash = next((f"{t} ({seen[t]})" for t in e.tools if t in seen), None)
+        clash = _clash(e.tools, name, seen, by_servers, may_share)
         if clash:
             e.status, e.reason = "error", f"tool names clash with {clash}"
             continue
         for t in e.tools:
-            seen[t] = name
+            by_servers.setdefault(t, []).append(name)
         e.toolset = toolset_for(name, spec, smart=smart, allowed=_allowed_for(name, allowed))  # connects lazily
         if not e.description:
             e.description = f"Tools from {name}: {', '.join(e.tools[:8])}"
@@ -680,6 +702,24 @@ async def load_servers(timeout: float = 15, reserved: dict[str, str] | None = No
     _set_tool_apps([(e.title or e.name, e.status, e.tools, e.skill.name if e.skill else None) for e in out])
     _set_tool_servers(out)
     return out
+
+
+def _clash(tools: list[str], server: str, reserved: dict[str, str], by_servers: dict[str, list[str]],
+           may_share: Callable[[str, str], bool] | None) -> str | None:
+    """The first of a server's tools that it may not have, as "<tool> (<who has it>)", or None when it may load. A
+    built-in's or a skill's tool name is never shared; another server's is, when may_share says no one has both on.
+      write_note, already a built-in tool                         -> "write_note (Odie)"
+      send_email, also in `mail`, both on for everyday Odie        -> "send_email (mail)"
+      send_email, also in `mail` (Odie's), this one Mira's alone   -> None: both load
+      nothing in common                                            -> None"""
+    for tool in tools:
+        if tool in reserved:
+            return f"{tool} ({reserved[tool]})"
+        for other in by_servers.get(tool, []):
+            shared_by_no_one = may_share is not None and may_share(other, server)
+            if not shared_by_no_one:
+                return f"{tool} ({other})"
+    return None
 
 
 def _allowed_for(server: str, allowed: Callable[[str, str | None], bool] | None) -> Callable[[str | None], bool] | None:

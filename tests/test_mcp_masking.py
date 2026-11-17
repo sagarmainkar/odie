@@ -48,6 +48,7 @@ def test_app_tool_approval_names_the_app_and_keeps_args_off_the_lock_screen(tmp_
     s = Store(tmp_path / "a.db")
     s.init_schema()
     mcp.TOOL_APP.clear()
+    mcp.TOOL_SERVERS.clear()  # nothing left from another test's load (the tester server has a write_note too)
     mcp.TOOL_APP["write_note"] = "Obsidian notes"
 
     class FC:

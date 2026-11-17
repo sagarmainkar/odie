@@ -96,19 +96,23 @@ def forget_personality(store: Store, pid: str) -> None:
     store.execute("delete from app_access where personality=?", (pid,))
 
 
-def give_back_to_odie(store: Store, gone: str) -> list[str]:
+def give_back_to_odie(store: Store, gone: str, tools_of: dict[str, list[str]] | None = None) -> list[str]:
     """A personality was just deleted (its record is gone, its switches not yet): every server it could use that is off
     for everyday Odie and that no one left may use goes back on for Odie. It was off for Odie only because it was the
     deleted one's, and otherwise nothing could use it. Returns their names, for the log.
       work-mail added with Mira picked, Mira deleted, no one else uses it -> on for Odie again: ["work-mail"]
       coach-app added with Coach picked, Mira deleted, Coach still there -> left off for Odie
-      home-mail Odie switched off for himself, Mira had it off too      -> left off for Odie (it was never hers)"""
+      home-mail Odie switched off for himself, Mira had it off too      -> left off for Odie (it was never hers)
+      zapier-2 hers, Odie still has zapier (the same tools) on          -> left off for Odie (clash_for); its switch shows
+    `tools_of`: each loaded server's tool names, for that last check."""
     others = [p.id for p in personalities.list_all(store)]
     given_back = []
     for server in sorted(off_for(store, ODIE)):
         was_hers = allowed(store, server, gone)
         someone_uses_it = any(allowed(store, server, who) for who in others)
         if not was_hers or someone_uses_it:
+            continue
+        if clash_for(store, server, ODIE, tools_of or {}) is not None:
             continue
         set_allowed(store, server, ODIE, True)
         given_back.append(server)
@@ -122,16 +126,58 @@ def skills_off_in(store: Store, session_id: str | None) -> frozenset[str]:
     return frozenset(skill_name_of(server) for server in off_in(store, session_id))
 
 
-def server_called(tool_name: str, args: dict) -> str | None:
-    """The connected app a tool call reaches, or None when it reaches none: one of the app's own tools, or loading the
-    app's skill (which would list its tools).
+def server_of_tool(store: Store, tool_name: str, session_id: str | None) -> str | None:
+    """The server a call to this tool reaches in this thread: of the servers that list it, the one on for the thread's
+    owner. Two connections of one service list the same names, and each owner has at most one of them on
+    (load_servers), so a name resolves to the owner's own connection. When none is on for the owner, the first one,
+    so the call is refused as off. None for a tool no server lists.
+      send_email in everyday Odie's thread, home mail (mail) his, work mail (mail-2) Mira's -> "mail"
+      send_email in Mira's thread                                                          -> "mail-2"
+      send_email in Odie's thread, both off for him                                        -> "mail" (refused as off)
+      run_shell                                                                            -> None"""
+    from odie.plugins.mcp import servers_with_tool
+    candidates = servers_with_tool(tool_name)
+    if not candidates:
+        return None
+    owner = personalities.of_session(store, session_id)
+    for server in candidates:
+        if allowed(store, server, owner):
+            return server
+    return candidates[0]
+
+
+def app_title_of_tool(store: Store, tool_name: str, session_id: str | None) -> str | None:
+    """The title of the app a call to this tool reaches in this thread, for its approval card and hints: send_email in
+    Mira's thread -> "Work mail"; in Odie's -> "Home mail"; a tool of no app -> None. A tool named only in the older
+    one-app-per-tool map (TOOL_APP, which tests fill by hand) keeps that title."""
+    from odie.plugins.mcp import SERVER_TITLE, TOOL_APP
+    server = server_of_tool(store, tool_name, session_id)
+    if server is None:
+        return TOOL_APP.get(tool_name)
+    return SERVER_TITLE.get(server, server)
+
+
+def skill_of_tool(store: Store, tool_name: str, session_id: str | None) -> str | None:
+    """The skill that brings this tool in this thread: send_email in Mira's thread -> "mcp-mail-2"; in Odie's ->
+    "mcp-mail"; an always-on app's tool, or a tool of no app -> None (the older map, TOOL_SKILL, for a tool only it
+    names)."""
+    from odie.plugins.mcp import SERVER_SKILL, TOOL_SKILL
+    server = server_of_tool(store, tool_name, session_id)
+    if server is None:
+        return TOOL_SKILL.get(tool_name)
+    return SERVER_SKILL.get(server)
+
+
+def server_called(store: Store, tool_name: str, args: dict, session_id: str | None) -> str | None:
+    """The connected app a tool call reaches in this thread, or None when it reaches none: one of the app's own tools
+    (the owner's own connection, server_of_tool), or loading the app's skill (which would list its tools).
       echo (a tool of the tester server)  -> "tester"
       load_skill("mcp-tester")            -> "tester"
       load_skill("trackers"), run_shell   -> None
       load_skill with no skill_name       -> None"""
-    from odie.plugins.mcp import TOOL_SERVER, server_of_skill
+    from odie.plugins.mcp import server_of_skill
     if tool_name != "load_skill":
-        return TOOL_SERVER.get(tool_name)
+        return server_of_tool(store, tool_name, session_id)
     if not args:
         return None
     skill = args.get("skill_name")
@@ -147,14 +193,43 @@ def refusal(store: Store, tool_name: str, args: dict, session_id: str | None) ->
       echo in Mira's thread, tester off for her          -> "tester is switched off for Mira, so it can't be used…"
       load_skill("mcp-tester") there                     -> the same
       echo in everyday Odie's thread, tester on for Odie -> None
+      send_email in Odie's thread, his mail on, Mira's mail-2 off for him -> None (it reaches his)
       run_shell, anywhere                                -> None (not a connected app's)"""
-    server = server_called(tool_name, args)
+    server = server_called(store, tool_name, args, session_id)
     if server is None:
         return None
     owner = personalities.of_session(store, session_id)
     if allowed(store, server, owner):
         return None
     return OFF_HERE.format(app=server, name=_name_of(store, owner))
+
+
+def no_one_has_both(store: Store, first: str, second: str) -> bool:
+    """Whether two servers may list the same tool names: no one (everyday Odie, or any personality) has both on.
+      mail on for Odie alone, mail-2 on for Mira alone -> True: both load
+      both on for Odie (nobody switched anything)      -> False: the second is refused, as before personalities"""
+    everyone = [ODIE] + [p.id for p in personalities.list_all(store)]
+    return not any(allowed(store, first, who) and allowed(store, second, who) for who in everyone)
+
+
+TAKEN = "{name} already has these tools from '{other}'; switch that one off for {name} first."
+
+
+def clash_for(store: Store, server: str, pid: str, tools_of: dict[str, list[str]]) -> str | None:
+    """Why this server can't be switched on for this one, in words, or None when it can: another server on for it
+    already lists one of the same tool names (each owner has one connection of a service at a time). `tools_of`:
+    each loaded server's tool names.
+      mail on for Mira, while mail-2 (the same tools) is on for her
+                           -> "Mira already has these tools from 'mail-2'; switch that one off for Mira first."
+      mail on for Mira, mail-2 off for her, or nothing in common -> None"""
+    mine = set(tools_of.get(server, []))
+    for other, tools in tools_of.items():
+        if other == server or not allowed(store, other, pid):
+            continue
+        if mine & set(tools):
+            name = _name_of(store, pid)
+            return TAKEN.format(name=name, other=other)
+    return None
 
 
 def _name_of(store: Store, pid: str) -> str:

@@ -646,6 +646,11 @@ async def mcp_access(name: str, body: OnIn, request: Request):
     if name not in servers:
         raise HTTPException(404, "no such server")
     store = request.app.state.store
+    if body.on:  # one connection of a service at a time for each owner: its tools' names would be listed twice
+        tools_of = {e.name: list(e.tools) for e in request.app.state.runner.plugins.get("servers", [])}
+        taken = access.clash_for(store, name, pick, tools_of)
+        if taken:
+            raise HTTPException(409, taken)
     access.set_allowed(store, name, pick, body.on)
     store.audit("user", "app_access", result_summary=f"{name} {'on' if body.on else 'off'} for {pick or 'everyday Odie'}")
     _forget_prompts(request)  # the prompt's capabilities (mail, the vault) follow the apps it may use

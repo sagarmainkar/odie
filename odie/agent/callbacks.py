@@ -164,8 +164,8 @@ def _close_skills(result: Any, asked: str) -> Any:
         return result
     import difflib
 
-    from odie.plugins.mcp import TOOL_SKILL
-    names = set(TOOL_SKILL.values())
+    from odie.plugins.mcp import SERVER_SKILL, TOOL_SKILL
+    names = set(TOOL_SKILL.values()) | set(SERVER_SKILL.values())  # every app's, a second connection's too
     try:
         from odie.about import hooks
         names |= {e.name for e in (getattr(hooks.get("runner"), "plugins", None) or {}).get("skills", [])}
@@ -241,7 +241,12 @@ class OdiePlugin(BasePlugin):
         if exposed is not None and turn.mark_read(exposed):
             from odie.signin import guard as signin_guard
             signin_guard.remember_read(self.store, session_id, exposed)
-        self.store.audit("agent", "tool_call", tool=tool.name, args=tool_args, result_summary=_summarise(result),
+        from odie.plugins import access
+        server = access.server_of_tool(self.store, tool.name, session_id)  # which connection, when it is an app's tool
+        summary = _summarise(result)
+        if server is not None:
+            summary = f"{server}: {summary}"
+        self.store.audit("agent", "tool_call", tool=tool.name, args=tool_args, result_summary=summary,
                          session_id=session_id, invocation_id=inv)
         from odie import addons
         addons.call("after_tool", tool.name, tool_args, result, self.store, session_id, inv)  # e.g. provenance for cards
@@ -264,14 +269,15 @@ class OdiePlugin(BasePlugin):
         """An app's tool called before its skill was loaded: say which skill, so the model loads it and goes on (a bare
         "no tool with that name" made it tell the user the app had dropped off)."""
         from odie.plugins import access
-        from odie.plugins.mcp import TOOL_APP, TOOL_SKILL
-        skill = TOOL_SKILL.get(tool.name)
+        session_id = session_id_of(tool_context)
+        skill = access.skill_of_tool(self.store, tool.name, session_id)  # the skill of this thread's own connection
         if skill is None or "not found" not in str(error).lower():
             return None
-        off_here = access.refusal(self.store, tool.name, tool_args, session_id_of(tool_context))
+        off_here = access.refusal(self.store, tool.name, tool_args, session_id)
         if off_here:  # not listed here because it's off for this thread: loading its skill wouldn't help
             return {"error": off_here}
-        return {"error": f"{tool.name} is one of {TOOL_APP.get(tool.name, 'a connected app')}'s tools, and they load with "
+        app = access.app_title_of_tool(self.store, tool.name, session_id) or "a connected app"
+        return {"error": f"{tool.name} is one of {app}'s tools, and they load with "
                          f"their skill: call load_skill(\"{skill}\") first, then call {tool.name} again."}
 
     async def before_tool_callback(self, *, tool, tool_args: dict[str, Any], tool_context) -> dict | None:

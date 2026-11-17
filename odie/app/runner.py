@@ -403,8 +403,8 @@ def approval_from_confirmation(fc: Any, invocation_id: str, session_id: str, sto
         summary, risk = card.summary, card.risk
         detail.update(card.detail)
     else:
-        from odie.plugins.mcp import TOOL_APP
-        app = TOOL_APP.get(tool)
+        from odie.plugins import access
+        app = access.app_title_of_tool(store, tool, session_id)  # the app of this thread's own connection
         label = tool.replace("_", " ").capitalize()
         args_text = "; ".join(f"{k}: {str(v)[:60]}" for k, v in targs.items())
         if app:
@@ -1676,7 +1676,7 @@ class OdieRunner:
                     if e.status == "ok":
                         reserved.update({t: f"the {e.name} skill" for t in e.tools})
                 servers = await load_servers(reserved=reserved, smart=lambda session_id: approvals_mode.runs_free(self.store, session_id),
-                                             allowed=self._app_allowed)
+                                             allowed=self._app_allowed, may_share=self._apps_may_share)
                 ok = [e for e in servers if e.status == "ok"]
                 skill_ts = build_skill_toolset(skills, extra_skills=[e.skill for e in ok if e.skill],
                                                extra_tools=[e.toolset for e in ok if e.skill], left_out_in=self._skills_off)
@@ -1718,6 +1718,14 @@ class OdieRunner:
           ("home-mail", None: a listing outside any chat)     -> everyday Odie's switch"""
         from odie.plugins import access
         return access.allowed_in(self.store, server, session_id)
+
+    def _apps_may_share(self, first: str, second: str) -> bool:
+        """Whether two connected apps may both load with the same tool names: no one has both switched on
+        (odie.plugins.access.no_one_has_both).
+          ("mail", "mail-2"), mail Odie's alone and mail-2 Mira's alone -> True
+          ("mail", "mail-2"), both on for Odie                         -> False"""
+        from odie.plugins import access
+        return access.no_one_has_both(self.store, first, second)
 
     def _skills_off(self, session_id: str | None) -> frozenset[str]:
         """The apps' skills a chat's catalog leaves out: those of the apps off for its owner (odie.plugins.access).

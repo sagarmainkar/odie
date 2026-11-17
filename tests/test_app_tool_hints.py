@@ -16,6 +16,8 @@ def plugin(isolated_settings, tmp_path, monkeypatch):
     s.init_schema()
     monkeypatch.setattr(mcp, "TOOL_APP", {})
     monkeypatch.setattr(mcp, "TOOL_SKILL", {})
+    for registry in ("TOOL_SERVERS", "SERVER_TITLE", "SERVER_SKILL"):  # nothing left from another test's load
+        monkeypatch.setattr(mcp, registry, {})
     mcp._set_tool_apps([("Zapier", "ok", ["inspect_zapier_actions", "execute_zapier_read_action"], "mcp-zapier-2"),
                         ("Notes", "error", ["read_note"], "mcp-notes")])
     return callbacks.OdiePlugin(s)
