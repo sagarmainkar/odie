@@ -242,7 +242,7 @@ class OdiePlugin(BasePlugin):
             from odie.signin import guard as signin_guard
             signin_guard.remember_read(self.store, session_id, exposed)
         from odie.plugins import access
-        server = access.server_of_tool(self.store, tool.name, session_id)  # which connection, when it is an app's tool
+        server = access.server_of_object(self.store, tool, session_id)  # the connection this very object reached
         summary = _summarise(result)
         if server is not None:
             summary = f"{server}: {summary}"
@@ -273,7 +273,7 @@ class OdiePlugin(BasePlugin):
         skill = access.skill_of_tool(self.store, tool.name, session_id)  # the skill of this thread's own connection
         if skill is None or "not found" not in str(error).lower():
             return None
-        off_here = access.refusal(self.store, tool.name, tool_args, session_id)
+        off_here = access.refusal(self.store, tool, tool_args, session_id)
         if off_here:  # not listed here because it's off for this thread: loading its skill wouldn't help
             return {"error": off_here}
         app = access.app_title_of_tool(self.store, tool.name, session_id) or "a connected app"
@@ -283,11 +283,19 @@ class OdiePlugin(BasePlugin):
     async def before_tool_callback(self, *, tool, tool_args: dict[str, Any], tool_context) -> dict | None:
         from odie import personalities
         from odie.plugins import access
-        off_here = access.refusal(self.store, tool.name, tool_args, session_id_of(tool_context))
+        session_id = session_id_of(tool_context)
+        call_id = getattr(tool_context, "function_call_id", None)
+        elsewhere = self._tap_runs_elsewhere(tool, session_id, call_id, tool_context)
+        if elsewhere:
+            return {"error": elsewhere}
+        server = access.server_called(self.store, tool, tool_args, session_id)
+        off_here = access.refusal(self.store, tool, tool_args, session_id)
         if off_here:  # a connected app switched off for whoever this thread belongs to: it never runs here
-            self.store.audit("agent", "tool_refused", tool=tool.name, result_summary="app switched off here",
-                             session_id=session_id_of(tool_context))
+            self.store.audit("agent", "tool_refused", tool=tool.name, result_summary=f"{server} switched off here",
+                             session_id=session_id)
             return {"error": off_here}
+        if server is not None and call_id:
+            self._note_server(call_id, server)  # its card, if it asks for a tap, names this server
         if tool.name in personalities.ODIE_ONLY_TOOLS:
             session_id = session_id_of(tool_context)
             in_a_personalitys_thread = personalities.of_session(self.store, session_id) != personalities.ODIE
@@ -300,6 +308,45 @@ class OdiePlugin(BasePlugin):
             self.store.audit("agent", "tool_args_rejected", tool=tool.name, result_summary=problem[:200], session_id=session_id)
             return {"error": problem}
         return None
+
+    def _note_server(self, call_id: str, server: str) -> None:
+        """Remember which server a call's tool object reaches, for its approval card (server_of_call), the last 200."""
+        servers = self.__dict__.setdefault("_call_servers", {})
+        servers[call_id] = server
+        if len(servers) > 200:
+            servers.pop(next(iter(servers)))
+
+    def server_of_call(self, call_id: str | None) -> str | None:
+        """The server the tool object of this call reaches (noted before it ran), or None for a call that reaches no
+        app: the approval card names it, and a tap is consent for that server alone."""
+        if not call_id:
+            return None
+        return self.__dict__.get("_call_servers", {}).get(call_id)
+
+    def _tap_runs_elsewhere(self, tool, session_id: str | None, call_id: str | None, tool_context) -> str | None:
+        """For a call resumed by a tap: why its tool object may not run, in words, or None when it may. It must reach
+        the server the card named, still on for the thread's owner (access.card_runs_elsewhere); otherwise the card
+        lapses (audited) and nothing runs.
+          a tapped "Send email in Home mail", the object home mail's, mail still on -> None
+          the same, the owner since moved Odie to work mail                       -> "This card was for Home mail, …"
+          a call nobody tapped                                                   -> None"""
+        from odie.plugins import access
+        confirmation = getattr(tool_context, "tool_confirmation", None)
+        tapped_yes = confirmation is not None and bool(getattr(confirmation, "confirmed", False))
+        if not tapped_yes or not call_id:
+            return None
+        card = self.store.one("select * from approvals where session_id=? and call_id=? order by id desc limit 1",
+                              (session_id, call_id))
+        if card is None:
+            return None
+        words = access.card_runs_elsewhere(self.store, card, tool, session_id)
+        if words is None:
+            return None
+        self.store.lapse_approval(card["id"])
+        self.store.set_approval_result(card["id"], words)
+        self.store.audit("agent", "approval_lapsed", tool=tool.name, result_summary=words, session_id=session_id,
+                         approval_id=card["id"])
+        return words
 
     async def after_model_callback(self, *, callback_context, llm_response):
         """Keep each reply's input and cached token counts, whichever provider answered (odie.agent.usage)."""

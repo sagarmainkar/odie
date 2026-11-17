@@ -168,16 +168,28 @@ def skill_of_tool(store: Store, tool_name: str, session_id: str | None) -> str |
     return SERVER_SKILL.get(server)
 
 
-def server_called(store: Store, tool_name: str, args: dict, session_id: str | None) -> str | None:
-    """The connected app a tool call reaches in this thread, or None when it reaches none: one of the app's own tools
-    (the owner's own connection, server_of_tool), or loading the app's skill (which would list its tools).
-      echo (a tool of the tester server)  -> "tester"
+def server_of_object(store: Store, tool, session_id: str | None) -> str | None:
+    """The server a tool OBJECT reaches when it runs: the name its toolset stamped on it (PluginMcpToolset), which is
+    what ADK will call whatever the switches say now; only an object with no stamp (a built-in, a test's stand-in) is
+    looked up by its name (server_of_tool).
+      the send_email object home mail's toolset listed, home mail since switched off -> "mail" (it would still reach it)
+      run_shell                                                                     -> None"""
+    stamped = getattr(tool, "_odie_server", None)
+    if stamped:
+        return stamped
+    return server_of_tool(store, tool.name, session_id)
+
+
+def server_called(store: Store, tool, args: dict, session_id: str | None) -> str | None:
+    """The connected app a tool call reaches, or None when it reaches none: one of the app's own tools (the server its
+    object came from, server_of_object), or loading the app's skill (which would list its tools).
+      echo (listed by the tester server)  -> "tester"
       load_skill("mcp-tester")            -> "tester"
       load_skill("trackers"), run_shell   -> None
       load_skill with no skill_name       -> None"""
     from odie.plugins.mcp import server_of_skill
-    if tool_name != "load_skill":
-        return server_of_tool(store, tool_name, session_id)
+    if tool.name != "load_skill":
+        return server_of_object(store, tool, session_id)
     if not args:
         return None
     skill = args.get("skill_name")
@@ -186,22 +198,66 @@ def server_called(store: Store, tool_name: str, args: dict, session_id: str | No
     return server_of_skill(skill)
 
 
-def refusal(store: Store, tool_name: str, args: dict, session_id: str | None) -> str | None:
+def refusal(store: Store, tool, args: dict, session_id: str | None) -> str | None:
     """Why this tool call may not run in this thread, in words for the model, or None when it may. Checked before a
-    tool runs (odie.agent.callbacks), so a tool name the model remembers from before the switch went off is still
-    refused there.
-      echo in Mira's thread, tester off for her          -> "tester is switched off for Mira, so it can't be used…"
-      load_skill("mcp-tester") there                     -> the same
-      echo in everyday Odie's thread, tester on for Odie -> None
-      send_email in Odie's thread, his mail on, Mira's mail-2 off for him -> None (it reaches his)
-      run_shell, anywhere                                -> None (not a connected app's)"""
-    server = server_called(store, tool_name, args, session_id)
+    tool runs (odie.agent.callbacks), on the object about to run, so a tool listed before a switch went off, or a name
+    the model remembers, is still refused there.
+      echo in Mira's thread, tester off for her             -> "tester is switched off for Mira, so it can't be used…"
+      load_skill("mcp-tester") there                        -> the same
+      echo in everyday Odie's thread, tester on for Odie    -> None
+      send_email listed from home mail, home mail since switched off for Odie (work mail on) -> refused, naming mail
+      run_shell, anywhere                                   -> None (not a connected app's)"""
+    server = server_called(store, tool, args, session_id)
     if server is None:
         return None
     owner = personalities.of_session(store, session_id)
     if allowed(store, server, owner):
         return None
     return OFF_HERE.format(app=server, name=_name_of(store, owner))
+
+
+LAPSED = "This card was for {app}, which is now off for {name}. Ask again."
+
+
+def card_moved(store: Store, card) -> str | None:
+    """Why a tapped card may not run, in words, or None when it may: a tap is consent for the account the card named,
+    so the card's server must still be on for the thread's owner. `card` is its approvals row; its detail says the
+    server ("server") and the app's title ("app") the card showed.
+      "Send email in Home mail" (mail), mail still on for Odie        -> None
+      the same, the owner since moved Odie to work mail (mail-2)      -> "This card was for Home mail, which is now off for
+                                                                         Odie. Ask again."
+      a card for no app (run_shell)                                   -> None"""
+    import json
+    detail = json.loads(card["detail_json"] or "{}")
+    server = detail.get("server")
+    if not server:
+        return None
+    owner = personalities.of_session(store, card["session_id"])
+    if allowed(store, server, owner):
+        return None
+    app = detail.get("app") or server
+    return LAPSED.format(app=app, name=_name_of(store, owner))
+
+
+def card_runs_elsewhere(store: Store, card, tool, session_id: str | None) -> str | None:
+    """Why the object a tapped card is about to run may not run, in words, or None when it may: it must reach the very
+    server the card named, still on for the owner (card_moved).
+      the card named mail; the object is home mail's                -> None
+      the card named mail; the object is work mail's (mail-2)       -> the card's words: "This card was for Home mail…"
+      a card that named no server                                   -> None"""
+    import json
+    moved = card_moved(store, card)
+    if moved:
+        return moved
+    detail = json.loads(card["detail_json"] or "{}")
+    named = detail.get("server")
+    if not named:
+        return None
+    reaches = server_of_object(store, tool, session_id)
+    if reaches == named:
+        return None
+    owner = personalities.of_session(store, session_id)
+    return LAPSED.format(app=detail.get("app") or named, name=_name_of(store, owner))
 
 
 def no_one_has_both(store: Store, first: str, second: str) -> bool:

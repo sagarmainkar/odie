@@ -369,11 +369,13 @@ def _safely(fn, *args):
         return None
 
 
-def approval_from_confirmation(fc: Any, invocation_id: str, session_id: str, store: Store) -> dict[str, Any]:
+def approval_from_confirmation(fc: Any, invocation_id: str, session_id: str, store: Store,
+                               server: str | None = None) -> dict[str, Any]:
     """Code, not the model, writes what the card says: the summary comes from the tool arguments (an add-on writes the
     card for its own tools, from its audit log), provenance from the mail the model has seen recently in this session.
     call_id: the id of the tool call waiting for the tap (ADK wraps it as originalFunctionCall); None when the
-    confirmation does not say."""
+    confirmation does not say. server: the connected app the waiting tool object reaches (OdiePlugin.server_of_call);
+    the card names it and keeps it ("server" in its detail), since a tap is consent for that app alone."""
     from odie.signin import guard as signin_guard
     args = dict(fc.args or {})
     orig = args.get("originalFunctionCall") or {}
@@ -404,7 +406,13 @@ def approval_from_confirmation(fc: Any, invocation_id: str, session_id: str, sto
         detail.update(card.detail)
     else:
         from odie.plugins import access
-        app = access.app_title_of_tool(store, tool, session_id)  # the app of this thread's own connection
+        from odie.plugins.mcp import SERVER_TITLE
+        if server is None:  # not noted (an older turn): this thread's own connection, by the tool's name
+            server = access.server_of_tool(store, tool, session_id)
+        app = access.app_title_of_tool(store, tool, session_id)
+        if server is not None:
+            app = SERVER_TITLE.get(server, server)
+            detail["server"] = server
         label = tool.replace("_", " ").capitalize()
         args_text = "; ".join(f"{k}: {str(v)[:60]}" for k, v in targs.items())
         if app:
@@ -1267,7 +1275,9 @@ class OdieRunner:
             if not fc or fc.name != CONFIRM:
                 continue
             inv = getattr(ev, "invocation_id", "") or ""
-            a = approval_from_confirmation(fc, inv, session_id, self.store)
+            orig = (fc.args or {}).get("originalFunctionCall") or {}
+            server = self.plugin.server_of_call(orig.get("id"))  # the app the waiting tool object reaches
+            a = approval_from_confirmation(fc, inv, session_id, self.store, server=server)
             aid = self.store.create_approval(session_id, inv, a["request_id"], a["tool"], a["args"], a["summary"], a["detail"], a["provenance"], a["risk"],
                                              call_id=a["call_id"])
             self.store.audit("agent", "approval_requested", tool=a["tool"], args=a["args"], result_summary=a["summary"], session_id=session_id, invocation_id=inv, approval_id=aid)
@@ -1296,10 +1306,18 @@ class OdieRunner:
         row = self.store.get_approval(approval_id)
         if row is None:
             return {"error": "no such approval"}
+        if approve:
+            from odie.plugins import access
+            moved = access.card_moved(self.store, row)
+            if moved:  # a tap is consent for the app the card named: it lapses instead of running elsewhere
+                await self.lapse_card(row, moved)
+                return {"error": moved}
         try:
             selection = brains.for_thread(self.store, row["session_id"])  # the paused turn goes on with its own brain
         except brains.BrainGone as gone:
-            return {"error": str(gone)}  # checked before the tap counts: the card stays waiting until the brain is back
+            if approve:
+                return {"error": str(gone)}  # checked before the tap counts: the card stays waiting until the brain is back
+            return await self._declined_without_a_turn(row)  # a No needs no model: it is recorded, nothing runs
         if not self.store.decide_approval(approval_id, approve):
             return {"error": f"already {self.store.get_approval(approval_id)['status']}"}
         row = self.store.get_approval(approval_id)  # again, so it carries decided_at
@@ -1365,6 +1383,29 @@ class OdieRunner:
         await self.bus.publish({"type": "approval_done", "id": approval_id, "status": "approved" if approve else "rejected", "text": text,
                                 "session_id": row["session_id"]})
         return {"text": text}
+
+    async def _declined_without_a_turn(self, row) -> dict[str, Any]:
+        """A No on a card whose thread can't think right now (its brain is gone): the No is recorded and every open
+        app hears it; the paused turn is not resumed, since nothing would run anyway."""
+        if not self.store.decide_approval(row["id"], False):
+            return {"error": f"already {self.store.get_approval(row['id'])['status']}"}
+        self.store.set_approval_result(row["id"], "Declined.")
+        self.store.audit("user", "approval_rejected", tool=row["tool"], session_id=row["session_id"],
+                         invocation_id=row["invocation_id"], approval_id=row["id"])
+        await self.bus.publish({"type": "approval_done", "id": row["id"], "status": "rejected", "text": "",
+                                "session_id": row["session_id"]})
+        return {"text": ""}
+
+    async def lapse_card(self, row, words: str) -> None:
+        """A tapped card that can't run as it was asked (its app is now off for the thread's owner): it lapses with
+        these words, audited, and every open app hears it; nothing runs."""
+        if not self.store.lapse_approval(row["id"]):
+            return
+        self.store.set_approval_result(row["id"], words)
+        self.store.audit("user", "approval_lapsed", tool=row["tool"], result_summary=words, session_id=row["session_id"],
+                         approval_id=row["id"])
+        await self.bus.publish({"type": "approval_done", "id": row["id"], "status": "expired", "text": words,
+                                "session_id": row["session_id"]})
 
     async def reconcile_approvals(self) -> int:
         """Decided approvals whose replay never finished (restart or crash between the tap and the tool): say so, once."""
@@ -1705,7 +1746,7 @@ class OdieRunner:
           echo, its server on for Mira alone -> {"error": "tester is switched off for Odie, …"}
           now, or an app on for Odie         -> None"""
         from odie.plugins import access
-        off_here = access.refusal(self.store, tool.name, args, session_id_of(tool_context))
+        off_here = access.refusal(self.store, tool, args, session_id_of(tool_context))
         if off_here is None:
             return None
         self.store.audit("agent", "tool_refused", tool=tool.name, result_summary="app switched off for Odie")

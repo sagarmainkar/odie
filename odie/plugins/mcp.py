@@ -211,19 +211,27 @@ def _session_id_of(readonly_context) -> str | None:
 class PluginMcpToolset(McpToolset):
     """An MCP toolset whose tools need the user's tap, unless the user switched "Reading doesn't need a tap" on for
     the server (reads_free) and the tool's name says it reads (asks); the server's own read-only hint frees nothing.
-    `smart` is a zero-argument function that says whether the approvals mode is Smart right now (None: always Careful).
-    It is called on every listing, and ADK lists the tools again at each step of a turn, so switching the mode mid-chat
-    shows on the next step."""
+    `smart` says whether the approvals mode is Smart right now (None: always Careful), and `allowed` whether a chat may
+    use this server at all. Both are read on every listing, and the listing is made again at every step of a turn
+    (ADK's per-invocation cache is off here: google/adk/tools/base_toolset.py get_tools_with_prefix), so a mode or a
+    switch changed mid-chat shows on the next step. The server's own tool list is reused for LIST_CACHE_SECONDS, so a
+    step costs no round trip to the server.
+
+    Every tool it hands out carries the name of its server (`_odie_server`): two connections of one service list the
+    same tool names, and which account a call reaches is a fact of the tool object ADK runs, not of its name
+    (odie.plugins.access.server_of_call)."""
 
     def __init__(self, *args, reads_free: bool = False, smart: Callable[[str | None], bool] | None = None,
-                 allowed: Callable[[str | None], bool] | None = None, **kwargs):
+                 allowed: Callable[[str | None], bool] | None = None, server: str | None = None, **kwargs):
         # smart: reads the live mode for a chat (the session id, or None outside one) on every listing; see runs_free.
         # allowed: whether the chat (the session id, or None outside one) may use this server at all
-        # (odie.plugins.access); None: every chat may.
+        # (odie.plugins.access); None: every chat may. server: its name in mcp.json, stamped on its tools.
         super().__init__(*args, **kwargs)
+        self._use_invocation_cache = False  # a listing per step: the switches and the mode are read live
         self.reads_free = reads_free
         self.smart = smart
         self.allowed = allowed
+        self.server = server
 
     def _allowed_in(self, session_id: str | None) -> bool:
         """Whether this chat may use the server, read live on every listing (a switch flipped in Settings counts from
@@ -260,9 +268,13 @@ class PluginMcpToolset(McpToolset):
         for t in tools:  # per tool; ADK's toolset option can't see annotations
             tool = {"name": t.name, "read_only": is_read_only(t), "destructive": is_destructive(t)}
             t._require_confirmation = asks(tool, self.reads_free, smart=smart_now)
+            t._odie_server = self.server  # which connection this object reaches, whatever its name
             # Background turns share these tool objects and must never get Smart's looser rule: they read this instead.
             t._asks_in_careful = asks(tool, self.reads_free, smart=False)
         return tools
+
+
+LIST_CACHE_SECONDS = 60  # how long a server's own tool list is reused between listings (PluginMcpToolset)
 
 
 def toolset_for(name: str, spec: dict, timeout: float = 30, smart: Callable[[str | None], bool] | None = None,
@@ -273,7 +285,8 @@ def toolset_for(name: str, spec: dict, timeout: float = 30, smart: Callable[[str
         env = {**server_env(), **(spec.get("env") or {})}
         params = StdioConnectionParams(server_params=StdioServerParameters(command=spec["command"], args=list(spec.get("args") or []), env=env),
                                        timeout=timeout)
-    return PluginMcpToolset(connection_params=params, reads_free=bool(spec.get("readsFree")), smart=smart, allowed=allowed)
+    return PluginMcpToolset(connection_params=params, reads_free=bool(spec.get("readsFree")), smart=smart, allowed=allowed,
+                            server=name, tool_list_cache_ttl_seconds=LIST_CACHE_SECONDS)
 
 
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")

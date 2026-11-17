@@ -435,3 +435,27 @@ async def test_a_tap_on_a_card_whose_brain_is_gone_is_answered_in_words_and_the_
     assert tapped.status_code == 409
     assert tapped.json()["detail"] == brains.GONE.format(name="Mira", model="miras-model", provider="work-box")
     assert store.get_approval(aid)["status"] == "pending"
+
+
+async def test_a_card_whose_brain_is_gone_can_still_be_declined(api, store):
+    """Declining needs no model: the No is recorded as before."""
+    mira = personalities.create(store, "Mira")
+    brains.choose(store, mira.id, "work-box", "miras-model")
+    personalities.claim(store, "chat-2026-11-17-2", mira.id)
+    aid = store.create_approval("chat-2026-11-17-2", "inv-1", "req-1", "run_shell", {"command": "ls"}, summary="List",
+                                detail={}, provenance=[])
+    store.set_setting("providers.custom", [])
+    declined = await api.post(f"/api/approvals/{aid}/decide?personality={mira.id}", json={"approve": False})
+    assert declined.status_code == 200 and declined.json()["status"] == "rejected"
+
+
+async def test_a_no_on_a_card_whose_brain_is_gone_is_recorded_without_a_model(runner, store):
+    mira = personalities.create(store, "Mira")
+    brains.choose(store, mira.id, "work-box", "miras-model")
+    miras = await runner.session_for(mira.id, D)
+    aid = store.create_approval(miras, "inv-1", "req-1", "run_shell", {"command": "ls"}, summary="List", detail={},
+                                provenance=[])
+    store.set_setting("providers.custom", [])
+    await runner.resume_approval(aid, False)
+    assert store.get_approval(aid)["status"] == "rejected"
+    assert Brain.calls == []

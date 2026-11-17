@@ -418,12 +418,38 @@ def test_which_app_a_tool_call_reaches(store, monkeypatch):
     from odie.plugins import mcp
     monkeypatch.setattr(mcp, "TOOL_SERVERS", {"echo": ["tester"]})
     odies = "chat-2026-11-17"
-    assert access.server_called(store, "echo", {"text": "x"}, odies) == "tester"
-    assert access.server_called(store, "load_skill", {"skill_name": "mcp-tester"}, odies) == "tester"
-    assert access.server_called(store, "load_skill", {"skill_name": "trackers"}, odies) is None
-    assert access.server_called(store, "load_skill", {}, odies) is None
-    assert access.server_called(store, "load_skill", None, odies) is None
-    assert access.server_called(store, "run_shell", {"command": "ls"}, odies) is None
+    named = SimpleNamespace(name="echo")  # an object with no stamp: looked up by its name
+    stamped = SimpleNamespace(name="echo", _odie_server="tester-2")  # the toolset said where it goes: that wins
+    skill = SimpleNamespace(name="load_skill")
+    assert access.server_called(store, named, {"text": "x"}, odies) == "tester"
+    assert access.server_called(store, stamped, {"text": "x"}, odies) == "tester-2"
+    assert access.server_called(store, skill, {"skill_name": "mcp-tester"}, odies) == "tester"
+    assert access.server_called(store, skill, {"skill_name": "trackers"}, odies) is None
+    assert access.server_called(store, skill, {}, odies) is None
+    assert access.server_called(store, skill, None, odies) is None
+    assert access.server_called(store, SimpleNamespace(name="run_shell"), {"command": "ls"}, odies) is None
+
+
+async def test_a_tapped_call_whose_object_reaches_another_app_than_its_card_lapses(runner, store):
+    """The last guard, as the tapped call is about to run: its object must reach the very server the card named."""
+    mira = await _home_and_work_mail(runner, store)
+    del mira
+    odies = runner.current_session_id(D)
+    aid = store.create_approval(odies, "inv-1", "req-1", "send_email", {"text": "hi"}, summary="Send email in Home mail",
+                                detail={"server": "mail", "app": "Home mail"}, provenance=[], call_id="call-7")
+    store.decide_approval(aid, True)
+    tapped = SimpleNamespace(session=SimpleNamespace(id=odies), function_call_id="call-7",
+                             tool_confirmation=SimpleNamespace(confirmed=True))
+    work_object = SimpleNamespace(name="send_email", _odie_server="mail-2")
+    refused = await runner.plugin.before_tool_callback(tool=work_object, tool_args={"text": "hi"}, tool_context=tapped)
+    assert refused == {"error": LAPSED}
+    assert store.get_approval(aid)["status"] == "expired"
+    home_object = SimpleNamespace(name="send_email", _odie_server="mail")
+    aid2 = store.create_approval(odies, "inv-2", "req-2", "send_email", {"text": "hi"}, summary="Send email in Home mail",
+                                 detail={"server": "mail", "app": "Home mail"}, provenance=[], call_id="call-8")
+    store.decide_approval(aid2, True)
+    tapped.function_call_id = "call-8"
+    assert await runner.plugin.before_tool_callback(tool=home_object, tool_args={"text": "hi"}, tool_context=tapped) is None
 
 
 # ── two connections of one service, one for each owner ──
@@ -610,3 +636,144 @@ async def test_her_own_connected_service_loads_and_is_the_one_her_thread_uses(ap
     assert access.server_of_tool(store, "execute_zapier_read_action", miras) == "zapier-2"
     assert access.server_of_tool(store, "execute_zapier_read_action", runner.current_session_id(D)) == "zapier"
     assert access.skills_off_in(store, miras) == frozenset({"mcp-zapier"})  # her catalog shows only her own
+
+
+# ── a tap is consent for the account the card named, and nothing else ──
+
+@pytest.fixture
+def sending_asks(monkeypatch):
+    """send_email waits for a tap, as a real send does; the rest run without one."""
+    from odie.plugins import mcp
+    monkeypatch.setattr(mcp, "asks", lambda tool, free, smart=False: tool["name"] == "send_email")
+
+
+SEND_SCRIPT = {"Odie": [("load_skill", {"skill_name": "mcp-mail"}), ("send_email", {"text": "hi"}), "Sent.", "Sent."],
+               "Mira": [("load_skill", {"skill_name": "mcp-mail-2"}), ("find_email", {"query": "q"}), "Found."]}
+
+
+async def _odies_card(runner) -> dict:
+    """Odie asks to send a mail from his home account; the turn pauses on its card."""
+    Plays.script = dict(SEND_SCRIPT)
+    events = [e async for e in runner.chat("Odie sends a mail", session_id=runner.current_session_id(D))]
+    [card] = [e for e in events if e["type"] == "approval"]
+    return card
+
+
+def _move_odie_to_work_mail(store) -> None:
+    """The owner switches everyday Odie from home mail to work mail."""
+    access.set_allowed(store, "mail", ODIE, False)
+    access.set_allowed(store, "mail-2", ODIE, True)
+
+
+def _accounts_that_sent() -> list[str]:
+    """Which account answered each send_email that ran, from the tool results the model was shown."""
+    sent = []
+    for step in Plays.seen:
+        said = str(step["results"].get("send_email", ""))
+        for account in ("home", "work"):
+            if f"sent from the {account} account" in said:
+                sent.append(account)
+    return sent
+
+
+LAPSED = "This card was for Home mail, which is now off for Odie. Ask again."
+
+
+async def test_a_tap_runs_on_the_account_the_card_named(runner, store, sending_asks):
+    await _home_and_work_mail(runner, store)
+    card = await _odies_card(runner)
+    assert card["detail"]["app"] == "Home mail" and card["detail"]["server"] == "mail"
+    await runner.resume_approval(card["id"], True)
+    assert _accounts_that_sent() == ["home"]
+
+
+async def test_a_tap_after_the_owner_moved_odie_to_another_account_sends_nothing(runner, store, sending_asks):
+    await _home_and_work_mail(runner, store)
+    card = await _odies_card(runner)
+    _move_odie_to_work_mail(store)
+    got = await runner.resume_approval(card["id"], True)
+    assert _accounts_that_sent() == []
+    assert got == {"error": LAPSED}
+    row = store.get_approval(card["id"])
+    assert (row["status"], row["result_text"]) == ("expired", LAPSED)
+    assert store.one("select 1 from audit_log where event='approval_lapsed' and approval_id=?", (card["id"],))
+
+
+async def test_another_turn_between_the_card_and_the_tap_changes_nothing(runner, store, sending_asks):
+    mira = await _home_and_work_mail(runner, store)
+    card = await _odies_card(runner)
+    await _say(runner, "Mira finds a mail", await runner.session_for(mira.id, D))  # lists the apps again
+    _move_odie_to_work_mail(store)
+    assert await runner.resume_approval(card["id"], True) == {"error": LAPSED}
+    assert _accounts_that_sent() == []
+
+
+async def test_a_pending_card_after_a_restart_is_held_to_its_account(store, sending_asks, monkeypatch):
+    from odie.app import runner as runner_mod
+    monkeypatch.setattr(runner_mod, "model_for", lambda selection, thinking, room=None: Plays(model="plays"))
+    Plays.seen = []
+    first = runner_mod.OdieRunner(store)
+    try:
+        await _home_and_work_mail(first, store)
+        card = await _odies_card(first)
+    finally:
+        await first.close()
+    _move_odie_to_work_mail(store)
+    second = runner_mod.OdieRunner(store)  # Odie restarted with the card still waiting
+    try:
+        await second.load_plugins()
+        assert await second.resume_approval(card["id"], True) == {"error": LAPSED}
+    finally:
+        await second.close()
+    assert _accounts_that_sent() == []
+
+
+async def test_a_switch_flipped_while_the_model_writes_the_call_stops_it(runner, store, monkeypatch):
+    """The model's request listed home mail; the owner moves Odie to work mail before the call comes back: the call
+    reaches the server it was listed from (home), which is now off for Odie, so it is refused and nothing is sent."""
+    await _home_and_work_mail(runner, store)
+    real = Plays.generate_content_async
+
+    async def flips_while_writing(self, llm_request, stream=False):
+        odies_steps = len([s for s in Plays.seen if s["who"] == "Odie"])
+        if odies_steps == 1:
+            _move_odie_to_work_mail(store)
+        async for reply in real(self, llm_request, stream):
+            yield reply
+    monkeypatch.setattr(Plays, "generate_content_async", flips_while_writing)
+    Plays.script = {"Odie": [("load_skill", {"skill_name": "mcp-mail"}), ("send_email", {"text": "hi"}), "Not sent."]}
+    await _say(runner, "Odie sends a mail", runner.current_session_id(D))
+    assert _accounts_that_sent() == []
+    refused = Plays.seen[-1]["results"]["send_email"]
+    assert refused == {"error": access.OFF_HERE.format(app="mail", name="Odie")}
+    logged = store.one("select result_summary from audit_log where event='tool_refused' and tool='send_email'")
+    assert logged["result_summary"] == "mail switched off here"
+
+
+async def test_tapping_a_card_whose_app_moved_answers_it_as_lapsed(api, runner, store):
+    await _home_and_work_mail(runner, store)
+    odies = runner.current_session_id(D)
+    aid = store.create_approval(odies, "inv-1", "req-1", "send_email", {"text": "hi"}, summary="Send email in Home mail",
+                                detail={"server": "mail", "app": "Home mail"}, provenance=[], call_id="call-7")
+    _move_odie_to_work_mail(store)
+    tapped = await api.post(f"/api/approvals/{aid}/decide", json={"approve": True})
+    assert tapped.status_code == 200 and tapped.json() == {"status": "expired", "text": LAPSED}
+    assert store.get_approval(aid)["status"] == "expired"
+
+
+async def test_an_apps_tools_are_listed_again_at_each_step_and_carry_their_server(isolated_settings):
+    """ADK keeps a toolset's tools for the whole turn unless the toolset says not to: an app's are listed again at each
+    step, so a switch or the approvals mode changed mid-turn shows on the next step, and each tool says its server."""
+    from odie.plugins import mcp
+    smart = {"on": False}
+    toolset = mcp.toolset_for("tester", TESTER, smart=lambda session_id: smart["on"])
+    step = SimpleNamespace(session=SimpleNamespace(id="chat-2026-11-17"), invocation_id="inv-1", state={}, agent_name="odie")
+    try:
+        first = {t.name: t for t in await toolset.get_tools_with_prefix(step)}
+        smart["on"] = True  # Smart from the next step on, in the same turn
+        second = {t.name: t for t in await toolset.get_tools_with_prefix(step)}
+    finally:
+        await toolset.close()
+    assert first["echo"]._odie_server == "tester" and second["echo"]._odie_server == "tester"
+    assert first["echo"] is not second["echo"]  # listed again, not ADK's copy from the turn's first step
+    assert first["echo"]._require_confirmation is True and second["echo"]._require_confirmation is False

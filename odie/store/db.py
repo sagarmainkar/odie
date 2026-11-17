@@ -219,6 +219,13 @@ class Store:
                            ("approved" if approve else "rejected", now_iso(), approval_id))
         return cur.rowcount == 1
 
+    def lapse_approval(self, approval_id: int) -> bool:
+        """Mark a card lapsed (status "expired") when its tap can't be honoured as it was asked: waiting, or tapped and
+        about to run. True when it changed; False for one already answered otherwise."""
+        cur = self.execute("update approvals set status='expired', decided_at=? where id=? and status in ('pending','approved')",
+                           (now_iso(), approval_id))
+        return cur.rowcount == 1
+
     def set_approval_result(self, approval_id: int, text: str) -> None:
         self.execute("update approvals set result_text=? where id=?", (text[:2000], approval_id))
 

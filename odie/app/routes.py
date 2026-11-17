@@ -2485,13 +2485,19 @@ async def approval_decide(approval_id: int, body: DecideIn, request: Request):
     """Answer at once so the card collapses; the paused turn resumes in its own task (it can take minutes) and
     reports through the live stream (approval, message, approval_done)."""
     from odie import brains
+    from odie.plugins import access
     row = _own_approval(request, approval_id)
     if row["status"] != "pending":
         raise HTTPException(409, f"already {row['status']}")
-    try:
-        brains.for_thread(request.app.state.store, row["session_id"])
-    except brains.BrainGone as gone:  # the turn couldn't go on: the card keeps waiting, and the words say why
-        raise HTTPException(409, str(gone))
+    if body.approve:  # a No needs no model and no app: it is recorded whatever has changed
+        moved = access.card_moved(request.app.state.store, row)
+        if moved:  # a tap is consent for the app the card named; that app is now off here: the card lapses
+            await request.app.state.runner.lapse_card(row, moved)
+            return {"status": "expired", "text": moved}
+        try:
+            brains.for_thread(request.app.state.store, row["session_id"])
+        except brains.BrainGone as gone:  # the turn couldn't go on: the card keeps waiting, and the words say why
+            raise HTTPException(409, str(gone))
     out: dict[str, Any] = {"status": "approved" if body.approve else "rejected"}
     if body.approve and body.allow_minutes and row["tool"] == "run_shell":
         from datetime import datetime
