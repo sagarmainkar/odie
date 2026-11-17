@@ -1296,6 +1296,10 @@ class OdieRunner:
         row = self.store.get_approval(approval_id)
         if row is None:
             return {"error": "no such approval"}
+        try:
+            selection = brains.for_thread(self.store, row["session_id"])  # the paused turn goes on with its own brain
+        except brains.BrainGone as gone:
+            return {"error": str(gone)}  # checked before the tap counts: the card stays waiting until the brain is back
         if not self.store.decide_approval(approval_id, approve):
             return {"error": f"already {self.store.get_approval(approval_id)['status']}"}
         row = self.store.get_approval(approval_id)  # again, so it carries decided_at
@@ -1309,14 +1313,6 @@ class OdieRunner:
         asked = {row["call_id"]} if row["call_id"] else set()  # the tapped call was asked: its result is no pass
         from odie import thinking as chat_thinking
         from odie.agent import turn
-        try:
-            selection = brains.for_thread(self.store, row["session_id"])  # the paused turn goes on with its own brain
-        except brains.BrainGone as gone:
-            text = str(gone)
-            self.store.set_approval_result(approval_id, text)
-            await self.bus.publish({"type": "approval_done", "id": approval_id, "status": "approved" if approve else "rejected",
-                                    "error": text, "session_id": row["session_id"]})
-            return {"error": text}
         effort_up = chat_effort_think_harder(selection, chat_thinking.get(self.store, row["session_id"]))
         async with self.lock_for(row["session_id"]):
             brain = turn.MODEL.set(self._chat_model(selection, effort_up))

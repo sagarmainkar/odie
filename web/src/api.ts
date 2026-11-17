@@ -8,9 +8,17 @@ export async function getJSON<T>(url: string): Promise<T> {
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
   return r.json();
 }
+/** What a refused call says: the server's own words when it gave some, else the status.
+ *    409 {"detail": "Mira's brain … isn't set up any more, …"} -> those words (a tap on her card: the card keeps waiting)
+ *    500, no body; or a detail that isn't words              -> "HTTP 500" */
+export function errorWords(status: number, body: unknown): string {
+  const detail = (body as { detail?: unknown } | null)?.detail;
+  if (typeof detail === "string") return detail;
+  return `HTTP ${status}`;
+}
 export async function postJSON<T>(url: string, body: unknown): Promise<T> {
   const r = await fetch(withPick(url), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  if (!r.ok) throw new Error(errorWords(r.status, await r.json().catch(() => null)));
   return r.json();
 }
 export async function putJSON<T>(url: string, body: unknown): Promise<T> {

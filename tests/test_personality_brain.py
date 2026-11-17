@@ -251,13 +251,17 @@ async def test_a_tap_whose_brain_is_gone_is_not_resumed_on_another(runner, store
     ran = []
 
     async def resumed(**kw):
-        ran.append(kw)
-        if False:
-            yield None
+        ran.append(runner.agent.canonical_model.model)
+        yield SimpleNamespace(author="odie", partial=False, invocation_id="inv-1",
+                              content=types.Content(role="model", parts=[types.Part(text="Listed.")]))
     runner.runner.run_async = resumed
     got = await runner.resume_approval(aid, True)
     assert got == {"error": brains.GONE.format(name="Mira", model="miras-model", provider="work-box")}
     assert ran == []
+    assert store.get_approval(aid)["status"] == "pending"  # the tap isn't used up: it can be tapped again
+    store.set_setting("providers.custom", [WORK_BOX])  # the work box is back
+    assert (await runner.resume_approval(aid, True))["text"] == "Listed."
+    assert ran == ["miras-model"] and store.get_approval(aid)["status"] == "approved"
 
 
 async def test_the_trim_reads_the_window_of_the_threads_brain(runner, store, monkeypatch):
@@ -418,3 +422,16 @@ def test_the_terminals_key_cant_reach_these_routes():
                          ("GET", "/api/mcp"), ("POST", "/api/mcp/work-mail/access"), ("POST", "/api/mcp")):
         assert not devices.terminal_may(method, path, "personality=abc")
         assert not devices.terminal_may(method, path, "")
+
+
+async def test_a_tap_on_a_card_whose_brain_is_gone_is_answered_in_words_and_the_card_waits(api, store):
+    mira = personalities.create(store, "Mira")
+    brains.choose(store, mira.id, "work-box", "miras-model")
+    personalities.claim(store, "chat-2026-11-17-2", mira.id)
+    aid = store.create_approval("chat-2026-11-17-2", "inv-1", "req-1", "run_shell", {"command": "ls"}, summary="List",
+                                detail={}, provenance=[])
+    store.set_setting("providers.custom", [])
+    tapped = await api.post(f"/api/approvals/{aid}/decide?personality={mira.id}", json={"approve": True})
+    assert tapped.status_code == 409
+    assert tapped.json()["detail"] == brains.GONE.format(name="Mira", model="miras-model", provider="work-box")
+    assert store.get_approval(aid)["status"] == "pending"

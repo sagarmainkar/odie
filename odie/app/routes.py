@@ -2479,9 +2479,14 @@ _resuming: set[asyncio.Task] = set()  # strong refs to turns resuming after a ta
 async def approval_decide(approval_id: int, body: DecideIn, request: Request):
     """Answer at once so the card collapses; the paused turn resumes in its own task (it can take minutes) and
     reports through the live stream (approval, message, approval_done)."""
+    from odie import brains
     row = _own_approval(request, approval_id)
     if row["status"] != "pending":
         raise HTTPException(409, f"already {row['status']}")
+    try:
+        brains.for_thread(request.app.state.store, row["session_id"])
+    except brains.BrainGone as gone:  # the turn couldn't go on: the card keeps waiting, and the words say why
+        raise HTTPException(409, str(gone))
     out: dict[str, Any] = {"status": "approved" if body.approve else "rejected"}
     if body.approve and body.allow_minutes and row["tool"] == "run_shell":
         from datetime import datetime
