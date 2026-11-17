@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { avatarUrl, deleteWords, personaUrl, showsDelete, showsWhoLine, soulUrl, whoLine } from "./settingsPick";
+import {
+  SAME_AS_ODIE, appsUrl, avatarUrl, brainChoiceUrl, brainHeading, canUseLabel, canUseUrl, connectUrl, deleteWords, goneWords, modelsUrl,
+  personaUrl, pickedBrainSub, showsCanUse, showsDelete, showsSameAsOdie, showsWhoLine, soulUrl, whoLine,
+} from "./settingsPick";
 
 describe("Settings follows the picked personality", () => {
   it("reads and saves the name, the picture and the personality of whoever is picked", () => {
@@ -31,5 +34,59 @@ describe("Settings follows the picked personality", () => {
     expect(deleteWords("Mira", 4)).toBe("Delete Mira and its 4 threads?" + rest);
     expect(deleteWords("Mira", 1)).toBe("Delete Mira and its 1 thread?" + rest);
     expect(deleteWords("Mira", 0)).toBe("Delete Mira?" + rest);
+  });
+});
+
+describe("Settings → Brain follows the picked personality", () => {
+  it("reads and picks the brain of whoever is picked, saying who even for Odie", () => {
+    expect(modelsUrl("abc")).toBe("/api/models?personality=abc");
+    expect(modelsUrl("")).toBe("/api/models?personality=");
+    expect(brainChoiceUrl("abc")).toBe("/api/models/selection?personality=abc");
+    expect(brainChoiceUrl("")).toBe("/api/models/selection?personality=");
+  });
+
+  it("offers \"Same as Odie\" first for a personality, never for Odie", () => {
+    expect(showsSameAsOdie("abc")).toBe(true);
+    expect(showsSameAsOdie("")).toBe(false);
+    expect(SAME_AS_ODIE).toBe("Same as Odie");
+  });
+
+  it("says whose brain the card shows", () => {
+    expect(brainHeading("Mira")).toBe("Mira is using");
+    expect(brainHeading("Odie")).toBe("Odie is using");
+  });
+
+  it("words the Settings row for a personality's brain", () => {
+    const same = { provider: "lmstudio", model: "lmstudio-community/gemma-4", same_as_odie: true, gone: false, reachable: true };
+    expect(pickedBrainSub(same, "LM Studio")).toBe("Same as Odie · gemma-4 · LM Studio");
+    const own = { provider: "work-box", model: "qwen3.8", same_as_odie: false, gone: false, reachable: true };
+    expect(pickedBrainSub(own, "Work box")).toBe("qwen3.8 · Work box");
+    expect(pickedBrainSub({ ...own, reachable: false }, "Work box")).toBe("qwen3.8 · Work box isn't reachable");
+    expect(pickedBrainSub({ ...own, gone: true, reachable: false }, "work-box")).toBe("qwen3.8 · isn't set up any more: pick another");
+  });
+
+  it("words the line when a personality's own brain is gone", () => {
+    expect(goneWords("Mira")).toBe("Mira's brain isn't set up any more, so Mira won't answer. Pick another below, or Same as Odie.");
+  });
+});
+
+describe("Connected apps follow the picked personality", () => {
+  it("lists, adds and connects apps for whoever is picked", () => {
+    expect(appsUrl("abc")).toBe("/api/mcp?personality=abc");
+    expect(appsUrl("")).toBe("/api/mcp?personality=");
+    expect(connectUrl("abc")).toBe("/api/mcp/connect?personality=abc");
+  });
+
+  it("flips one app's switch for whoever is picked", () => {
+    expect(canUseUrl("work-mail", "abc")).toBe("/api/mcp/work-mail/access?personality=abc");
+    expect(canUseUrl("work-mail", "")).toBe("/api/mcp/work-mail/access?personality=");
+    expect(canUseLabel("Mira")).toBe("Mira can use this");
+    expect(canUseLabel("Odie")).toBe("Odie can use this");
+  });
+
+  it("shows that switch once there is someone else to switch it for", () => {
+    expect(showsCanUse("", 0)).toBe(false);  // no personalities: the list looks as it always has
+    expect(showsCanUse("", 1)).toBe(true);
+    expect(showsCanUse("abc", 1)).toBe(true);
   });
 });

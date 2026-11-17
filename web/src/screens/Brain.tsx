@@ -3,13 +3,17 @@ import type { ReactNode } from "react";
 import { getJSON, postJSON } from "../api";
 import { badge, brainState, partLine, said, tone, type BrainReport } from "../brain";
 import { Collapse } from "../components/Collapse";
+import { usePickedPersona } from "../persona";
+import { usePick } from "../pick";
 import { addressHint, creativityLabel, visibleModels, type Creativity } from "../providers";
+import { SAME_AS_ODIE, brainChoiceUrl, brainHeading, goneWords, modelsUrl, showsSameAsOdie } from "../settingsPick";
 import { usageLine, type Usage } from "../usage";
 
 type ModelRow = { id: string; local: boolean };
 type ProviderRow = { id: string; name: string; local: boolean; models: ModelRow[]; error: string | null; base_url?: string; base_url_env?: string | null };
-type Sel = { provider: string; model: string; leaves_mini: boolean; chosen?: boolean; reachable?: boolean };
-type Data = { providers: ProviderRow[]; selection: { chat: Sel }; creativity?: Creativity };
+// same_as_odie and gone come only for a personality: it follows everyday Odie's brain, or its own is no longer set up
+type Sel = { provider: string; model: string; leaves_mini: boolean; chosen?: boolean; reachable?: boolean; same_as_odie?: boolean; gone?: boolean };
+type Data = { providers: ProviderRow[]; selection: { chat: Sel }; creativity?: Creativity; odie?: { provider: string; model: string; leaves_mini: boolean } };
 
 function Pill({ local, children }: { local: boolean; children?: ReactNode }) {
   return <span className={`chip ${local ? "chip-good" : "chip-warn"}`}>{children ?? (local ? "on this computer" : "leaves this computer")}</span>;
@@ -65,7 +69,26 @@ function CreativityCard({ creativity, isClaude }: { creativity: Creativity; isCl
   );
 }
 
+/** "Same as Odie": a personality's first choice, which follows everyday Odie's brain. */
+function SameAsOdie({ on, busy, odie, onChoose }: { on: boolean; busy: boolean; odie?: Data["odie"]; onChoose: () => void }) {
+  return (
+    <div className="glass rounded-[26px] overflow-hidden">
+      <button onClick={onChoose} disabled={busy} className="w-full text-left flex items-center gap-3 px-4 min-h-[52px] py-2 active:bg-well">
+        <span className={`w-2 h-2 rounded-full shrink-0 ${on ? "bg-iris" : "bg-line-2"}`} />
+        <span className="flex-1 min-w-0">
+          <span className={`block text-[15px] leading-5 ${on ? "font-medium" : ""}`}>{SAME_AS_ODIE}</span>
+          {odie && <span className="block text-[12.5px] leading-[18px] text-muted truncate">{odie.model.split("/").pop()}</span>}
+        </span>
+        {on && <svg className="text-ember-text shrink-0" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M5 13l4 4L19 7" /></svg>}
+      </button>
+    </div>
+  );
+}
+
 export function Brain() {
+  // With a personality picked, this screen shows and chooses its brain: "Same as Odie" or one of its own.
+  const pick = usePick();
+  const picked = usePickedPersona();
   const [data, setData] = useState<Data | null>(null);
   const [failed, setFailed] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
@@ -76,10 +99,10 @@ export function Brain() {
   const [usage, setUsage] = useState<Usage | null>(null);
   const load = useCallback(() => {
     setFailed(false);
-    getJSON<Data>("/api/models").then(setData).catch(() => setFailed(true));
+    getJSON<Data>(modelsUrl(pick)).then(setData).catch(() => setFailed(true));
     getJSON<{ usage: Usage | null }>("/api/models/usage").then((r) => setUsage(r.usage)).catch(() => {});
     getJSON<Record<string, BrainReport>>("/api/brain/checks").then(setChecks).catch(() => {});
-  }, []);
+  }, [pick]);
   useEffect(() => { load(); }, [load]);
 
   async function checkModel(provider: string, model: string) {
@@ -95,11 +118,20 @@ export function Brain() {
   async function choose(provider: string, model: string) {
     setBusy(`${provider}/${model}`);
     try {
-      const r = await fetch("/api/models/selection", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ slot: "chat", provider, model }) });
+      const r = await fetch(brainChoiceUrl(pick), { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ slot: "chat", provider, model }) });
+      if (r.ok) load();
+    } finally { setBusy(null); }
+  }
+  async function followOdie() {
+    setBusy(SAME_AS_ODIE);
+    try {
+      const r = await fetch(brainChoiceUrl(pick), { method: "DELETE" });
       if (r.ok) load();
     } finally { setBusy(null); }
   }
   const current = data?.selection.chat;
+  const ownPick = current && !current.same_as_odie;  // a model row is ticked only for a brain of its own
+  const heading = pick ? brainHeading(picked.name) : "Odie is using";  // everyday Odie's card reads as it always has
   const state = brainState(current?.chosen, current?.reachable);
   const providerName = (id: string) => data?.providers.find((p) => p.id === id)?.name ?? id;
 
@@ -112,7 +144,16 @@ export function Brain() {
         <div className="text-[21px] font-bold tracking-[-0.015em]">Brain</div>
       </div>
 
-      {current && state === "none" && (
+      {current?.gone && (
+        <div className="glass rounded-[26px] p-4 flex flex-col gap-1">
+          <div className="text-[17px] leading-[22px] font-medium"><ModelName id={current.model} /></div>
+          <div className="flex items-start gap-2 text-[13px] leading-[18px] text-muted">
+            <span className="w-1.5 h-1.5 rounded-full bg-gold mt-1.5 shrink-0" />
+            {goneWords(picked.name)}
+          </div>
+        </div>
+      )}
+      {current && !current.gone && state === "none" && (
         <div className="glass rounded-[26px] p-4 flex flex-col gap-1">
           <div className="text-[17px] leading-[22px] font-medium">No brain yet</div>
           <div className="flex items-start gap-2 text-[13px] leading-[18px] text-muted">
@@ -121,9 +162,9 @@ export function Brain() {
           </div>
         </div>
       )}
-      {current && state !== "none" && (
+      {current && !current.gone && state !== "none" && (
         <div className="glass rounded-[26px] p-4 flex flex-col gap-1">
-          <div className="text-[13px] leading-5 font-bold text-muted">Odie is using</div>
+          <div className="text-[13px] leading-5 font-bold text-muted">{heading}{current.same_as_odie ? ` · ${SAME_AS_ODIE}` : ""}</div>
           <ModelName id={current.model} className="text-[17px] leading-[22px] font-medium block" />
           <div className="flex items-center gap-2 text-[13px] leading-[18px] text-muted">
             <span className={`w-1.5 h-1.5 rounded-full ${state === "unreachable" || current.leaves_mini ? "bg-gold" : "bg-moss"}`} />
@@ -150,6 +191,8 @@ export function Brain() {
       )}
       {failed && <div className="text-[14px] text-muted">Couldn't reach the server. <button onClick={load} className="text-ember-text font-medium">Retry</button></div>}
 
+      {data && showsSameAsOdie(pick) && <SameAsOdie on={!!current?.same_as_odie} busy={busy !== null} odie={data.odie} onChoose={() => void followOdie()} />}
+
       {data?.providers.map((p) => {
         const { shown, hidden } = visibleModels(p.models, query, expanded[p.id] ? Infinity : 12, current?.provider === p.id ? current.model : undefined);
         if (query.trim() && shown.length === 0) return null;
@@ -160,7 +203,7 @@ export function Brain() {
             {p.error && <div className="px-4 py-2 text-[14px] text-muted flex items-center justify-between">Not reachable <button onClick={load} className="h-10 px-3 -mr-3 text-ember-text font-medium">Retry</button></div>}
             {!p.error && p.models.length === 0 && <div className="px-4 py-3 text-[14px] text-muted">No chat models listed</div>}
             {shown.map((m, i) => {
-              const on = current?.provider === p.id && current?.model === m.id;
+              const on = !!ownPick && current?.provider === p.id && current?.model === m.id;
               const isBusy = busy === `${p.id}/${m.id}`;
               return (
                 <button key={m.id} onClick={() => choose(p.id, m.id)} disabled={busy !== null}

@@ -18,7 +18,7 @@ import { BrowserSection } from "../components/BrowserSection";
 import { personaChanged, usePickedPersona } from "../persona";
 import { setPick, usePick } from "../pick";
 import { deletePersonality, personalitiesChanged, usePersonalities } from "../personalities";
-import { avatarUrl, deleteWords, personaUrl, showsDelete, showsWhoLine, soulUrl, whoLine } from "../settingsPick";
+import { avatarUrl, deleteWords, modelsUrl, pickedBrainSub, personaUrl, showsDelete, showsWhoLine, soulUrl, whoLine, type PickedBrain } from "../settingsPick";
 import { Switcher } from "../components/Switcher";
 import { profileChanged, useProfile } from "../profile";
 import { has, useCaps } from "../capabilities";
@@ -508,6 +508,37 @@ function brainOk(h: Health | null): Dot {
   return true;
 }
 
+/** The Brain row: everyday Odie's brain from the health check, as always; with a personality picked, that one's brain
+ *  ("Same as Odie · …", its own, or its own that is no longer set up). */
+function BrainRow({ h }: { h: Health | null }) {
+  const pick = usePick();
+  // the picked one's brain, with whose it is: one loaded for an earlier pick shows as loading until this one's comes
+  const [loaded, setLoaded] = useState<{ pick: string; brain: PickedBrain & { leaves_mini?: boolean }; where: string } | null>(null);
+  useEffect(() => {
+    if (!pick) return;
+    type Models = { providers: { id: string; name: string }[]; selection: { chat: PickedBrain & { leaves_mini?: boolean } } };
+    getJSON<Models>(modelsUrl(pick)).then((d) => {
+      const brain = d.selection.chat;
+      const where = d.providers.find((p) => p.id === brain.provider)?.name ?? brain.provider;
+      setLoaded({ pick, brain, where });
+    }).catch(() => {});
+  }, [pick]);
+  const its = loaded?.pick === pick ? loaded : null;
+  if (!pick) {
+    return (
+      <Row icon={{ icon: "brain", color: "ink" }} ok={brainOk(h)} title="Brain" sub={brainSub(h)}
+        right={h && brainState(h.brain_chosen, h.brain_reachable) === "ready" ? (h.leaves_mini ? <Pill tone="ember">leaves this computer</Pill> : <Pill tone="moss">on this computer</Pill>) : undefined} chevron />
+    );
+  }
+  if (!its) return <Row icon={{ icon: "brain", color: "ink" }} ok="loading" title="Brain" sub="…" chevron />;
+  const usable = !its.brain.gone && its.brain.reachable !== false;
+  const ok: Dot = usable && !its.brain.leaves_mini ? true : "warn";
+  return (
+    <Row icon={{ icon: "brain", color: "ink" }} ok={ok} title="Brain" sub={pickedBrainSub(its.brain, its.where)}
+      right={usable ? (its.brain.leaves_mini ? <Pill tone="ember">leaves this computer</Pill> : <Pill tone="moss">on this computer</Pill>) : undefined} chevron />
+  );
+}
+
 export function Settings() {
   const caps = useCaps();
   const [h, setH] = useState<Health | null>(null);
@@ -600,8 +631,7 @@ export function Settings() {
           <Section title="Connections">
             {has(caps, "google") && <GoogleRows g={g} flash={flash} setupAction={g && !g.client_configured ? googleAction : null} reload={() => getJSON<Google>("/api/google/status").then(setG).catch(() => {})} />}
             <a href="#brain" className="block active:bg-well">
-              <Row icon={{ icon: "brain", color: "ink" }} ok={brainOk(h)} title="Brain" sub={brainSub(h)}
-                right={h && brainState(h.brain_chosen, h.brain_reachable) === "ready" ? (h.leaves_mini ? <Pill tone="ember">leaves this computer</Pill> : <Pill tone="moss">on this computer</Pill>) : undefined} chevron />
+              <BrainRow h={h} />
             </a>
           </Section>
 

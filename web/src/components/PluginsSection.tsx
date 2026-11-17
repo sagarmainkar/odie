@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { getJSON, postJSON } from "../api";
+import { usePickedPersona } from "../persona";
+import { usePersonalities } from "../personalities";
+import { usePick } from "../pick";
+import { appsUrl, canUseLabel, canUseUrl, connectUrl, showsCanUse } from "../settingsPick";
 import { checkSummary, formFromServer, linkCarriesToken, serverTitle, specFromForm, ownSkills, statusLabel, toolLabel, type Check, type Preset, type ServerForm, type ServerRow, type SkillRow } from "../plugins";
 import { Collapse } from "./Collapse";
 import { Switch } from "./Switch";
@@ -42,8 +46,13 @@ function CheckResult({ check }: { check: Check }) {
 }
 
 /** Settings: skills Odie can load and the MCP servers it connects to, from odie/skills, ~/.odie/skills
- * and ~/.odie/mcp.json. Allow code, switches, add a server, reload. */
+ * and ~/.odie/mcp.json. Allow code, switches, add a server, reload. Each server also says whether whoever is picked
+ * may use it ("Mira can use this"), and a server added here is the picked one's alone. */
 export function PluginsSection() {
+  const pick = usePick();
+  const picked = usePickedPersona();
+  const personalities = usePersonalities();
+  const perWho = showsCanUse(pick, personalities.list.length);
   const [skills, setSkills] = useState<SkillRow[] | null>(null);
   const [servers, setServers] = useState<ServerRow[] | null>(null);
   const [configError, setConfigError] = useState("");
@@ -61,10 +70,10 @@ export function PluginsSection() {
 
   const load = useCallback(async () => {
     try {
-      const [s, m] = await Promise.all([getJSON<{ skills: SkillRow[] }>("/api/skills"), getJSON<{ servers: ServerRow[]; error: string }>("/api/mcp")]);
+      const [s, m] = await Promise.all([getJSON<{ skills: SkillRow[] }>("/api/skills"), getJSON<{ servers: ServerRow[]; error: string }>(appsUrl(pick))]);
       setSkills(s.skills); setServers(m.servers); setConfigError(m.error || "");
     } catch { /* keep what we have */ }
-  }, []);
+  }, [pick]);
   useEffect(() => { void load(); }, [load]);
   useEffect(() => { getJSON<Preset[]>("/api/mcp/presets").then(setPresets).catch(() => {}); }, []);
   useEffect(() => { setCheck(null); }, [form]);  // a change needs a new check
@@ -81,7 +90,7 @@ export function PluginsSection() {
     setFormError("");
     if (!editing && servers?.some((m) => m.name === r.name) && !confirm(`An app with the id "${r.name}" exists. Replace it?`)) return;
     await act(async () => {
-      const res = await fetch("/api/mcp", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(r) });
+      const res = await fetch(appsUrl(pick), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(r) });
       if (!res.ok) {
         let msg = `Couldn't save (${res.status})`;
         try { const j = await res.json(); if (typeof j.detail === "string") msg = j.detail; } catch { /* keep the status */ }
@@ -105,7 +114,7 @@ export function PluginsSection() {
   async function connectPreset(checkOnly: boolean) {
     if (!preset) return;
     setBusy(true);
-    const got = await postCheck("/api/mcp/connect", { preset: preset.id, url: link.trim(), key: key.trim(), check_only: checkOnly });
+    const got = await postCheck(connectUrl(pick), { preset: preset.id, url: link.trim(), key: key.trim(), check_only: checkOnly });
     setBusy(false);
     if (checkOnly || !got.ok) { setPresetCheck(got); return; }
     closePreset();
@@ -146,7 +155,8 @@ export function PluginsSection() {
         {servers === null ? <div className="px-4 py-3.5 text-[14px] text-muted">Loading…</div>
           : servers.length === 0 && !adding ? <div className="px-4 py-3.5 text-[14px] text-muted">Nothing connected yet.</div>
           : servers.map((m) => (
-            <div key={m.name} className="flex items-start gap-3 px-4 py-3 border-b border-line">
+            <div key={m.name} className="px-4 py-3 border-b border-line">
+            <div className="flex items-start gap-3">
               <button type="button" onClick={() => openEdit(m)} className="flex items-start gap-3 flex-1 min-w-0 text-left" aria-label={`Edit ${serverTitle(m)}`}>
                 <Tile icon={m.name === "vault" ? "note" : "globe"} color={m.name === "vault" ? "violet" : "blue"} small />
                 <span className="flex-1 min-w-0">
@@ -159,6 +169,15 @@ export function PluginsSection() {
                 </span>
               </button>
               <Switch label={`${serverTitle(m)} on`} on={m.enabled} disabled={busy} onChange={(v) => act(() => postJSON(`/api/mcp/${m.name}/enabled`, { enabled: v }))} />
+            </div>
+            {perWho && (
+              // Whether whoever is picked may use this app; the switch above stays the whole app's, for everyone.
+              <div className="flex items-center gap-3 mt-1 pl-[46px]">
+                <span className="flex-1 min-w-0 text-[13px] leading-[18px] text-muted">{canUseLabel(picked.name)}</span>
+                <Switch label={`${canUseLabel(picked.name)}: ${serverTitle(m)}`} on={m.canUse} disabled={busy}
+                  onChange={(v) => act(() => postJSON(canUseUrl(m.name, pick), { on: v }))} />
+              </div>
+            )}
             </div>
           ))}
         {adding && (
