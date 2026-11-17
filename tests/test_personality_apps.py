@@ -963,3 +963,31 @@ async def test_a_lapse_inside_the_resumed_turn_stays_a_lapse(runner, store, send
     assert (row["status"], row["result_text"]) == ("expired", LAPSED)
     done = [e for e in heard if e["type"] == "approval_done"]
     assert [(e["status"], e["text"]) for e in done] == [("expired", LAPSED)]
+
+
+async def test_a_refused_second_connection_stays_refused_when_the_first_fails_to_list(runner, store):
+    """Odie has home mail and work mail both on (the second refused at every load). One day home mail doesn't answer:
+    work mail must not load in its place and answer Odie's mail from the other account."""
+    from odie.plugins import mcp
+    mcp.write_config({"mail": HOME_MAIL, "mail-2": WORK_MAIL})
+    await runner.load_plugins()  # both list; mail-2 refused; both their tool names are kept
+    mcp.write_config({"mail": {**HOME_MAIL, "command": "/nonexistent/mail-server"}, "mail-2": WORK_MAIL})
+    await runner.load_plugins()
+    status = {e.name: (e.status, e.reason) for e in runner.plugins["servers"]}
+    assert status["mail"][0] == "failed"
+    assert status["mail-2"][0] == "error" and status["mail-2"][1].startswith("tool names clash with ")
+    assert "mail" in status["mail-2"][1]
+    assert mcp.servers_with_tool("send_email") == []  # nothing serves Odie's send_email from the other account
+    assert access.server_of_tool(store, "send_email", runner.current_session_id(D)) is None
+
+
+def test_with_no_tools_ever_listed_only_clearly_different_servers_count_as_different(store):
+    """Program means the command and its first argument that isn't a flag: two accounts of one program differ only in
+    flags or env, and count as one service."""
+    configured = {"home": {"command": "uvx", "args": ["mail-mcp", "--account", "home"]},
+                  "work": {"command": "uvx", "args": ["mail-mcp", "--account", "work"]},
+                  "notes": {"command": "uvx", "args": ["notes-mcp"]},
+                  "web": {"url": "https://web.example.invalid/mcp"}}
+    assert access.could_clash("home", "work", configured, {})
+    assert not access.could_clash("home", "notes", configured, {})
+    assert not access.could_clash("home", "web", configured, {})

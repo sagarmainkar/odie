@@ -1723,7 +1723,8 @@ class OdieRunner:
                     if e.status == "ok":
                         reserved.update({t: f"the {e.name} skill" for t in e.tools})
                 servers = await load_servers(reserved=reserved, smart=lambda session_id: approvals_mode.runs_free(self.store, session_id),
-                                             allowed=self._app_allowed, may_share=self._apps_may_share)
+                                             allowed=self._app_allowed, may_share=self._apps_may_share,
+                                             could_clash=self._apps_could_clash)
                 ok = [e for e in servers if e.status == "ok"]
                 skill_ts = build_skill_toolset(skills, extra_skills=[e.skill for e in ok if e.skill],
                                                extra_tools=[e.toolset for e in ok if e.skill], left_out_in=self._skills_off)
@@ -1775,6 +1776,16 @@ class OdieRunner:
           ("mail", "mail-2"), both on for Odie                         -> False"""
         from odie.plugins import access
         return access.no_one_has_both(self.store, first, second)
+
+    def _apps_could_clash(self, first: str, second: str) -> bool:
+        """Whether two connected apps could list the same tool names, from what is known of them beyond this load: the
+        names each listed last time, else whether they look like one service (odie.plugins.access.could_clash).
+          ("mail", "mail-2"), both listed send_email before -> True
+          ("mail", "notes"), nothing in common              -> False"""
+        from odie.plugins import access
+        from odie.plugins.mcp import read_config
+        configured, _ = read_config()
+        return access.could_clash(first, second, configured, access.known_tools(self.store))
 
     def _skills_off(self, session_id: str | None) -> frozenset[str]:
         """The apps' skills a chat's catalog leaves out: those of the apps off for its owner (odie.plugins.access).

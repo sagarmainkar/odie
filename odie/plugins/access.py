@@ -307,10 +307,12 @@ def _host(spec: dict) -> str:
 
 def same_service(first: dict, second: dict) -> bool:
     """Whether two servers' specs look like two connections of one service, for when nothing is known of their tools:
-    the same preset, the same title, the same link's host, or the same program and arguments.
+    the same preset, the same title, the same link's host, or the same program (_program). Only servers different in
+    all of those count as different services.
       two Zapier links                                    -> True
       https://mail.example.invalid/home and …/work        -> True (the same host)
       "Home mail" and "Work mail", one program, two envs  -> True (the same program)
+      uvx mail-mcp --account home / --account work        -> True (the same program, other flags)
       a mail server and a notes server, nothing in common -> False"""
     from odie.plugins.presets import preset_of
     first_preset = preset_of(str(first.get("url") or ""))
@@ -321,8 +323,21 @@ def same_service(first: dict, second: dict) -> bool:
         return True
     if _host(first) and _host(first) == _host(second):
         return True
-    first_program = (first.get("command"), list(first.get("args") or []))
-    return bool(first.get("command")) and first_program == (second.get("command"), list(second.get("args") or []))
+    return _program(first) is not None and _program(first) == _program(second)
+
+
+def _program(spec: dict) -> tuple[str, str] | None:
+    """What a command-line server runs: its command's name and its first argument that isn't a flag (the package or
+    script), so two accounts of one program, which differ only in flags or env, are the same program.
+      uvx mail-mcp --account home              -> ("uvx", "mail-mcp")
+      python3 /path/mail.py                    -> ("python3", "/path/mail.py")
+      a server reached by a link (no command)  -> None"""
+    from pathlib import PurePath
+    command = str(spec.get("command") or "")
+    if not command:
+        return None
+    first_plain = next((str(a) for a in spec.get("args") or [] if not str(a).startswith("-")), "")
+    return PurePath(command).name, first_plain
 
 
 def could_clash(first: str, second: str, configured: dict[str, dict], known: dict[str, list[str]]) -> bool:

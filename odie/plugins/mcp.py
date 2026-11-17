@@ -668,18 +668,22 @@ async def probe_tools(spec: dict, timeout: float) -> list[dict]:
 async def load_servers(timeout: float = 15, reserved: dict[str, str] | None = None,
                        smart: Callable[[str | None], bool] | None = None,
                        allowed: Callable[[str, str | None], bool] | None = None,
-                       may_share: Callable[[str, str], bool] | None = None) -> list[ServerEntry]:
+                       may_share: Callable[[str, str], bool] | None = None,
+                       could_clash: Callable[[str, str], bool] | None = None) -> list[ServerEntry]:
     """Every server in mcp.json with its status. `reserved` maps tool names Odie already has (built-ins, skill
     tools) to their owner, so a server can't shadow them. `smart` reads the live approvals mode for each server's
     toolset. `allowed(server, session_id)` says whether a chat may use a server (odie.plugins.access), read on every
     listing. `may_share(a, b)` says whether two servers may list the same tool names (no one has both switched on);
-    None: never, as before personalities."""
+    None: never, as before personalities. `could_clash(a, b)` says whether two servers could list the same names from
+    what is known of them beyond this load (odie.plugins.access.could_clash), so an earlier server that didn't answer
+    this time still keeps a later one of the same service from loading in its place."""
     servers, err = read_config()
     if err:
         log.warning(err)
     out: list[ServerEntry] = []
     seen: dict[str, str] = dict(reserved or {})  # tool name -> the built-in or skill that owns it
     by_servers: dict[str, list[str]] = {}  # tool name -> the servers loaded so far that list it
+    unanswered: list[str] = []  # earlier servers, switched on, that didn't list this time
     for name, spec in servers.items():
         spec = spec if isinstance(spec, dict) else {}
         e = ServerEntry(name, "http" if spec.get("url") else "stdio", spec.get("description") or "", "ok",
@@ -698,10 +702,13 @@ async def load_servers(timeout: float = 15, reserved: dict[str, str] | None = No
             listed = await probe_tools(spec, timeout)
         except Exception as ex:  # noqa: BLE001 (timeouts, refused connections, bad commands)
             e.status, e.reason = "failed", scrub(str(ex) or type(ex).__name__, spec)
+            unanswered.append(name)
             continue
         e.tools = [t["name"] for t in listed]
         e.title = spec.get("title") or name
         clash = _clash(e.tools, name, seen, by_servers, may_share)
+        if clash is None:
+            clash = _clash_with_unanswered(name, unanswered, may_share, could_clash)
         if clash:
             e.status, e.reason = "error", f"tool names clash with {clash}"
             continue
@@ -742,6 +749,23 @@ def _clash(tools: list[str], server: str, reserved: dict[str, str], by_servers: 
 
 
 ONE_OF_TWO = "Only one of them can be on for each one: switch one of the two off, or off for whoever has both."
+
+
+def _clash_with_unanswered(server: str, unanswered: list[str], may_share: Callable[[str, str], bool] | None,
+                           could_clash: Callable[[str, str], bool] | None) -> str | None:
+    """A clash with an earlier server that didn't list this time, as "<server> (<server>)", or None. That server would
+    have kept this one out had it answered, so it still does when they could list the same names and someone has
+    both on: a blip never lets a second connection of a service answer in the first one's place.
+      mail-2 after mail, mail failed, both on for Odie, the same tools known   -> "mail (mail). Only one of them…"
+      mail-2 after mail, mail failed, mail Odie's alone and mail-2 Mira's       -> None (they may share)
+      nothing earlier failed, or no could_clash given                          -> None"""
+    if could_clash is None:
+        return None
+    for other in unanswered:
+        shared_by_no_one = may_share is not None and may_share(other, server)
+        if not shared_by_no_one and could_clash(server, other):
+            return f"{other} ({other}). {ONE_OF_TWO}"
+    return None
 
 
 def _allowed_for(server: str, allowed: Callable[[str, str | None], bool] | None) -> Callable[[str | None], bool] | None:
