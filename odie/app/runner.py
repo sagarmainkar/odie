@@ -23,7 +23,7 @@ from google.adk.runners import Runner
 from google.adk.sessions.sqlite_session_service import SqliteSessionService
 from google.genai import types
 
-from odie import addons, approvals_mode, config
+from odie import addons, approvals_mode, brains, config
 from odie.agent.agent import build_agent, chat_generate_config, memory_file
 from odie.agent.callbacks import OdiePlugin
 from odie.agent.context import parts_of, session_id_of
@@ -353,6 +353,8 @@ def chat_run_config() -> RunConfig:
 
 def chat_error(e: Exception) -> str:
     from google.adk.agents.invocation_context import LlmCallsLimitExceededError
+    if isinstance(e, brains.BrainGone):
+        return str(e)  # already words for the user
     if isinstance(e, LlmCallsLimitExceededError):
         return f"I stopped after {MAX_LLM_CALLS} steps without finishing; ask again more narrowly, or I can try a different way."
     return f"{type(e).__name__}: {str(e)[:200]}"
@@ -614,7 +616,7 @@ class OdieRunner:
         # for every turn then running: harmless with one personality, but with several a turn could have run with
         # another's instructions and memory titles.
         self._prompts: dict[str, SessionPrompt] = {}
-        self._model_key: tuple | None = None
+        self._chat_models: dict[tuple, Any] = {}  # (effort, model_key) -> the chat model built for it (_chat_model)
         self.gated = True  # approval-gated tools are loaded (send, trash, invites, shell)
         self.memory = memory_file()
         self.memory.ensure()
@@ -910,9 +912,21 @@ class OdieRunner:
             self._prompts.pop(session_id, None)
 
     def apply_model_selection(self) -> None:
-        """Settings changed the chat model: the next message builds the agent's model from the new selection."""
-        self._model_key = None
+        """Settings changed a brain, a provider or a key: the next message builds its model again."""
+        self._chat_models.clear()
         self.invalidate_prompt()
+
+    def _chat_model(self, selection, effort_up: bool):
+        """The chat model for a brain at an effort, built the first time it is needed and then kept, so turns on the
+        same brain share one model object; Settings clears them (apply_model_selection).
+          gemma on LM Studio, low effort, twice        -> the same object both times
+          the same, then Mira's qwen on the work box   -> a second object, kept beside the first"""
+        key = (effort_up, model_key(selection))
+        built = self._chat_models.get(key)
+        if built is None:
+            built = model_for(selection, effort_up)
+            self._chat_models[key] = built
+        return built
 
     def current_model(self) -> dict[str, Any]:
         sel = resolve_selection(self.store, "chat")
@@ -1020,14 +1034,14 @@ class OdieRunner:
         session_id = session_id or self.current_session_id(today)
         lock = self.lock_for(session_id)
         await lock.acquire()
-        turn_token = private_token = read_token = compact_token = None
+        turn_token = private_token = read_token = compact_token = model_token = None
         was_private = False
         try:
             session_id = await self._ensure_session(session_id)
             if thinking is None:
                 from odie import thinking as chat_thinking
                 thinking = chat_thinking.settle(self.store, session_id)
-            selection = resolve_selection(self.store, "chat")  # the chosen model, or the fallback when nothing is chosen
+            selection = brains.for_thread(self.store, session_id)  # its owner's brain; raises BrainGone, with words
             from odie.blocks.answers import without_form_answers
             words = without_form_answers(text)  # a form's answer: lookups use its line, not the fence the model reads
             trailer = self._prepare_prompt(session_id, words) + await self._visual_nudge(session_id, text)
@@ -1063,10 +1077,7 @@ class OdieRunner:
             sent_text = f"{text}{markers}" + (f"\n\n{blocks}" if blocks else "") + f"\n\n{trailer}"
             parts.insert(0, types.Part(text=sent_text))
             effort_up = chat_effort_think_harder(selection, thinking)  # always False on a local server
-            key = (effort_up, model_key(selection))
-            if key != self._model_key:
-                self._model_key = key
-                self.agent.model = model_for(selection, effort_up)
+            model_token = turn_words.MODEL.set(self._chat_model(selection, effort_up))  # this turn's, for all its calls
             self.agent.generate_content_config = chat_generate_config(self.store)  # Creativity, as set right now
             self.store.audit("user", "message", result_summary=text, session_id=session_id)
             final: list[str] = []
@@ -1151,6 +1162,8 @@ class OdieRunner:
                         turn_words.READ.reset(read_token)
                     if compact_token is not None:
                         turn_words.HISTORY_LIMIT.reset(compact_token)
+                    if model_token is not None:
+                        turn_words.MODEL.reset(model_token)
                 except ValueError:  # iterated from another context: it ends with that context
                     pass
             lock.release()

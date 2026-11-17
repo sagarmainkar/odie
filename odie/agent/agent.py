@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from google.adk.agents import LlmAgent
+from google.adk.models.base_llm import BaseLlm
 from google.genai import types
 
 from odie.agent.model import model_for
@@ -66,8 +67,30 @@ def chat_generate_config(store: Store) -> types.GenerateContentConfig:
     return types.GenerateContentConfig(temperature=chat_temperature(store), top_p=CHAT_TOP_P)
 
 
+class ChatAgent(LlmAgent):
+    """The chat agent. There is one for every thread, and its model is the running turn's brain (odie.agent.turn.MODEL,
+    set by the runner from the thread's owner: odie.brains), not one model swapped on the shared agent, which a turn
+    running at the same time in another thread would have changed under it.
+
+    ADK takes everything about the model from `canonical_model` (google-adk 2.12): the model name the request is built
+    with, which LiteLlm then routes on (flows/llm_flows/basic.py), the call itself (flows/llm_flows/core/_model_call.py,
+    through canonical_model_async), whether tool calls pair by id (flows/llm_flows/context/_contents.py) and the tool
+    list (flows/llm_flows/tools/_agent_tools.py). So every one of those reads, during a turn, gets that turn's model.
+      a turn in Mira's thread, her own brain picked -> her model for every call of the turn
+      a turn in an everyday thread at the same time -> everyday Odie's, for every call of that turn
+      outside a chat turn (nothing set)             -> the model the agent was built with"""
+
+    @property
+    def canonical_model(self) -> BaseLlm:
+        from odie.agent import turn
+        turn_model = turn.MODEL.get()
+        if turn_model is None:
+            return super().canonical_model
+        return turn_model
+
+
 def build_agent(store: Store, instruction: str | Callable | None = None,
-                memory: MemoryFile | None = None, on_memory_change=None, memory_for: Callable | None = None) -> LlmAgent:
+                memory: MemoryFile | None = None, on_memory_change=None, memory_for: Callable | None = None) -> ChatAgent:
     """`memory` is the shared memory; `memory_for` (a chat's own memory file, from a tool's context) lets a
     personality's chat save to its own (odie.memory.tools.memory_of_chat)."""
     memory = memory or memory_file()
@@ -89,9 +112,9 @@ def build_agent(store: Store, instruction: str | Callable | None = None,
         if clash:  # ADK would advertise both and run the last one: the add-on's tool could never be called
             addons.refuse(a.name, f"tool names clash with the core: {', '.join(clash)}")
     extra = [t for a in addons.active() for t in addons.tools_of(a, store)]
-    return LlmAgent(
+    return ChatAgent(
         name="odie",
-        model=model_for(resolve_selection(store, "chat"), think_harder=False),  # swapped per turn by the runner
+        model=model_for(resolve_selection(store, "chat"), think_harder=False),  # each turn brings its own (ChatAgent)
         instruction=instruction or STATIC_INSTRUCTION,
         tools=[*vault_tools(store), *signin_tools(store), *extra, *core, build_skill_toolset()],
         generate_content_config=chat_generate_config(store),
