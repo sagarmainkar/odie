@@ -35,9 +35,19 @@ def make_shell_tool(home: Path | None = None, store=None) -> FunctionTool:
             return f"Could not run it: {e}"
 
         def kill_group() -> None:
+            """Stop the command, pipelines and background children too. macOS can refuse to signal the group (EPERM)
+            once its leader has exited; then the leader is stopped on its own, and a stop that finds nothing is fine:
+            killpg works -> group stopped; killpg refused -> os.kill(leader); both find nothing -> nothing to do."""
             try:
-                os.killpg(proc.pid, signal.SIGKILL)  # pipelines and background children too
+                os.killpg(proc.pid, signal.SIGKILL)
+                return
             except ProcessLookupError:
+                return
+            except PermissionError:
+                pass
+            try:
+                os.kill(proc.pid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
                 pass
 
         chunks: list[bytes] = []

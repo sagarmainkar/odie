@@ -384,3 +384,31 @@ async def test_allow_for_30_min_approves_one_card_only(isolated_settings, tmp_pa
             assert decided == [(first, True)]  # the tapped card, and nothing the user didn't read
             for other in (second, hidden, elsewhere):
                 assert s.get_approval(other)["status"] == "pending"
+
+
+async def test_run_shell_survives_when_the_system_refuses_to_stop_the_group(tmp_path, monkeypatch):
+    """On macOS, stopping a process group can be refused (EPERM) when its leader has already exited; the tool must still
+    return what the command printed, and stop the leader itself instead (it crashed the tool before, 17 Nov 2026)."""
+    import os
+
+    from odie.agent.tools import shell
+    stopped: list[int] = []
+
+    def refuse(pid, sig):
+        raise PermissionError(1, "Operation not permitted")
+
+    monkeypatch.setattr(shell.os, "killpg", refuse)
+    real_kill = os.kill
+
+    def note_kill(pid, sig):
+        stopped.append(pid)
+        try:
+            real_kill(pid, sig)
+        except ProcessLookupError:
+            pass
+
+    monkeypatch.setattr(shell.os, "kill", note_kill)
+    tool = shell.make_shell_tool(home=tmp_path)
+    big = await tool.func(command="python3 -c \"print('x'*20000)\"", cwd=str(tmp_path))
+    assert len(big) <= 8300 and big.endswith("…")  # the capped output came back: no crash
+    assert len(stopped) == 1  # the leader was stopped directly
