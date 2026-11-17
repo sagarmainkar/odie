@@ -58,7 +58,7 @@ function Row({ ok, title, sub, meta, right, chevron, icon }: { ok?: Dot; title: 
       ) : ok !== undefined && <StatusDot ok={ok} />}
       <div className="flex-1 min-w-0">
         <div className="text-[15px] leading-5 font-medium">{title}</div>
-        {sub && <div className="text-[13px] leading-[18px] text-muted truncate">{sub}</div>}
+        {sub && <div className="text-[13px] leading-[18px] text-muted line-clamp-2">{sub}</div>}
         {meta && <div className="text-[12px] leading-4 text-dim mt-0.5">{meta}</div>}
       </div>
       {right && <div className="text-[13px] text-muted shrink-0">{right}</div>}
