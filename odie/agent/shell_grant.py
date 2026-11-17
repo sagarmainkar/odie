@@ -257,7 +257,7 @@ def shell_word(word: str) -> str | None:
 
 
 def write_reason(shell: str, safe_dirs: tuple[str, ...], cwd: str | None, smart: bool = False,
-                 odie_dirs: tuple[str, ...] = ()) -> str | None:
+                 odie_dirs: tuple[str, ...] = (), code: str = "") -> str | None:
     """Why the shell text's writes (>, >>, >|, &>) need a tap, following its cd's (piece_folders), or None when they
     don't. A write into a safe place (/tmp, the workspace, the vault) never asks. Careful's pass: any other place ->
     "writes a file outside /tmp". Smart also lets a new note or output, or an append to one, in an ordinary folder under
@@ -266,7 +266,7 @@ def write_reason(shell: str, safe_dirs: tuple[str, ...], cwd: str | None, smart:
       `cd /tmp && cat > b.py` -> None;  `echo hi > ~/notes.txt` -> "writes a file outside /tmp";
       Smart, `echo hi > ~/work/notes/new.md` -> None;  Smart, `echo hi > ~/work/notes/old.md` (it exists) ->
       "replaces a file";  `echo "a > b"` -> None;  `popd; echo hi > x.md` -> "writes a file outside /tmp"."""
-    may_create = _MAKES_FOLDERS_OR_LINKS.search(shell) is not None
+    may_create = _MAKES_FOLDERS_OR_LINKS.search(f"{shell}\n{code}") is not None  # heredoc code may make one too
     for start, end, here in piece_folders(shell, cwd):
         segment = shell[start:end]
         words = quoted(segment)
@@ -361,7 +361,13 @@ NOTE_ENDINGS = (".md", ".txt", ".csv", ".tsv", ".log")
 # see yet: `ln -s ~/Library/LaunchAgents ~/work/la && cat > ~/work/la/x.plist`.
 _MAKES_FOLDERS_OR_LINKS = re.compile(
     r"\b(ln|cp|mv|mkdir|install|rsync|ditto|tar|bsdtar|unzip|gunzip|cpio|pax|hdiutil|mount|patch|xargs)\b|"
-    r"\bgit\b[^|;&\n]*\b(checkout|switch|worktree|clone|restore|stash|reset|pull|merge|am|apply)\b")
+    r"\bgit\b[^|;&\n]*\b(checkout|switch|worktree|clone|restore|stash|reset|pull|merge|am|apply)\b|"
+    # and from code: node's symlinkSync / mkdirSync, Python's os.symlink, os.makedirs, Path(…).symlink_to, .mkdir(
+    r"\b(symlink\w*|link\w*Sync|mkdir\w*|makedirs|mkdtemp\w*|symlink_to|hardlink_to|cpSync|renameSync)\b")
+# Notes that other tools read as instructions or as what to install, named in any case: writing one asks.
+_READ_AS_INSTRUCTIONS = re.compile(
+    r"^(claude|agents|gemini|conventions|copilot-instructions)\.md$|rules|instructions|"
+    r"^(requirements|constraints)[\w.-]*\.txt$|^brewfile|\.lock$", re.IGNORECASE)
 
 
 def ordinary_write(name: str, here: str | None, appending: bool, odie_dirs: tuple[str, ...],
@@ -373,12 +379,15 @@ def ordinary_write(name: str, here: str | None, appending: bool, odie_dirs: tupl
       `> ~/work/notes/new.md` -> None;  `>> ~/work/notes/old.md` -> None;  `> ~/work/notes/old.md` -> "replaces a
       file";  `> ~/work/proj/run.sh` -> "writes a file outside /tmp" (a script);  `> ~/.config/x` -> the same;
       `> ~/work/notes/$(date).md` -> the same;  `> ~/work/new-folder/a.md` -> the same (no such folder yet);
-      `> ~/work/link-to-notes/a.md` -> the same (through a link);  `ln -s … && echo > …/a.md` -> the same."""
+      `> ~/work/link-to-notes/a.md` -> the same (through a link);  `ln -s … && echo > …/a.md` -> the same;
+      `>> ~/work/proj/CLAUDE.md` or `requirements.txt` -> the same (read later as instructions)."""
     from_home = _LEADING_HOME.sub("~", name)  # $HOME/x is ~/x, not a name made at run time
     if _DYNAMIC_NAME.search(from_home) or may_create:
         return OUTSIDE
     if not from_home.lower().endswith(NOTE_ENDINGS):
         return OUTSIDE
+    if _READ_AS_INSTRUCTIONS.search(os.path.basename(from_home)):
+        return OUTSIDE  # CLAUDE.md, AGENTS.md, requirements.txt: read later as instructions or an install list
     written_home = os.path.normpath(os.path.expanduser("~"))
     as_written = _spelled(name, here or written_home)  # no links followed
     real = _expanded(name, here or written_home)
@@ -827,9 +836,9 @@ _DEFAULT_PORT = {"http": 80, "https": 443}
 # Ports on this computer that reach Odie's own API: its own (passed in), and Vite's preview and dev servers, which
 # hand /api on to it.
 _ODIE_FRONT_PORTS = frozenset({4173, 5173})
-# Odie's API paths that change what it allows, what runs or what it knows: a send there asks on any port.
-_ODIE_API_PATHS = ("/api/approvals", "/api/devices", "/api/settings", "/api/mcp", "/api/models",
-                   "/api/personalities", "/api/plugins")
+# Odie's API, wherever it answers (its port, a Vite dev or preview server on another one): a send to any /api/ path on
+# this computer asks.
+_ODIE_API_PATH = "/api"
 # The curl and wget options a send to this computer may use, so the whole command is read exactly: an option not
 # listed (a proxy, a resolver, a redirect followed, a config file, a variable expanded into the address …) means the
 # command can't be read exactly, and it asks.
@@ -858,13 +867,14 @@ _WGET_VALUE_LETTERS = "OoaPUtTwQ"
 
 def is_local_address(word: str, own_port: int | None) -> bool:
     """Whether an address curl or wget is given is this computer (localhost, 127.0.0.1, [::1] or 0.0.0.0), and not
-    Odie's own API: not its port, not Vite's 4173 or 5173 (they pass /api on to it), and on any port not a path that
-    changes Odie (_ODIE_API_PATHS, read after decoding %xx, // and ..). Anything built at run time, curl's own {braces}
+    Odie's own API: not its port, not Vite's 4173 or 5173 (they pass /api on to it), and on any port no /api path (read
+    after decoding %xx, // and .., case ignored). Anything built at run time, curl's own {braces}
     or [ranges], a user@ part, a % left in the path, or a host that merely starts like one, is not.
       "http://localhost:9000/x" -> True;  "localhost:9000/x" -> True (curl adds http://);  "http://[::1]:9000/" -> True;
       "http://localhost.evil.example/" -> False;  "http://localhost@evil.example/" -> False;
       "http://{localhost,evil.example}/" -> False;  "http://localhost:8000/" with Odie on 8000 -> False;
-      "http://localhost:5173/x" -> False;  "http://localhost:9000/api/approvals/5/decide" -> False."""
+      "http://localhost:5173/x" -> False;  "http://localhost:9000/api/approvals/5/decide" -> False;
+      "http://localhost:5174/API/chat" -> False."""
     rest = word.replace("[::1]", "", 1)
     if re.search(r"[\[\]{}*?$`\\\s@]", rest):
         return False
@@ -888,7 +898,7 @@ def is_local_address(word: str, own_port: int | None) -> bool:
     if "%" in path:
         return False  # encoded twice: can't say where it lands
     path = posixpath.normpath(re.sub(r"/+", "/", "/" + path)).lower()  # //api/x and /x/../api are /api/…
-    return not any(path == p or path.startswith(p + "/") for p in _ODIE_API_PATHS)
+    return not (path == _ODIE_API_PATH or path.startswith(_ODIE_API_PATH + "/"))
 
 
 def _addresses(args: list[str], flags: frozenset[str], values: frozenset[str], flag_letters: str,
@@ -950,26 +960,29 @@ def is_local_send(words: list[str], own_port: int | None) -> bool:
 
 
 # What makes a whole command unfit for a free local send or piped program: it sets a variable (a proxy, CURL_HOME,
-# WGETRC, PYTHONINSPECT, NODE_OPTIONS …) or names a curl or wget config file, which could send it elsewhere or run code.
+# WGETRC, PYTHONINSPECT, NODE_OPTIONS …) or names a curl or wget config, which could send it elsewhere or run code.
+# Read as whole words anywhere outside quotes, so no wrapper hides it: builtin export, noglob export, inside if/for,
+# after ! or ||.
 _SETS_A_VARIABLE = re.compile(
-    r"(^|[;&|(){}\n]\s*)(export|env|declare|typeset|readonly|setenv|local|set\s+-\w*a\w*|set\s+-o\s+allexport|"
-    r"[A-Za-z_]\w*\+?=)")
+    r"(?<![\w./-])(export|typeset|declare|local|readonly|env|setenv|unset)(?![\w./-])|"
+    r"(?<![\w./-])set\s+[-+]|"
+    r"(?<![\w./=:@?-])[A-Za-z_]\w*\+?=")
 _NAMES_A_CONFIG = re.compile(r"curlrc|wgetrc|CURL_HOME|WGETRC|XDG_CONFIG_HOME|--config\b|(^|\s)-K", re.IGNORECASE)
 
 
 def sets_variables(shell: str) -> bool:
-    """Whether the command sets a variable anywhere (export, env, declare, typeset, set -a, or NAME=value at a
-    command's start), or names a curl or wget config: then a send it makes, or a program it runs, may not do what its
-    words say. `export ALL_PROXY=…; curl …` -> True;  `X=1 curl …` -> True;  `set -a; …` -> True;
-    `export WGETRC=w; wget …` -> True;  `curl -d a=1 http://localhost:9000/` -> False (data, not a variable);
-    `… | python3 -c 'import json; d=json.load(…)'` -> False (inside the quoted program)."""
+    """Whether the command sets a variable anywhere, however wrapped (export, typeset, declare, local, readonly, env,
+    set with an option, or a NAME=value word), reading only what is outside quotes; or names a curl or wget config.
+    Then a send it makes, or a program it runs, may not do what its words say.
+      `export ALL_PROXY=…; curl …` -> True;  `builtin export X=1; curl …` -> True;  `if true; then export X=1; fi` ->
+      True;  `X=1 curl …` -> True;  `curl -d a=1 http://localhost:9000/` -> True (a NAME= word: fail closed);
+      `curl -d 'a=1' http://localhost:9000/` -> False;  `… | python3 -c 'import json; d=json.load(…)'` -> False (inside
+      the quoted program);  `export WGETRC=w; wget …` -> True."""
     if _NAMES_A_CONFIG.search(shell):
         return True
     contexts = char_contexts(shell)
-    for setting in _SETS_A_VARIABLE.finditer(shell):
-        if contexts[setting.start(2)] == "plain":
-            return True  # not one inside a quoted program: python3 -c 'import json; d=json.load(…)'
-    return False
+    unquoted = "".join(char if contexts[i] == "plain" else " " for i, char in enumerate(shell))
+    return _SETS_A_VARIABLE.search(unquoted) is not None
 
 
 # A pipe into python3 -c / node -e whose program is written right there, in one quoted word (double quotes only when
@@ -997,12 +1010,17 @@ _NEVER_IN_A_PLAIN_PROGRAM = re.compile(
     r"(?<![A-Za-z0-9])_|\]\s*\(|\[\s*['\"`][^\]]*\+|\b(eval|exec|getattr|setattr|globals|vars|constructor)\b")
 _NEVER_IN_PLAIN_PYTHON = re.compile(
     r"\w*_hook\b|\bparse_(float|int|constant)\b|\b(execfile|delattr|locals|breakpoint|help|attrgetter|methodcaller|f_globals|f_builtins|f_locals|f_back|"
-    r"tb_frame|tb_next|gi_frame|cr_frame|ag_frame|exc_info)\b|(?<![\w.])compile\b|\bfile\s*=")
+    r"tb_frame|tb_next|gi_frame|cr_frame|ag_frame|exc_info|modules|cls)\b|(?<![\w.])compile\b|\bfile\s*=")
 _NEVER_IN_PLAIN_NODE = re.compile(
     r"\b(globalThis|global|this|Function|prototype|Reflect|Proxy|module|import|vm|child_process|fetch|WebSocket|"
-    r"XMLHttpRequest|callee|caller|with)\b")
+    r"XMLHttpRequest|callee|caller|with)\b|"
+    r"[\w$)\]]\s*\[|"  # member access by [ ]: fs[k], o["x"]; an array literal [1, 2] is fine
+    r"\.(call|apply|bind)\s*\(")
 _PY_OPEN = re.compile(r"\bopen\s*\(")
-_PY_PLAIN_OPEN = re.compile(r"\bopen\s*\(\s*[\w.\"'/ -]*\)")  # one plain argument: a file read, never written
+_PY_PLAIN_OPEN = re.compile(r"\bopen\s*\(\s*(['\"])[\w./ -]*\1\s*\)")  # a file named right there, read, never written
+# A name given another name (m = sys, f = o.system): after that the allowlist can't follow what it is.
+_PY_BARE_ASSIGNMENT = re.compile(r"(?<![=!<>])=\s*[A-Za-z_][\w.]*\s*(;|,|\n|$)")
+_PY_RUNNERS_UNCALLED = re.compile(r"\.(system|popen|exec\w*|spawn\w*)\b(?!\s*\()")
 _JS_REQUIRE = re.compile(r"\brequire\b")
 _JS_PLAIN_REQUIRE = re.compile(r"\brequire\s*\(\s*(['\"])(fs|node:fs)\1\s*\)")
 # fs calls that write, copy, move, remove, open or watch; process.stdout.write is the one plain write.
@@ -1033,9 +1051,11 @@ def plain_program(program: str, language: str) -> bool:
 
 def _plain_python(program: str) -> bool:
     """plain_program's Python half: every import a whole module from PLAIN_PY_NAMES (no `as`, no dotted name) or
-    named parts of one; every module.name in its list; every open() a plain read.
+    named parts of one; each module named only as module.name with the name on its list (never bare, never renamed);
+    no name given another bare name (f = o.system); every open() a read of a file named right there.
       "import json, sys" -> True;  "import json as j" -> False;  "from json import loads" -> True;
-      "from os import system" -> False;  "import re; re.compile('a')" -> True;  "open('a.txt', 'w')" -> False."""
+      "from os import system" -> False;  "import re; re.compile('a')" -> True;  "open('a.txt', 'w')" -> False;
+      "import sys; m=sys" -> False;  "f=sys.exit; f(1)" -> False;  "p=sys.stdin.read(); open(p)" -> False."""
     imported = set()
     for found in _PY_IMPORT.finditer(program):
         if found.group(2) is not None:
@@ -1050,10 +1070,13 @@ def _plain_python(program: str) -> bool:
             if name not in PLAIN_PY_NAMES:
                 return False  # not on the list, dotted, or `as` another name
             imported.add(name)
+    without_imports = _PY_IMPORT.sub(" ", program)
     for module in imported:
-        for used in re.finditer(rf"\b{module}\s*\.\s*(\w+)", program):
-            if used.group(1) not in PLAIN_PY_NAMES[module]:
-                return False
+        for used in re.finditer(rf"\b{module}\b(\s*\.\s*(\w+))?", without_imports):
+            if used.group(2) not in PLAIN_PY_NAMES[module]:
+                return False  # the module bare (m = sys) or a name not on its list
+    if _PY_BARE_ASSIGNMENT.search(program) or _PY_RUNNERS_UNCALLED.search(program):
+        return False
     opens = len(_PY_OPEN.findall(program))
     return opens == len(_PY_PLAIN_OPEN.findall(program))
 
@@ -1089,19 +1112,44 @@ def shadows_pythons_modules(folder: str | None) -> bool:
     return False
 
 
+def writes_a_python_module(shell: str) -> bool:
+    """Whether the command itself may write a file Python would import instead of its own (the folder is listed
+    before the command runs, so shadows_pythons_modules can't see it): a redirect, copy, move, link or download whose
+    name is a standard module's (json.py, re.pyc, csv/), or a download or unpack into a folder under names the command
+    doesn't show (curl -O, wget, tar, unzip, git clone).
+      `cat > json.py <<'EOF'` -> True;  `curl -o re.py U` -> True;  `curl -sO U` -> True;  `echo hi > notes.md` -> False."""
+    for start, end in piece_spans(shell):
+        piece = shell[start:end]
+        targets = [shell_word(r.group(3).removeprefix("&")) or "" for r in _REDIRECT.finditer(piece)]
+        try:
+            words = shlex.split(piece)
+        except ValueError:
+            return True
+        for name, how in written_paths(words):
+            if how == "folder":
+                return True
+            targets.append(name)
+        for target in targets:
+            stem = os.path.basename(target.rstrip("/")).split(".", 1)[0]
+            if stem in sys.stdlib_module_names:
+                return True
+    return False
+
+
 def smart_blanked(shell: str, shell_read: str, code: str, cwd: str | None = None) -> str:
     """Smart's rules 2 and 3 applied to the text the rules read (`shell_read`, the same length as `shell`): a pipe into
     a plain program written in the command (plain_program) becomes a `;` (it carries data, not commands; the program
     itself is still read by every rule), and find's own -prune is blanked (it skips a folder; it deletes nothing).
-    The pipe stays a pipe when the command sets a variable (sets_variables: PYTHONINSPECT, NODE_OPTIONS …) or, for
-    python, when its folder holds a file named like one of Python's own modules (shadows_pythons_modules).
+    The pipe stays a pipe when the command sets a variable (sets_variables: PYTHONINSPECT, NODE_OPTIONS …), writes a
+    file Python could import instead of its own (writes_a_python_module), or, for python, when its folder already holds
+    one (shadows_pythons_modules).
       `curl -s u | python3 -c 'import json,sys; print(json.load(sys.stdin))'` -> the | becomes ;
       `curl -s u | python3 -c 'exec(input())'` -> unchanged;  `export PYTHONINSPECT=1; curl u | python3 -c 'pass'` ->
       unchanged;  `find . -path ./x -prune -o -print` -> -prune blanked;  `git fetch --prune` -> unchanged."""
     contexts = char_contexts(shell)
     out = list(shell_read)
     folder_at = {start: here for start, _end, here in piece_folders(shell, cwd)}
-    variables_set = sets_variables(shell)
+    variables_set = sets_variables(shell) or writes_a_python_module(shell)  # either: no pipe into a program is plain
     for pipe in _PIPE_INTO_PROGRAM.finditer(shell):
         language = "python"
         program = pipe.group(1)
@@ -1585,11 +1633,12 @@ _RECURSIVE_GREP = re.compile(r"^-[A-Za-z]*[rR]|^--recursive$|^--dereference-recu
 
 
 def search_starts_plainly(words: list[str], here: str, checkout: str) -> bool:
-    """Whether a search in the checkout stays out of its .git and its links: a recursive grep (or rg, which always
-    recurses) must name where it starts, each start a folder below the checkout's top, and must not follow links
-    (grep -R, rg -L). Any other command -> True.
+    """Whether a search in the checkout stays out of its .git, its links and its hidden files: a recursive grep (or
+    rg, which always recurses) must start below the checkout's top, in a folder with no hidden name anywhere below it
+    (hidden_below), and must not follow links (grep -R, rg -L). Any other command -> True.
       ["grep", "-rn", "x", "odie"] in the checkout -> True;  ["grep", "-rn", "x", "."] -> False;  ["rg", "x"] (from the
       top) -> False;  ["grep", "-R", "x", "odie"] -> False;  ["rg", "-L", "x", "odie"] -> False;
+      ["grep", "-rn", "x", "lib"] with lib/inner/.env.local -> False;
       ["grep", "-n", "x", "a.py"] -> True (not recursive)."""
     if not words:
         return True
@@ -1613,10 +1662,36 @@ def search_starts_plainly(words: list[str], here: str, checkout: str) -> bool:
     if not starts:
         starts = ["."]
     for start in starts:
-        path = _expanded(start.replace(_ANY_RUN, "*").replace(_ANY_ONE, "?"), here)
-        if _inside(path, checkout) and not (_parts_under(path.lower(), checkout.lower()) or []):
+        globbed = "*" in start or "?" in start  # rule 1 hands the words over spelled back, marks made * and ?
+        if globbed:
+            start = start.rpartition("/")[0] or "."  # a pattern's folder: the search may start anywhere in it
+        path = _expanded(start, here)
+        if not _inside(path, checkout):
+            continue
+        if not (_parts_under(path.lower(), checkout.lower()) or []):
             return False  # the checkout's top: the search would read .git
+        if hidden_below(path):
+            return False
     return True
+
+
+_WALK_LIMIT = 5000
+
+
+def hidden_below(folder: str) -> bool:
+    """Whether a recursive search starting at this folder could read a hidden file: any name starting with a dot
+    anywhere below it (links aren't followed, as grep -r and rg don't). Read from names only; past _WALK_LIMIT names it
+    counts as yes. odie/ with only .py files -> False;  lib/ holding inner/.env.local -> True;  a plain file -> False
+    (only its own name was checked by the caller)."""
+    if not os.path.isdir(folder):
+        return False
+    seen = 0
+    for _root, folders, files in os.walk(folder):
+        for name in (*folders, *files):
+            seen += 1
+            if name.startswith(".") or seen > _WALK_LIMIT:
+                return True
+    return False
 
 
 def always_ask(command: str, safe_dirs: tuple[str, ...] = (), cwd: str | None = None,
@@ -1678,7 +1753,7 @@ def reasons_to_ask(command: str, safe_dirs: tuple[str, ...] = (), cwd: str | Non
                 note(why)
     if hidden_path_by_pattern(shell_read, safe_dirs):
         note("reaches a hidden file by a pattern")
-    write_why = write_reason(shell_read, safe_dirs, cwd, smart, odie_dirs)
+    write_why = write_reason(shell_read, safe_dirs, cwd, smart, odie_dirs, code)
     if write_why is not None:
         note(write_why)
     landing_why = destination_reason(shell, cwd, safe_dirs, odie_dirs)
@@ -1694,38 +1769,49 @@ def reasons_to_ask(command: str, safe_dirs: tuple[str, ...] = (), cwd: str | Non
     return reasons
 
 
-def _key(session_id: str) -> str:
-    return f"shell_grant:{session_id}"
+# Passes live only in the running server's memory (17 Nov 2026 review): code that writes Odie's database could plant
+# one there, so nothing written to disk can make one. A restart ends them all.
+_GRANTS: dict[str, datetime] = {}  # chat id -> until: Careful's 'Allow for 30 min'
+_KIND_PASSES: dict[tuple[str, str], datetime] = {}  # (chat id, kind) -> until: "don't ask again in this chat"
 
 
-def grant(store: Store, session_id: str, now: datetime, minutes: int = GRANT_MINUTES) -> datetime:
+def grant(session_id: str, now: datetime, minutes: int = GRANT_MINUTES) -> datetime:
+    """Careful's 'Allow for 30 min' for this chat, until now + minutes (in memory only); returns that time."""
     until = now + timedelta(minutes=minutes)
-    store.set_setting(_key(session_id), {"until": until.isoformat()})
+    _GRANTS[session_id] = until
     return until
 
 
-def active(store: Store, session_id: str, now: datetime) -> bool:
-    """Is this chat's 'Allow for 30 min' pass still running? Example: granted at 10:00 -> True at 10:29, False at 10:31;
-    never granted, a stored value that can't be read, or one too far ahead (believable_until) -> False."""
-    got = store.get_setting(_key(session_id))
-    try:
-        until = datetime.fromisoformat(got["until"])
-    except (KeyError, TypeError, ValueError):
-        return False
-    return believable_until(until, now)
+def active(session_id: str, now: datetime) -> bool:
+    """Is this chat's 'Allow for 30 min' pass still running? Granted at 10:00 -> True at 10:29, False at 10:31;
+    never granted, or Odie restarted since -> False."""
+    until = _GRANTS.get(session_id)
+    return until is not None and believable_until(until, now)
 
 
 def believable_until(until: datetime, now: datetime) -> bool:
-    """Whether a saved pass's end time means a running pass: after now, and no later than a pass could ever run
-    (GRANT_MINUTES from now), so a row planted with a far-off time is no pass at all. now 10:00: 10:29 -> True;
-    09:59 -> False; 2099-01-01 -> False."""
+    """Whether a pass's end time means a running pass: after now, and no later than a pass could ever run
+    (GRANT_MINUTES from now). now 10:00: 10:29 -> True; 09:59 -> False; 2099-01-01 -> False."""
     return now < until <= now + timedelta(minutes=GRANT_MINUTES)
+
+
+def forget_chat(session_id: str) -> None:
+    """Drop every pass of this chat (its thread was erased)."""
+    _GRANTS.pop(session_id, None)
+    for key in [k for k in _KIND_PASSES if k[0] == session_id]:
+        del _KIND_PASSES[key]
+
+
+def forget_all() -> None:
+    """Drop every pass (what a restart does; tests start from here)."""
+    _GRANTS.clear()
+    _KIND_PASSES.clear()
 
 
 # ── "Don't ask again in this chat" (17 Nov 2026) ────────────────────────────────────────────────────────────────────
 # In Smart, a shell card's second button lets that kind of command (the reason on the card) run without asking in that
-# chat only, for GRANT_MINUTES. Kept in the settings as "shell_kinds:<chat id>" -> {"kinds": {kind: until}}: the key
-# ends with the chat's id, so erasing a thread (personalities.erase_rows_of) takes its passes too.
+# chat only, for GRANT_MINUTES. Kept in memory (_KIND_PASSES); erasing a thread (personalities.erase_rows_of) drops its
+# passes (forget_chat), and a restart ends them.
 
 CHAT_PASS = "allowed for this chat"
 # The kinds a pass may cover. Reading secrets, changing Odie itself, switching off another agent's approvals, sending
@@ -1744,40 +1830,22 @@ def may_pass(kind: str | None) -> bool:
     return kind in PASSABLE
 
 
-def _kinds_key(session_id: str) -> str:
-    return f"shell_kinds:{session_id}"
-
-
-def grant_kind(store: Store, session_id: str, kind: str, now: datetime, minutes: int = GRANT_MINUTES) -> datetime:
-    """Let commands of this kind run in this chat without asking until now + minutes; returns that time. A kind that
-    may never have a pass (may_pass) is refused with ValueError and nothing is saved."""
+def grant_kind(session_id: str, kind: str, now: datetime, minutes: int = GRANT_MINUTES) -> datetime:
+    """Let commands of this kind run in this chat without asking until now + minutes (in memory only); returns that
+    time. A kind that may never have a pass (may_pass) is refused with ValueError and nothing is kept."""
     if not may_pass(kind):
         raise ValueError(f"No pass for {kind!r}.")
-    saved = store.get_setting(_kinds_key(session_id))
-    kinds = {}
-    if isinstance(saved, dict) and isinstance(saved.get("kinds"), dict):
-        kinds = dict(saved["kinds"])
     until = now + timedelta(minutes=minutes)
-    kinds[kind] = until.isoformat()
-    store.set_setting(_kinds_key(session_id), {"kinds": kinds})
+    _KIND_PASSES[(session_id, kind)] = until
     return until
 
 
-def kinds_passed(store: Store, session_id: str, now: datetime) -> set[str]:
-    """The kinds this chat has a running pass for. Each kind keeps its own time; a time that can't be read, or a kind
-    that may never have a pass, or a time further ahead than a pass runs (believable_until), counts as none. Deletes
-    passed at 10:00 -> {"deletes or stops something"} at 10:29, set()
-    at 10:31; another chat -> set()."""
-    saved = store.get_setting(_kinds_key(session_id))
-    if not isinstance(saved, dict) or not isinstance(saved.get("kinds"), dict):
-        return set()
+def kinds_passed(session_id: str, now: datetime) -> set[str]:
+    """The kinds this chat has a running pass for, each with its own time. Deletes passed at 10:00 ->
+    {"deletes or stops something"} at 10:29, set() at 10:31; another chat -> set(); after a restart -> set()."""
     running = set()
-    for kind, until in saved["kinds"].items():
-        try:
-            still_on = believable_until(datetime.fromisoformat(until), now)
-        except (TypeError, ValueError):
-            continue
-        if still_on and may_pass(kind):
+    for (chat, kind), until in _KIND_PASSES.items():
+        if chat == session_id and believable_until(until, now) and may_pass(kind):
             running.add(kind)
     return running
 
@@ -1813,7 +1881,7 @@ def _missing_kinds(store: Store, session_id: str, command: str, cwd: str | None,
     reasons = _reasons_for(store, command, cwd, smart)
     if not smart:
         return reasons
-    passed = kinds_passed(store, session_id, now)
+    passed = kinds_passed(session_id, now)
     return [why for why in reasons if why not in passed]
 
 
@@ -1892,13 +1960,13 @@ def make_check(store: Store, clock: Callable[[], datetime] = datetime.now) -> Ca
         if not session_id:
             return True  # outside a chat there is no pass to look up
         smart = approvals_mode.runs_free(store, session_id)  # Smart mode
-        if not smart and not active(store, session_id, clock()):
+        if not smart and not active(session_id, clock()):
             return True  # Careful, and no pass or it ran out
 
         reasons = _reasons_for(store, command, cwd, smart)
         passed = set()
         if smart:
-            passed = kinds_passed(store, session_id, clock())
+            passed = kinds_passed(session_id, clock())
         missing = [why for why in reasons if why not in passed]
         audit_args = {"command": command, "cwd": cwd}
         if missing:

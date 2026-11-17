@@ -2502,7 +2502,7 @@ async def approval_decide(approval_id: int, body: DecideIn, request: Request):
         from datetime import datetime
 
         from odie.agent import shell_grant
-        until = shell_grant.grant_kind(request.app.state.store, row["session_id"], kind, datetime.now())
+        until = shell_grant.grant_kind(row["session_id"], kind, datetime.now())
         request.app.state.store.audit("user", "shell_allowed_for_chat", tool="run_shell",
                                       result_summary=f"{kind} until {until:%H:%M}", session_id=row["session_id"],
                                       approval_id=approval_id)
@@ -2512,7 +2512,7 @@ async def approval_decide(approval_id: int, body: DecideIn, request: Request):
 
         from odie.agent import shell_grant
         minutes = max(1, min(body.allow_minutes, shell_grant.GRANT_MINUTES))
-        until = shell_grant.grant(request.app.state.store, row["session_id"], datetime.now(), minutes)
+        until = shell_grant.grant(row["session_id"], datetime.now(), minutes)
         request.app.state.store.audit("user", "shell_allowed", tool="run_shell", result_summary=f"until {until:%H:%M}",
                                       session_id=row["session_id"], approval_id=approval_id)
         out["allowed_until"] = until.isoformat()

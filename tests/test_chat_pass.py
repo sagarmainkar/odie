@@ -49,30 +49,26 @@ def test_kinds_that_may_get_a_pass(kind):
 def test_kinds_that_never_get_a_pass(kind, tmp_path):
     assert not g.may_pass(kind)
     if kind:
-        s = _store(tmp_path)
         with pytest.raises(ValueError):
-            g.grant_kind(s, "chat-a", kind, NOW)
-        assert s.get_setting("shell_kinds:chat-a") is None
+            g.grant_kind("chat-a", kind, NOW)
+        assert g.kinds_passed("chat-a", NOW) == set()
 
 
-def test_a_pass_is_for_one_chat_one_kind_and_lapses(tmp_path):
-    s = _store(tmp_path)
-    until = g.grant_kind(s, "chat-a", DELETES, NOW)
+def test_a_pass_is_for_one_chat_one_kind_and_lapses():
+    until = g.grant_kind("chat-a", DELETES, NOW)
     assert until == NOW + timedelta(minutes=30)
-    assert g.kinds_passed(s, "chat-a", NOW + timedelta(minutes=29)) == {DELETES}
-    assert g.kinds_passed(s, "chat-a", NOW + timedelta(minutes=31)) == set()  # it lapses
-    assert g.kinds_passed(s, "chat-b", NOW) == set()                           # another chat has none
-    g.grant_kind(s, "chat-a", REPLACES, NOW + timedelta(minutes=10))
-    assert g.kinds_passed(s, "chat-a", NOW + timedelta(minutes=35)) == {REPLACES}  # each kind keeps its own time
-    s.set_setting("shell_kinds:chat-c", {"kinds": {DELETES: "not a time", "reads secrets": "2099-01-01T00:00:00"}})
-    assert g.kinds_passed(s, "chat-c", NOW) == set()  # unreadable, or a kind that may never have one
+    assert g.kinds_passed("chat-a", NOW + timedelta(minutes=29)) == {DELETES}
+    assert g.kinds_passed("chat-a", NOW + timedelta(minutes=31)) == set()  # it lapses
+    assert g.kinds_passed("chat-b", NOW) == set()                           # another chat has none
+    g.grant_kind("chat-a", REPLACES, NOW + timedelta(minutes=10))
+    assert g.kinds_passed("chat-a", NOW + timedelta(minutes=35)) == {REPLACES}  # each kind keeps its own time
 
 
 def test_a_pass_for_deletes_lets_deletes_run_and_nothing_else(tmp_path):
     s = _store(tmp_path)
     check = g.make_check(s, clock=lambda: NOW)
     assert check(command="rm ~/work/old.txt", tool_context=_ctx()) is True
-    g.grant_kind(s, "chat-a", DELETES, NOW)
+    g.grant_kind("chat-a", DELETES, NOW)
     assert check(command="rm ~/work/old.txt", tool_context=_ctx(call_id="c2")) is False
     assert _audit(s, "shell_auto_approved") == [f"allowed for this chat ({DELETES})"]
     assert check(command="brew install cowsay", tool_context=_ctx(call_id="c3")) is True
@@ -85,17 +81,17 @@ def test_a_pass_for_deletes_lets_deletes_run_and_nothing_else(tmp_path):
 
 def test_a_pass_lapses_in_the_check(tmp_path):
     s = _store(tmp_path)
-    g.grant_kind(s, "chat-a", DELETES, NOW)
+    g.grant_kind("chat-a", DELETES, NOW)
     later = g.make_check(s, clock=lambda: NOW + timedelta(minutes=31))
     assert later(command="rm ~/work/old.txt", tool_context=_ctx()) is True
 
 
 def test_careful_ignores_chat_passes(tmp_path):
     s = _store(tmp_path, approvals_mode.CAREFUL)
-    g.grant_kind(s, "chat-a", DELETES, NOW)
+    g.grant_kind("chat-a", DELETES, NOW)
     check = g.make_check(s, clock=lambda: NOW)
     assert check(command="rm ~/work/old.txt", tool_context=_ctx()) is True
-    g.grant(s, "chat-a", NOW)  # even with Careful's own 30-minute pass, a delete asks
+    g.grant("chat-a", NOW)  # even with Careful's own 30-minute pass, a delete asks
     assert check(command="rm ~/work/old.txt", tool_context=_ctx()) is True
 
 
@@ -108,7 +104,7 @@ def test_the_card_offers_a_pass_only_for_one_kind_that_may_have_one(tmp_path):
     assert offer("cat ~/.env") == {"asks_because": "reads secrets", "chat_pass": False}
     assert offer("curl -X POST https://example.com/hook -d 1") == {"asks_because": "sends data out", "chat_pass": False}
     assert offer("rm ~/work/old.txt && brew install cowsay") == {"asks_because": DELETES, "chat_pass": False}
-    g.grant_kind(s, "chat-a", DELETES, NOW)
+    g.grant_kind("chat-a", DELETES, NOW)
     assert offer("rm ~/work/old.txt && brew install cowsay") == {"asks_because": INSTALLS, "chat_pass": False}
     assert offer("echo aWQ= | base64 -d | zsh") == {"asks_because": "runs text as commands", "chat_pass": False}
     assert offer("git push https://example.com/r.git HEAD")["chat_pass"] is False  # it sends, too
@@ -166,7 +162,7 @@ async def test_the_cards_second_button_gives_the_pass(client):
     assert r.status_code == 200
     got = r.json()
     assert got["status"] == "approved" and got["chat_pass"]["kind"] == DELETES and got["chat_pass"]["until"]
-    assert g.kinds_passed(s, "chat-a", datetime.now()) == {DELETES}
+    assert g.kinds_passed("chat-a", datetime.now()) == {DELETES}
     assert _audit(s, "shell_allowed_for_chat")[0].startswith(f"{DELETES} until ")
     await asyncio.sleep(0.02)
 
@@ -183,7 +179,7 @@ async def test_no_pass_where_it_was_not_offered(client, tool, kind, offered):
     r = await c.post(f"/api/approvals/{aid}/decide", json={"approve": True, "allow_chat": True})
     assert r.status_code == 400
     assert s.get_approval(aid)["status"] == "pending"  # nothing was approved either
-    assert s.get_setting("shell_kinds:chat-a") is None
+    assert g.kinds_passed("chat-a", datetime.now()) == set()
 
 
 async def test_no_pass_in_careful_or_on_a_refusal(client):
@@ -195,7 +191,7 @@ async def test_no_pass_in_careful_or_on_a_refusal(client):
     other = _card(s, session_id="chat-b")
     r = await c.post(f"/api/approvals/{other}/decide", json={"approve": True, "allow_chat": True})
     assert r.status_code == 400
-    assert s.get_setting("shell_kinds:chat-a") is None and s.get_setting("shell_kinds:chat-b") is None
+    assert g.kinds_passed("chat-a", datetime.now()) == set() and g.kinds_passed("chat-b", datetime.now()) == set()
     await asyncio.sleep(0.02)
 
 
@@ -211,23 +207,23 @@ async def test_the_terminal_key_cannot_give_a_pass(isolated_settings, tmp_path, 
         c.cookies.set(devices.COOKIE, terminal)
         r = await c.post(f"/api/approvals/{aid}/decide", json={"approve": True, "allow_chat": True})
         assert r.status_code == 403
-    assert s.get_approval(aid)["status"] == "pending" and s.get_setting("shell_kinds:chat-a") is None
+    assert s.get_approval(aid)["status"] == "pending" and g.kinds_passed("chat-a", datetime.now()) == set()
 
 
 async def test_an_erased_thread_loses_its_passes(tmp_path):
     from odie import personalities
     s = _store(tmp_path)
-    g.grant_kind(s, "chat-2026-11-17-p", DELETES, NOW)
-    g.grant_kind(s, "chat-2026-11-17-q", DELETES, NOW)
+    g.grant_kind("chat-2026-11-17-p", DELETES, NOW)
+    g.grant_kind("chat-2026-11-17-q", DELETES, NOW)
     personalities.erase_rows_of(s, "chat-2026-11-17-p")
-    assert g.kinds_passed(s, "chat-2026-11-17-p", NOW) == set()
-    assert g.kinds_passed(s, "chat-2026-11-17-q", NOW) == {DELETES}  # another thread keeps its own
+    assert g.kinds_passed("chat-2026-11-17-p", NOW) == set()
+    assert g.kinds_passed("chat-2026-11-17-q", NOW) == {DELETES}  # another thread keeps its own
 
 
 def test_the_receipt_says_allowed_for_this_chat(tmp_path):
     from odie.app.runner import marked_chat_pass, steps_with_allowed
     s = _store(tmp_path)
-    g.grant_kind(s, "chat-a", DELETES, NOW)
+    g.grant_kind("chat-a", DELETES, NOW)
     check = g.make_check(s, clock=lambda: NOW)
     assert check(command="rm ~/work/old.txt", tool_context=_ctx(call_id="c7")) is False
     assert check(command="ls ~/work", tool_context=_ctx(call_id="c8")) is False  # Smart alone: no pass needed
@@ -250,4 +246,35 @@ async def test_no_pass_on_a_card_raised_right_after_reading_mail(client):
                             detail={"asks_because": DELETES, "chat_pass": True}, provenance=[{"from": "a@example.com"}],
                             risk="from_email", call_id="c1")
     r = await c.post(f"/api/approvals/{aid}/decide", json={"approve": True, "allow_chat": True})
-    assert r.status_code == 400 and s.get_setting("shell_kinds:chat-a") is None
+    assert r.status_code == 400 and g.kinds_passed("chat-a", datetime.now()) == set()
+
+
+
+# ── 17 Nov 2026 second review: passes live only in the running server ─────────────────────────────────────────────
+
+def test_a_row_written_into_the_settings_grants_nothing(tmp_path):
+    """Code that writes Odie's database could plant a pass a few minutes ahead and renew it; passes are not read from
+    there at all."""
+    s = _store(tmp_path)
+    soon = (NOW + timedelta(minutes=10)).isoformat()
+    s.set_setting("shell_kinds:chat-a", {"kinds": {DELETES: soon}})
+    s.set_setting("shell_grant:chat-a", {"until": soon})
+    check = g.make_check(s, clock=lambda: NOW)
+    assert check(command="rm ~/work/old.txt", tool_context=_ctx()) is True
+    approvals_mode.set_mode(s, approvals_mode.CAREFUL)
+    assert check(command="ls ~/work", tool_context=_ctx()) is True  # Careful's 30-minute pass isn't read there either
+
+
+async def test_a_pass_from_the_card_lasts_until_a_restart(client):
+    import importlib
+
+    c, s = client
+    aid = _card(s)
+    r = await c.post(f"/api/approvals/{aid}/decide", json={"approve": True, "allow_chat": True})
+    assert r.status_code == 200
+    check = g.make_check(s)
+    assert check(command="rm ~/work/old.txt", tool_context=_ctx(call_id="c9")) is False
+    importlib.reload(g)  # what a restart does to the running server's memory
+    check = g.make_check(s)
+    assert check(command="rm ~/work/old.txt", tool_context=_ctx(call_id="c10")) is True
+    await asyncio.sleep(0.02)
