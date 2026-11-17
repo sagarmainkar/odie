@@ -51,8 +51,8 @@ def is_bill_or_order(title: str) -> bool:
 
 def open_bills_and_orders(store) -> list[dict]:
     """The open reminders that are bills or orders: id, title, due; the dated ones first, soonest due first."""
-    rows = store.query("select id, title, due_at from tasks where status in ('open', 'waiting') "
-                       "order by due_at is null, due_at, created_at")
+    rows = store.query("select id, title, due_at from tasks where status in ('open', 'waiting') and personality is null "
+                       "order by due_at is null, due_at, created_at")  # everyday ones: never a personality's reminder
     return [{"id": r["id"], "title": r["title"], "due": r["due_at"]} for r in rows if is_bill_or_order(r["title"])]
 
 

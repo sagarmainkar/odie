@@ -88,10 +88,21 @@ class Store:
     # tasks
     def add_task(self, title: str, kind: str, due_at: str | None = None, next_check_at: str | None = None,
                  source_kind: str | None = None, source_ref: str | None = None, origin: str = "user",
-                 notes: str | None = None) -> int:
+                 notes: str | None = None, personality: str | None = None) -> int:
+        """`personality`: the personality whose chat it was set in (odie.personalities); None or "" = an everyday task."""
         return self.execute(
-            "insert into tasks(title,kind,due_at,next_check_at,source_kind,source_ref,origin,notes) values(?,?,?,?,?,?,?,?)",
-            (title, kind, due_at, next_check_at, source_kind, source_ref, origin, notes)).lastrowid
+            "insert into tasks(title,kind,due_at,next_check_at,source_kind,source_ref,origin,notes,personality) values(?,?,?,?,?,?,?,?,?)",
+            (title, kind, due_at, next_check_at, source_kind, source_ref, origin, notes, personality or None)).lastrowid
+
+    @staticmethod
+    def _whose_tasks(personality: str) -> tuple[str, tuple]:
+        """The SQL condition (and its values) for the tasks someone may see. A task set with a personality is that
+        personality's alone; a personality also sees the everyday ones.
+          everyday Odie ("") -> ("personality is null", ())
+          Mira ("ab12…")     -> ("(personality is null or personality = ?)", ("ab12…",))"""
+        if not personality:
+            return "personality is null", ()
+        return "(personality is null or personality = ?)", (personality,)
 
     def update_task(self, task_id: int, **fields: Any) -> None:
         fields["updated_at"] = now_iso()
@@ -100,15 +111,19 @@ class Store:
         cols = ", ".join(f"{k}=?" for k in fields)
         self.execute(f"update tasks set {cols} where id=?", (*fields.values(), task_id))
 
-    def list_tasks(self, status: str | None = None) -> list[sqlite3.Row]:
+    def list_tasks(self, status: str | None = None, personality: str = "") -> list[sqlite3.Row]:
+        """The tasks `personality` may see (_whose_tasks; everyday Odie's when none is named), with one status or all."""
+        whose, values = self._whose_tasks(personality)
         if status:
-            return self.query("select * from tasks where status=? order by coalesce(due_at,next_check_at,created_at)", (status,))
-        return self.query("select * from tasks order by coalesce(due_at,next_check_at,created_at)")
+            return self.query(f"select * from tasks where status=? and {whose} order by coalesce(due_at,next_check_at,created_at)",
+                              (status, *values))
+        return self.query(f"select * from tasks where {whose} order by coalesce(due_at,next_check_at,created_at)", values)
 
     def closed_today(self, since_utc_iso: str) -> int:
         """Tasks the user closed since local midnight (given in UTC); ones closed because the source dropped them don't count."""
         row = self.one(
-            "select count(*) n from tasks where status='done' and completed_at >= ? and coalesce(notes,'') != 'resolved at source'",
+            "select count(*) n from tasks where status='done' and completed_at >= ? and coalesce(notes,'') != 'resolved at source' "
+            "and personality is null",  # Today's count is everyday Odie's
             (since_utc_iso,),
         )
         return int(row["n"]) if row else 0
@@ -137,10 +152,13 @@ class Store:
             self.update_task(r["id"], status="done", notes="resolved at source")
         return closed
 
-    def open_tasks(self, now: str | None = None) -> list[sqlite3.Row]:
+    def open_tasks(self, now: str | None = None, personality: str = "") -> list[sqlite3.Row]:
+        """The open tasks `personality` may see (_whose_tasks). With none named they are everyday Odie's, which is what
+        Today, the brief, the morning hello and the watch read: a reminder set with a personality is never among them."""
         now = now or local_now_iso()
+        whose, values = self._whose_tasks(personality)
         return self.query("select * from tasks where status in ('open','waiting') and (snoozed_until is null or snoozed_until <= ?) "
-                          "order by coalesce(due_at,next_check_at,created_at)", (now,))
+                          f"and {whose} order by coalesce(due_at,next_check_at,created_at)", (now, *values))
 
     def due_tasks(self, now: str | None = None) -> list[sqlite3.Row]:
         now = now or local_now_iso()
@@ -160,7 +178,7 @@ class Store:
         seen, still open. Example: a reminder that rang at 6 pm while the phone was in a pocket -> listed when the app
         opens; one the user dismissed -> not listed, though it stays on Today."""
         return self.query("select * from tasks where delivered_at is not null and seen_at is null and status in ('open','waiting') "
-                          "order by delivered_at")
+                          "and personality is null order by delivered_at")  # a personality's reminder fires in its own thread
 
     def mark_seen(self, task_id: int, when: str | None = None) -> None:
         self.update_task(task_id, seen_at=when or local_now_iso())

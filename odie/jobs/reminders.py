@@ -37,11 +37,43 @@ async def _spoken(store: Store, text: str, transport: httpx.AsyncBaseTransport |
         return None
 
 
+async def fire_in_its_thread(store: Store, runner, row, now: str) -> None:
+    """A reminder set with a personality: it is said in that personality's current thread, not on the curtain and not
+    in the everyday chat, and the push says only who (odie.personalities.quiet_push). A timed reminder is then
+    done, as after Act on the curtain; a follow-up stays open in that personality's list."""
+    from odie import personalities
+    owner = personalities.get(store, row["personality"])
+    if owner is None:  # the personality is gone: so is its reminder
+        store.update_task(row["id"], status="dropped")
+        return
+    text = phrase(row)
+    session_id = await runner.session_for(owner.id, now[:10])
+    await runner.post_message(text, session_id=session_id, kind="reminder")
+    store.mark_delivered(row["id"], now)
+    store.mark_seen(row["id"], now)
+    if row["kind"] == "reminder" and not row["snoozed_until"]:
+        store.update_task(row["id"], status="done")
+    try:
+        title, body = personalities.quiet_push(owner.name, "reminder")
+        send_to_all(store, title, body, url="/#chat", tag=f"task-{row['id']}")
+    except Exception:  # noqa: BLE001
+        log.warning("reminder push failed", exc_info=True)
+    store.audit("job", "reminder", result_summary=text, session_id=session_id)
+
+
 async def run_due(store: Store, runner, now: str | None = None, transport: httpx.AsyncBaseTransport | None = None) -> int:
     from odie import voice
     now = now or now_iso()
     n = 0
     for row in store.due_tasks(now):
+        if row["personality"]:
+            try:
+                await fire_in_its_thread(store, runner, row, now)
+            except Exception:  # noqa: BLE001
+                log.exception("a personality's reminder failed for task %s", row["id"])
+                continue
+            n += 1
+            continue
         text = phrase(row)
         memo = await _spoken(store, text, transport) if voice.reminders_spoken(store) else None
         try:

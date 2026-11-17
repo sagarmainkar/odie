@@ -5,14 +5,32 @@ from __future__ import annotations
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from google.adk.tools import FunctionTool
+from google.adk.tools import FunctionTool, ToolContext
 
 from odie.store.db import Store
 
 
-def threads_summary(store: Store) -> str:
-    """'2 waiting, 3 to do': open threads by state, for the context note (was misnamed ledger_summary)."""
-    rows = store.query("select status, kind, count(*) n from tasks where status in ('open','waiting') group by status, kind")
+def personality_of(store: Store, tool_context) -> str:
+    """The personality whose chat a tool was called in ("" for everyday Odie, and for a turn in no chat)."""
+    from odie import personalities
+    from odie.agent.context import session_id_of
+    return personalities.of_session(store, session_id_of(tool_context))
+
+
+def may_see(row, personality: str) -> bool:
+    """Whether a chat may see a task: an everyday task -> every chat; a task set with Mira -> only Mira's chat.
+      (everyday task, Odie) -> True;  (everyday task, Mira) -> True;  (Mira's task, Odie) -> False;
+      (Mira's task, Mira) -> True;  (Mira's task, Coach) -> False"""
+    owner = row["personality"] or ""
+    return owner == "" or owner == personality
+
+
+def threads_summary(store: Store, personality: str = "") -> str:
+    """'2 waiting, 3 to do': the open threads `personality` may see, by state, for the context note (was misnamed
+    ledger_summary). Everyday Odie's count never includes a personality's."""
+    whose, values = store._whose_tasks(personality)
+    rows = store.query(f"select status, kind, count(*) n from tasks where status in ('open','waiting') and {whose} "
+                       "group by status, kind", values)
     if not rows:
         return ""
     waiting = sum(r["n"] for r in rows if r["status"] == "waiting" or r["kind"] == "waiting")
@@ -46,7 +64,7 @@ def make_local_tools(store: Store, tz: str, source_done=None) -> list[FunctionTo
     zone = ZoneInfo(tz)
 
     def task_add(title: str, kind: str = "todo", due: str | None = None, next_check: str | None = None,
-                 source_ref: str | None = None) -> str:
+                 source_ref: str | None = None, tool_context: ToolContext | None = None) -> str:
         """Add an open thread to the user's ledger. kind: todo, reminder, followup, waiting. due / next_check: ISO datetime like 2026-10-01T11:00 (today's date from the context; naive times are the user's timezone). A reminder fires in the chat at `due`. source_ref: a message, thread or event id if there is one."""
         if kind not in ("todo", "reminder", "followup", "waiting"):
             kind = "todo"
@@ -54,16 +72,17 @@ def make_local_tools(store: Store, tz: str, source_done=None) -> list[FunctionTo
         if (due and not due_iso) or (next_check and not check_iso):
             return "I didn't catch the time. Give me an ISO datetime like 2026-10-01T11:00."
         tid = store.add_task(title.strip(), kind, due_at=due_iso, next_check_at=check_iso,
-                             source_kind="ref" if source_ref else None, source_ref=source_ref, origin="agent")
+                             source_kind="ref" if source_ref else None, source_ref=source_ref, origin="agent",
+                             personality=personality_of(store, tool_context))  # set with a personality: it is that one's
         when = due_iso or check_iso
         return f"Added task #{tid} {title.strip()}" + (f" for {when}" if when else "")
 
     async def task_update(task_id: int, status: str | None = None, next_check: str | None = None, notes: str | None = None,
-                          snooze_until: str | None = None) -> str:
+                          snooze_until: str | None = None, tool_context: ToolContext | None = None) -> str:
         """Update a thread. status: done (the user handled it: paid, replied, finished), dropped (not needed), open, waiting. snooze_until: ISO datetime to hide it and remind again then. next_check: ISO datetime for a follow-up."""
         row = store.one("select * from tasks where id=?", (int(task_id),))
-        if row is None:
-            return f"No task #{task_id}."
+        if row is None or not may_see(row, personality_of(store, tool_context)):
+            return f"No task #{task_id}."  # a personality's task doesn't exist for any other chat
         fields: dict = {}
         if status in ("open", "waiting", "done", "dropped"):
             fields["status"] = status
@@ -94,9 +113,9 @@ def make_local_tools(store: Store, tz: str, source_done=None) -> list[FunctionTo
                 msg += ". " + note
         return msg
 
-    def task_list(status: str = "open") -> str:
+    def task_list(status: str = "open", tool_context: ToolContext | None = None) -> str:
         """List ledger tasks. status: open (default), waiting, done, dropped, all."""
-        rows = store.list_tasks(None if status == "all" else status)
+        rows = store.list_tasks(None if status == "all" else status, personality_of(store, tool_context))
         if not rows:
             return f"Nothing {status}."
         return "\n".join(

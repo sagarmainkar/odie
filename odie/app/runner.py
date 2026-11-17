@@ -912,14 +912,14 @@ class OdieRunner:
         now = datetime.now(self.tz)
         built = self._static_prompt(session_id)
         personality = personalities.of_session(self.store, session_id)
-        rows = self.store.open_tasks(now.isoformat(timespec="minutes"))[:10]
+        rows = self.store.open_tasks(now.isoformat(timespec="minutes"), personality)[:10]
         # The day summary already carries the brief's news, so a chat that has the summary doesn't get the brief too.
         brief = None
         if not built.day_summary:
             brief = self.store.one("select text from briefs where date=? order by id desc limit 1", (now.strftime("%Y-%m-%d"),))
         from odie import location
         place, seen, home = location.location_bits(location.get(self.store), now)  # a place name and home, never coordinates
-        return build_turn_context(now, self.prefetch(text, personality), threads_summary(self.store), format_open_threads(rows),
+        return build_turn_context(now, self.prefetch(text, personality), threads_summary(self.store, personality), format_open_threads(rows),
                                   brief["text"] if brief else "", caps=built.caps, place=place, seen=seen, home=home,
                                   approvals=approvals_mode.context_line(self.store))
 

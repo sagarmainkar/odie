@@ -246,7 +246,7 @@ async def run_check(store, now: datetime, turn, push, memory=None, memory_index:
 def _last_task_id(store) -> int:
     """The newest task's id (0 with none), the watch's own threads left out: compared before and after the check, it
     says whether the check added a reminder for the user (opening a thread to follow is not one)."""
-    row = store.one("select max(id) n from tasks where source_kind is null or source_kind != 'watch'")
+    row = store.one("select max(id) n from tasks where (source_kind is null or source_kind != 'watch') and personality is null")
     if row is None or row["n"] is None:
         return 0
     return int(row["n"])

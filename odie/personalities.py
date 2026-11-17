@@ -212,3 +212,27 @@ def hidden_from(store: Store, pid: str) -> frozenset[str]:
       Mira       -> Coach's threads (not her own, not the everyday ones)"""
     rows = store.query("select session_id, personality from threads where personality is not null and personality != ''")
     return frozenset(r["session_id"] for r in rows if r["personality"] != pid)
+
+
+# ── what stays everyday Odie's ──
+
+# Tools that start or stop background work, which runs as everyday Odie and reports in the everyday chat. In a
+# personality's thread they are refused (odie.agent.callbacks) and the model is told to send the user to Odie.
+ODIE_ONLY_TOOLS = frozenset({"track", "stop_tracker"})
+ODIE_ONLY = "That's Odie's job: it runs in the background as Odie. Tell the user to ask Odie in the everyday chat."
+
+_QUIET = {
+    "replied": ("{name} replied", "Open Odie to read it."),
+    "needs you": ("{name} needs you", "Open Odie to answer."),
+    "lapsed": ("{name}: a request lapsed", "Open Odie to see it."),
+    "reminder": ("{name}", "A reminder is waiting."),
+}
+
+
+def quiet_push(name: str, what: str) -> tuple[str, str]:
+    """A push's title and body for something in a personality's thread: who, and that something happened, never the
+    words (they would sit on the lock screen). `what` is "replied", "needs you", "lapsed" or "reminder".
+      ("Mira", "replied")  -> ("Mira replied", "Open Odie to read it.")
+      ("Mira", "reminder") -> ("Mira", "A reminder is waiting.")"""
+    title, body = _QUIET[what]
+    return title.format(name=name), body

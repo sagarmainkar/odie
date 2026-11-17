@@ -78,7 +78,8 @@ def from_tasks(store: Store, now: datetime, days: int = DAYS) -> list[dict]:
     end = (now + timedelta(days=days)).isoformat()
     out = []
     for r in store.query("select id, title, due_at from tasks where status in ('open','waiting') and due_at is not null "
-                         "and due_at >= ? and due_at <= ? and coalesce(source_kind,'') != 'ledger' order by due_at",
+                         "and due_at >= ? and due_at <= ? and coalesce(source_kind,'') != 'ledger' "
+                         "and personality is null order by due_at",  # a personality's reminders are not everyday Odie's
                          (now.date().isoformat(), end)):
         due = r["due_at"]
         t = due[11:16] if len(due) >= 16 and due[11:16] != "00:00" else None

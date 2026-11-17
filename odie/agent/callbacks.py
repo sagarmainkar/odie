@@ -271,6 +271,13 @@ class OdiePlugin(BasePlugin):
                          f"their skill: call load_skill(\"{skill}\") first, then call {tool.name} again."}
 
     async def before_tool_callback(self, *, tool, tool_args: dict[str, Any], tool_context) -> dict | None:
+        from odie import personalities
+        if tool.name in personalities.ODIE_ONLY_TOOLS:
+            session_id = session_id_of(tool_context)
+            in_a_personalitys_thread = personalities.of_session(self.store, session_id) != personalities.ODIE
+            if in_a_personalitys_thread:  # background work is everyday Odie's: the tool doesn't run here
+                self.store.audit("agent", "tool_refused", tool=tool.name, result_summary="everyday Odie's job", session_id=session_id)
+                return {"error": personalities.ODIE_ONLY}
         problem = fix_tool_args(tool, tool_args)
         if problem:
             session_id = session_id_of(tool_context)

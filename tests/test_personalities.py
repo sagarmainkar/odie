@@ -550,3 +550,102 @@ async def test_the_morning_hello_does_not_read_her_chats(runner, monkeypatch):
     monkeypatch.setattr(morning, "today_weather", no_weather)
     gathered = await morning.gather(runner.store, now, BriefInputs(tasks=""))
     assert "dentist" in gathered.chats and "lighthouse" not in gathered.chats
+
+
+# ── a reminder stays with whoever it was asked of; Odie's background jobs stay Odie's ──
+
+def _task_tools(runner) -> dict:
+    """task_add, task_update and task_list as the chat agent has them, by name."""
+    from odie.agent.tools.local import make_local_tools
+    return {t.name: t.func for t in make_local_tools(runner.store, config.settings.timezone)}
+
+
+def _odie_said(history: dict) -> list[str]:
+    """The assistant's words in a history answer, oldest first."""
+    return [item["text"] for item in history["items"] if item["role"] == "odie"]
+
+
+def test_quiet_push_says_who_and_never_what():
+    assert personalities.quiet_push("Mira", "replied") == ("Mira replied", "Open Odie to read it.")
+    assert personalities.quiet_push("Mira", "needs you") == ("Mira needs you", "Open Odie to answer.")
+    assert personalities.quiet_push("Mira", "lapsed") == ("Mira: a request lapsed", "Open Odie to see it.")
+    assert personalities.quiet_push("Mira", "reminder") == ("Mira", "A reminder is waiting.")
+
+
+async def test_a_reminder_set_with_mira_is_hers(runner):
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from odie import upcoming
+    from odie.agent.tools.local import threads_summary
+    from odie.jobs.brief import users_open_tasks
+    mira, hers = await _mira_with_a_thread(runner)
+    tools = _task_tools(runner)
+    tools["task_add"]("Call the clinic", "reminder", "2026-11-20T10:00", tool_context=_ctx(hers))
+    tools["task_add"]("Buy milk", "todo", tool_context=_ctx(f"chat-{D}"))
+    rows = runner.store.query("select title, personality from tasks order by id")
+    assert [(r["title"], r["personality"]) for r in rows] == [("Call the clinic", mira.id), ("Buy milk", None)]
+    # everyday places: Today, the brief and the hello, what's coming up, the count in a message's context
+    assert [r["title"] for r in runner.store.open_tasks()] == ["Buy milk"]
+    assert [r["title"] for r in runner.store.list_tasks("open")] == ["Buy milk"]
+    now = datetime(2026, 11, 18, 9, 0, tzinfo=ZoneInfo(config.settings.timezone))
+    assert [r["title"] for r in users_open_tasks(runner.store, now)] == ["Buy milk"]
+    assert all("clinic" not in str(item) for item in upcoming.from_tasks(runner.store, now))
+    assert threads_summary(runner.store) == "Open threads: 1 to do."
+    assert "clinic" not in tools["task_list"](tool_context=_ctx(f"chat-{D}"))
+    assert "Call the clinic" not in runner._prepare_prompt(f"chat-{D}", "hi")
+    # in her own chat she sees hers and the everyday ones
+    assert sorted(r["title"] for r in runner.store.open_tasks(personality=mira.id)) == ["Buy milk", "Call the clinic"]
+    her_list = tools["task_list"](tool_context=_ctx(hers))
+    assert "Call the clinic" in her_list and "Buy milk" in her_list
+    assert threads_summary(runner.store, mira.id) == "Open threads: 2 to do."
+    assert "Call the clinic" in runner._prepare_prompt(hers, "hi")
+
+
+async def test_her_reminder_fires_in_her_thread(runner, monkeypatch):
+    from odie.jobs import reminders
+    mira, hers = await _mira_with_a_thread(runner)
+    pushed = []
+    monkeypatch.setattr(reminders, "send_to_all", lambda store, title, body, url="/", tag=None: pushed.append((title, body)) or 1)
+    _task_tools(runner)["task_add"]("Call the clinic", "reminder", "2026-11-17T10:00", tool_context=_ctx(hers))
+    listening = runner.bus.queue()
+    assert await reminders.run_due(runner.store, runner, "2026-11-17T10:00:30+05:30") == 1
+    events = []
+    while not listening.empty():
+        events.append(listening.get_nowait())
+    assert [(e["type"], e.get("kind"), e.get("session_id")) for e in events] == [("message", "reminder", hers)]
+    assert _odie_said(await runner.history(D, personality=mira.id)) == ["Reminder: Call the clinic"]
+    assert (await runner.history(D))["items"] == []  # nothing in the everyday chat
+    assert runner.store.pending_notices() == []  # and nothing rings the curtain
+    assert pushed == [("Mira", "A reminder is waiting.")]  # her name, not the reminder's words
+    row = runner.store.one("select status, delivered_at, seen_at from tasks")
+    assert row["status"] == "done" and row["delivered_at"] and row["seen_at"]
+    assert await reminders.run_due(runner.store, runner, "2026-11-17T10:05:00+05:30") == 0  # once
+
+
+async def test_odie_cannot_close_her_task_but_she_can_close_an_everyday_one(runner):
+    mira, hers = await _mira_with_a_thread(runner)
+    tools = _task_tools(runner)
+    tools["task_add"]("Call the clinic", "reminder", "2026-11-20T10:00", tool_context=_ctx(hers))
+    tools["task_add"]("Buy milk", "todo", tool_context=_ctx(f"chat-{D}"))
+    her_task = runner.store.one("select id from tasks where title='Call the clinic'")["id"]
+    milk = runner.store.one("select id from tasks where title='Buy milk'")["id"]
+    said = await tools["task_update"](her_task, status="done", tool_context=_ctx(f"chat-{D}"))
+    assert said == f"No task #{her_task}."  # as for an id that doesn't exist
+    assert runner.store.one("select status from tasks where id=?", (her_task,))["status"] == "open"
+    assert "status=done" in await tools["task_update"](her_task, status="done", tool_context=_ctx(hers))
+    assert "status=done" in await tools["task_update"](milk, status="done", tool_context=_ctx(hers))
+
+
+async def test_a_tracker_asked_of_a_personality_is_refused(runner):
+    from odie.skills.trackers.tools import TOOLS
+    mira, hers = await _mira_with_a_thread(runner)
+    by_name = {t.name: t for t in TOOLS}
+    assert personalities.ODIE_ONLY_TOOLS == frozenset({"track", "stop_tracker"})
+    for name in ("track", "stop_tracker"):
+        refused = await runner.plugin.before_tool_callback(tool=by_name[name], tool_args={}, tool_context=_ctx(hers))
+        assert refused == {"error": personalities.ODIE_ONLY}
+        allowed = await runner.plugin.before_tool_callback(tool=by_name[name], tool_args={}, tool_context=_ctx(f"chat-{D}"))
+        assert allowed is None
+    listing = await runner.plugin.before_tool_callback(tool=by_name["list_trackers"], tool_args={}, tool_context=_ctx(hers))
+    assert listing is None  # reading Odie's trackers is fine: she reads the everyday side
