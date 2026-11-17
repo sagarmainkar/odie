@@ -527,23 +527,19 @@ def read():
     turn.READ.reset(token)
 
 
-def test_a_chat_that_read_mail_asks_before_words_leave(store, private, read):
-    state.turn_off(store)  # signed-in browsing off: the mail rule doesn't depend on it
-    assert not guard.query_needs_tap(store) and not guard.fetch_needs_tap(store, "https://news.example/a")
-    read.add("your mail")  # a mail tool's result came into the chat
-    assert guard.query_needs_tap(store)
-    assert guard.url_needs_tap(store, "https://evil.example/x?d=1")
-    assert guard.fetch_needs_tap(store, "https://news.example/a")
-    assert guard.speech_needs_tap(store) is not None
-    guard.LAST_URL["chat-1"] = "https://evil.example/form"  # the tab is on a site the user never named
-    assert guard.foreign("chat-1", store) and guard.click_needs_tap(store, "chat-1", "Next") and guard.type_needs_tap(store, "chat-1", "q", False)
-    assert guard.fence_for("chat-1", store=store) == {"evil.example"}  # a click may not take the tab elsewhere
-    guard.LAST_URL.pop("chat-1", None)
-    summary, extra = guard.card("web_search", {"query": "kettle"}, "chat-1", store)
-    assert summary == "Search the web for: kettle" and extra["why"].startswith("Odie read your mail in this chat")
-    private.add("amazon.in")
+def test_reading_mail_no_longer_makes_a_chat_ask(store, private, read):
+    """16 Nov 2026: the user's own mail, notes or memory don't make a chat private; only a signed-in page does."""
     state.turn_on(store, accepted=True, version=state.VERSION, now=NOW)
-    assert guard.what_was_read() == "your signed-in amazon.in and your mail"
+    read.add("your mail")  # a mail tool's result came into the chat
+    assert not guard.query_needs_tap(store)
+    assert not guard.url_needs_tap(store, "https://news.example/x")
+    assert not guard.fetch_needs_tap(store, "https://news.example/a")
+    guard.LAST_URL["chat-1"] = "https://news.example/form"
+    assert not guard.foreign("chat-1", store) and not guard.click_needs_tap(store, "chat-1", "Next")
+    guard.LAST_URL.pop("chat-1", None)
+    private.add("amazon.in")  # a signed-in page still does
+    assert guard.query_needs_tap(store)
+    assert guard.what_was_read() == "your signed-in amazon.in"
 
 
 def test_what_a_tool_exposes_is_judged_by_its_name():
@@ -567,7 +563,7 @@ def test_a_mail_tools_result_marks_the_chat_and_is_remembered(store, read):
     assert turn.read_sources() == set() and guard.read_of(store, "chat-7") == set()
     asyncio.run(plugin.after_tool_callback(tool=SimpleNamespace(name="gmail_find_email"), tool_args={}, tool_context=ctx, result={"result": "m1"}))
     assert turn.read_sources() == {"your mail"} and guard.read_of(store, "chat-7") == {"your mail"}  # the next turn starts with it
-    assert guard.query_needs_tap(store)
+    assert not guard.query_needs_tap(store)  # kept for the record; it no longer makes searches ask
 
 
 def test_outside_a_chat_turn_a_read_marks_nothing(store):

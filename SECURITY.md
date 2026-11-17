@@ -29,11 +29,12 @@ Odie runs on your computer and holds your mail, notes and memory. This is how it
 - A connected app's tool runs without a tap only when you turn on "Reading doesn't need a tap" for that app *and*
   the tool's name says it reads (find, get, list, search, fetch). A server's own `readOnlyHint` frees nothing: it is
   the server's word about itself.
-- **Once a tool in a chat has read your mail, notes, memory or messages** (or a page you're signed in to), a web
-  search, a fetch, opening another site, a picture or clip search and a cloud voice ask first, with a card naming what
-  the chat read. The words a model picks for a search can carry what it just read. Memory Odie already had in mind
-  for the message (the notes it prefetches) doesn't count as a read, and other tools that reach the web (research,
-  markets, a podcast or video) aren't in this list.
+- **Once a chat has read a page you're signed in to**, a web search, a fetch, opening another site, a picture or
+  clip search and a cloud voice ask first, with a card naming the site the chat read. The words a model picks for a
+  search can carry what it just read. Reading your own mail, notes, memory or messages does not do this (it did
+  until November 2026, and it made ordinary work ask at every step); sending, paying, installing and secrets still
+  ask by their own rules. Other tools that reach the web (research, markets, a podcast or video) aren't in this
+  list.
 - The background watch stays off the web once a check has read mail or events; the one exception is an address you
   wrote in a Watch for entry yourself.
 - The card also tells you when Odie read mail from someone just before asking to act, so a message can't quietly

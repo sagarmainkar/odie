@@ -51,7 +51,8 @@ def private_of(store, session_id: str) -> set:
 
 
 def remember_read(store, session_id: str, label: str) -> None:
-    """This chat read something of the user's own (mail, notes, memory): the rest of it asks before words leave."""
+    """This chat read something of the user's own (mail, notes, memory): kept so an approval card can name it. It no
+    longer makes the chat private (chat_is_private)."""
     if store is None or not session_id or not label:
         return
     got = read_of(store, session_id)
@@ -142,24 +143,24 @@ def tab_of(tool_context) -> str:
 
 
 # The *_needs_tap predicates below answer one question each: should this tool call wait for the user's tap?
-# "Private chat" means: in this chat turn Odie has read a page where the user is signed in (turn.private_sites()), or
-# something of the user's own, mail, notes, memory (turn.read_sources(): odie.agent.confidential).
+# "Private chat" means: in this chat turn Odie has read a page where the user is signed in (turn.private_sites()).
+# Reading the user's own mail, notes, memory or messages no longer counts (16 Nov 2026: the user found it blocked
+# ordinary work, such as looking up a pull request on the web after reading GitHub's mail about it). Sends,
+# payments, installs and secrets still ask on their own rules.
 
 
 def chat_is_private(store) -> bool:
-    """Whether words leaving this chat could carry something of the user's: it read a signed-in page (with signed-in
-    browsing on), or it read the user's mail, notes, memory or messages. Example: the chat read your amazon.in orders
-    -> True; it fetched a mail -> True (whatever the browsing switch says); it read a public page and nothing else ->
-    False; outside a chat turn (a background check) -> False."""
+    """Whether words leaving this chat could carry what a signed-in page showed: it read one, with signed-in browsing
+    on. Example: the chat read your amazon.in orders -> True; it fetched a mail -> False (mail no longer counts); it
+    read a public page and nothing else -> False; outside a chat turn (a background check) -> False."""
     read_a_signed_in_page = bool(turn.private_sites()) and _on(store)
-    read_the_users_own = bool(turn.read_sources())
-    return read_a_signed_in_page or read_the_users_own
+    return read_a_signed_in_page
 
 
 def what_was_read() -> str:
-    """How the card names what the chat read: "your signed-in amazon.in", "your mail", "your signed-in amazon.in and
-    your mail"; nothing read -> "something of yours"."""
-    parts = [f"your signed-in {site}" for site in sorted(turn.private_sites())] + sorted(turn.read_sources())
+    """How the card names what the chat read: "your signed-in amazon.in", "your signed-in amazon.in and your signed-in
+    flipkart.com"; nothing read -> "something of yours"."""
+    parts = [f"your signed-in {site}" for site in sorted(turn.private_sites())]
     if not parts:
         return "something of yours"
     if len(parts) == 1:
@@ -170,16 +171,16 @@ def what_was_read() -> str:
 def query_needs_tap(store) -> bool:
     """A web search (or anything that sends words out) asks only in a private chat (chat_is_private).
     Example: the chat read your amazon.in orders, then web_search("kettle reviews") -> True (the card); the chat read
-    a mail, then web_search(...) -> True; a chat that read neither -> False; a signed-in page read with signed-in
-    browsing off -> False (nothing is signed in while it's off)."""
+    only a mail, then web_search(...) -> False (mail no longer counts); a chat that read neither -> False; a
+    signed-in page read with signed-in browsing off -> False (nothing is signed in while it's off)."""
     return chat_is_private(store)
 
 
 def url_needs_tap(store, url: str, tab: str = "") -> bool:
     """Opening an address asks in a private chat, unless its site is one the chat may go to freely (_free).
     Example: the chat read amazon.in, then browser_open("https://www.amazon.in/orders") -> False (same site);
-    browser_open("https://evil.example/") -> True; the chat read a mail, then browser_open("https://evil.example/")
-    -> True; any address in a chat that read nothing of the user's -> False."""
+    browser_open("https://evil.example/") -> True; the chat read only a mail, then browser_open("https://evil.example/")
+    -> False (mail no longer counts); any address in a chat that read no signed-in page -> False."""
     if not chat_is_private(store):
         return False
     site = sites.site_of(url)
@@ -199,8 +200,7 @@ def fetch_needs_tap(store, url: str) -> bool:
 def foreign(tab: str, store=None) -> bool:
     """In a private chat (chat_is_private), the tab is on a site that isn't one of the chat's signed-in, okayed or
     named sites. Example: the chat read amazon.in and the tab now shows evil.example -> True; the tab shows amazon.in
-    -> False; the chat read a mail and the tab shows a site the user never named -> True; a chat that read nothing of
-    the user's -> False."""
+    -> False; a chat that read only a mail, or no signed-in page at all -> False."""
     if not chat_is_private(store):
         return False
     tab_site = sites.site_of(LAST_URL.get(tab, ""))
