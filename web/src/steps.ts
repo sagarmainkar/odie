@@ -216,3 +216,25 @@ export function outputHead(result: string, lines = 12): { head: string; rest: nu
   const all = linesOf(result);
   return { head: all.slice(0, lines).join("\n"), rest: Math.max(0, all.length - lines) };
 }
+
+/** "1 step", "4 steps". */
+export function stepsCount(n: number): string {
+  return n === 1 ? "1 step" : `${n} steps`;
+}
+
+/** A summary cut to at most `max` characters at the end of a word, with "…" when something was left out and no comma
+ *  left dangling before it; one word longer than `max` is cut inside the word, as nothing else can fit.
+ *    ("Checked trackers, looked back, checked the time", 30) -> "Checked trackers, looked back…"
+ *    ("Searched the web, remembered that", 40)               -> unchanged (it fits) */
+export function cutAtWord(text: string, max: number): string {
+  if (text.length <= max) return text;
+  let kept = "";
+  for (const word of text.split(" ")) {
+    const longer = kept ? `${kept} ${word}` : word;
+    const withoutComma = longer.replace(/,$/, "");
+    if (withoutComma.length + 1 > max) break;  // + 1 leaves room for the "…"
+    kept = longer;
+  }
+  if (!kept) return `${text.slice(0, max - 1)}…`;
+  return `${kept.replace(/,$/, "")}…`;
+}
