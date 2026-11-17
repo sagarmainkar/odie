@@ -11,6 +11,7 @@ import { getJSON, postJSON, todayISO } from "../api";
 import { speak, stopSpeaking } from "../voice";
 import { usePickedPersona } from "../persona";
 import { lightOf } from "../light";
+import { ctxWorthShowing } from "../contextRing";
 import { usePick } from "../pick";
 import { clearElsewhere, noteElsewhere, somethingElsewhere, useElsewhere, usePersonalities } from "../personalities";
 import { Switcher } from "../components/Switcher";
@@ -160,15 +161,6 @@ function NewChatDivider({ ts, name }: { ts?: number; name: string }) {
   return (
     <div className="flex justify-center min-h-11 items-center"><span className="self-center text-[12px] font-semibold text-muted px-3 py-1 rounded-full bg-well text-center">New chat{ts ? ` · ${fmtTime(ts)}` : ""} · {name} doesn't see anything above</span></div>
   );
-}
-
-/** Whether the header shows how full the conversation is: only once it is half full, so a fresh chat's header is calm.
- *    2K of 32K used   -> false, nothing in the header
- *    16K of 32K used  -> true, the ring shows 50%
- *    a limit of 0 (not known yet) -> false */
-export function ctxWorthShowing(used: number, limit: number): boolean {
-  if (limit <= 0) return false;
-  return used / limit >= 0.5;
 }
 
 function ContextRing({ used, limit }: { used: number; limit: number }) {
