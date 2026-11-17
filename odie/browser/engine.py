@@ -317,6 +317,7 @@ class Browser:
         self._sealed_frames: set[str] = set()  # and their frames, for requests paused browser-wide (no session)
         self._contexts: dict[str, str] = {}  # isolated tab -> its own browser context (background work: no cookies)
         self._holds: dict[str, str] = {}  # tab -> who holds it (the user, in the live view): tools wait
+        self._emulated: set[str] = set()  # tabs made phone-shaped for the user to drive (a watched tab stays as it is)
         self._upi_fns: list[Callable[[str, str], None]] = []
         self._upi: dict[str, str] = {}  # tab -> the last UPI app link its page tried to open
         self._live: dict[str, tuple[Callable, Callable]] = {}  # tab -> (on_frame, on_page): the user's live view of it
@@ -703,26 +704,50 @@ class Browser:
 
     # ── the live view (the user's turn; odie.signin.live): frames out, touch and keys in, nothing to the model ──
     async def live_start(self, tab: str, width: int, height: int, on_frame: Callable[[str, dict], Awaitable[None]],
-                         on_page: Callable[[dict], Awaitable[None]]) -> None:
-        """Show the tab to the user, phone-shaped (touch on, the desktop user agent kept), as JPEG frames (base64)
-        acknowledged one by one, so a slow phone gets fewer. Called again, it resizes and starts over."""
+                         on_page: Callable[[dict], Awaitable[None]], emulate: bool = True) -> None:
+        """Show the tab to the user as JPEG frames (base64) acknowledged one by one, so a slow phone gets fewer.
+        emulate (the user drives): phone-shaped first (touch on, the desktop user agent kept), and the tab's fence
+        lifted; False (the user only watches Odie work): the page stays exactly as Odie has it, fence and all, until
+        live_control. Called again, it resizes and starts over."""
         s = await self._session(tab, create=True)
         assert self._cdp
-        self.fence(tab, None)  # the user drives: anywhere they like
         if tab not in self._live:
-            self._busy += 1  # the browser stays up while the user drives it
+            self._busy += 1  # the browser stays up while the user watches or drives it
             self._stop_idle()
         self._live[tab] = (on_frame, on_page)
-        await self._cdp.send("Emulation.setDeviceMetricsOverride", {"width": width, "height": height, "deviceScaleFactor": 2,
-                                                                    "mobile": True}, session=s)
-        await self._cdp.send("Emulation.setTouchEmulationEnabled", {"enabled": True, "maxTouchPoints": 5}, session=s)
+        if emulate:
+            await self._phone_shaped(tab, s, width, height)
+        await self._cast(s, width, height)
+        await on_page(await self._live_page(s))
+
+    async def _cast(self, s: str, width: int, height: int) -> None:
+        """Start the tab's screencast at the phone's size. One that is already running is stopped first: Chrome
+        refuses a second start ("Screencast is already active")."""
+        assert self._cdp
         try:
             await self._cdp.send("Page.stopScreencast", session=s)
         except CDPError:
-            pass
+            pass  # none was running
         await self._cdp.send("Page.startScreencast", {"format": "jpeg", "quality": 60, "maxWidth": width * 2, "maxHeight": height * 2,
                                                       "everyNthFrame": 1}, session=s)
-        await on_page(await self._live_page(s))
+
+    async def _phone_shaped(self, tab: str, s: str, width: int, height: int) -> None:
+        """The user drives: the tab goes phone-shaped with touch, and anywhere they like (no fence)."""
+        assert self._cdp
+        self.fence(tab, None)
+        self._emulated.add(tab)
+        await self._cdp.send("Emulation.setDeviceMetricsOverride", {"width": width, "height": height, "deviceScaleFactor": 2,
+                                                                    "mobile": True}, session=s)
+        await self._cdp.send("Emulation.setTouchEmulationEnabled", {"enabled": True, "maxTouchPoints": 5}, session=s)
+
+    async def live_control(self, tab: str, width: int, height: int) -> None:
+        """A watcher takes control (odie.signin.live): from here the tab is the user's to drive, phone-shaped, and the
+        frames start over at that shape. Nothing live on the tab -> BrowserError."""
+        s = self._tabs.get(tab)
+        if s is None or tab not in self._live or self._cdp is None:
+            raise BrowserError("The live view isn't on for this tab.")
+        await self._phone_shaped(tab, s, width, height)
+        await self._cast(s, width, height)
 
     async def _live_frame(self, tab: str, s: str, params: dict) -> None:
         """The screencast says the page changed; the phone gets a sharp picture of it. Headless Chrome casts at 1x (a
@@ -800,6 +825,8 @@ class Browser:
             await send("Input.dispatchKeyEvent", {"type": "keyUp", **key}, session=s, timeout=INPUT_TIMEOUT)
         elif t == "back":
             await self._eval(s, "history.back()")
+        elif t == "forward":
+            await self._eval(s, "history.forward()")
         elif t == "reload":
             await send("Page.reload", session=s)
         elif t == "go":
@@ -814,12 +841,15 @@ class Browser:
             return
         self._busy -= 1
         s = self._tabs.get(tab)
+        emulated = tab in self._emulated
+        self._emulated.discard(tab)
         try:
             if s and self._cdp is not None and self.running:
                 await self._cdp.send("Page.stopScreencast", session=s)
-                await self._cdp.send("Emulation.setTouchEmulationEnabled", {"enabled": False}, session=s)
-                await self._cdp.send("Emulation.setDeviceMetricsOverride", {"width": VIEW[0], "height": VIEW[1], "deviceScaleFactor": 1,
-                                                                            "mobile": False}, session=s)
+                if emulated:  # only a tab the user drove was made phone-shaped; a watched one never changed
+                    await self._cdp.send("Emulation.setTouchEmulationEnabled", {"enabled": False}, session=s)
+                    await self._cdp.send("Emulation.setDeviceMetricsOverride", {"width": VIEW[0], "height": VIEW[1],
+                                                                                "deviceScaleFactor": 1, "mobile": False}, session=s)
         except (CDPError, ConnectionError, TimeoutError):
             pass  # the tab went away with the user's turn
         finally:
