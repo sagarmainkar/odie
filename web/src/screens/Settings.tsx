@@ -74,6 +74,16 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
   );
 }
 
+/** One of Settings' four parts: a heading a size up from the section labels, then its sections. */
+function Group({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <div className="flex flex-col gap-6 lg:min-w-0">
+      <h2 className="text-[17px] leading-6 font-bold tracking-[-0.01em] px-1.5 -mb-2">{title}</h2>
+      {children}
+    </div>
+  );
+}
+
 function Pill({ tone, children }: { tone: "moss" | "ember" | "gold"; children: ReactNode }) {
   const c = tone === "moss" ? "chip-good" : tone === "ember" ? "chip-warn" : "chip-warn";
   return <span className={`chip shrink-0 ${c}`}>{children}</span>;
@@ -528,112 +538,121 @@ export function Settings() {
         <div className="text-[21px] font-bold tracking-[-0.015em]">Settings</div>
       </div>
 
-      {/* A desktop shows two columns: who the assistant is and what it connects to on the left, the rest on the right.
-          On a phone and a tablet the wrappers vanish (display: contents): one column, in the same order as always. */}
-      <div className="contents lg:grid lg:grid-cols-2 lg:gap-6 lg:items-start">
-        <div className="contents lg:flex lg:flex-col lg:gap-6 lg:min-w-0">
-          <AssistantSection />
+      {/* Four parts, each under its own heading: who it is, what it can reach, how it behaves, this device and setup.
+          A desktop shows two columns (the first two parts on the left, the last two on the right); on a phone and a
+          tablet the column wrappers vanish (display: contents) and the parts stack in that order. */}
+      <div className="flex flex-col gap-10 lg:grid lg:grid-cols-2 lg:gap-6 lg:items-start">
+        <div className="contents lg:flex lg:flex-col lg:gap-10 lg:min-w-0">
+          <Group title="Who it is">
+            <AssistantSection />
 
-          {/* How the picked one talks: what the owner edits after a switch, so it sits right under who it is. */}
-          <div className="glass rounded-[26px] overflow-hidden shrink-0 -mt-3">
-            <button onClick={() => setSoulOpen((v) => !v)} className="w-full text-left active:bg-well" aria-expanded={soulOpen}>
-              <Row icon={{ icon: "spark", color: "pink" }} ok={soul ? true : "loading"} title={`How ${picked.name} talks`} sub={soul?.custom ? "Your own words in use" : "The default personality"} chevron />
-            </button>
-            <AnimatePresence initial={false}>
-              {soulOpen && (
-                <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.2 }} className="overflow-hidden">
-                  <div className="px-4 pb-4 pt-1 flex flex-col gap-2.5">
-                    <textarea value={soulDraft} onChange={(e) => setSoulDraft(e.target.value)} rows={7} spellCheck={false}
-                      className="w-full bg-well border border-line rounded-[12px] p-3 text-[14px] leading-[22px] outline-none focus:border-line-2" />
-                    <div className="flex gap-2 items-center">
-                      <button onClick={() => saveSoul(soulDraft)} className="h-11 px-4 rounded-[14px] bg-ember text-on-ember font-semibold text-[15px]">Save</button>
-                      <button onClick={() => saveSoul("")} className="h-11 px-4 rounded-[14px] border border-line-2 text-[15px]">Reset</button>
-                      <AnimatePresence>{soulSaved && <motion.span initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="text-[13px] text-moss-text">{soulSaved}</motion.span>}</AnimatePresence>
+            {/* How the picked one talks: what the owner edits after a switch, so it sits right under who it is. */}
+            <div className="glass rounded-[26px] overflow-hidden shrink-0 -mt-3">
+              <button onClick={() => setSoulOpen((v) => !v)} className="w-full text-left active:bg-well" aria-expanded={soulOpen}>
+                <Row icon={{ icon: "spark", color: "pink" }} ok={soul ? true : "loading"} title={`How ${picked.name} talks`} sub={soul?.custom ? "Your own words in use" : "The default personality"} chevron />
+              </button>
+              <AnimatePresence initial={false}>
+                {soulOpen && (
+                  <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.2 }} className="overflow-hidden">
+                    <div className="px-4 pb-4 pt-1 flex flex-col gap-2.5">
+                      <textarea value={soulDraft} onChange={(e) => setSoulDraft(e.target.value)} rows={7} spellCheck={false}
+                        className="w-full bg-well border border-line rounded-[12px] p-3 text-[14px] leading-[22px] outline-none focus:border-line-2" />
+                      <div className="flex gap-2 items-center">
+                        <button onClick={() => saveSoul(soulDraft)} className="h-11 px-4 rounded-[14px] bg-ember text-on-ember font-semibold text-[15px]">Save</button>
+                        <button onClick={() => saveSoul("")} className="h-11 px-4 rounded-[14px] border border-line-2 text-[15px]">Reset</button>
+                        <AnimatePresence>{soulSaved && <motion.span initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="text-[13px] text-moss-text">{soulSaved}</motion.span>}</AnimatePresence>
+                      </div>
                     </div>
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
-
-          <Section title="Connections">
-            {has(caps, "google") && <GoogleRows g={g} flash={flash} setupAction={g && !g.client_configured ? googleAction : null} reload={() => getJSON<Google>("/api/google/status").then(setG).catch(() => {})} />}
-            <a href="#brain" className="block active:bg-well">
-              <BrainRow h={h} />
-            </a>
-          </Section>
-
-          <DevicesSection />
-
-          <ProvidersSection />
-
-          <SearchSection />
-        </div>
-        <div className="contents lg:flex lg:flex-col lg:gap-6 lg:min-w-0">
-          {has(caps, "browser") && <BrowserSection />}
-
-          <PluginsSection />
-          <a href="#sample" className="-mt-3 px-1.5 py-2.5 self-start text-[13px] text-ember-text font-medium">See a sample chat →</a>
-
-          {macApps?.mac && (
-            <Section title="Mac apps">
-              <MacAppsBlock data={macApps} onChange={setMacApps} />
-            </Section>
-          )}
-
-          <Section title="Look">
-            <div className="p-1 m-3 mb-2 rounded-full bg-well flex gap-1" role="radiogroup" aria-label="Look">
-              {([["auto", "Auto"], ["light", "Light"], ["dark", "Dark"]] as const).map(([k, l]) => (
-                <button key={k} role="radio" aria-checked={look === k} onClick={() => pickLook(k)}
-                  className={`flex-1 h-9 rounded-full text-[13px] font-semibold transition-colors ${look === k ? "glass-solid text-ink shadow-[0_4px_12px_-6px_rgba(0,0,0,.25)]" : "text-muted"}`}>{l}</button>
-              ))}
-            </div>
-            <div className="px-4 pb-3 text-[12.5px] text-muted">Auto follows your phone: dark in dark mode; in light mode the colour follows the time of day, warm in the morning, sky at noon, rose in the evening.</div>
-          </Section>
-
-          <Section title="Voice">
-            <VoiceRowLink />
-          </Section>
-
-          <Section title="Memory">
-            <NotesRow />
-            <PhotosRow />
-            <LocationRow />
-            <MemoryRow />
-          </Section>
-
-          <ApprovalsSection />
-
-          {has(caps, "update") && <UpdateSection version={h?.version} />}
-
-          <PhoneSection />
-
-          <Section title="Setup">
-            <button onClick={async () => {
-              const what = skipped.length ? `Set up what was skipped (${skippedList(skipped)})?` : "Go through every step again?";
-              if (!confirm(`${what} Everything that's set stays as it is until you change it, and you can leave setup at any time.`)) return;
-              await postJSON("/api/setup/restart", {}); location.hash = "#setup"; location.reload();
-            }} className="block w-full text-left active:bg-well">
-              <Row icon={{ icon: "spark", color: "violet" }} ok={skipped.length ? "warn" : true} title={skipped.length ? "Finish setup" : "Run setup again"}
-                sub={skipped.length ? `Skipped: ${skippedList(skipped)}` : "Names, notes, search, voice, apps and phone, one at a time"} chevron />
-            </button>
-          </Section>
-
-          <Section title="Notifications">
-            {!pushSupported ? (
-              <Row ok="warn" icon={{ icon: "bell", color: "green" }} title="Push to this device" sub={standalone ? "Not available in this browser" : "Add to Home Screen, then open Odie from the icon"} />
-            ) : subscribed ? (
-              <Row ok={true} icon={{ icon: "bell", color: "green" }} title="Push to this device" sub={tested || "Reminders and briefs reach this phone"}
-                right={<button onClick={testPush} className="h-11 px-1 text-ember-text font-medium text-[14px]">Send a test</button>} />
-            ) : (
-              <>
-                <Row ok="warn" icon={{ icon: "bell", color: "green" }} title="Push to this device" sub={pushSub(push, isApple())} />
-                {push !== "denied" && (
-                  <div className="px-4 pb-3"><button onClick={enablePush} className="h-11 px-4 rounded-[14px] bg-ember text-on-ember font-semibold text-[15px]">Enable notifications</button></div>
+                  </motion.div>
                 )}
-              </>
+              </AnimatePresence>
+            </div>
+          </Group>
+
+          <Group title={`What ${picked.name} can reach`}>
+            <Section title="Connections">
+              {has(caps, "google") && <GoogleRows g={g} flash={flash} setupAction={g && !g.client_configured ? googleAction : null} reload={() => getJSON<Google>("/api/google/status").then(setG).catch(() => {})} />}
+              <a href="#brain" className="block active:bg-well">
+                <BrainRow h={h} />
+              </a>
+            </Section>
+
+            <ProvidersSection />
+
+            <SearchSection />
+
+            {has(caps, "browser") && <BrowserSection />}
+
+            <PluginsSection />
+            <a href="#sample" className="-mt-3 px-1.5 py-2.5 self-start text-[13px] text-ember-text font-medium">See a sample chat →</a>
+
+            {macApps?.mac && (
+              <Section title="Mac apps">
+                <MacAppsBlock data={macApps} onChange={setMacApps} />
+              </Section>
             )}
-          </Section>
+
+            <Section title="Memory">
+              <NotesRow />
+              <PhotosRow />
+              <LocationRow />
+              <MemoryRow />
+            </Section>
+          </Group>
+        </div>
+        <div className="contents lg:flex lg:flex-col lg:gap-10 lg:min-w-0">
+          <Group title={`How ${picked.name} behaves`}>
+            <ApprovalsSection />
+
+            <Section title="Voice">
+              <VoiceRowLink />
+            </Section>
+
+            <Section title="Look">
+              <div className="p-1 m-3 mb-2 rounded-full bg-well flex gap-1" role="radiogroup" aria-label="Look">
+                {([["auto", "Auto"], ["light", "Light"], ["dark", "Dark"]] as const).map(([k, l]) => (
+                  <button key={k} role="radio" aria-checked={look === k} onClick={() => pickLook(k)}
+                    className={`flex-1 h-9 rounded-full text-[13px] font-semibold transition-colors ${look === k ? "glass-solid text-ink shadow-[0_4px_12px_-6px_rgba(0,0,0,.25)]" : "text-muted"}`}>{l}</button>
+                ))}
+              </div>
+              <div className="px-4 pb-3 text-[12.5px] text-muted">Auto follows your phone: dark in dark mode; in light mode the colour follows the time of day, warm in the morning, sky at noon, rose in the evening.</div>
+            </Section>
+
+            <Section title="Notifications">
+              {!pushSupported ? (
+                <Row ok="warn" icon={{ icon: "bell", color: "green" }} title="Push to this device" sub={standalone ? "Not available in this browser" : "Add to Home Screen, then open Odie from the icon"} />
+              ) : subscribed ? (
+                <Row ok={true} icon={{ icon: "bell", color: "green" }} title="Push to this device" sub={tested || "Reminders and briefs reach this phone"}
+                  right={<button onClick={testPush} className="h-11 px-1 text-ember-text font-medium text-[14px]">Send a test</button>} />
+              ) : (
+                <>
+                  <Row ok="warn" icon={{ icon: "bell", color: "green" }} title="Push to this device" sub={pushSub(push, isApple())} />
+                  {push !== "denied" && (
+                    <div className="px-4 pb-3"><button onClick={enablePush} className="h-11 px-4 rounded-[14px] bg-ember text-on-ember font-semibold text-[15px]">Enable notifications</button></div>
+                  )}
+                </>
+              )}
+            </Section>
+          </Group>
+
+          <Group title="This device and setup">
+            <DevicesSection />
+
+            <PhoneSection />
+
+            {has(caps, "update") && <UpdateSection version={h?.version} />}
+
+            <Section title="Setup">
+              <button onClick={async () => {
+                const what = skipped.length ? `Set up what was skipped (${skippedList(skipped)})?` : "Go through every step again?";
+                if (!confirm(`${what} Everything that's set stays as it is until you change it, and you can leave setup at any time.`)) return;
+                await postJSON("/api/setup/restart", {}); location.hash = "#setup"; location.reload();
+              }} className="block w-full text-left active:bg-well">
+                <Row icon={{ icon: "spark", color: "violet" }} ok={skipped.length ? "warn" : true} title={skipped.length ? "Finish setup" : "Run setup again"}
+                  sub={skipped.length ? `Skipped: ${skippedList(skipped)}` : "Names, notes, search, voice, apps and phone, one at a time"} chevron />
+              </button>
+            </Section>
+          </Group>
         </div>
       </div>
 
