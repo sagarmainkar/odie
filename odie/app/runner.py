@@ -976,7 +976,11 @@ class OdieRunner:
             brief = self.store.one("select text from briefs where date=? order by id desc limit 1", (now.strftime("%Y-%m-%d"),))
         from odie import location
         place, seen, home = location.location_bits(location.get(self.store), now)  # a place name and home, never coordinates
-        return build_turn_context(now, self.prefetch(text, personality), threads_summary(self.store, personality), format_open_threads(rows),
+        if personality:
+            remembered = self.prefetch(text, personality)  # its own memories first, then the shared ones
+        else:
+            remembered = self.prefetch(text)
+        return build_turn_context(now, remembered, threads_summary(self.store, personality), format_open_threads(rows),
                                   brief["text"] if brief else "", caps=built.caps, place=place, seen=seen, home=home,
                                   approvals=approvals_mode.context_line(self.store))
 
