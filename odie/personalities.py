@@ -363,9 +363,9 @@ async def delete(store: Store, runner, pid: str) -> dict:
     threads it had}. Erased: its threads' messages; every row and setting kept for those threads (cards, the activity
     log, saved ticks, Think harder); its reminders; its passages in recall; the files made in its threads (their
     cards, their copies in the workspace, its making jobs' folders) and the pictures uploaded into them; its SOUL and
-    memories; its picture; the record itself.
-    Not erased, because Odie can't reach them from here: the rolling debug copies of model requests (they age out),
-    log lines, and anything already sent to a tracing service.
+    memories; its picture; the record itself; and the debug copies of the last few model requests (all of them: they
+    carry no thread id, so the ones from its threads can't be told apart).
+    Not erased, because Odie can't reach them from here: log lines, and anything already sent to a tracing service.
     The record goes first, so no new turn can start in its threads while they are erased (the runner then refuses
     them: SessionGone)."""
     from odie import media, thinking
@@ -398,6 +398,8 @@ async def delete(store: Store, runner, pid: str) -> dict:
     shutil.rmtree(folder(pid), ignore_errors=True)
     (config.settings.data_dir / f"memory-{pid}.lock").unlink(missing_ok=True)
     persona.delete_picture(found.avatar)
+    from odie.agent.model import forget_saved_requests
+    forget_saved_requests(config.settings.data_dir / "requests")  # last: no turn of its threads can save one now
     runner.invalidate_prompt()
     return {"threads": len(its_threads)}
 

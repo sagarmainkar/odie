@@ -1192,3 +1192,18 @@ async def test_an_interrupted_job_of_an_erased_thread_is_removed_not_told(runner
     assert await jobs.tell_if_interrupted(folder / "job.json", kind_name, kind) is False
     assert not folder.exists()  # so the next start has nothing to trip over, and nothing of hers is left
 
+
+
+async def test_delete_clears_the_debug_copies_of_model_requests(runner):
+    """The last few requests sent to the model are kept as files for reading the real prompt; they hold whatever was
+    said in any thread. They carry no thread id, so deleting a personality clears them all."""
+    from odie.agent.model import save_request
+    store = runner.store
+    mira, hers, _kept = await _mira_with_everything(runner)
+    saved = config.settings.data_dir / "requests"
+    assert str(saved).startswith(str(config.settings.data_dir)) and "/.odie/" not in str(saved)  # this test's folder
+    save_request({"model": "m", "messages": [{"role": "user", "content": "the lighthouse secret"}]}, saved)
+    save_request({"model": "m", "messages": [{"role": "user", "content": "what is for lunch"}]}, saved)
+    assert len(list(saved.glob("*.json"))) == 2
+    await personalities.delete(store, runner, mira.id)
+    assert list(saved.glob("*.json")) == []

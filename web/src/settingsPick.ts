@@ -24,6 +24,6 @@ export function deleteWords(name: string, threads: number): string {
   let what = `Delete ${name}?`;
   if (threads === 1) what = `Delete ${name} and its 1 thread?`;
   if (threads > 1) what = `Delete ${name} and its ${threads} threads?`;
-  return `${what} Its threads, memory, instructions and picture are erased for good. Not erased: debug copies of recent `
-    + "model requests (they age out on their own), log lines, and anything already sent to a tracing service.";
+  return `${what} Its threads, memory, instructions and picture are erased for good, and so are the debug copies of `
+    + "recent model requests. Not erased: log lines, and anything already sent to a tracing service.";
 }

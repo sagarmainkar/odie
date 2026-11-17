@@ -26,8 +26,8 @@ describe("Settings follows the picked personality", () => {
   });
 
   it("asks before deleting, in words that say what goes and what Odie can't reach", () => {
-    const rest = " Its threads, memory, instructions and picture are erased for good. Not erased: debug copies of recent model "
-      + "requests (they age out on their own), log lines, and anything already sent to a tracing service.";
+    const rest = " Its threads, memory, instructions and picture are erased for good, and so are the debug copies of recent "
+      + "model requests. Not erased: log lines, and anything already sent to a tracing service.";
     expect(deleteWords("Mira", 4)).toBe("Delete Mira and its 4 threads?" + rest);
     expect(deleteWords("Mira", 1)).toBe("Delete Mira and its 1 thread?" + rest);
     expect(deleteWords("Mira", 0)).toBe("Delete Mira?" + rest);
