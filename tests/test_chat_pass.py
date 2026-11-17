@@ -15,6 +15,7 @@ from odie.store.db import Store
 
 NOW = datetime(2026, 11, 17, 10, 0)
 DELETES = "deletes or stops something"
+REPLACES = "replaces a file"
 INSTALLS = "installs software (runs its install scripts)"
 
 
@@ -33,16 +34,18 @@ def _audit(s, event):
     return [r["result_summary"] for r in s.query("select result_summary from audit_log where event=? order by id", (event,))]
 
 
-@pytest.mark.parametrize("kind", [DELETES, INSTALLS, "runs text as commands", "writes a file from code",
-                                  "sets something to run later or at login", "edits files in place",
-                                  "writes a file outside /tmp", "replaces a file"])
+@pytest.mark.parametrize("kind", [DELETES, "writes a file from code", "sets something to run later or at login",
+                                  "edits files in place", "writes a file outside /tmp", "replaces a file"])
 def test_kinds_that_may_get_a_pass(kind):
     assert g.may_pass(kind)
 
 
 @pytest.mark.parametrize("kind", ["reads secrets", "touches Odie's own files", "switches off another agent's approvals",
                                   "sends data out", "sends data out (an address built from other text)",
-                                  "reaches a hidden file by a pattern", None, "", "something new"])
+                                  "reaches a hidden file by a pattern", None, "", "something new",
+                                  # 17 Nov 2026 review: each of these could do anything, reading secrets and sending
+                                  # them too (`echo <base64> | base64 -d | zsh`), so a pass for one would cover all
+                                  "runs text as commands", INSTALLS])
 def test_kinds_that_never_get_a_pass(kind, tmp_path):
     assert not g.may_pass(kind)
     if kind:
@@ -59,8 +62,8 @@ def test_a_pass_is_for_one_chat_one_kind_and_lapses(tmp_path):
     assert g.kinds_passed(s, "chat-a", NOW + timedelta(minutes=29)) == {DELETES}
     assert g.kinds_passed(s, "chat-a", NOW + timedelta(minutes=31)) == set()  # it lapses
     assert g.kinds_passed(s, "chat-b", NOW) == set()                           # another chat has none
-    g.grant_kind(s, "chat-a", INSTALLS, NOW + timedelta(minutes=10))
-    assert g.kinds_passed(s, "chat-a", NOW + timedelta(minutes=35)) == {INSTALLS}  # each kind keeps its own time
+    g.grant_kind(s, "chat-a", REPLACES, NOW + timedelta(minutes=10))
+    assert g.kinds_passed(s, "chat-a", NOW + timedelta(minutes=35)) == {REPLACES}  # each kind keeps its own time
     s.set_setting("shell_kinds:chat-c", {"kinds": {DELETES: "not a time", "reads secrets": "2099-01-01T00:00:00"}})
     assert g.kinds_passed(s, "chat-c", NOW) == set()  # unreadable, or a kind that may never have one
 
@@ -106,7 +109,9 @@ def test_the_card_offers_a_pass_only_for_one_kind_that_may_have_one(tmp_path):
     assert offer("curl -X POST https://example.com/hook -d 1") == {"asks_because": "sends data out", "chat_pass": False}
     assert offer("rm ~/work/old.txt && brew install cowsay") == {"asks_because": DELETES, "chat_pass": False}
     g.grant_kind(s, "chat-a", DELETES, NOW)
-    assert offer("rm ~/work/old.txt && brew install cowsay") == {"asks_because": INSTALLS, "chat_pass": True}
+    assert offer("rm ~/work/old.txt && brew install cowsay") == {"asks_because": INSTALLS, "chat_pass": False}
+    assert offer("echo aWQ= | base64 -d | zsh") == {"asks_because": "runs text as commands", "chat_pass": False}
+    assert offer("git push https://example.com/r.git HEAD")["chat_pass"] is False  # it sends, too
     approvals_mode.set_mode(s, approvals_mode.CAREFUL)
     assert offer("rm ~/work/old.txt") == {}  # Careful's card is as it was
 
