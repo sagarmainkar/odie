@@ -9,6 +9,8 @@ and memories.md. Every chat thread belongs to exactly one of them (or to Odie), 
 before the thread's session exists, and never changed."""
 from __future__ import annotations
 
+import logging
+import shutil
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -16,6 +18,8 @@ from pathlib import Path
 from odie import config, persona
 from odie.memory.store import MemoryFile
 from odie.store.db import Store, now_iso
+
+log = logging.getLogger("odie.personalities")
 
 ODIE = ""  # the everyday one's id
 
@@ -178,6 +182,18 @@ def of_session(store: Store, session_id: str | None) -> str:
     return row["personality"] or ODIE
 
 
+def is_erased(store: Store, session_id: str | None) -> bool:
+    """Whether a thread was erased with its personality (delete): its row is kept, empty, with the id of a personality
+    that no longer exists. The row keeps the thread's number from being given out again, so a job that was still
+    finishing for the erased thread can never write into a new thread that happens to reuse its id.
+      a thread of Mira's, Mira still there -> False;  the same thread after Mira was deleted -> True;
+      an everyday thread, or one with no row -> False"""
+    owner = of_session(store, session_id)
+    if owner == ODIE:
+        return False
+    return get(store, owner) is None
+
+
 def claim(store: Store, session_id: str, pid: str) -> None:
     """Write that this new thread belongs to this personality. It is called before the thread's session is made, and
     the answer never changes afterwards: a thread that already belongs to someone else, or that Odie already has a
@@ -276,4 +292,72 @@ def event_for_stream(event: dict, owner: str, pick: str | None) -> dict | None:
 def stream_view(store: Store, event: dict, pick: str | None) -> dict | None:
     """event_for_stream, with the event's owner read from the store."""
     return event_for_stream(event, owner_of_event(store, event), pick)
+
+
+# ── deleting one ──
+
+def tables_with_a_thread_column(store: Store) -> list[str]:
+    """Every table of the app's database that has a `session_id` column (approvals, the activity log, a reply's saved
+    ticks…), found by asking the database, so a table added later is covered without touching this file."""
+    names = [r["name"] for r in store.query("select name from sqlite_master where type='table' and name not like 'sqlite_%'")]
+    found = []
+    for name in names:
+        columns = [c["name"] for c in store.query(f'pragma table_info("{name}")')]
+        if "session_id" in columns:
+            found.append(name)
+    return found
+
+
+def erase_rows_of(store: Store, session_id: str) -> None:
+    """Remove everything the app's database keeps for one thread: its rows in every table with a `session_id` column,
+    and the settings kept under its id (the signed-in sites it read, the sites okayed in it). Its `threads` row stays,
+    emptied, as the mark that the thread was erased (is_erased)."""
+    for table in tables_with_a_thread_column(store):
+        if table == "threads":
+            store.execute("update threads set title=null, pinned_at=null where session_id=?", (session_id,))
+            continue
+        store.execute(f'delete from "{table}" where session_id=?', (session_id,))
+    # settings kept per thread are named "<what>.<the thread's id>": the key ends with the whole id
+    store.execute("delete from settings where length(key) > length(?) and substr(key, -length(?)) = ?",
+                  (session_id, session_id, session_id))
+
+
+async def delete(store: Store, runner, pid: str) -> dict:
+    """Erase a personality and everything Odie keeps for it, for good; there is no bin. Returns {"threads": how many
+    threads it had}. Erased: its threads' messages; every row and setting kept for those threads (cards, the activity
+    log, saved ticks, Think harder); its reminders; its passages in recall; the files made in its threads and the
+    pictures uploaded into them; its SOUL and memories; its picture; the record itself.
+    Not erased, because Odie can't reach them from here: the rolling debug copies of model requests (they age out),
+    log lines, and anything already sent to a tracing service.
+    The record goes first, so no new turn can start in its threads while they are erased (the runner then refuses
+    them: SessionGone)."""
+    from odie import media, thinking
+    from odie.app import images
+    found = get(store, pid)
+    if found is None:
+        raise ValueError("no such personality")
+    its_threads = sessions_of(store, pid)
+    store.execute("delete from personalities where id=?", (pid,))
+    await runner.forget_personality(pid)
+    for session_id in its_threads:
+        made, uploads = await runner.erase_thread(session_id)  # waits for a turn still running there
+        for mid in made:
+            media.delete(mid)
+        for iid in uploads:
+            images.delete_upload(iid)
+        erase_rows_of(store, session_id)
+    try:
+        from odie.recall.fill import recall_index
+        recall_index().drop_sessions(its_threads)
+    except Exception:  # noqa: BLE001 (an index that won't open holds nothing we could remove now)
+        log.warning("recall: a deleted personality's passages couldn't be removed", exc_info=True)
+    thinking.forget(store, its_threads)
+    store.execute("delete from tasks where personality=?", (pid,))
+    store.execute("delete from settings where key=?", (f"current:{pid}",))
+    await runner.forget_personality(pid)  # again: a turn that was finishing may have noted itself meanwhile
+    shutil.rmtree(folder(pid), ignore_errors=True)
+    (config.settings.data_dir / f"memory-{pid}.lock").unlink(missing_ok=True)
+    persona.delete_picture(found.avatar)
+    runner.invalidate_prompt()
+    return {"threads": len(its_threads)}
 

@@ -2120,6 +2120,19 @@ async def personalities_create(body: PersonalityIn, request: Request):
     return _personality_row(store, made)
 
 
+@router.delete("/personalities/{pid}")
+async def personalities_delete(pid: str, request: Request):
+    """Erase a personality with its threads, memory, instructions and picture, for good (odie.personalities.delete).
+    The activity log keeps only that one was deleted, not which."""
+    from odie import personalities
+    store = request.app.state.store
+    if personalities.get(store, pid) is None:
+        raise HTTPException(404, "no such personality")
+    erased = await personalities.delete(store, request.app.state.runner, pid)
+    store.audit("user", "personality_deleted", result_summary=f"{erased['threads']} thread(s)")
+    return {"ok": True, **erased}
+
+
 @router.get("/persona/avatar/{aid}")
 async def persona_avatar_file(aid: str):
     from fastapi.responses import FileResponse

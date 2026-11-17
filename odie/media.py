@@ -61,6 +61,18 @@ def get(mid: str) -> tuple[Path, dict] | None:
     return (path, m) if path.is_file() else None
 
 
+def delete(mid: str) -> bool:
+    """Remove a made file and its description for good. True when there was one: a well-formed id that was saved ->
+    True; an unknown or malformed id -> False."""
+    found = get(mid)
+    if found is None:
+        return False
+    path, _ = found
+    path.unlink(missing_ok=True)
+    (media_dir() / f"{mid}.json").unlink(missing_ok=True)
+    return True
+
+
 def update(mid: str, extra: dict) -> dict | None:
     """Merges keys into a saved item's description (a deck adds its previews and PowerPoint); the new description."""
     got = get(mid)

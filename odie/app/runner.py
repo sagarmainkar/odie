@@ -578,6 +578,23 @@ def previous_questions(history: list[dict]) -> list[str]:
         said.append(without_form_answers(h["text"]))
     return said[-2:][::-1]
 
+class SessionGone(Exception):
+    """A thread that was erased with its personality (odie.personalities.delete): nothing may be written to it, or made
+    under its id, again."""
+
+
+def files_of(events: list[Any]) -> tuple[list[str], list[str]]:
+    """What a thread's messages carry besides words: the ids of the files made in it (odie.media: a memo, a podcast, a
+    picture) and of the pictures the user uploaded into it. ([made ids], [upload ids])."""
+    made = [m["id"] for line in events_to_history(events) for m in line.get("media", []) if m.get("id")]
+    uploads: list[str] = []
+    for ev in events:
+        for part in parts_of(ev):
+            text = getattr(part, "text", None) or ""
+            uploads += IMAGE_MARK.findall(text)
+    return made, uploads
+
+
 @dataclass
 class SessionPrompt:
     """One thread's system prompt, built once for that thread and that day (so a provider's cache can reuse it), and
@@ -629,6 +646,7 @@ class OdieRunner:
         self.review_every = config.settings.review_every_turns
         # (user, assistant) pairs since the last review, kept apart for each personality ("" = everyday Odie)
         self._turns: dict[str, list[tuple[str, str]]] = {}
+        self._review_for = ""  # whose turns the running review reads (so deleting a personality can stop a review of it)
         self._review_task: asyncio.Task | None = None
         self.agent = build_agent(store, instruction=self._prompt_of, memory=self.memory,
                                  on_memory_change=self._memory_changed, memory_for=self._memory_for_chat)
@@ -744,11 +762,49 @@ class OdieRunner:
         return self._locks.setdefault(session_id, asyncio.Lock())
 
     async def _ensure_session(self, session_id: str) -> str:
+        """The thread's session, made if it isn't there yet. A thread that was erased with its personality raises
+        SessionGone: a turn or a job that was still finishing can't bring it back."""
+        from odie import personalities
+        if personalities.is_erased(self.store, session_id):
+            raise SessionGone(session_id)
         s = config.settings
         existing = await self.session_service.get_session(app_name=s.app_name, user_id=s.user_id, session_id=session_id)
         if existing is None:
             await self.session_service.create_session(app_name=s.app_name, user_id=s.user_id, session_id=session_id)
         return session_id
+
+    def forget_sessions(self, session_ids) -> None:
+        """Drop what the runner remembers about threads that were erased: their prompt, their last questions, their
+        history limit, a pending Stop."""
+        for session_id in session_ids:
+            self._prompts.pop(session_id, None)
+            self._recent.pop(session_id, None)
+            self._history_limits.pop(session_id, None)
+            self._stop.discard(session_id)
+
+    async def erase_thread(self, session_id: str) -> tuple[list[str], list[str]]:
+        """Erase one thread's messages for good (its personality was deleted). A turn still running in it is asked to
+        stop and waited for first. Returns files_of its messages, for the caller to erase too."""
+        s = config.settings
+        self.request_stop(session_id)
+        async with self.lock_for(session_id):
+            sess = await self.session_service.get_session(app_name=s.app_name, user_id=s.user_id, session_id=session_id)
+            carried: tuple[list[str], list[str]] = ([], [])
+            if sess is not None:
+                carried = files_of(sess.events)
+                await self.session_service.delete_session(app_name=s.app_name, user_id=s.user_id, session_id=session_id)
+            self.forget_sessions([session_id])
+        return carried
+
+    async def forget_personality(self, personality: str) -> None:
+        """A personality was deleted: drop its turns waiting for a memory review, and stop a review of its turns that
+        is still running (it would write its memory file back)."""
+        self._turns.pop(personality, None)
+        review = self._review_task
+        reviewing_it = review is not None and not review.done() and self._review_for == personality
+        if reviewing_it:
+            review.cancel()
+            await asyncio.gather(review, return_exceptions=True)
 
     def memory_of(self, personality: str):
         """The memory file a personality saves to: everyday Odie -> the shared memories.md; Mira -> her own."""
@@ -813,6 +869,7 @@ class OdieRunner:
         if self._review_task is None or self._review_task.done():
             memory = self.memory_of(personality)
             index_text = self.memory_index(personality)
+            self._review_for = personality
             self._review_task = asyncio.create_task(run_review(memory, pending, index_text, on_change=self._memory_changed, store=self.store))
 
     def _memory_changed(self) -> None:

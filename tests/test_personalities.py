@@ -957,3 +957,129 @@ async def test_a_made_thing_in_her_thread_is_a_quiet_push(runner, monkeypatch):
     await jobs.tell("video-kettles", f"chat-{D}", "Your video about kettles is ready.")
     assert pushed == [("Mira replied", "Open Odie to read it."), ("Odie", "Your video about kettles is ready.")]
     assert _odie_said(await runner.session_history(hers)) == ["Your video about the lighthouse is ready."]
+
+
+# ── deleting a personality ──
+
+async def _mira_with_everything(runner):
+    """Mira with one thread and something of hers in every place Odie keeps things for a thread."""
+    from odie import media, thinking
+    from odie.app.images import prepare_image, uploads_dir
+    from odie.recall.fill import recall_index
+    from odie.signin import guard
+    store = runner.store
+    mira, hers = await _mira_with_a_thread(runner)
+    await _say(runner, hers, "user", "The lighthouse plan", time.time())
+    picture = persona.store_picture(_jpeg())
+    personalities.set_avatar(store, mira.id, picture)
+    runner.memory_of(mira.id).update("The lighthouse plan", "Kept between us.", topic="Private")
+    card = _card(store, hers, "Delete the lighthouse notes")
+    store.audit("user", "message", result_summary="The lighthouse plan", session_id=hers)
+    store.save_block_state(hers, "reply-1", "0", True)
+    _task_tools(runner)["task_add"]("Call the clinic", "reminder", "2026-11-20T10:00", tool_context=_ctx(hers))
+    recall_index().add_exchanges([_exchange(hers, "you: the lighthouse plan\nOdie: kept between us")])
+    thinking.put(store, hers, True)
+    store.set_setting(guard.PRIVATE_KEY + hers, ["example.com"])
+    made = media.save(b"a voice memo", "memo", "wav", "audio/wav", "A memo about the lighthouse")
+    await runner.post_message("Here it is.", session_id=hers, media=[made])
+    upload = prepare_image(_jpeg(), uploads_dir())
+    await _say(runner, hers, "user", f"Look at this\n[image:{upload['id']}]", time.time())
+    return mira, hers, {"card": card, "picture": picture, "made": made["id"], "upload": upload["id"]}
+
+
+async def test_delete_erases_everything_odie_keeps_for_it(runner):
+    from odie import media, thinking
+    from odie.app.images import load_image
+    from odie.recall.fill import recall_index
+    from odie.signin import guard
+    store = runner.store
+    mira, hers, kept = await _mira_with_everything(runner)
+    assert media.get(kept["made"]) is not None and load_image(kept["upload"]) is not None  # there before
+    assert await personalities.delete(store, runner, mira.id) == {"threads": 1}
+    assert personalities.get(store, mira.id) is None and personalities.list_all(store) == []
+    assert hers not in threads.session_ids_on(D)  # the thread's messages are gone from the session store
+    for table in ("approvals", "audit_log", "block_state"):
+        assert store.query(f"select 1 from {table} where session_id=?", (hers,)) == [], table
+    mark = store.one("select title, pinned_at from threads where session_id=?", (hers,))
+    assert mark["title"] is None and mark["pinned_at"] is None  # only an empty mark that the thread was erased
+    assert personalities.is_erased(store, hers)
+    assert threads.next_free_id(store, D) != hers  # its number is never given out again
+    assert threads.list_threads(store) == []  # and it is in nobody's list
+    assert store.query("select 1 from tasks where personality=?", (mira.id,)) == []
+    assert recall_index().keyword("lighthouse") == []
+    assert not personalities.folder(mira.id).exists()  # her SOUL and her memories
+    assert not (config.settings.data_dir / f"memory-{mira.id}.lock").exists()
+    assert persona.avatar_path(kept["picture"]) is None
+    assert media.get(kept["made"]) is None and load_image(kept["upload"]) is None
+    assert hers not in thinking._load(store)["chats"]
+    assert store.get_setting(guard.PRIVATE_KEY + hers) is None
+    assert store.get_setting(f"current:{mira.id}") is None
+    assert hers not in runner._prompts and mira.id not in runner._turns
+
+
+async def test_delete_leaves_odie_and_the_others_alone(runner, odies_soul):
+    from odie.recall.fill import recall_index
+    store = runner.store
+    mira, hers, _ = await _mira_with_everything(runner)
+    # everyday Odie's things
+    odies = f"chat-{D}"
+    await _say(runner, odies, "user", "Everyday question", time.time())
+    runner.memory.update("Rent day", "Paid on the first.", topic="Finance")
+    odies_picture = persona.save_avatar(store, _jpeg())["avatar"]
+    odies_card = _card(store, odies, "Run pwd")
+    store.save_block_state(odies, "reply-1", "0", True)
+    _task_tools(runner)["task_add"]("Buy milk", "todo", tool_context=_ctx(odies))
+    recall_index().add_exchanges([_exchange(odies, "you: which kettle\nOdie: the steel kettle", hour=11)])
+    # another personality's things
+    coach = personalities.create(store, "Coach")
+    personalities.save_soul(coach.id, "You are Coach. Direct.")
+    coachs = await runner.session_for(coach.id, D)
+    await _say(runner, coachs, "user", "The training plan", time.time())
+    runner.memory_of(coach.id).update("Training plan", "Three runs a week.", topic="Health")
+
+    await personalities.delete(store, runner, mira.id)
+
+    assert _said(await runner.history(D)) == ["Everyday question"]
+    assert runner.memory.load().find("Rent day") is not None
+    assert odies_soul.read_text() == "You are Odie, the everyday one. Sunny."
+    assert persona.avatar_path(odies_picture) is not None and persona.get(store)["avatar"] == odies_picture
+    assert store.get_approval(odies_card)["status"] == "pending"
+    assert store.block_state(odies, "reply-1") != {}
+    assert [r["title"] for r in store.open_tasks()] == ["Buy milk"]
+    assert len(recall_index().keyword("kettle")) == 1
+    assert personalities.get(store, coach.id) is not None and personalities.load_soul(coach.id) == "You are Coach. Direct."
+    assert _said(await runner.history(D, personality=coach.id)) == ["The training plan"]
+    assert runner.memory_of(coach.id).load().find("Training plan") is not None
+
+
+async def test_nothing_comes_back_after_delete(api, runner):
+    from odie.app.runner import SessionGone
+    mira, hers, kept = await _mira_with_everything(runner)
+    await _say(runner, f"chat-{D}", "user", "Everyday question", time.time())
+    gone = await api.delete(f"/api/personalities/{mira.id}")
+    assert gone.status_code == 200 and gone.json() == {"ok": True, "threads": 1}
+    assert (await api.get(f"/api/approvals/{kept['card']}")).status_code == 404  # her waiting card went with her
+    with pytest.raises(SessionGone):
+        await runner.post_message("a late reply", session_id=hers)  # a turn still finishing can't bring the thread back
+    assert hers not in threads.session_ids_on(D)
+    assert _odie_said(await runner.history(D)) == []  # and its words didn't land in the everyday chat
+    assert (await api.delete(f"/api/personalities/{mira.id}")).status_code == 404
+    assert (await api.get("/api/personalities")).json() == {"personalities": []}
+    assert (await api.get(f"/api/threads?personality={mira.id}")).status_code == 404
+
+
+async def test_deleting_stops_a_review_of_her_turns(runner):
+    import asyncio
+    mira, hers = await _mira_with_a_thread(runner)
+    started = asyncio.Event()
+
+    async def slow_review():
+        started.set()
+        await asyncio.sleep(30)  # a review still waiting for the model
+
+    runner._review_task = asyncio.create_task(slow_review())
+    runner._review_for = mira.id
+    await started.wait()
+    await personalities.delete(runner.store, runner, mira.id)
+    assert runner._review_task.cancelled()  # it can no longer write her memory file back
+    assert not personalities.folder(mira.id).exists()
