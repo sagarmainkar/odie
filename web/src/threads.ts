@@ -22,8 +22,13 @@ export function whenText(t: Thread, today: string): string {
     : new Date(t.date + "T00:00:00").toLocaleDateString(userLocale(), { weekday: "short", day: "numeric", month: "short" });
 }
 
-/** Does a live message belong in the chat being shown? Today's view shows today's segments; a thread shows only itself. */
-export function belongsHere(sessionId: string | undefined, threadId: string | null, today: string): boolean {
+/** Does a live message belong in the chat being shown? Today's view shows today's segments; a thread shows only itself.
+ *  `owner` is the personality the message's thread belongs to and `pick` the one on screen ("" = everyday Odie): a
+ *  message of another's never belongs. A personality's chat with no thread shown yet takes its own first message. */
+export function belongsHere(sessionId: string | undefined, threadId: string | null, today: string, owner = "", pick = ""): boolean {
+  if (owner !== pick) return false;
   if (!sessionId) return threadId === null;
-  return threadId ? sessionId === threadId : sessionId.startsWith(`chat-${today}`);
+  if (threadId) return sessionId === threadId;
+  if (pick) return true;
+  return sessionId.startsWith(`chat-${today}`);
 }

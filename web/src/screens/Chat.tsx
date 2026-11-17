@@ -9,7 +9,10 @@ import { has, useCaps, userCountry } from "../capabilities";
 import { ideasFor } from "../ideas";
 import { getJSON, postJSON, todayISO } from "../api";
 import { speak, stopSpeaking } from "../voice";
-import { usePersona } from "../persona";
+import { usePickedPersona } from "../persona";
+import { usePick } from "../pick";
+import { clearElsewhere, noteElsewhere, somethingElsewhere, useElsewhere, usePersonalities } from "../personalities";
+import { Switcher } from "../components/Switcher";
 import { TalkMode } from "../components/TalkMode";
 import { SpeakingBars } from "../components/Orb";
 import { Avatar } from "../components/Avatar";
@@ -232,7 +235,20 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
   const [micNote, setMicNote] = useState("");  // why the mic couldn't write it down, shown under the box
   const micLevel = useRef(0);  // the voice's loudness right now, for the wave
   const [talking, setTalking] = useState(false);
-  const { name } = usePersona();
+  // Who this chat is with: everyday Odie (""), or a personality picked in the switcher. The name, the picture, the
+  // threads and every call for the chat follow it (api.ts names the pick on those calls).
+  const pick = usePick();
+  const pickRef = useRef(pick);
+  pickRef.current = pick;
+  const picked = usePickedPersona();
+  const { name } = picked;
+  const [switcherOpen, setSwitcherOpen] = useState(false);
+  const [pickThread, setPickThread] = useState<string | null>(null);  // a personality's current thread, as its history said
+  const pickThreadRef = useRef<string | null>(null);
+  pickThreadRef.current = pickThread;
+  const personalities = usePersonalities();
+  const elsewhere = useElsewhere();
+  const someoneElseWaits = somethingElsewhere(personalities.list, elsewhere, pick);  // the header's dot
   const stopDictate = useRef<(() => void) | null>(null);
   const bottom = useRef<HTMLDivElement>(null);
   const field = useRef<HTMLTextAreaElement>(null);
@@ -301,12 +317,26 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
   const lastEventAt = useRef(0);
   const settling = useRef(false);
   const toLatest = () => requestAnimationFrame(() => { bottom.current?.scrollIntoView(); setAtBottom(true); atBottomRef.current = true; });
+  // Switching to someone else: the screen is theirs at once. The other's messages, opened thread and half-typed words
+  // go, and an answer still streaming stops being drawn (it finishes on the server and is there on the way back).
+  const sawFirstPick = useRef(false);
+  useEffect(() => {
+    clearElsewhere(pick);  // what was waiting here is on screen now
+    if (!sawFirstPick.current) { sawFirstPick.current = true; return; }
+    streamAbort.current?.abort();
+    setThread(null); setMsgs([]); setEarlier(0); setPickThread(null); setInput("");
+    setThreadsReload((n) => n + 1);
+    setChatKey((n) => n + 1);
+  }, [pick]);  // eslint-disable-line react-hooks/exhaustive-deps
   const loadHistory = useCallback(async () => {
     // Last 30 messages first (fast on a phone), then pending approvals appended once, so neither fetch can wipe the other.
     const wasAtBottom = atBottomRef.current;
     settling.current = true;
+    const askedFor = pick;
     try {
-      const h = await getJSON<H>(historyUrl("limit=30"));
+      const h = await getJSON<H & { thread?: string | null }>(historyUrl("limit=30"));
+      if (askedFor !== pickRef.current) return;  // switched while it loaded: this history is someone else's
+      setPickThread(h.thread ?? null);
       const fresh = afterLastNewChat(h.items);
       setEarlier(fresh.cut ? 0 : h.start);  // nothing above a "/new" is shown here
       setHistoryCut({ threadId: thread?.id ?? null, cut: fresh.cut });
@@ -320,7 +350,7 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
       if (wasAtBottom) toLatest();
     } catch { /* offline: keep what we have */ }
     finally { window.setTimeout(() => { settling.current = false; }, 600); }
-  }, [setOrb, thread]);  // eslint-disable-line react-hooks/exhaustive-deps
+  }, [setOrb, thread, pick]);  // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { void loadHistory(); loadCtx(); }, [loadHistory, loadCtx]);
 
   async function loadEarlier() {
@@ -376,7 +406,17 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
 
   // After Act on a reminder's curtain: the chat is open and the cursor goes to the composer.
   useLive(useCallback((e: any) => {
-    if (e.type === "message" && e.text !== NEW_CHAT && belongsHere(e.session_id, threadRef.current?.id ?? null, todayISO())) {
+    // Whose event it is: the server marks a personality's with its id; everyday Odie's carry none. Only the events of
+    // whoever is on screen touch this chat. Someone else's are noted for the header's dot and the switcher, no more.
+    const owner: string = e.personality ?? "";
+    const shownId = threadRef.current?.id ?? pickThreadRef.current ?? null;
+    if (e.type === "elsewhere") { noteElsewhere(e.personality, e.what); return; }
+    if (owner !== pickRef.current) {
+      if (e.type === "approval" && e.status === "pending") noteElsewhere(owner, "card");
+      if (e.type === "message" && e.text !== NEW_CHAT) noteElsewhere(owner, "reply");
+      if (e.session_id || e.type === "approval" || e.type === "approval_done") return;  // about a thread that isn't on screen
+    }
+    if (e.type === "message" && e.text !== NEW_CHAT && belongsHere(e.session_id, shownId, todayISO(), owner, pickRef.current)) {
       // A reply after a tap is her answer, not a reminder: show it like any other reply.
       // A reply after a tap replaces the "still working" row that waitForTap put up.
       // Words after a tap join the message of their turn; with none on screen (opened later) they come as a new one.
@@ -390,7 +430,7 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
       setUnseen(true);
     }
     // A resumed run's steps join the message of their turn; a finished one falls back to the reply holding its id.
-    const stepHere = belongsHere(e.session_id, threadRef.current?.id ?? null, todayISO());
+    const stepHere = belongsHere(e.session_id, shownId, todayISO(), owner, pickRef.current);
     if ((e.type === "step_start" || e.type === "step_wait") && stepHere) setMsgs((m) => withTurnEvent(m, e) ?? m);
     if (e.type === "step" && stepHere) setMsgs((m) => withTurnEvent(m, e) ?? withStepEvent(m, e as StepEvent));
     if (e.type === "thinking") setThink((shown) => thinkingAfter(shown, e));  // flipped in another app or browser
@@ -613,7 +653,7 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
   const morning = useMorning(thread?.id ?? null);
   const onScreen = chatOnScreen(thread?.id ?? null, historyCut, earlier);
   let morningOnTop: MorningReply | null = null;
-  if (morning && shouldShowMorning(onScreen, todayISO(), morning.state)) morningOnTop = morning;
+  if (pick === "" && morning && shouldShowMorning(onScreen, todayISO(), morning.state)) morningOnTop = morning;  // the hello is everyday Odie's
   const morningReady = morningOnTop?.card != null;
   // In an empty chat the hello is the latest thing, so "to the latest" (opening the chat, a reload) lands on its top,
   // not under its chips.
@@ -625,6 +665,7 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
       {wide && <ThreadsSidebar current={thread?.id ?? null} onOpen={setThread} onNewChat={() => void newChat()} reload={threadsReload} />}
       <div className="relative flex flex-col h-full flex-1 min-w-0">
         <AnimatePresence>{talking && <TalkMode onClose={() => setTalking(false)} />}</AnimatePresence>
+        <Switcher open={switcherOpen} onClose={() => setSwitcherOpen(false)} />
         <header className="chat-col sticky top-0 z-10 grid grid-cols-[auto_1fr_auto] items-center gap-2.5 px-[18px] pb-4 safe-top bg-overlay backdrop-blur-xl backdrop-saturate-150 [mask-image:linear-gradient(180deg,#000_82%,transparent)]">
           {/* On a desktop the rail has Today; an empty span holds the back button's place in the header grid. */}
           {wide ? <span /> : (
@@ -633,13 +674,16 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
               {badge(needYou) && <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-ember text-on-ember text-[11px] font-bold grid place-items-center">{badge(needYou)}</span>}
             </a>
           )}
-          <div className="flex items-center justify-center gap-2.5 min-w-0">
+          <button type="button" onClick={() => setSwitcherOpen(true)} aria-haspopup="dialog"
+            aria-label={`Switch personality. Talking to ${name}${someoneElseWaits ? "; someone else has something for you" : ""}`}
+            className="flex items-center justify-center gap-2.5 min-w-0 text-left rounded-[18px] px-2 py-1 -my-1 active:bg-well">
             <span className="relative shrink-0">
-              <Avatar size={40} state={orb} />
+              <Avatar size={40} state={orb} who={picked} />
               <i className={`absolute right-0 bottom-0 w-3 h-3 rounded-full border-2 border-[var(--t-ground)] ${busy || orb === "approval" ? "bg-gold" : "bg-good"}`} aria-hidden="true" />
+              {someoneElseWaits && <i className="absolute -left-0.5 -top-0.5 w-3 h-3 rounded-full border-2 border-[var(--t-ground)] bg-ember" aria-hidden="true" />}
             </span>
             <div className="flex flex-col items-start leading-tight min-w-0">
-            <b className="text-[17px] font-bold truncate max-w-full">{name}</b>
+            <b className="text-[17px] font-bold truncate max-w-full inline-flex items-center gap-1">{name}<span className="text-muted text-[12px]" aria-hidden="true">▾</span></b>
             <AnimatePresence mode="wait" initial={false}>
               <motion.span key={status} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.16 }}
                 className="text-[12.5px] text-muted inline-flex items-center gap-1.5 whitespace-nowrap max-w-full truncate">
@@ -647,7 +691,7 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
               </motion.span>
             </AnimatePresence>
             </div>
-          </div>
+          </button>
           <div className="flex items-center gap-1.5">
             {!wide && <button onClick={() => setThreadsOpen(true)} aria-label="Threads" title="Threads" className="pill w-11 px-0"><Glyph name="menu" size={18} /></button>}
             {ctx && ctxKnown && !thread && (
@@ -661,7 +705,7 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
         </header>
         {thread && (
           <div className="chat-col-edge mx-[18px] -mt-2 mb-1 flex items-center gap-2 px-3 py-2 rounded-[18px] glass">
-            <button onClick={() => setThread(null)} className="text-[13px] font-semibold text-ember-text shrink-0">‹ Today</button>
+            <button onClick={() => setThread(null)} className="text-[13px] font-semibold text-ember-text shrink-0">{pick ? "‹ Current chat" : "‹ Today"}</button>
             <button onClick={() => { const t = prompt("Name this thread", thread.title); if (t !== null) void postJSON(`/api/threads/${thread.id}/rename`, { title: t }).then(() => setThread({ ...thread, title: t.trim() || thread.title })); }}
               className="flex-1 min-w-0 text-left text-[14px] font-semibold truncate" title="Rename">{thread.title}</button>
             <button aria-label={thread.pinned ? "Unpin" : "Pin"} onClick={() => { const p = !thread.pinned; setThread({ ...thread, pinned: p }); void postJSON(`/api/threads/${thread.id}/pin`, { pinned: p }); }}
@@ -687,7 +731,14 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
             )}
             {latestIsHello && <div ref={bottom} />}
             {morningOnTop && <MorningHello reply={morningOnTop} onChip={(t) => void send(t)} />}
-            {msgs.length === 0 && !morningReady && (() => { const g = greetingParts(); return (
+            {msgs.length === 0 && pick !== "" && (
+              <div className="min-h-[60dvh] flex flex-col items-center justify-center text-center pt-5">
+                <Avatar size={132} halo who={picked} />
+                <h2 className="text-[26px] font-bold tracking-[-0.02em] mt-7">Say hello to {name}.</h2>
+                <p className="text-muted mt-1.5 max-w-[30ch]">What you say here stays in {name}'s own threads and memory.</p>
+              </div>
+            )}
+            {msgs.length === 0 && pick === "" && !morningReady && (() => { const g = greetingParts(); return (
               <div className="min-h-[60dvh] flex flex-col items-center justify-center text-center pt-5">
                 <Orb size={150} halo />
                 <h2 className="text-[28px] font-bold tracking-[-0.02em] mt-7">{g.lead} <span className="serif text-[32px]">{g.accent}</span>{you ? `, ${you}` : ""}</h2>
@@ -723,7 +774,7 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
                     ) : (
                       <motion.div {...enter} className="flex flex-col gap-2.5">
                         <div className="flex items-center gap-2 text-[12.5px] text-muted font-semibold">
-                          <Avatar size={36} /><span className="text-[13.5px]"><b className="text-ink-2 font-bold">{name}</b>{m.live ? " · reminder" : ""}{m.ts ? ` · ${fmtTime(m.ts)}` : ""}</span>
+                          <Avatar size={36} who={picked} /><span className="text-[13.5px]"><b className="text-ink-2 font-bold">{name}</b>{m.live ? " · reminder" : ""}{m.ts ? ` · ${fmtTime(m.ts)}` : ""}</span>
                         </div>
                         <Steps tools={m.tools} running={streaming} />
                         {m.awaiting && (
@@ -848,7 +899,7 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
             <ThinkChip on={thinking} onTap={() => setPlusOpen(true)} />
             <span className="flex-1" />
             {/* Talk (a live voice conversation) is held back for now: the server never grants "talk", so this stays hidden. */}
-            {has(caps, "talk") && (
+            {has(caps, "talk") && pick === "" && (  /* Talk is everyday Odie's in this build */
               <button type="button" onClick={() => { stopSpeaking(); setTalking(true); }} aria-label={`Talk with ${name}`} className="pill pill-flat h-[42px]"><Glyph name="wave" size={18} /> Speak</button>
             )}
             {busy ? (

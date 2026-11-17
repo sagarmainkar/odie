@@ -1,21 +1,25 @@
 import { userLocale } from "./locale";
+import { withPick } from "./pick";
+
+// Every helper below names the picked personality on the calls that follow it (pick.ts: the chat, its history, the
+// threads, the cards), so no screen can forget to.
 export async function getJSON<T>(url: string): Promise<T> {
-  const r = await fetch(url);
+  const r = await fetch(withPick(url));
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
   return r.json();
 }
 export async function postJSON<T>(url: string, body: unknown): Promise<T> {
-  const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const r = await fetch(withPick(url), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
   return r.json();
 }
 export async function putJSON<T>(url: string, body: unknown): Promise<T> {
-  const r = await fetch(url, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const r = await fetch(withPick(url), { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
   return r.json();
 }
 export async function deleteJSON<T>(url: string): Promise<T> {
-  const r = await fetch(url, { method: "DELETE" });
+  const r = await fetch(withPick(url), { method: "DELETE" });
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
   return r.json();
 }

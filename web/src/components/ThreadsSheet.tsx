@@ -2,6 +2,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { useEffect, useState, type ReactNode } from "react";
 import { getJSON, postJSON, todayISO } from "../api";
 import { groupThreads, whenText, type Thread } from "../threads";
+import { usePick } from "../pick";
 import { Icon } from "./Tile";
 import { ToBody } from "./ToBody";
 
@@ -23,13 +24,15 @@ function threadsUrl(q: string): string {
 function useThreadList(active: boolean, reload: number) {
   const [list, setList] = useState<Thread[] | null>(null);
   const [q, setQ] = useState("");
+  const pick = usePick();  // the list is the picked personality's (getJSON names it): it loads again on a switch
+  useEffect(() => { setList(null); setQ(""); }, [pick]);  // never the other one's threads while the new list loads
   useEffect(() => {
     if (!active) return;
     const id = setTimeout(() => {
       getJSON<{ threads: Thread[] }>(threadsUrl(q)).then((d) => setList(d.threads)).catch(() => setList([]));
     }, q ? 250 : 0);
     return () => clearTimeout(id);
-  }, [active, q, reload]);
+  }, [active, q, reload, pick]);
 
   async function pin(t: Thread) {
     setList((l) => l?.map((x) => (x.id === t.id ? { ...x, pinned: !t.pinned } : x)) ?? l);
@@ -45,6 +48,8 @@ type ThreadList = ReturnType<typeof useThreadList>;
  *  the star pins it. Drawn inside the sheet on a phone and in the sidebar on a desktop. */
 function ThreadsPanel({ threads, current, onOpen, actions }: { threads: ThreadList; current: string | null; onOpen: (t: Thread | null) => void; actions: ReactNode }) {
   const { list, q, setQ, pin } = threads;
+  const pick = usePick();
+  const firstRow = pick ? "Current chat" : "Today's chat";  // a personality's chat doesn't start fresh each day
   const today = todayISO();
   const groups = list ? groupThreads(list, today) : [];
   return (
@@ -64,7 +69,7 @@ function ThreadsPanel({ threads, current, onOpen, actions }: { threads: ThreadLi
         {!q && (
           <button onClick={() => onOpen(null)} className={`w-full flex items-center gap-3 px-3 py-3 rounded-[16px] text-left ${current === null ? "bg-well" : ""}`}>
             <span className="w-9 h-9 rounded-[12px] grid place-items-center bg-ember-tint text-ember-text"><Icon name="chat" size={16} /></span>
-            <span className="flex-1"><b className="text-[15px] font-semibold block">Today's chat</b><span className="text-[12.5px] text-muted">Where new messages go</span></span>
+            <span className="flex-1"><b className="text-[15px] font-semibold block">{firstRow}</b><span className="text-[12.5px] text-muted">Where new messages go</span></span>
           </button>
         )}
         {list === null && <div className="px-3 py-4 text-[14px] text-muted">Loading…</div>}

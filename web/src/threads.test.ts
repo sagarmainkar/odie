@@ -18,4 +18,12 @@ describe("threads", () => {
     expect(belongsHere("chat-2026-10-05", "chat-2026-10-02", "2026-10-05")).toBe(false);
     expect(belongsHere(undefined, null, "2026-10-05")).toBe(true);
   });
+
+  it("keeps each personality's live messages in its own chat", () => {
+    expect(belongsHere("chat-2026-10-05-2", null, "2026-10-05", "mira", "")).toBe(false);  // hers, while Odie is picked
+    expect(belongsHere("chat-2026-10-05", null, "2026-10-05", "", "mira")).toBe(false);  // an everyday one, while she is picked
+    expect(belongsHere("chat-2026-10-03-2", "chat-2026-10-03-2", "2026-10-05", "mira", "mira")).toBe(true);  // hers, in her shown thread
+    expect(belongsHere("chat-2026-10-03-4", "chat-2026-10-03-2", "2026-10-05", "mira", "mira")).toBe(false);  // another thread of hers
+    expect(belongsHere("chat-2026-10-03-2", null, "2026-10-05", "mira", "mira")).toBe(true);  // her first thread, not shown yet
+  });
 });
