@@ -500,11 +500,17 @@ async def test_two_connections_with_the_same_tools_both_load_and_each_thread_rea
 async def test_two_connections_both_on_for_one_owner_still_clash_as_before(runner, store):
     from odie.plugins import mcp
     mcp.write_config({"mail": HOME_MAIL, "mail-2": WORK_MAIL})  # nobody switched anything: both are everyday Odie's
-    from odie.plugins.mcp import ONE_OF_TWO
     await runner.load_plugins()
     status = {e.name: (e.status, e.reason) for e in runner.plugins["servers"]}
     assert status["mail"] == ("ok", "")
-    assert status["mail-2"] == ("error", "tool names clash with find_email (mail). " + ONE_OF_TWO)  # today's words, and what to do
+    alone = "tool names clash with find_email (mail). Only one of them can be on: switch one of the two off."
+    assert status["mail-2"] == ("error", alone)  # today's words, and what to do (no personalities: no "whoever")
+    personalities.create(store, "Mira")  # she copies Odie's: both on for her too
+    await runner.load_plugins()
+    status = {e.name: (e.status, e.reason) for e in runner.plugins["servers"]}
+    with_them = ("tool names clash with find_email (mail). Only one of them can be on for each one: switch one of the "
+                 "two off, or off for whoever has both.")
+    assert status["mail-2"] == ("error", with_them)
 
 
 async def test_a_remembered_call_resolves_to_the_owners_own_connection(runner, store):
@@ -862,8 +868,7 @@ async def test_a_switch_that_clears_a_clash_loads_the_refused_server_again(api, 
     mcp.write_config({"mail": HOME_MAIL, "mail-2": WORK_MAIL})  # both everyday Odie's: the second is refused
     await runner.load_plugins()
     status = {e.name: (e.status, e.reason) for e in runner.plugins["servers"]}
-    said = "tool names clash with find_email (mail). Only one of them can be on for each one: switch one of the two off, " \
-        "or off for whoever has both."
+    said = "tool names clash with find_email (mail). Only one of them can be on: switch one of the two off."
     assert status["mail-2"] == ("error", said)
     assert (await api.post("/api/mcp/mail/access", json={"on": False})).status_code == 200
     status = {e.name: e.status for e in runner.plugins["servers"]}

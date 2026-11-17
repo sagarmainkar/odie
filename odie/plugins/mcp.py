@@ -669,14 +669,18 @@ async def load_servers(timeout: float = 15, reserved: dict[str, str] | None = No
                        smart: Callable[[str | None], bool] | None = None,
                        allowed: Callable[[str, str | None], bool] | None = None,
                        may_share: Callable[[str, str], bool] | None = None,
-                       could_clash: Callable[[str, str], bool] | None = None) -> list[ServerEntry]:
+                       could_clash: Callable[[str, str], bool] | None = None,
+                       advice: str = "") -> list[ServerEntry]:
     """Every server in mcp.json with its status. `reserved` maps tool names Odie already has (built-ins, skill
     tools) to their owner, so a server can't shadow them. `smart` reads the live approvals mode for each server's
     toolset. `allowed(server, session_id)` says whether a chat may use a server (odie.plugins.access), read on every
     listing. `may_share(a, b)` says whether two servers may list the same tool names (no one has both switched on);
     None: never, as before personalities. `could_clash(a, b)` says whether two servers could list the same names from
     what is known of them beyond this load (odie.plugins.access.could_clash), so an earlier server that didn't answer
-    this time still keeps a later one of the same service from loading in its place."""
+    this time still keeps a later one of the same service from loading in its place. `advice`: what a clash's words
+    say to do (ONE_OF_TWO with personalities; ONLY_ONE, the default, without)."""
+    if not advice:
+        advice = ONLY_ONE
     servers, err = read_config()
     if err:
         log.warning(err)
@@ -706,9 +710,9 @@ async def load_servers(timeout: float = 15, reserved: dict[str, str] | None = No
             continue
         e.tools = [t["name"] for t in listed]
         e.title = spec.get("title") or name
-        clash = _clash(e.tools, name, seen, by_servers, may_share)
+        clash = _clash(e.tools, name, seen, by_servers, may_share, advice)
         if clash is None:
-            clash = _clash_with_unanswered(name, unanswered, may_share, could_clash)
+            clash = _clash_with_unanswered(name, unanswered, may_share, could_clash, advice)
         if clash:
             e.status, e.reason = "error", f"tool names clash with {clash}"
             continue
@@ -731,11 +735,11 @@ def remember_loaded(entries: list[ServerEntry]) -> None:
 
 
 def _clash(tools: list[str], server: str, reserved: dict[str, str], by_servers: dict[str, list[str]],
-           may_share: Callable[[str, str], bool] | None) -> str | None:
+           may_share: Callable[[str, str], bool] | None, advice: str = "") -> str | None:
     """The first of a server's tools that it may not have, as "<tool> (<who has it>)", or None when it may load. A
     built-in's or a skill's tool name is never shared; another server's is, when may_share says no one has both on.
       write_note, already a built-in tool                         -> "write_note (Odie)"
-      send_email, also in `mail`, both on for everyday Odie        -> "send_email (mail). Only one of them can be on…"
+      send_email, also in `mail`, both on for everyday Odie        -> "send_email (mail). Only one of them can be on: …"
       send_email, also in `mail` (Odie's), this one Mira's alone   -> None: both load
       nothing in common                                            -> None"""
     for tool in tools:
@@ -744,15 +748,19 @@ def _clash(tools: list[str], server: str, reserved: dict[str, str], by_servers: 
         for other in by_servers.get(tool, []):
             shared_by_no_one = may_share is not None and may_share(other, server)
             if not shared_by_no_one:
-                return f"{tool} ({other}). {ONE_OF_TWO}"
+                return f"{tool} ({other}). {advice or ONLY_ONE}"
     return None
 
 
+# What a clash's words say to do: with personalities, a switch for each one can clear it too; with none, only the
+# whole server's switch can (load_servers' `advice`).
 ONE_OF_TWO = "Only one of them can be on for each one: switch one of the two off, or off for whoever has both."
+ONLY_ONE = "Only one of them can be on: switch one of the two off."
+CLASH_ADVICE = (ONE_OF_TWO, ONLY_ONE)
 
 
 def _clash_with_unanswered(server: str, unanswered: list[str], may_share: Callable[[str, str], bool] | None,
-                           could_clash: Callable[[str, str], bool] | None) -> str | None:
+                           could_clash: Callable[[str, str], bool] | None, advice: str = "") -> str | None:
     """A clash with an earlier server that didn't list this time, as "<server> (<server>)", or None. That server would
     have kept this one out had it answered, so it still does when they could list the same names and someone has
     both on: a blip never lets a second connection of a service answer in the first one's place.
@@ -764,7 +772,7 @@ def _clash_with_unanswered(server: str, unanswered: list[str], may_share: Callab
     for other in unanswered:
         shared_by_no_one = may_share is not None and may_share(other, server)
         if not shared_by_no_one and could_clash(server, other):
-            return f"{other} ({other}). {ONE_OF_TWO}"
+            return f"{other} ({other}). {advice or ONLY_ONE}"
     return None
 
 

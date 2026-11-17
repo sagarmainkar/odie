@@ -687,10 +687,11 @@ async def mcp_access(name: str, body: OnIn, request: Request):
 
 def _refused_for_a_clash(runner) -> bool:
     """Whether a loaded server was refused because its tool names clash with another server's, which a switch can
-    clear: "tool names clash with send_email (mail). Only one…" -> True; every server loaded, or one that failed to
-    start -> False."""
-    from odie.plugins.mcp import ONE_OF_TWO
-    return any(e.status == "error" and ONE_OF_TWO in e.reason for e in runner.plugins.get("servers", []))
+    clear: "tool names clash with send_email (mail). Only one of them can be on…" -> True; every server loaded, or one
+    that failed to start -> False."""
+    from odie.plugins.mcp import CLASH_ADVICE
+    return any(e.status == "error" and any(words in e.reason for words in CLASH_ADVICE)
+               for e in runner.plugins.get("servers", []))
 
 
 @router.delete("/mcp/{name}")

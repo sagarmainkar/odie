@@ -1724,7 +1724,7 @@ class OdieRunner:
                         reserved.update({t: f"the {e.name} skill" for t in e.tools})
                 servers = await load_servers(reserved=reserved, smart=lambda session_id: approvals_mode.runs_free(self.store, session_id),
                                              allowed=self._app_allowed, may_share=self._apps_may_share,
-                                             could_clash=self._apps_could_clash)
+                                             could_clash=self._apps_could_clash, advice=self._clash_advice())
                 ok = [e for e in servers if e.status == "ok"]
                 skill_ts = build_skill_toolset(skills, extra_skills=[e.skill for e in ok if e.skill],
                                                extra_tools=[e.toolset for e in ok if e.skill], left_out_in=self._skills_off)
@@ -1776,6 +1776,17 @@ class OdieRunner:
           ("mail", "mail-2"), both on for Odie                         -> False"""
         from odie.plugins import access
         return access.no_one_has_both(self.store, first, second)
+
+    def _clash_advice(self) -> str:
+        """What a clash's words say to do: with personalities, a server can also be switched off for one of them;
+        with none, only the whole server's switch is there.
+          Mira exists      -> "Only one of them can be on for each one: switch one of the two off, or off for whoever…"
+          no personalities -> "Only one of them can be on: switch one of the two off." """
+        from odie import personalities
+        from odie.plugins.mcp import ONE_OF_TWO, ONLY_ONE
+        if personalities.list_all(self.store):
+            return ONE_OF_TWO
+        return ONLY_ONE
 
     def _apps_could_clash(self, first: str, second: str) -> bool:
         """Whether two connected apps could list the same tool names, from what is known of them beyond this load: the
