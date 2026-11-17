@@ -42,7 +42,8 @@ _RULES: list[tuple[str, re.Pattern[str]]] = [
         r"\bos\.(remove|unlink|rmdir|kill)\b|\bshutil\.(rmtree|move)\b|\.unlink\(|\.rmdir\(|"
         r"\.(rm|rmSync|unlinkSync|rmdirSync)\(|\bsubprocess\b|\bos\.system\b|child_process")),
     ("sends data out", re.compile(
-        r"\bcurl\b[^|;]*(-X\s*(POST|PUT|PATCH|DELETE)|--data|\s-d\s|\s-F\s|--form|\s-T\s|--upload|\s-K\s|--config)|\bwget\b[^|;]*--post|"
+        r"\bcurl\b[^|;]*(-[a-zA-Z]*X\s*(POST|PUT|PATCH|DELETE)|--request\s+(POST|PUT|PATCH|DELETE)|--data|--json|"
+        r"\s-[a-zA-Z]*[dFTK](\s|\S)|--form|--upload|--config)|\bwget\b[^|;]*--post|"
         r"\b(scp|ssh|ftp|sftp|nc|ncat|sendmail|telnet|socat)\b|\bosascript\b[\s\S]*\bsend\b|\bshortcuts\s+run\b|\brsync\b[^|;]*\S+:|"
         r"\bnpm\s+publish\b|\bgh\s+(pr|issue|release)\s+create\b|\bmail\s+-s\b|"
         r"\brequests\.(post|put|patch|delete)\b|\bhttpx\.(post|put|patch|delete)\b|\bsmtplib\b|"
@@ -782,6 +783,13 @@ def is_local_address(word: str, own_port: int | None) -> bool:
     return own_port is None or port != own_port
 
 
+def _abbreviates(name: str, refused: frozenset[str]) -> bool:
+    """Whether a long option could be a shortened spelling of a refused one (GNU tools take any unambiguous start):
+    ("--exe", {"--execute"}) -> True; ("--prox", {"--proxy"}) -> True; ("--post-data", {"--execute"}) -> False."""
+    long_refused = [r for r in (*refused, *_ELSEWHERE_PREFIXES) if r.startswith("--")]
+    return len(name) > 2 and any(r.startswith(name) for r in long_refused)
+
+
 def _options_and_addresses(args: list[str], takes_value: frozenset[str],
                            elsewhere: frozenset[str]) -> tuple[list[str], list[str]] | None:
     """A curl or wget command's options and the addresses it is given, or None when an option sends it somewhere else
@@ -804,7 +812,7 @@ def _options_and_addresses(args: list[str], takes_value: frozenset[str],
             continue
         if word.startswith("--"):
             name = word.split("=", 1)[0]
-            if name in elsewhere or name.startswith(_ELSEWHERE_PREFIXES):
+            if name in elsewhere or name.startswith(_ELSEWHERE_PREFIXES) or _abbreviates(name, elsewhere):
                 return None
             options.append(name)
             if name in takes_value and "=" not in word:
@@ -851,23 +859,45 @@ _PIPE_INTO_PROGRAM = re.compile(
     r"\|\s*(?:python3?\s+-c\s+('[^']*'|\"[^\"$`\\]*\")(?=\s|$|[;&|)])"
     r"|node\s+-[ep]\s+('[^']*'|\"[^\"$`\\]*\")(?=\s*(?:$|[;&|\n])))")
 # A pipe into python3 or node whose program is a heredoc with a quoted end word (so the shell fills nothing in).
-_PIPE_INTO_HEREDOC = re.compile(r"\|\s*(?:python3?|node)\s+(?:-\s+)?<<-?\s*(['\"])\w+\1")
+_PIPE_INTO_HEREDOC = re.compile(r"\|\s*(python3?|node)\s+(?:-\s+)?<<-?\s*(['\"])\w+\2")
 # What makes a program run the text it is given (or start a prompt that reads it): it then runs what came down the pipe.
 _RUNS_ITS_INPUT = re.compile(
-    r"\b(exec|eval|execfile|breakpoint)\s*\(|(?<![\w.])compile\s*\(|__\w+__|\bbuiltins\b|pickle|marshal|\brunpy\b|"
-    r"\bimportlib\b|\bos\.(system|popen|exec\w*|spawn\w*|posix_spawn\w*)\b|\bsubprocess\b|\bpty\b|\bctypes\b|\bpdb\b|"
-    r"\bcode\.|\bimport\s+code\b|\bInteractiveConsole\b|\byaml\.(load|unsafe_load|full_load)\b|\bshelve\b|\bdill\b|"
-    r"\bgetattr\b|\bsetattr\b|\bglobals\s*\(|\bvars\s*\(|"
-    r"\bFunction\s*\(|\bvm\b|\bchild_process\b|\bworker_threads\b|\brepl\b|\binspector\b|\bimport\s*\(|"
-    r"\brequire\s*\(\s*[^'\"\s]|_compile\b|WebAssembly|\bprocess\.binding\b")
+    r"\b(exec|eval|execfile|breakpoint|help|interact)\b|(?<![\w.])compile\b|__\w+__|\bbuiltins\b|pickle|marshal|"
+    r"\brunpy\b|\bimportlib\b|\bos\.(system|popen|exec\w*|spawn\w*|posix_spawn\w*)\b|\bsubprocess\b|\bpty\b|"
+    r"\bctypes\b|\bpdb\b|\bcode\b|\bInteractiveConsole\b|\byaml\b|\bshelve\b|\bdill\b|\bsys\.modules\b|"
+    r"\bgetattr\b|\bsetattr\b|\b(globals|locals|vars)\b|\bconstructor\b|\bprototype\b|"
+    r"\bFunction\b|\bvm\b|\bchild_process\b|\bworker_threads\b|\brepl\b|\binspector\b|\bimport\s*\(|"
+    r"_compile\b|WebAssembly|\bprocess\.(binding|dlopen|mainModule)\b")
+# What a piped program may bring in: modules that read, parse and print, and can't run anything. Anything else asks.
+PLAIN_PY_MODULES = frozenset({"json", "sys", "csv", "re", "collections", "datetime", "math", "statistics", "itertools",
+                              "functools", "textwrap", "pprint", "string", "operator", "decimal", "fractions",
+                              "urllib.parse", "html", "unicodedata", "time", "zoneinfo", "hashlib", "uuid", "random"})
+PLAIN_JS_MODULES = frozenset({"fs", "node:fs", "path", "node:path", "util", "node:util", "readline", "node:readline"})
+_PY_IMPORT = re.compile(r"\bimport\s+([\w.]+(?:\s+as\s+\w+)?(?:\s*,\s*[\w.]+(?:\s+as\s+\w+)?)*)|\bfrom\s+([\w.]+)\s+import\b")
+_JS_REQUIRE = re.compile(r"\brequire\s*\(")
+_JS_PLAIN_REQUIRE = re.compile(r"\brequire\s*\(\s*(['\"])([\w:./-]+)\1\s*\)")
 
 
-def program_runs_its_input(program: str) -> bool:
-    """Whether a program written in the command runs what it reads (exec, eval, compile, pickle, marshal, runpy,
-    importlib, os.system, subprocess, Function(, vm …) or opens a prompt that would (breakpoint, pdb, code.interact).
+def program_runs_its_input(program: str, language: str) -> bool:
+    """Whether a program written in the command (`language` "python" or "node") could run what it reads: it names a
+    way to run text (exec, eval, compile, pickle, marshal, runpy, importlib, os.system, subprocess, Function, vm, a
+    constructor …), opens a prompt that would (breakpoint, pdb, code.interact), or brings in a module that isn't on the
+    short list of plain ones (PLAIN_PY_MODULES, PLAIN_JS_MODULES: an aliased `import os as o` could run anything).
     "import json,sys; print(json.load(sys.stdin))" -> False;  "import sys; exec(sys.stdin.read())" -> True;
-    "import re; re.compile('a')" -> False;  "breakpoint()" -> True;  "eval(require('fs').readFileSync(0))" -> True."""
-    return _RUNS_ITS_INPUT.search(program) is not None
+    "import re; re.compile('a')" -> False;  "from code import interact" -> True;  "import os as o" -> True;
+    node "require('fs').readFileSync(0)" -> False;  node "require('net')" -> True."""
+    if _RUNS_ITS_INPUT.search(program):
+        return True
+    if language == "python":
+        for found in _PY_IMPORT.finditer(program):
+            names = [found.group(2)] if found.group(2) else [part.split()[0] for part in found.group(1).split(",")]
+            if any(name not in PLAIN_PY_MODULES for name in names):
+                return True
+        return False
+    plain_requires = [m.group(2) for m in _JS_PLAIN_REQUIRE.finditer(program)]
+    if len(plain_requires) != len(_JS_REQUIRE.findall(program)):
+        return True  # a require of something built at run time
+    return any(name not in PLAIN_JS_MODULES for name in plain_requires)
 
 
 def smart_blanked(shell: str, shell_read: str, code: str) -> str:
@@ -881,11 +911,16 @@ def smart_blanked(shell: str, shell_read: str, code: str) -> str:
     contexts = char_contexts(shell)
     out = list(shell_read)
     for pipe in _PIPE_INTO_PROGRAM.finditer(shell):
-        program = pipe.group(1) or pipe.group(2)
-        if contexts[pipe.start()] == "plain" and not program_runs_its_input(program):
+        language = "python"
+        program = pipe.group(1)
+        if program is None:
+            language = "node"
+            program = pipe.group(2)
+        if contexts[pipe.start()] == "plain" and not program_runs_its_input(program, language):
             out[pipe.start()] = ";"
     for pipe in _PIPE_INTO_HEREDOC.finditer(shell):
-        if contexts[pipe.start()] == "plain" and not program_runs_its_input(code):
+        language = "node" if pipe.group(1) == "node" else "python"
+        if contexts[pipe.start()] == "plain" and not program_runs_its_input(code, language):
             out[pipe.start()] = ";"
     for start, end in piece_spans(shell):
         words = plain_words(shell[start:end])
@@ -909,14 +944,17 @@ def _blank_pieces(shell: str, text: str, keep: Callable[[list[str]], bool]) -> s
 
 
 def smart_views(shell: str, shell_read: str, own_port: int | None) -> dict[str, str]:
-    """What some rules read in Smart instead of the whole text: the "runs later" and "deletes" rules don't see the
-    commands that only read what runs at login (is_login_reader: `launchctl list`, `crontab -l`, `plutil -p`), and the
+    """What some rules read in Smart instead of the whole text: the "runs later" rule doesn't see the commands that
+    only read what runs at login (is_login_reader: `launchctl list`, `crontab -l`, `plutil -p`, `cat` of a plist), the
+    "deletes" rule doesn't see `launchctl list|print` or `crontab -l` (launchctl and crontab are its words), and the
     "sends data out" rule doesn't see a send to this computer (is_local_send). Every other rule reads it all.
-      `launchctl list | grep x` -> both login rules read "              | grep x";
+      `launchctl list | grep x` -> both login rules read "              | grep x";  `echo rm x` -> unchanged;
       `curl -X POST http://localhost:9000/x -d 1` -> "sends data out" reads blanks."""
     login_blanked = _blank_pieces(shell, shell_read, is_login_reader)
+    listings_blanked = _blank_pieces(shell, shell_read, lambda words: words[0] in ("launchctl", "crontab")
+                                     and is_login_reader(words))
     sends_blanked = _blank_pieces(shell, shell_read, lambda words: is_local_send(words, own_port))
-    return {"deletes or stops something": login_blanked, "sets something to run later or at login": login_blanked,
+    return {"deletes or stops something": listings_blanked, "sets something to run later or at login": login_blanked,
             "sends data out": sends_blanked}
 
 
@@ -941,7 +979,8 @@ def reads_only_odies_code(shell: str, code: str, cwd: str | None) -> bool:
     or outside Odie's home. When unsure: False, and the command asks.
       `cd ~/.odie/app; grep -n x web/src/a.tsx | head` -> True;  `cd ~/.odie; sed -n 1,5p mcp.json` -> False;
       `cd ~/.odie/app; cat ../.env` -> False;  `cd ~/.odie/app; cat link-out` (a link to ../mcp.json) -> False;
-      `cd ~/.odie/app; cat $X` -> False;  `echo x > ~/.odie/app/a.py` -> False (a write)."""
+      `cd ~/.odie/app; cat $X` -> False;  `echo x > ~/.odie/app/a.py` -> False (a write);
+      `cat ~/.odie/app/.git/config` -> False (a hidden file)."""
     if code.strip():
         return False
     where = cwd or ""
@@ -962,8 +1001,13 @@ def reads_only_odies_code(shell: str, code: str, cwd: str | None) -> bool:
                 return False  # `cd -` goes back to a folder this text doesn't name
             here = _expanded(words[1] if len(words) == 2 else "~", here)
         for path in (here, *(_expanded(w, here) for w in words[1:])):
-            if _inside(path, odie_home) and not _inside(path, checkout):
+            if not _inside(path, odie_home):
+                continue
+            if not _inside(path, checkout):
                 return False
+            inside_checkout = _parts_under(path, checkout) or []
+            if any(part.startswith(".") for part in inside_checkout):
+                return False  # .git/config, a .env: hidden files there may hold a token
     return True
 
 
