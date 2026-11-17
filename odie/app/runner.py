@@ -627,10 +627,11 @@ class OdieRunner:
         self._retries_left = 8
         self._background: set[asyncio.Task] = set()
         self.review_every = config.settings.review_every_turns
-        self._turns: list[tuple[str, str]] = []   # (user, assistant) pairs since the last review
+        # (user, assistant) pairs since the last review, kept apart for each personality ("" = everyday Odie)
+        self._turns: dict[str, list[tuple[str, str]]] = {}
         self._review_task: asyncio.Task | None = None
         self.agent = build_agent(store, instruction=self._prompt_of, memory=self.memory,
-                                 on_memory_change=self._memory_changed)
+                                 on_memory_change=self._memory_changed, memory_for=self._memory_for_chat)
         self.plugin = OdiePlugin(store)
         from odie.agent.usage import CACHE
         app = App(name=s.app_name, root_agent=self.agent, plugins=[self.plugin],
@@ -789,14 +790,30 @@ class OdieRunner:
         rendered, _ = render_prefetch(hits, max_entries=4, max_chars=2500)
         return rendered
 
-    def _note_turn(self, user: str, assistant: str) -> None:
-        """Every N user turns, review the conversation for things worth remembering (background)."""
-        self._turns.append((user, assistant))
-        if len(self._turns) < self.review_every:
+    def _memory_for_chat(self, tool_context):
+        """The memory file of the chat a tool was called in (ADK's tool_context names the chat): an everyday chat ->
+        the shared memories.md; a personality's thread -> its own. No chat at all (a background turn) -> the shared one."""
+        from odie import personalities
+        personality = personalities.of_session(self.store, session_id_of(tool_context))
+        return self.memory_of(personality)
+
+    def _note_turn(self, session_id: str, user: str, assistant: str) -> None:
+        """Every N user turns, review the conversation for things worth remembering (background). Turns are counted
+        and reviewed apart for each personality, and what a review finds goes into the memory of whoever the thread
+        belongs to: a private thing said to Mira is never reviewed into the shared memory."""
+        from odie import personalities
+        personality = personalities.of_session(self.store, session_id)
+        if personality and personalities.get(self.store, personality) is None:
+            return  # it was deleted while this turn ran: nothing of it is kept
+        pending = self._turns.setdefault(personality, [])
+        pending.append((user, assistant))
+        if len(pending) < self.review_every:
             return
-        turns, self._turns = self._turns, []
+        self._turns[personality] = []
         if self._review_task is None or self._review_task.done():
-            self._review_task = asyncio.create_task(run_review(self.memory, turns, self.memory_index(), on_change=self._memory_changed, store=self.store))
+            memory = self.memory_of(personality)
+            index_text = self.memory_index(personality)
+            self._review_task = asyncio.create_task(run_review(memory, pending, index_text, on_change=self._memory_changed, store=self.store))
 
     def _memory_changed(self) -> None:
         """The memory file changed (update_memory, the review): when it's in the vault, the notes index re-reads it.
@@ -1085,7 +1102,7 @@ class OdieRunner:
         if unsaved:  # its own stored message, so it's in history too (the false claim stays visible above it)
             await self.post_message(unsaved_note, session_id=session_id)
         if not was_private:  # a turn that read a signed-in page never feeds the memory review
-            self._note_turn(text, "".join(final))
+            self._note_turn(session_id, text, "".join(final))
         yield {"type": "done", "text": "".join(final), "session_id": session_id}  # the thread, also when a card ended it
 
     def request_stop(self, session_id: str) -> None:

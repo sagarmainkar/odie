@@ -358,3 +358,82 @@ async def test_a_thread_that_lives_for_days_gets_todays_date(runner):
     first.day = "2000-01-01"  # as if it had been built on an earlier day
     again = runner._static_prompt(hers)
     assert again is not first and again.day != "2000-01-01"
+
+
+# ── memory by who is asking ──
+
+def _memory_tools(runner) -> dict:
+    """fetch_memory, update_memory and forget_memory as the chat agent has them, by name."""
+    from odie.memory.tools import make_memory_tools
+    tools = make_memory_tools(runner.memory, memory_for=runner._memory_for_chat)
+    return {t.name: t.func for t in tools}
+
+
+async def test_a_memory_saved_with_mira_is_hers_alone(runner):
+    mira, hers = await _mira_with_a_thread(runner)
+    tools = _memory_tools(runner)
+    said = tools["update_memory"]("The lighthouse plan", "Kept between us.", "Private", tool_context=_ctx(hers))
+    assert said.startswith("Saved 'The lighthouse plan'")
+    assert runner.memory_of(mira.id).load().find("The lighthouse plan") is not None
+    assert runner.memory.load().find("The lighthouse plan") is None  # not in the shared memory
+    tools["update_memory"]("Rent day", "Paid on the first.", "Finance", tool_context=_ctx(f"chat-{D}"))
+    assert runner.memory.load().find("Rent day") is not None  # said in the everyday chat: the shared one
+    assert runner.memory_of(mira.id).load().find("Rent day") is None
+
+
+async def test_she_can_read_the_shared_memory_and_odie_cannot_read_hers(runner):
+    mira, hers = await _mira_with_a_thread(runner)
+    tools = _memory_tools(runner)
+    runner.memory.update("Rent day", "Paid on the first.", topic="Finance")
+    runner.memory_of(mira.id).update("The lighthouse plan", "Kept between us.", topic="Private")
+    assert "Paid on the first." in tools["fetch_memory"]("Rent day", tool_context=_ctx(hers))
+    assert "Kept between us." in tools["fetch_memory"]("The lighthouse plan", tool_context=_ctx(hers))
+    from_odie = tools["fetch_memory"]("The lighthouse plan", tool_context=_ctx(f"chat-{D}"))
+    assert from_odie.startswith("Nothing remembered under")
+    # she reads the shared memory but can't change it
+    assert tools["forget_memory"]("Rent day", tool_context=_ctx(hers)) == "No memory called 'Rent day'."
+    assert runner.memory.load().find("Rent day") is not None
+
+
+async def test_a_watch_asked_of_a_personality_is_refused_without_a_card(runner):
+    from odie.memory.tools import WATCH_IS_ODIES, watch_for_needs_tap
+    mira, hers = await _mira_with_a_thread(runner)
+    tools = _memory_tools(runner)
+    needs_tap = watch_for_needs_tap(runner.memory, runner._memory_for_chat)
+    watch = {"title": "Passport email", "content": "When: it comes. Do: tell me.", "topic": "Watch for"}
+    assert needs_tap(**watch, tool_context=_ctx(hers)) is False  # no card: the tool itself says no
+    assert needs_tap(**watch, tool_context=_ctx(f"chat-{D}")) is True  # in the everyday chat, the card as before
+    said = tools["update_memory"](watch["title"], watch["content"], watch["topic"], tool_context=_ctx(hers))
+    assert said == WATCH_IS_ODIES
+    assert runner.memory.load().find("Passport email") is None  # not a watch in the shared memory
+    assert not runner.memory_of(mira.id).exists()  # and nothing was written to hers
+
+
+async def test_the_review_reads_and_writes_the_thread_owners_memory(runner, monkeypatch):
+    mira, hers = await _mira_with_a_thread(runner)
+    runner.review_every = 2
+    reviewed = {}
+
+    async def fake_review(memory, turns, index_text, on_change=None, store=None):
+        reviewed.update(path=memory.path, turns=turns)
+        return []
+
+    monkeypatch.setattr("odie.app.runner.run_review", fake_review)
+    runner._note_turn(f"chat-{D}", "an everyday thing", "ok")
+    runner._note_turn(hers, "a private thing", "ok")
+    runner._note_turn(hers, "another private thing", "ok")  # her second turn: hers are reviewed, into her memory
+    await runner._review_task
+    assert reviewed["path"] == runner.memory_of(mira.id).path
+    assert reviewed["turns"] == [("a private thing", "ok"), ("another private thing", "ok")]
+    assert runner._turns[ODIE] == [("an everyday thing", "ok")]  # Odie's turn still waits, not mixed in with hers
+
+
+async def test_a_personality_that_never_saved_anything(runner):
+    mira, hers = await _mira_with_a_thread(runner)
+    tools = _memory_tools(runner)
+    runner.memory.update("Rent day", "Paid on the first.", topic="Finance")
+    assert not runner.memory_of(mira.id).exists()
+    index = runner.memory_index(mira.id)
+    assert "nothing yet" in index and "Rent day" in index
+    assert "Paid on the first." in runner.prefetch("when is rent day", mira.id)
+    assert tools["fetch_memory"]("Nope", tool_context=_ctx(hers)).startswith("Nothing remembered under")
