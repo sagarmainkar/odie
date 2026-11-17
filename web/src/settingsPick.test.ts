@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  SAME_AS_ODIE, appsUrl, avatarUrl, brainChoiceUrl, brainHeading, canUseLabel, canUseUrl, connectUrl, deleteWords, goneWords, modelsUrl,
+  SAME_AS_ODIE, appsUrl, avatarUrl, brainChoiceUrl, brainHeading, canUseLabel, canUseUrl, connectNote, connectUrl, deleteWords, goneWords, modelsUrl,
   personaUrl, pickedBrainSub, showsCanUse, showsDelete, showsSameAsOdie, showsWhoLine, soulUrl, whoLine,
 } from "./settingsPick";
 
@@ -88,5 +88,24 @@ describe("Connected apps follow the picked personality", () => {
     expect(showsCanUse("", 0)).toBe(false);  // no personalities: the list looks as it always has
     expect(showsCanUse("", 1)).toBe(true);
     expect(showsCanUse("abc", 1)).toBe(true);
+  });
+});
+
+describe("Connecting a service again says what it will do", () => {
+  const zapier = (canUse: boolean, onlyPick: boolean) => ({ title: "Zapier", canUse, onlyPick });
+  it("replaces a connection only the picked one uses", () => {
+    expect(connectNote([zapier(true, true)], "Zapier", "Odie")).toBe(
+      "This replaces your Zapier connection: the new link and code take the old ones' place, and its switches stay.");
+  });
+
+  it("gives the picked one its own when the one there is shared or someone else's", () => {
+    expect(connectNote([zapier(true, false)], "Zapier", "Mira")).toBe(
+      "Mira gets a Zapier connection of its own; the one there is left as it is.");
+    expect(connectNote([zapier(false, false)], "Zapier", "Mira")).toBe(
+      "Mira gets a Zapier connection of its own; the one there is left as it is.");
+  });
+
+  it("says nothing when there is none yet", () => {
+    expect(connectNote([], "Zapier", "Mira")).toBe("");
   });
 });

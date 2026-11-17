@@ -3,7 +3,7 @@ import { getJSON, postJSON } from "../api";
 import { usePickedPersona } from "../persona";
 import { usePersonalities } from "../personalities";
 import { usePick } from "../pick";
-import { appsUrl, canUseLabel, canUseUrl, connectUrl, showsCanUse } from "../settingsPick";
+import { appsUrl, canUseLabel, canUseUrl, connectNote, connectUrl, showsCanUse } from "../settingsPick";
 import { checkSummary, formFromServer, linkCarriesToken, serverTitle, specFromForm, ownSkills, statusLabel, toolLabel, type Check, type Preset, type ServerForm, type ServerRow, type SkillRow } from "../plugins";
 import { Collapse } from "./Collapse";
 import { Switch } from "./Switch";
@@ -121,6 +121,8 @@ export function PluginsSection() {
     await load();
   }
   const editingRow = editing ? servers?.find((m) => m.name === editing) : undefined;
+  const rows = (servers ?? []).map((m) => ({ title: serverTitle(m), canUse: m.canUse, onlyPick: m.onlyPick }));
+  const note = preset ? connectNote(rows, preset.title, picked.name) : "";  // replaces it, or a connection of its own
   const mine = skills === null ? null : ownSkills(skills);  // Odie's built-in skills aren't listed
 
   return (
@@ -228,9 +230,7 @@ export function PluginsSection() {
           <div className="px-4 py-3.5 flex flex-col gap-2.5 border-b border-line">
             <div className="text-[14px] font-semibold">Connect {preset.title}</div>
             <div className="text-[12.5px] leading-[18px] text-muted">{preset.where} Your data then goes through {preset.title}.</div>
-            {servers?.some((m) => serverTitle(m) === preset.title) && (
-              <div className="text-[12.5px] leading-[18px] text-warn-ink">This replaces your {preset.title} connection: the new link and code take the old ones' place, and its switches stay.</div>
-            )}
+            {note && <div className="text-[12.5px] leading-[18px] text-warn-ink">{note}</div>}
             <input value={link} type="text" autoComplete="off" autoCapitalize="none" autoCorrect="off" spellCheck={false} onChange={(e) => { setLink(e.target.value); setPresetCheck(null); }} placeholder={`The ${preset.title} server link (https://…)`}
               aria-label={`${preset.title} server link`} className={field} />
             {linkCarriesToken(link) && <div className="text-[12.5px] leading-[18px] text-muted">This link has its code in it, so leave the code box empty.</div>}

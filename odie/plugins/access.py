@@ -55,6 +55,17 @@ def off_in(store: Store, session_id: str | None) -> frozenset[str]:
     return off_for(store, personalities.of_session(store, session_id))
 
 
+def only_one_using(store: Store, server: str, pid: str) -> bool:
+    """Whether this one is the only one who may use the server (everyday Odie and every personality asked), so a new
+    link for it may replace the old one without taking anyone else's connection away.
+      zapier on for everyone, Mira exists, asking Mira or Odie -> False
+      zapier added while Mira was picked (hers alone), asking Mira -> True
+      no personalities, asking Odie                             -> True (as it always was)"""
+    everyone = [ODIE] + [p.id for p in personalities.list_all(store)]
+    users = [who for who in everyone if allowed(store, server, who)]
+    return users == [pid]
+
+
 def copy_odies(store: Store, pid: str) -> None:
     """A personality was just made: it starts with everyday Odie's switches as they are now. Only Odie's rows are
     copied; a server Odie never switched is on for both, and stays on for the new one if Odie switches it later."""

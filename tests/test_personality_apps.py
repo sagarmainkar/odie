@@ -323,9 +323,14 @@ async def test_the_apps_list_and_switch_follow_the_pick(api, runner, store, monk
     assert store.one("select * from app_access where server='work-mail'") is None
 
 
-async def test_connecting_a_service_while_she_is_picked_is_hers(api, runner, store, monkeypatch):
+ODIES_LINK = "https://mcp.zapier.com/api/mcp/s/odies-link/mcp"
+MIRAS_LINK = "https://mcp.zapier.com/api/mcp/s/miras-link/mcp"
+
+
+@pytest.fixture
+def connecting(runner, monkeypatch):
+    """Connecting a preset without starting anything: the check always answers, and no servers are loaded."""
     from odie.app import routes
-    from odie.plugins import mcp
 
     async def no_reload():
         return runner.plugins
@@ -334,12 +339,54 @@ async def test_connecting_a_service_while_she_is_picked_is_hers(api, runner, sto
         return {"ok": True, "tools": []}
     monkeypatch.setattr(runner, "load_plugins", no_reload)
     monkeypatch.setattr(routes, "_check", answers)
+
+
+def _links() -> dict[str, str]:
+    from odie.plugins import mcp
+    return {name: spec["url"] for name, spec in mcp.read_config()[0].items()}
+
+
+async def test_connecting_never_replaces_another_ones_connection(api, store, connecting):
+    """Odie's zapier is on for everyone; Mira connects her own link: she gets a connection of her own and Odie's stays
+    as it was (now off for her). Then each reconnecting their own replaces it in place."""
+    from odie.plugins import mcp
+    mcp.write_config({"zapier": {"url": ODIES_LINK, "title": "Zapier"}})
     mira = personalities.create(store, "Mira")
-    made = await api.post(f"/api/mcp/connect?personality={mira.id}",
-                          json={"preset": "zapier", "url": "https://mcp.zapier.com/api/mcp/s/abc/mcp"})
-    assert made.status_code == 200
-    name = made.json()["name"]
-    assert access.allowed(store, name, mira.id) and not access.allowed(store, name, ODIE)
-    again = await api.post("/api/mcp/connect", json={"preset": "zapier", "url": "https://mcp.zapier.com/api/mcp/s/new/mcp"})
-    assert again.json()["replaced"] is True and not access.allowed(store, name, ODIE)  # a new link keeps the switches
-    assert mcp.read_config()[0][name]["url"].endswith("/new/mcp")
+    hers = await api.post(f"/api/mcp/connect?personality={mira.id}", json={"preset": "zapier", "url": MIRAS_LINK})
+    assert hers.status_code == 200 and hers.json()["replaced"] is False
+    assert hers.json()["name"] == "zapier-2"
+    assert _links() == {"zapier": ODIES_LINK, "zapier-2": MIRAS_LINK}  # Odie's link untouched
+    assert access.allowed(store, "zapier-2", mira.id) and not access.allowed(store, "zapier-2", ODIE)
+    assert not access.allowed(store, "zapier", mira.id) and access.allowed(store, "zapier", ODIE)
+    rows = (await api.get(f"/api/mcp?personality={mira.id}")).json()["servers"]
+    assert {r["name"]: r["onlyPick"] for r in rows} == {"zapier": False, "zapier-2": True}  # what Settings tells her
+
+    newer = MIRAS_LINK.replace("miras-link", "miras-new")
+    again = await api.post(f"/api/mcp/connect?personality={mira.id}", json={"preset": "zapier", "url": newer})
+    assert (again.json()["name"], again.json()["replaced"]) == ("zapier-2", True)  # hers alone: replaced in place
+    assert _links() == {"zapier": ODIES_LINK, "zapier-2": newer}
+
+    odies_new = ODIES_LINK.replace("odies-link", "odies-new")
+    odie = await api.post("/api/mcp/connect", json={"preset": "zapier", "url": odies_new})
+    assert (odie.json()["name"], odie.json()["replaced"]) == ("zapier", True)  # Odie's alone now: replaced in place
+    assert _links() == {"zapier": odies_new, "zapier-2": newer}
+
+
+async def test_odie_reconnecting_a_connection_she_shares_gets_his_own(api, store, connecting):
+    from odie.plugins import mcp
+    mcp.write_config({"zapier": {"url": ODIES_LINK, "title": "Zapier"}})
+    mira = personalities.create(store, "Mira")
+    odies_new = ODIES_LINK.replace("odies-link", "odies-new")
+    odie = await api.post("/api/mcp/connect", json={"preset": "zapier", "url": odies_new})
+    assert (odie.json()["name"], odie.json()["replaced"]) == ("zapier-2", False)
+    assert _links() == {"zapier": ODIES_LINK, "zapier-2": odies_new}  # the one she uses is left as it was
+    assert access.allowed(store, "zapier", mira.id) and not access.allowed(store, "zapier", ODIE)
+
+
+async def test_with_no_personalities_reconnecting_replaces_as_before(api, store, connecting):
+    from odie.plugins import mcp
+    mcp.write_config({"zapier": {"url": ODIES_LINK, "title": "Zapier"}})
+    odies_new = ODIES_LINK.replace("odies-link", "odies-new")
+    odie = await api.post("/api/mcp/connect", json={"preset": "zapier", "url": odies_new})
+    assert (odie.json()["name"], odie.json()["replaced"]) == ("zapier", True)
+    assert _links() == {"zapier": odies_new}

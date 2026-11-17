@@ -81,3 +81,15 @@ export function canUseLabel(name: string): string { return `${name} can use this
 /** Whether each app shows "<name> can use this": only once there is someone else to switch it for, so an install with
  *  no personalities looks as it always has:  ("", 0) -> false;  ("", 1) -> true;  ("abc", 1) -> true. */
 export function showsCanUse(pick: string, howMany: number): boolean { return showsWhoLine(pick, howMany); }
+
+/** What connecting a service again will do, said above the Connect button (routes.mcp_connect decides the same way):
+ *    a Zapier only the picked one uses       -> "This replaces your Zapier connection: …, and its switches stay."
+ *    a Zapier someone else uses too, or not the picked one's at all -> "Mira gets a Zapier connection of its own; …"
+ *    no Zapier yet                           -> "" */
+export function connectNote(rows: { title: string; canUse: boolean; onlyPick: boolean }[], title: string, name: string): string {
+  const same = rows.filter((r) => r.title === title);
+  if (same.length === 0) return "";
+  const replacesIt = same.some((r) => r.canUse && r.onlyPick);
+  if (replacesIt) return `This replaces your ${title} connection: the new link and code take the old ones' place, and its switches stay.`;
+  return `${name} gets a ${title} connection of its own; the one there is left as it is.`;
+}

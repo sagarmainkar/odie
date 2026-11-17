@@ -458,8 +458,9 @@ async def skills_enabled(name: str, body: EnabledIn, request: Request):
 
 @router.get("/mcp")
 async def mcp_list(request: Request):
-    """The connected apps, each with its whole-server switches and `canUse`: whether whoever the request picked (a
-    personality, or everyday Odie with none) may use it (odie.plugins.access)."""
+    """The connected apps, each with its whole-server switches, `canUse`: whether whoever the request picked (a
+    personality, or everyday Odie with none) may use it (odie.plugins.access), and `onlyPick`: whether no one else may
+    (connecting the same service again then replaces it, mcp_connect)."""
     from odie.plugins import access
     from odie.plugins.mcp import masked, read_config
     pick = _personality(request)
@@ -471,7 +472,8 @@ async def mcp_list(request: Request):
         e = live.get(name)
         out.append({"name": name, "spec": masked(spec), "status": e.status if e else "not loaded", "tools": e.tools if e else [],
                     "reason": e.reason if e else "", "alwaysOn": bool(spec.get("alwaysOn")), "enabled": spec.get("enabled", True) is not False,
-                    "readsFree": bool(spec.get("readsFree")), "canUse": access.allowed(store, name, pick)})
+                    "readsFree": bool(spec.get("readsFree")), "canUse": access.allowed(store, name, pick),
+                    "onlyPick": access.only_one_using(store, name, pick)})
     return {"servers": out, "error": err}
 
 
@@ -559,8 +561,13 @@ async def mcp_check(body: CheckIn, request: Request) -> dict[str, Any]:
 @router.post("/mcp/connect")
 async def mcp_connect(body: ConnectIn, request: Request) -> dict[str, Any]:
     """Zapier or Composio from the link (and key) the user pasted: checked, then saved and loaded. Connecting the same
-    service again replaces its connection (a new link, a new code), keeping its switches; add=True adds another."""
-    from odie.plugins import presets
+    service again replaces its connection (a new link, a new code), keeping its switches; add=True adds another.
+    A connection is replaced only when whoever is picked is the only one who can use it; otherwise the picked one gets
+    a connection of its own and the old one is left as it is, switched off for the picked one (odie.plugins.access):
+      Odie's zapier, on for everyone; Mira connects     -> zapier-2, on for Mira alone; zapier unchanged, off for her
+      Mira connects again (zapier-2 is hers alone)      -> zapier-2 replaced in place
+      no personalities; Odie connects again             -> zapier replaced in place, as before personalities"""
+    from odie.plugins import access, presets
     from odie.plugins.mcp import read_config, write_config
     try:
         spec = presets.spec_for(body.preset, body.url, body.key)
@@ -572,23 +579,31 @@ async def mcp_connect(body: ConnectIn, request: Request) -> dict[str, Any]:
         raise HTTPException(422, said if said != checked["reason"] else f"{presets.PRESETS[body.preset]['title']} didn't answer: {said}")
     if body.check_only:
         return {"ok": True, "name": None, "tools": checked["tools"]}
+    store = request.app.state.store
+    pick = _personality(request)
     servers, _ = read_config()
     name = next((n for n, sp in servers.items() if isinstance(sp, dict) and sp.get("url") == spec["url"]), None)
     if name is None and not body.add:
         same = [n for n, sp in servers.items() if isinstance(sp, dict) and presets.preset_of(str(sp.get("url") or "")) == body.preset]
-        if len(same) > 1:
+        usable = [n for n in same if access.allowed(store, n, pick)]  # the picked one's own; another's is never a candidate
+        if len(usable) > 1:
             title = presets.PRESETS[body.preset]["title"]
-            raise HTTPException(409, f"You have two {title} connections ({', '.join(same)}): remove the one you don't use in "
+            raise HTTPException(409, f"You have two {title} connections ({', '.join(usable)}): remove the one you don't use in "
                                      "Settings → Connected apps, then connect again.")
-        name = same[0] if same else None
+        name = usable[0] if usable else None
+    shared = None  # a connection someone else uses too: left as it is, and switched off for the picked one
+    if name is not None and not access.only_one_using(store, name, pick):
+        shared = name
+        name = None
     replaced = name is not None
     name = name or next(n for n in (body.preset, *(f"{body.preset}-{i}" for i in range(2, 100))) if n not in servers)
-    pick = _personality(request)
     old = servers.get(name) or {}
     servers[name] = {**{k: v for k, v in old.items() if k in ("enabled", "alwaysOn", "readsFree")}, **spec}
     write_config(servers)
     if not replaced:
         _app_added(request, name, pick)
+    if shared is not None:
+        access.set_allowed(store, shared, pick, False)
     await request.app.state.runner.load_plugins()
     return {"ok": True, "name": name, "tools": checked["tools"], "replaced": replaced}
 

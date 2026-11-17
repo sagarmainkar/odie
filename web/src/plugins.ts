@@ -6,8 +6,9 @@ export function ownSkills(skills: SkillRow[]): SkillRow[] {
   return skills.filter((s) => s.source === "user");
 }
 
-// canUse: whether whoever is picked (a personality, or everyday Odie) may use the server (odie.plugins.access)
-export type ServerRow = { name: string; spec: Record<string, any>; status: string; tools: string[]; reason: string; alwaysOn: boolean; enabled: boolean; readsFree: boolean; canUse: boolean };
+// canUse: whether whoever is picked (a personality, or everyday Odie) may use the server (odie.plugins.access);
+// onlyPick: whether no one else may (connecting the service again then replaces it)
+export type ServerRow = { name: string; spec: Record<string, any>; status: string; tools: string[]; reason: string; alwaysOn: boolean; enabled: boolean; readsFree: boolean; canUse: boolean; onlyPick: boolean };
 export type CheckedTool = { name: string; read_only: boolean; asks: boolean };
 export type Check = { ok: true; tools: CheckedTool[] } | { ok: false; reason: string };
 export type Preset = { id: string; title: string; where: string; key_label: string };
