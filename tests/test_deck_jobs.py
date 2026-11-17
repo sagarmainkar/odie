@@ -291,7 +291,10 @@ async def test_a_deck_queued_behind_a_podcast_is_second_and_both_are_posted_with
     monkeypatch.setattr(deck.KIND, "write", deck_written)
     monkeypatch.setattr(build, "fetch_all", no_photos)
     monkeypatch.setattr(jobs, "render_browser", lambda: object())
-    chat.focused_turn = "the runner's focused turn"  # handed to the (stand-in) writing steps, unused
+
+    async def unused_turn(*args, **kwargs):  # handed to the (stand-in) writing steps, unused
+        return ""
+    chat.focused_turn = unused_turn
     podcast_folder = workspace() / podcast.FOLDER / "moon"
     first = jobs.Job(kind="podcast", slug="moon", title="Moon", topic="Moon", session_id="chat-1",
                      folder=podcast_folder)

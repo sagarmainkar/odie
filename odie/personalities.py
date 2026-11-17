@@ -364,7 +364,7 @@ async def delete(store: Store, runner, pid: str) -> dict:
     log, saved ticks, Think harder); its reminders; its passages in recall; the files made in its threads (their
     cards, their copies in the workspace, its making jobs' folders) and the pictures uploaded into them; its SOUL and
     memories; its picture; the record itself; and the debug copies of the last few model requests (all of them: they
-    carry no thread id, so the ones from its threads can't be told apart).
+    carry no thread id, so the ones from its threads can't be told apart), and the brain picked for it.
     Not erased, because Odie can't reach them from here: log lines, and anything already sent to a tracing service.
     The record goes first, so no new turn can start in its threads while they are erased (the runner then refuses
     them: SessionGone)."""
@@ -394,6 +394,8 @@ async def delete(store: Store, runner, pid: str) -> dict:
     thinking.forget(store, its_threads)
     store.execute("delete from tasks where personality=?", (pid,))
     store.execute("delete from settings where key=?", (f"current:{pid}",))
+    from odie import brains
+    brains.same_as_odie(store, pid)  # its own brain pick
     await runner.forget_personality(pid)  # again: a turn that was finishing may have noted itself meanwhile
     shutil.rmtree(folder(pid), ignore_errors=True)
     (config.settings.data_dir / f"memory-{pid}.lock").unlink(missing_ok=True)

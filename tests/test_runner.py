@@ -171,7 +171,7 @@ async def test_review_triggers_every_n_turns(isolated_settings, tmp_path, monkey
     import odie.app.runner as rmod
     calls = []
 
-    async def fake_review(memory, turns, index, on_change=None, store=None):
+    async def fake_review(memory, turns, index, on_change=None, store=None, brain=None):
         calls.append(len(turns))
     monkeypatch.setattr(rmod, "run_review", fake_review)
     s = Store(tmp_path / "assistant.db")
@@ -275,7 +275,7 @@ async def test_new_chat_starts_a_clean_segment(isolated_settings, tmp_path):
     texts = [p.text for e in sess.events for p in (e.content.parts or []) if p.text]
     assert texts == [NEW_CHAT]  # nothing from the old segment is carried over
     usage = await r.context_usage("2026-10-01")
-    assert usage["limit"] == r.history_limit and usage["used"] < 10  # the ring empties with a new chat
+    assert usage["limit"] == 50_000 and usage["used"] < 10  # the ring empties with a new chat (a size nobody said)
     h = (await r.history("2026-10-01"))["items"]
     assert h[0]["text"].startswith("something") and h[-1]["text"] == NEW_CHAT  # old turns still visible above
     await r.close()

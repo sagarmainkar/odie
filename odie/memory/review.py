@@ -70,12 +70,15 @@ def build_messages(turns: list[tuple[str, str]], index_text: str) -> list[dict[s
     return [{"role": "system", "content": SYSTEM}, {"role": "user", "content": user}]
 
 
-async def run_review(memory: MemoryFile, turns: list[tuple[str, str]], index_text: str, on_change=None, store=None) -> list[dict[str, str]]:
+async def run_review(memory: MemoryFile, turns: list[tuple[str, str]], index_text: str, on_change=None, store=None,
+                     brain=None) -> list[dict[str, str]]:
+    """Review these turns for things worth remembering and save them into `memory`. `brain`: the Selection that reads
+    them, the brain of whoever the turns belong to (odie.brains); None for everyday Odie's."""
     from odie.models import chat_completion
     from odie.sampling import MEMORY_REVIEW_TEMPERATURE
     try:
         text = await chat_completion(store, "chat", build_messages(turns, index_text), temperature=MEMORY_REVIEW_TEMPERATURE,
-                                     max_tokens=2000)
+                                     max_tokens=2000, selection=brain)
     except Exception:  # noqa: BLE001
         log.exception("memory review failed")
         return []

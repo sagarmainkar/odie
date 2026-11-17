@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
+import functools
 import importlib
 import json
 import logging
@@ -182,7 +183,8 @@ def one_line(error: Exception, known: tuple[type[Exception], ...]) -> str:
     the browser's) keep their first line, without a closing full stop: VoiceUnavailable("Odie's local voice isn't
     running.") with VoiceUnavailable known -> "Odie's local voice isn't running". Anything else is not shown, because
     it may hold paths or internals: KeyError("/some/path") -> "something went wrong (see Odie's log)"."""
-    shown = (WriterFailed, *known)
+    from odie.brains import BrainGone
+    shown = (WriterFailed, BrainGone, *known)
     if not isinstance(error, shown):
         return UNKNOWN_ERROR
     lines = str(error).strip().splitlines()
@@ -253,8 +255,8 @@ async def run(job: Job, browser=None, transport=None, turn=None) -> None:
         if kind.needs_writing(job):
             write_job(job, "writing")
             write_brief(job)
-            if turn is None:
-                turn = hooks["runner"].focused_turn
+            if turn is None:  # the runner's focused turn, on the brain of the thread the job was asked for in
+                turn = functools.partial(hooks["runner"].focused_turn, session_id=job.session_id)
             await kind.write(job, turn, browser)
         write_job(job, "making")
         media = await kind.make(job, browser, transport)

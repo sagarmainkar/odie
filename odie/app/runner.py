@@ -624,9 +624,7 @@ class OdieRunner:
         self._locks: dict[str, asyncio.Lock] = {}
         self._history_limits: dict[str, int] = {}  # session -> its history limit in tokens (_history_limit)
         self._recent: dict[str, list[str]] = {}  # previous two user questions per session, for prefetch  # one per session: a reminder never appends mid-turn
-        self.history_limit = history_limit_for(None)  # tokens; until the model's real context size is known
-        self._limit_key: tuple | None = None
-        self._window_unknown = True  # the provider has not said the model's context size yet: ask again next time
+        self._windows: dict[str, int] = {}  # model_key -> the context size its provider said (_window_of)
         self.plugins: dict = {"skills": [], "servers": []}
         self._stop: set[str] = set()  # sessions the user asked to stop
         self._new_thread_lock = asyncio.Lock()  # one new personality thread at a time (odie.personalities)
@@ -716,19 +714,31 @@ class OdieRunner:
 
     async def _history_limit(self, session_id: str) -> int:
         """This chat's history limit in tokens (odie.models.history_limit_for; odie.agent.compaction cuts past it),
-        from the chosen model's context size, read at the session's first turn and then kept for the session: a limit
-        that moved mid-chat would move the cut and rewrite history the model has already read. While the provider
-        can't say the size, the 'can't say' limit is used but not kept, so the next turn asks again (23 Oct: a chat
-        pinned at 50k all day was trimmed hard, then jumped to 300k after a restart).
+        from the context size of the thread's brain (odie.brains: its personality's own, or Odie's), read at the
+        session's first turn and then kept for the session: a limit that moved mid-chat would move the cut and rewrite
+        history the model has already read. While the provider can't say the size, the 'can't say' limit is used but
+        not kept, so the next turn asks again (23 Oct: a chat pinned at 50k all day was trimmed hard, then jumped to
+        300k after a restart).
           the first turn of chat-2026-10-15 with DeepSeek (1M)  -> 300,000, kept for chat-2026-10-15
           a later turn there, after switching to Gemma (70k)    -> still 300,000 (the next session uses Gemma's)
-          Ollama not saying the size yet                        -> 50,000 this turn; asked again next turn"""
+          Ollama not saying the size yet                        -> 50,000 this turn; asked again next turn
+          a thread of Mira's, her own brain at 70k              -> 52,500, whatever everyday Odie uses
+          a thread whose own brain is gone                      -> 50,000, and no provider is asked"""
         if session_id in self._history_limits:
             return self._history_limits[session_id]
-        limit = await self.refresh_history_limit()
-        if not self._window_unknown:
+        window = await self._window_of_thread(session_id)
+        limit = history_limit_for(window)
+        if window is not None:
             self._history_limits[session_id] = limit
         return limit
+
+    async def _window_of_thread(self, session_id: str) -> int | None:
+        """The context size of this thread's brain (_window_of); None when it isn't known or the brain is gone."""
+        try:
+            selection = brains.for_thread(self.store, session_id)
+        except brains.BrainGone:
+            return None
+        return await self._window_of(selection)
 
     async def _visual_nudge(self, session_id: str, text: str) -> str:
         """The line that reminds the model to draw (odie.agent.visual_nudge), with a line break before it, when this
@@ -868,11 +878,17 @@ class OdieRunner:
         if len(pending) < self.review_every:
             return
         self._turns[personality] = []
-        if self._review_task is None or self._review_task.done():
-            memory = self.memory_of(personality)
-            index_text = self.memory_index(personality)
-            self._review_for = personality
-            self._review_task = asyncio.create_task(run_review(memory, pending, index_text, on_change=self._memory_changed, store=self.store))
+        if self._review_task is not None and not self._review_task.done():
+            return  # one review at a time
+        try:
+            brain = brains.for_personality(self.store, personality)  # the review reads the turns with their own brain
+        except brains.BrainGone:
+            return  # its own brain is gone: no other model reads its turns
+        memory = self.memory_of(personality)
+        index_text = self.memory_index(personality)
+        self._review_for = personality
+        self._review_task = asyncio.create_task(run_review(memory, pending, index_text, on_change=self._memory_changed,
+                                                           store=self.store, brain=brain))
 
     def _memory_changed(self) -> None:
         """The memory file changed (update_memory, the review): when it's in the vault, the notes index re-reads it.
@@ -1288,8 +1304,19 @@ class OdieRunner:
             id=row["request_id"], name=CONFIRM, response={"confirmed": bool(approve)}))])
         final: list[str] = []  # each reply the model wrote after the tap (one event's text parts make one reply)
         asked = {row["call_id"]} if row["call_id"] else set()  # the tapped call was asked: its result is no pass
+        from odie import thinking as chat_thinking
         from odie.agent import turn
+        try:
+            selection = brains.for_thread(self.store, row["session_id"])  # the paused turn goes on with its own brain
+        except brains.BrainGone as gone:
+            text = str(gone)
+            self.store.set_approval_result(approval_id, text)
+            await self.bus.publish({"type": "approval_done", "id": approval_id, "status": "approved" if approve else "rejected",
+                                    "error": text, "session_id": row["session_id"]})
+            return {"error": text}
+        effort_up = chat_effort_think_harder(selection, chat_thinking.get(self.store, row["session_id"]))
         async with self.lock_for(row["session_id"]):
+            brain = turn.MODEL.set(self._chat_model(selection, effort_up))
             words = turn.USER_TEXT.set(await self._words_of(row["session_id"], row["invocation_id"]))  # the paused turn, resumed
             from odie.signin import guard as signin_guard
             private = turn.PRIVATE.set(set(json.loads(row["detail_json"] or "{}").get("private") or ())
@@ -1327,6 +1354,7 @@ class OdieRunner:
                 turn.PRIVATE.reset(private)
                 turn.READ.reset(read)
                 turn.HISTORY_LIMIT.reset(compact)
+                turn.MODEL.reset(brain)
         # The model's own words after the tool, its replies a paragraph each as the history folds them on reload, or ""
         # when it said nothing: no filler is made up.
         text = "\n\n".join(final)
@@ -1410,7 +1438,7 @@ class OdieRunner:
 
     async def focused_turn(self, prompt: str, instruction: str, tools: list, timeout: float = 600,
                            follow_up: Callable[[], str | None] | None = None,
-                           max_llm_calls: int = WRITER_MAX_LLM_CALLS) -> str:
+                           max_llm_calls: int = WRITER_MAX_LLM_CALLS, session_id: str | None = None) -> str:
         """One agent turn that sees only what it is handed: the chat's model, `instruction` as its whole system prompt
         (no Odie prompt, no memory, no chat history), exactly the `tools` given (none of Odie's own), and a fresh
         in-memory session. Returns the reply text, thoughts left out; a turn over `timeout` seconds (follow-up
@@ -1419,13 +1447,15 @@ class OdieRunner:
         follow_up: asked once, after the turn; a text it returns is sent as one more message in the same session (the
         video writer's nudge when it stopped without submitting), None sends nothing.
         max_llm_calls: the model calls each message may lead to (the writer's 10 by default, research 60); one more
-        raises ADK's LlmCallsLimitExceededError, as a model looping on a tool would."""
+        raises ADK's LlmCallsLimitExceededError, as a model looping on a tool would.
+        session_id: the thread the work was asked for in (a making job's); the turn thinks with that thread's brain
+        (odie.brains), and raises BrainGone when that brain can't be used. None: everyday Odie's brain."""
         from google.adk.agents import LlmAgent
         from google.adk.sessions import InMemorySessionService
 
         from odie.agent.usage import CACHE
         s = config.settings
-        model = model_for(resolve_selection(self.store, "chat"), False, room=WRITER_REPLY_TOKENS)
+        model = model_for(brains.for_thread(self.store, session_id), False, room=WRITER_REPLY_TOKENS)
         now = datetime.now(self.tz).strftime("%A %d %B %Y, %H:%M")
 
         def as_written(_context) -> str:
@@ -1519,33 +1549,54 @@ class OdieRunner:
         from odie.agent import compaction
         return compaction.read_tokens(events)
 
-    async def refresh_history_limit(self) -> int:
-        """Re-read the chosen model's context size and the history limit that follows from it (3/4, capped). Read
-        again when the model changes, every time for LM Studio (local, quick), whose loaded size can differ from its
-        maximum, and while the provider has not said the size (then the limit is the 'can't say' 50k)."""
-        sel = resolve_selection(self.store, "chat")
-        key = model_key(sel)
-        if key != self._limit_key or sel.provider.id == "lmstudio" or self._window_unknown:
-            self._limit_key = key
-            window = await context_window(sel)
-            self._window_unknown = window is None
-            self.history_limit = history_limit_for(window)
-        return self.history_limit
+    async def _window_of(self, selection) -> int | None:
+        """A brain's context size, as its provider reports it (odie.models.context_window), kept for each brain: asked
+        the first time, again every time for LM Studio (local, quick), whose loaded size can differ from its maximum,
+        and again while the provider has not said it. None while it is not known.
+          DeepSeek on Ollama, said 1M once           -> 1,048,576 from then on, not asked again
+          Gemma on LM Studio                         -> asked every time (it may have been loaded with less)
+          a provider that didn't answer the last time -> asked again"""
+        key = model_key(selection)
+        ask_now = key not in self._windows or selection.provider.id == "lmstudio"
+        if ask_now:
+            window = await context_window(selection)
+            if window is None:
+                self._windows.pop(key, None)
+            else:
+                self._windows[key] = window
+        return self._windows.get(key)
+
+    async def refresh_history_limit(self, selection=None) -> int:
+        """The history limit that follows from a brain's context size (3/4, capped): everyday Odie's when no brain is
+        given. Read again as _window_of says."""
+        if selection is None:
+            selection = resolve_selection(self.store, "chat")
+        return history_limit_for(await self._window_of(selection))
 
     async def context_usage(self, date: str, personality: str = "") -> dict[str, int]:
         """How full the current chat is: the tokens the model read last time (after any cut) against the history
         limit, past which older turns go as words only. Everyday Odie: today's current segment. A personality: its
-        current thread (nothing used when it has no thread yet)."""
+        current thread (nothing used when it has no thread yet), against its own brain's limit."""
         s = config.settings
         if personality:
             sid = self.current_thread(personality)
             if sid is None:
-                return {"used": 0, "limit": await self.refresh_history_limit()}
+                return {"used": 0, "limit": await self._limit_of_personality(personality)}
         else:
             sid = self.current_session_id(date)
-        limit = self._history_limits.get(sid) or await self.refresh_history_limit()  # this chat's, once pinned
+        limit = self._history_limits.get(sid)  # this chat's, once pinned
+        if limit is None:
+            limit = history_limit_for(await self._window_of_thread(sid))  # not pinned here: the first turn does that
         sess = await self.session_service.get_session(app_name=s.app_name, user_id=s.user_id, session_id=sid)
         return {"used": self.context_tokens(sess.events) if sess else 0, "limit": limit}
+
+    async def _limit_of_personality(self, personality: str) -> int:
+        """The history limit a personality's next chat would get: its brain's ('can't say' when its brain is gone)."""
+        try:
+            selection = brains.for_personality(self.store, personality)
+        except brains.BrainGone:
+            return history_limit_for(None)
+        return await self.refresh_history_limit(selection)
 
     async def new_chat(self, date: str, personality: str = "") -> str:
         """The user asked for a clean slate: continue in a new segment with nothing carried over. For a personality it

@@ -370,7 +370,10 @@ async def test_a_job_written_without_cues_carries_an_empty_list(world, fast, mon
 
 async def test_the_writer_uses_the_runners_focused_turn_by_default(world, fast, monkeypatch):
     chat, _pushes, _store = world
-    chat.focused_turn = object()
+
+    async def focused_turn(*args, **kwargs):
+        return ""
+    chat.focused_turn = focused_turn
     seen = {}
 
     async def stand_in_write(topic, minutes, brief, folder, turn, browser, listing="", assets_script="", aspect=None, timed_seconds=None, kit=None):
@@ -380,7 +383,7 @@ async def test_the_writer_uses_the_runners_focused_turn_by_default(world, fast, 
     monkeypatch.setattr(kind.writer, "write", stand_in_write)
     job = make_topic_job()
     await jobs.run(job, browser=object())
-    assert seen["turn"] is chat.focused_turn
+    assert seen["turn"].func is chat.focused_turn and seen["turn"].keywords == {"session_id": job.session_id}
     assert job.title == "how attention works"      # the writer gave no title, so the topic stands in
 
 

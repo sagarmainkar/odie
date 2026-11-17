@@ -5,6 +5,7 @@ chats at once never cross brains."""
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 from typing import ClassVar
 
 import pytest
@@ -219,3 +220,141 @@ def test_the_chat_agent_hands_adk_the_turns_real_model(store):
     finally:
         turn.MODEL.reset(token)
     assert agent.canonical_model is agent.model  # outside a turn: the model it was built with
+
+
+# ── every other model call made for a thread ──
+
+async def test_a_tap_resumes_the_turn_on_its_threads_brain(runner, store):
+    mira = personalities.create(store, "Mira")
+    brains.choose(store, mira.id, "work-box", "miras-model")
+    miras = await runner.session_for(mira.id, D)
+    aid = store.create_approval(miras, "inv-1", "req-1", "run_shell", {"command": "ls"}, summary="List", detail={},
+                                provenance=[])
+    used = []
+
+    async def resumed(**kw):
+        used.append(runner.agent.canonical_model.model)
+        yield SimpleNamespace(author="odie", partial=False, invocation_id="inv-1",
+                              content=types.Content(role="model", parts=[types.Part(text="Listed.")]))
+    runner.runner.run_async = resumed
+    assert (await runner.resume_approval(aid, True))["text"] == "Listed."
+    assert used == ["miras-model"]
+
+
+async def test_a_tap_whose_brain_is_gone_is_not_resumed_on_another(runner, store):
+    mira = personalities.create(store, "Mira")
+    brains.choose(store, mira.id, "work-box", "miras-model")
+    miras = await runner.session_for(mira.id, D)
+    aid = store.create_approval(miras, "inv-1", "req-1", "run_shell", {"command": "ls"}, summary="List", detail={},
+                                provenance=[])
+    store.set_setting("providers.custom", [])
+    ran = []
+
+    async def resumed(**kw):
+        ran.append(kw)
+        if False:
+            yield None
+    runner.runner.run_async = resumed
+    got = await runner.resume_approval(aid, True)
+    assert got == {"error": brains.GONE.format(name="Mira", model="miras-model", provider="work-box")}
+    assert ran == []
+
+
+async def test_the_trim_reads_the_window_of_the_threads_brain(runner, store, monkeypatch):
+    from odie.app import runner as runner_mod
+    windows = {"odies-model": 1_048_576, "miras-model": 70_000}
+    asked = []
+
+    async def window(sel, transport=None):
+        asked.append(sel.model)
+        return windows[sel.model]
+    monkeypatch.setattr(runner_mod, "context_window", window)
+    mira = personalities.create(store, "Mira")
+    brains.choose(store, mira.id, "work-box", "miras-model")
+    miras = await runner.session_for(mira.id, D)
+    assert await runner._history_limit(miras) == 52_500  # 3/4 of her 70k
+    assert await runner._history_limit(runner.current_session_id(D)) == 300_000  # Odie's 1M, capped
+    assert (await runner.context_usage(D, mira.id))["limit"] == 52_500  # her chat's ring
+    assert (await runner.context_usage(D))["limit"] == 300_000
+    assert set(asked) == {"odies-model", "miras-model"}
+
+
+async def test_the_memory_review_after_her_chat_uses_her_brain(runner, store, monkeypatch):
+    from odie.agent import model as model_mod
+    reviewed_with = []
+
+    async def complete(selection, messages, **kw):
+        reviewed_with.append(selection.model)
+        return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content="[]"), finish_reason="stop")])
+    monkeypatch.setattr(model_mod, "complete", complete)
+    runner.review_every = 1
+    mira = personalities.create(store, "Mira")
+    brains.choose(store, mira.id, "work-box", "miras-model")
+    miras = await runner.session_for(mira.id, D)
+    await _say(runner, "Mira asks the time", miras)
+    await runner._review_task
+    await _say(runner, "Odie asks the time", runner.current_session_id(D))
+    await runner._review_task
+    assert reviewed_with == ["miras-model", "odies-model"]
+
+
+async def test_a_making_job_started_in_her_thread_is_written_on_her_brain(runner, store, monkeypatch):
+    from odie.app import runner as runner_mod
+
+    class Writes(BaseLlm):
+        async def generate_content_async(self, llm_request, stream: bool = False):
+            yield LlmResponse(content=types.Content(role="model", parts=[types.Part(text=f"Written by {self.model}.")]))
+    monkeypatch.setattr(runner_mod, "model_for", lambda selection, thinking, room=None: Writes(model=selection.model))
+    mira = personalities.create(store, "Mira")
+    brains.choose(store, mira.id, "work-box", "miras-model")
+    miras = await runner.session_for(mira.id, D)
+    assert await runner.focused_turn("Write it.", "You write.", [], session_id=miras) == "Written by miras-model."
+    assert await runner.focused_turn("Write it.", "You write.", []) == "Written by odies-model."
+    store.set_setting("providers.custom", [])
+    with pytest.raises(brains.BrainGone):
+        await runner.focused_turn("Write it.", "You write.", [], session_id=miras)
+
+
+async def test_the_making_queue_hands_the_writer_its_jobs_thread(isolated_settings, tmp_path, monkeypatch):
+    from odie.making import jobs
+    handed = []
+
+    class Runner:
+        async def focused_turn(self, prompt, instruction, tools, timeout=600, session_id=None, **kw):
+            handed.append(session_id)
+            return ""
+
+        async def post_message(self, text, session_id=None, media=None, kind="system"):
+            pass
+
+    async def write(job, turn, browser):
+        await turn("Write it.", "You write.", [])
+        job.title = "Tides"
+
+    async def make(job, browser, transport):
+        return {"kind": "note"}
+    store = Store(tmp_path / "assistant.db")
+    store.init_schema()
+    monkeypatch.setitem(jobs.hooks, "runner", Runner())
+    monkeypatch.setitem(jobs.hooks, "store", store)
+    monkeypatch.setitem(jobs.KINDS, "note", jobs.Kind(word="note", folder="notes", write=write, make=make))
+    monkeypatch.setattr(jobs, "send_to_all", lambda *a, **k: 0)
+    job = jobs.Job(slug="tides", title="tides", session_id="chat-2026-11-17-2", folder=tmp_path / "tides", kind="note")
+    job.folder.mkdir()
+    await jobs.run(job, browser=object())
+    assert handed == ["chat-2026-11-17-2"]
+
+
+def test_a_writers_brain_gone_is_told_in_words(store):
+    from odie.making import jobs
+    gone = brains.BrainGone(brains.GONE.format(name="Mira", model="miras-model", provider="work-box"))
+    assert jobs.one_line(gone, ()) == ("Mira's brain (miras-model on work-box) isn't set up any more, so Mira can't "
+                                       "answer. Pick another brain for Mira in Settings → Brain, or set it to \"Same "
+                                       "as Odie\"")
+
+
+async def test_deleting_her_removes_her_brain_pick(runner, store):
+    mira = personalities.create(store, "Mira")
+    brains.choose(store, mira.id, "work-box", "miras-model")
+    await personalities.delete(store, runner, mira.id)
+    assert store.one("select key from settings where key like 'brain:%'") is None
