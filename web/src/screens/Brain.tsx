@@ -6,7 +6,7 @@ import { Collapse } from "../components/Collapse";
 import { usePickedPersona } from "../persona";
 import { usePick } from "../pick";
 import { addressHint, creativityLabel, visibleModels, type Creativity } from "../providers";
-import { SAME_AS_ODIE, brainChoiceUrl, brainHeading, goneWords, modelsUrl, showsSameAsOdie } from "../settingsPick";
+import { SAME_AS_ODIE, brainChoiceUrl, brainHeading, goneWords, modelsUrl, sharedCreativityLine, showsSameAsOdie } from "../settingsPick";
 import { usageLine, type Usage } from "../usage";
 
 type ModelRow = { id: string; local: boolean };
@@ -44,7 +44,7 @@ function CheckCard({ report, checking, onCheck }: { report?: BrainReport; checki
 
 /** Settings → Brain → Creativity: the chat temperature. Saved when the finger lifts (or a key is released), used from
  *  the next message. Claude ignores it: its newer models set their own. */
-function CreativityCard({ creativity, isClaude }: { creativity: Creativity; isClaude: boolean }) {
+function CreativityCard({ creativity, isClaude, sharedWith }: { creativity: Creativity; isClaude: boolean; sharedWith?: string }) {
   const [value, setValue] = useState(creativity.value);
   const [saved, setSaved] = useState(creativity.value);  // a new value from the server remounts the card (its key)
 
@@ -65,6 +65,7 @@ function CreativityCard({ creativity, isClaude }: { creativity: Creativity; isCl
       <div className="text-[12.5px] leading-[18px] text-muted">
         {isClaude ? "Claude sets this itself." : `Lower keeps chat steady and factual, higher makes it more varied. Default ${creativity.default.toFixed(1)}.`}
       </div>
+      {sharedWith && <div className="text-[12.5px] leading-[18px] text-muted">{sharedCreativityLine(sharedWith)}</div>}
     </div>
   );
 }
@@ -178,7 +179,8 @@ export function Brain() {
         </div>
       )}
 
-      {data?.creativity && <CreativityCard key={data.creativity.value} creativity={data.creativity} isClaude={current?.provider === "anthropic"} />}
+      {data?.creativity && <CreativityCard key={data.creativity.value} creativity={data.creativity} isClaude={current?.provider === "anthropic"}
+        sharedWith={pick ? picked.name : undefined} />}
 
       {!data && !failed && [0, 1].map((k) => (
         <div key={k} className="flex flex-col gap-2">

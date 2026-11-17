@@ -97,3 +97,9 @@ export function connectNote(rows: { title: string; canUse: boolean; onlyPick: bo
   if (replacesIt) return `This replaces your ${title} connection: the new link and code take the old ones' place, and its switches stay.`;
   return `${name} gets a ${title} connection of its own; the one there is left as it is.`;
 }
+
+/** Under a personality, the Creativity slider says it isn't hers alone: it is one setting for everyone.
+ *    "Mira" -> "Shared with everyday Odie: this one setting is for Mira and Odie alike." */
+export function sharedCreativityLine(name: string): string {
+  return `Shared with everyday Odie: this one setting is for ${name} and Odie alike.`;
+}

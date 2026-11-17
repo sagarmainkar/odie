@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   SAME_AS_ODIE, appsUrl, avatarUrl, brainChoiceUrl, brainHeading, canUseLabel, canUseUrl, connectNote, connectUrl, deleteWords, goneWords, modelsUrl,
-  personaUrl, pickedBrainSub, showsCanUse, showsDelete, showsSameAsOdie, showsWhoLine, soulUrl, whoLine,
+  personaUrl, pickedBrainSub, sharedCreativityLine, showsCanUse, showsDelete, showsSameAsOdie, showsWhoLine, soulUrl, whoLine,
 } from "./settingsPick";
 
 describe("Settings follows the picked personality", () => {
@@ -108,5 +108,11 @@ describe("Connecting a service again says what it will do", () => {
 
   it("says nothing when there is none yet", () => {
     expect(connectNote([], "Zapier", "Mira")).toBe("");
+  });
+});
+
+describe("Creativity under a personality", () => {
+  it("says it is shared with everyday Odie", () => {
+    expect(sharedCreativityLine("Mira")).toBe("Shared with everyday Odie: this one setting is for Mira and Odie alike.");
   });
 });
