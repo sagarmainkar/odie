@@ -15,7 +15,11 @@ import { Switch } from "../components/Switch";
 import { DevicesSection } from "../components/DevicesSection";
 import { UpdateSection } from "../components/UpdateSection";
 import { BrowserSection } from "../components/BrowserSection";
-import { personaChanged, usePersona } from "../persona";
+import { personaChanged, usePickedPersona } from "../persona";
+import { setPick, usePick } from "../pick";
+import { deletePersonality, personalitiesChanged, usePersonalities } from "../personalities";
+import { avatarUrl, deleteWords, personaUrl, showsDelete, showsWhoLine, soulUrl, whoLine } from "../settingsPick";
+import { Switcher } from "../components/Switcher";
 import { profileChanged, useProfile } from "../profile";
 import { has, useCaps } from "../capabilities";
 import { EMBED_EVERY_CHOICES, embedEveryLabel, notesRow, type VaultInfo } from "../vault";
@@ -109,10 +113,16 @@ function GoogleRows({ g, flash, setupAction, reload }: { g: Google | null; flash
 
 
 function AssistantSection() {
-  const persona = usePersona();
+  // The picked personality's name and picture, or everyday Odie's: Settings edits whoever the chat is with.
+  const pick = usePick();
+  const persona = usePickedPersona();
+  const personalities = usePersonalities();
+  const [switcherOpen, setSwitcherOpen] = useState(false);
   const [draft, setDraft] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState("");
+  const [problem, setProblem] = useState("");  // why a name wasn't saved, in the server's words
+  useEffect(() => { setDraft(null); setNote(""); setProblem(""); }, [pick]);  // someone else: their name, not a half-typed one
   const fileRef = useRef<HTMLInputElement>(null);
     const profile = useProfile();
     const [you, setYou] = useState<string | null>(null);
@@ -123,8 +133,25 @@ function AssistantSection() {
     }
     const name = draft ?? persona.name;
   async function saveName() {
-    const r = await fetch("/api/persona", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name }) });
-    if (r.ok) { setDraft(null); personaChanged(); setNote("Saved. She'll use the new name from your next message."); setTimeout(() => setNote(""), 3000); }
+    setProblem("");
+    const r = await fetch(personaUrl(pick), { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name }) });
+    if (r.ok) {
+      setDraft(null); personaChanged(); personalitiesChanged();
+      setNote("Saved. She'll use the new name from your next message."); setTimeout(() => setNote(""), 3000);
+      return;
+    }
+    const said = await r.json().catch(() => ({}));  // a name it won't take: "You already have one called Mira."
+    setProblem(typeof said.detail === "string" ? said.detail : "That name didn't work. Try another.");
+  }
+  async function deleteIt() {
+    const threads = personalities.list.find((p) => p.id === pick)?.threads ?? 0;
+    if (!window.confirm(deleteWords(persona.name, threads))) return;
+    setBusy(true);
+    try {
+      await deletePersonality(pick);
+      setPick("");  // back to everyday Odie
+    } catch { setProblem("It couldn't be deleted. Try again."); }
+    finally { setBusy(false); }
   }
   async function upload(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0]; e.target.value = "";
@@ -132,16 +159,23 @@ function AssistantSection() {
     setBusy(true);
     try {
       const fd = new FormData(); fd.append("file", f);
-      const r = await fetch("/api/persona/avatar", { method: "POST", body: fd });
+      const r = await fetch(avatarUrl(pick), { method: "POST", body: fd });
       setNote(r.ok ? "Photo updated." : "That photo didn't work. Try a JPEG or PNG.");
-      personaChanged();
+      personaChanged(); personalitiesChanged();
     } finally { setBusy(false); setTimeout(() => setNote(""), 3000); }
   }
-  async function removePhoto() { await fetch("/api/persona/avatar", { method: "DELETE" }); personaChanged(); }
+  async function removePhoto() { await fetch(avatarUrl(pick), { method: "DELETE" }); personaChanged(); personalitiesChanged(); }
   return (
     <section className="glass rounded-[26px] px-4 pt-6 pb-4 flex flex-col items-center text-center gap-1">
+      {showsWhoLine(pick, personalities.list.length) && (
+        <div className="w-full flex items-center justify-center gap-2 -mt-2 mb-2 text-[13px] text-muted">
+          <span>{whoLine(persona.name)}</span>
+          <button onClick={() => setSwitcherOpen(true)} className="font-semibold text-ember-text">Switch</button>
+        </div>
+      )}
+      <Switcher open={switcherOpen} onClose={() => setSwitcherOpen(false)} />
       <button onClick={() => fileRef.current?.click()} aria-label="Change photo" className="relative">
-        <Avatar size={96} />
+        <Avatar size={96} who={persona} />
         {busy && <span className="absolute inset-0 flex items-center justify-center"><span className="spinner" /></span>}
       </button>
       <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={upload} />
@@ -151,8 +185,8 @@ function AssistantSection() {
           className="flex-1 min-w-0 h-11 px-3 rounded-[14px] bg-transparent text-center text-[26px] font-bold tracking-[-0.02em] outline-none focus:bg-well" />
         {draft !== null && draft !== persona.name && <button onClick={() => void saveName()} className="pill pill-solid h-10 text-[14px] shadow-none">Save</button>}
       </div>
-        <div className="text-[14px] text-muted">Your assistant · lives on this {profile?.machine ?? "computer"}</div>
-        <div className="flex items-center gap-2 mt-3 w-full max-w-[280px]">
+        <div className="text-[14px] text-muted">{pick ? "A personality · its own threads and memory" : `Your assistant · lives on this ${profile?.machine ?? "computer"}`}</div>
+        <div className={`items-center gap-2 mt-3 w-full max-w-[280px] ${pick ? "hidden" : "flex"}`}>
           <label htmlFor="your-name" className="text-[13px] text-muted shrink-0">Calls you</label>
           <input id="your-name" value={yourName} maxLength={40} placeholder="Your name" onChange={(e) => setYou(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter") void saveYou(); }}
@@ -162,7 +196,9 @@ function AssistantSection() {
         <div className="flex items-center justify-center gap-2 mt-3 flex-wrap">
         <button onClick={() => fileRef.current?.click()} className="pill pill-flat h-10 text-[13.5px]">{persona.avatar_url ? "Change photo" : "Use a photo"}</button>
         {persona.avatar_url && <button onClick={() => void removePhoto()} className="pill pill-flat h-10 text-[13.5px]">Use the orb</button>}
+        {showsDelete(pick) && <button onClick={() => void deleteIt()} disabled={busy} className="pill pill-flat h-10 text-[13.5px] text-ember-text">Delete {persona.name}</button>}
       </div>
+      {problem && <span role="alert" className="text-[13px] text-ember-text mt-1">{problem}</span>}
       <AnimatePresence>{note && <motion.span initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="text-[13px] text-good mt-1">{note}</motion.span>}</AnimatePresence>
     </section>
   );
@@ -487,6 +523,12 @@ export function Settings() {
   const [soulDraft, setSoulDraft] = useState("");
   const [soulOpen, setSoulOpen] = useState(false);
   const [soulSaved, setSoulSaved] = useState("");
+  const pick = usePick();  // the personality box below shows and saves the picked one's instructions
+  const picked = usePickedPersona();
+  useEffect(() => {
+    setSoul(null);
+    getJSON<{ text: string; custom: boolean; path: string }>(soulUrl(pick)).then((x) => { setSoul(x); setSoulDraft(x.text); }).catch(() => {});
+  }, [pick]);
   const flash = location.hash.includes("google=connected") ? "Connected. Gmail and Calendar are ready." : location.hash.includes("google=error") ? "Google said no. Try again." : "";
   const [macApps, setMacApps] = useState<MacApps | null>(null);
   const pushSupported = typeof Notification !== "undefined" && "serviceWorker" in navigator && "PushManager" in window;
@@ -496,16 +538,16 @@ export function Settings() {
     getJSON<Health>("/api/health").then(setH).catch(() => {});
     getJSON<MacApps>("/api/mac/apps").then(setMacApps).catch(() => {});
     getJSON<Google>("/api/google/status").then(setG).catch(() => {});
-    getJSON<{ text: string; custom: boolean; path: string }>("/api/soul").then((x) => { setSoul(x); setSoulDraft(x.text); }).catch(() => {});
     if (pushSupported) navigator.serviceWorker.ready.then((r) => r.pushManager.getSubscription()).then((s) => setSubscribed(!!s)).catch(() => {});
   }, [pushSupported]);
 
   function pickLook(l: Look) { setLook(l); applyLook(l); }
   async function saveSoul(text: string) {
-    const r = await fetch("/api/soul", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }) });
+    const r = await fetch(soulUrl(pick), { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }) });
     const j = await r.json();
-    setSoul((s) => ({ text: text || (s?.text ?? ""), custom: j.custom, path: s?.path }));
-    setSoulSaved(j.custom ? "Saved. Odie uses it from the next message." : "Back to the default personality.");
+    if (text) setSoul((s) => ({ text, custom: j.custom, path: s?.path }));
+    else getJSON<{ text: string; custom: boolean; path: string }>(soulUrl(pick)).then((x) => { setSoul(x); setSoulDraft(x.text); }).catch(() => {});  // Reset: the default words again
+    setSoulSaved(j.custom ? `Saved. ${picked.name} uses it from the next message.` : "Back to the default personality.");
     setTimeout(() => setSoulSaved(""), 3000);
   }
   async function enablePush() {
@@ -595,7 +637,7 @@ export function Settings() {
 
           <Section title="Personality">
             <button onClick={() => setSoulOpen((v) => !v)} className="w-full text-left active:bg-well" aria-expanded={soulOpen}>
-              <Row icon={{ icon: "spark", color: "pink" }} ok={soul ? true : "loading"} title="How Odie talks" sub={soul?.custom ? "Your own words in use" : "The default personality"} chevron />
+              <Row icon={{ icon: "spark", color: "pink" }} ok={soul ? true : "loading"} title={`How ${picked.name} talks`} sub={soul?.custom ? "Your own words in use" : "The default personality"} chevron />
             </button>
             <AnimatePresence initial={false}>
               {soulOpen && (
