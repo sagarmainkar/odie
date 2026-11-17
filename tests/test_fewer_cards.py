@@ -31,7 +31,7 @@ def home(tmp_path, monkeypatch):
     (root / "work" / "notes" / "to-new.md").symlink_to(root / "work" / "other" / "new.md")  # a link to nothing yet
     (root / ".config").mkdir()
     (root / "Library" / "LaunchAgents").mkdir(parents=True)
-    real_vault = root / "Library" / "Mobile Documents" / "iCloud~md~obsidian" / "Documents" / "Made-Up-Vault"
+    real_vault = root / "Library" / "Cloud Notes" / "Synced" / "Made-Up-Vault"
     real_vault.mkdir(parents=True)
     (root / "vault").symlink_to(real_vault)
     monkeypatch.setenv("HOME", str(root))
@@ -116,7 +116,7 @@ def test_what_smart_still_asks(home, cmd, why):
 
 
 def test_code_run_from_the_vault_by_its_real_path_writes_in_a_safe_place(home):
-    """The safe place is the ~/vault link; the command reaches the same folder by its real (iCloud) path."""
+    """The safe place is the ~/vault link; the command reaches the same folder by its real (synced-folder) path."""
     real = os.path.realpath(home / "vault")
     code = "from pathlib import Path\nPath('Inbox.md').write_text('x')\n"
     by_real_path = f"cd '{real}' && python3 - <<'PY'\n{code}PY"
