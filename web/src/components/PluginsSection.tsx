@@ -52,7 +52,7 @@ export function PluginsSection() {
   const pick = usePick();
   const picked = usePickedPersona();
   const personalities = usePersonalities();
-  const perWho = showsCanUse(pick, personalities.list.length);
+  const howMany = personalities.list.length;
   const [skills, setSkills] = useState<SkillRow[] | null>(null);
   const [servers, setServers] = useState<ServerRow[] | null>(null);
   const [configError, setConfigError] = useState("");
@@ -172,7 +172,7 @@ export function PluginsSection() {
               </button>
               <Switch label={`${serverTitle(m)} on`} on={m.enabled} disabled={busy} onChange={(v) => act(() => postJSON(`/api/mcp/${m.name}/enabled`, { enabled: v }))} />
             </div>
-            {perWho && (
+            {showsCanUse(pick, howMany, m.canUse) && (
               // Whether whoever is picked may use this app; the switch above stays the whole app's, for everyone.
               <div className="flex items-center gap-3 mt-1 pl-[46px]">
                 <span className="flex-1 min-w-0 text-[13px] leading-[18px] text-muted">{canUseLabel(picked.name)}</span>

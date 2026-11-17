@@ -92,6 +92,25 @@ def forget_personality(store: Store, pid: str) -> None:
     store.execute("delete from app_access where personality=?", (pid,))
 
 
+def give_back_to_odie(store: Store, gone: str) -> list[str]:
+    """A personality was just deleted (its record is gone, its switches not yet): every server it could use that is off
+    for everyday Odie and that no one left may use goes back on for Odie. It was off for Odie only because it was the
+    deleted one's, and otherwise nothing could use it. Returns their names, for the log.
+      work-mail added with Mira picked, Mira deleted, no one else uses it -> on for Odie again: ["work-mail"]
+      coach-app added with Coach picked, Mira deleted, Coach still there -> left off for Odie
+      home-mail Odie switched off for himself, Mira had it off too      -> left off for Odie (it was never hers)"""
+    others = [p.id for p in personalities.list_all(store)]
+    given_back = []
+    for server in sorted(off_for(store, ODIE)):
+        was_hers = allowed(store, server, gone)
+        someone_uses_it = any(allowed(store, server, who) for who in others)
+        if not was_hers or someone_uses_it:
+            continue
+        set_allowed(store, server, ODIE, True)
+        given_back.append(server)
+    return given_back
+
+
 def skills_off_in(store: Store, session_id: str | None) -> frozenset[str]:
     """The on-demand skills of the servers off in this thread (mcp-<server>), which its skills catalog leaves out:
     Mira's thread with work-mail off -> {"mcp-work-mail"}."""

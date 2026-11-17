@@ -94,6 +94,7 @@ async def test_deleting_a_personality_removes_its_switches(store):
     from odie.app.runner import OdieRunner
     mira = personalities.create(store, "Mira")
     access.set_allowed(store, "home-mail", mira.id, False)
+    access.set_allowed(store, "home-mail", ODIE, False)
     access.added(store, "work-mail", mira.id)
     r = OdieRunner(store)
     try:
@@ -101,7 +102,8 @@ async def test_deleting_a_personality_removes_its_switches(store):
     finally:
         await r.close()
     assert store.one("select * from app_access where personality=?", (mira.id,)) is None
-    assert not access.allowed(store, "work-mail", ODIE)  # Odie's own switches stay
+    assert not access.allowed(store, "home-mail", ODIE)  # Odie's own switch stays
+    assert access.allowed(store, "work-mail", ODIE)  # hers alone: back to Odie (give_back_to_odie)
 
 
 # ── off means off in that thread ──
@@ -390,3 +392,23 @@ async def test_with_no_personalities_reconnecting_replaces_as_before(api, store,
     odie = await api.post("/api/mcp/connect", json={"preset": "zapier", "url": odies_new})
     assert (odie.json()["name"], odie.json()["replaced"]) == ("zapier", True)
     assert _links() == {"zapier": odies_new}
+
+
+async def test_deleting_the_one_an_app_belonged_to_gives_it_back_to_odie(store):
+    """work-mail was added with Mira picked (hers alone). With her gone no one could use it, and with no personalities
+    left its switch wouldn't even show, so it goes back on for everyday Odie, and the log says so. An app another
+    personality still uses stays as it is."""
+    from odie.app.runner import OdieRunner
+    mira = personalities.create(store, "Mira")
+    coach = personalities.create(store, "Coach")
+    access.added(store, "work-mail", mira.id)
+    access.added(store, "coach-app", coach.id)
+    r = OdieRunner(store)
+    try:
+        await personalities.delete(store, r, mira.id)
+    finally:
+        await r.close()
+    assert access.allowed(store, "work-mail", ODIE)
+    assert not access.allowed(store, "coach-app", ODIE)  # Coach still uses it: Odie's switch is left alone
+    said = [row["result_summary"] for row in store.query("select result_summary from audit_log where event='app_access'")]
+    assert said == ["work-mail on for everyday Odie: no one else could use it"]

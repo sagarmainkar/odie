@@ -84,10 +84,11 @@ describe("Connected apps follow the picked personality", () => {
     expect(canUseLabel("Odie")).toBe("Odie can use this");
   });
 
-  it("shows that switch once there is someone else to switch it for", () => {
-    expect(showsCanUse("", 0)).toBe(false);  // no personalities: the list looks as it always has
-    expect(showsCanUse("", 1)).toBe(true);
-    expect(showsCanUse("abc", 1)).toBe(true);
+  it("shows that switch once there is someone else to switch it for, or when the app is off for the picked one", () => {
+    expect(showsCanUse("", 0, true)).toBe(false);  // no personalities: the list looks as it always has
+    expect(showsCanUse("", 1, true)).toBe(true);
+    expect(showsCanUse("abc", 1, true)).toBe(true);
+    expect(showsCanUse("", 0, false)).toBe(true);  // off for Odie with no one else around: the switch to turn it on
   });
 });
 

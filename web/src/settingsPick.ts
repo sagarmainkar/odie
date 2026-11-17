@@ -78,9 +78,13 @@ export function canUseUrl(name: string, pick: string): string {
 
 export function canUseLabel(name: string): string { return `${name} can use this`; }
 
-/** Whether each app shows "<name> can use this": only once there is someone else to switch it for, so an install with
- *  no personalities looks as it always has:  ("", 0) -> false;  ("", 1) -> true;  ("abc", 1) -> true. */
-export function showsCanUse(pick: string, howMany: number): boolean { return showsWhoLine(pick, howMany); }
+/** Whether an app shows "<name> can use this": once there is someone else to switch it for, so an install with no
+ *  personalities looks as it always has, and always when the app is off for the picked one, so it can be turned back on:
+ *    ("", 0, on) -> false;  ("", 1, on) -> true;  ("abc", 1, on) -> true;  ("", 0, off) -> true. */
+export function showsCanUse(pick: string, howMany: number, canUse: boolean): boolean {
+  if (!canUse) return true;
+  return showsWhoLine(pick, howMany);
+}
 
 /** What connecting a service again will do, said above the Connect button (routes.mcp_connect decides the same way):
  *    a Zapier only the picked one uses       -> "This replaces your Zapier connection: …, and its switches stay."

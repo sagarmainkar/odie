@@ -401,6 +401,8 @@ async def delete(store: Store, runner, pid: str) -> dict:
     from odie import brains
     from odie.plugins import access
     brains.same_as_odie(store, pid)  # its own brain pick
+    for server in access.give_back_to_odie(store, pid):  # an app that was its alone: usable by everyday Odie again
+        store.audit("agent", "app_access", result_summary=f"{server} on for everyday Odie: no one else could use it")
     access.forget_personality(store, pid)  # its connected apps' switches
     await runner.forget_personality(pid)  # again: a turn that was finishing may have noted itself meanwhile
     shutil.rmtree(folder(pid), ignore_errors=True)
