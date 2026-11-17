@@ -5,7 +5,9 @@ connection keeps the tab for GRACE seconds (the phone sleeping), and IDLE second
 
 Watching is the other way in (a hello with "watch": true, from the chat's Watch button): the user sees Odie's page as
 Odie works on it. Nothing is held, the page keeps its shape and its fence, and no tap or key reaches it. Take control
-turns the view into the user's turn above; Hand back (Cancel) or Close ends it."""
+turns the view into the user's turn above. It ends as that turn does, with the words the bar uses there: Hand back
+(Cancel: nothing recorded) or "I signed in" (Done: the site is recorded, so its order and pay clicks ask). Close ends
+a view that only watched."""
 from __future__ import annotations
 
 import asyncio
@@ -245,12 +247,16 @@ class LiveViews:
         return view
 
     async def finish(self, tab: str, done: bool) -> dict:
-        """Done (record the site now open) or Cancel. LookupError if nothing is live on the tab."""
+        """Done (record the site now open) or Cancel. After Take control the bar says "I signed in" for Done and Hand
+        back for Cancel. A view that only watched records nothing, whatever is sent: the user never touched the page.
+        LookupError if nothing is live on the tab.
+        Done on amazon.in after driving -> amazon.in recorded; Cancel -> nothing; Done on a watch-only view -> nothing."""
         view = await self.end(tab, "done" if done else "cancel")
         if view is None:
             raise LookupError(tab)
         site = sites.site_of(view.url)
-        if done and site:
+        user_drove = not view.watching
+        if done and site and user_drove:
             sites.record(self.store, site, datetime.now().astimezone(), origins=view.origins)
             self.store.audit("user", "signin_done", result_summary=site)  # the site only: never what was typed
         return {"site": site}

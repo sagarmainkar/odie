@@ -226,6 +226,36 @@ def test_watching_holds_nothing_until_take_control(app, engine):
     assert live.clean({"t": "control", "js": "alert(1)"}) == {"t": "control"}  # nothing rides along
 
 
+def test_after_control_i_signed_in_records_the_site_and_hand_back_does_not(app, store, engine):
+    """After Take control the bar has two ways back: Hand back (Cancel) records nothing, "I signed in" (Done) records
+    the site, so its order and pay clicks ask. Done on a view that only watched records nothing: the user never
+    touched the page."""
+    c = app.state.client
+    with c.websocket_connect(URL) as ws:
+        ws.send_json(WATCH)
+        ws.receive_json(), ws.receive_json()
+        assert c.post(f"{URL}/done").json() == {"site": "amazon.in"}  # only watched
+    assert sites.listing(store) == []
+    with c.websocket_connect(URL) as ws:
+        ws.send_json(WATCH)
+        ws.receive_json(), ws.receive_json()
+        ws.send_json({"t": "control"})
+        assert ws.receive_json() == {"t": "control"}
+        assert c.post(f"{URL}/cancel").json() == {"site": "amazon.in"}  # Hand back
+        assert ws.receive_json() == {"t": "bye", "why": "cancel"}
+    assert sites.listing(store) == [] and engine.held_by(TAB) is None
+    with c.websocket_connect(URL) as ws:
+        ws.send_json(WATCH)
+        ws.receive_json(), ws.receive_json()
+        ws.send_json({"t": "control"})
+        assert ws.receive_json() == {"t": "control"}
+        assert c.post(f"{URL}/done").json() == {"site": "amazon.in"}  # I signed in
+        assert ws.receive_json() == {"t": "bye", "why": "done"}
+    assert [s["domain"] for s in sites.listing(store)] == ["amazon.in"]
+    assert sites.is_signed_in(store, "https://www.amazon.in/gp/buy")
+    assert engine.held_by(TAB) is None
+
+
 def test_a_watcher_who_only_watched_hands_nothing_back_but_the_view(app, engine):
     """Close without ever taking control: the view stops, and there was never a hold to release."""
     c = app.state.client

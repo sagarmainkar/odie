@@ -23,7 +23,9 @@ const ENDED: Record<string, string> = {
 };
 
 /** watch: Odie is at work in this tab; you see its page as it is, and nothing you do reaches it until Take control
- * (then Odie's next browser step waits, and Hand back gives the page back to it). who: the assistant's name for the bar. */
+ * (then Odie's next browser step waits). Two ways back: Hand back gives the page back and records nothing; "I signed
+ * in" also records the site as one you're signed in to, as Done does, so ordering and paying there ask first.
+ * who: the assistant's name for the bar. */
 function Live({ tab, site, start, chat, onClose, watch = false, who = "Odie" }: { tab: string; site: string; start?: string; chat: boolean; onClose: (r: LiveResult | null) => void; watch?: boolean; who?: string }) {
   const [controlling, setControlling] = useState(!watch);
   const ws = useRef<WebSocket | null>(null);
@@ -165,7 +167,9 @@ function Live({ tab, site, start, chat, onClose, watch = false, who = "Odie" }: 
       ) : (
       <>
       <div className="flex items-center gap-2 px-3 pt-[max(10px,env(safe-area-inset-top))] pb-2">
-        {watch ? <span className="w-10" /> : <button onClick={() => finish(false)} disabled={finishing} className="h-10 px-3 rounded-full text-[14px] font-semibold text-white/85 active:bg-white/15">Cancel</button>}
+        {watch
+          ? <button onClick={() => finish(true)} disabled={finishing} className="h-10 px-3 rounded-full text-[14px] font-semibold text-white/85 active:bg-white/15">I signed in</button>
+          : <button onClick={() => finish(false)} disabled={finishing} className="h-10 px-3 rounded-full text-[14px] font-semibold text-white/85 active:bg-white/15">Cancel</button>}
         <div className="flex-1 min-w-0 text-center">
           <div className="text-[14px] font-semibold truncate flex items-center justify-center gap-1.5">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" aria-hidden><rect x="5" y="11" width="14" height="10" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" /></svg>
