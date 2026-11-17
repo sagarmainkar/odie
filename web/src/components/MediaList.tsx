@@ -1,7 +1,9 @@
+import { useState } from "react";
 import type { Media } from "../media";
-import { groupMedia, liveShot } from "../screenshots";
+import { groupMedia, liveShot, site, watchTab } from "../screenshots";
 import { DeckCard } from "./DeckCard";
 import { FileCard } from "./FileCard";
+import { LiveView } from "./LiveView";
 import { AudioCard, PictureCard, VideoCard } from "./InlineMedia";
 import { Podcast } from "./Podcast";
 import { LiveBrowser, ScreenshotStrip } from "./Screenshots";
@@ -10,13 +12,22 @@ import { PayCard, TurnCard } from "./TurnCard";
 import { VoiceMemo } from "./VoiceMemo";
 
 /** What tools made for this reply, drawn by kind. `live`: the reply is still being written, so the browser's latest
- * page shows large; afterwards its pages fold into a strip. */
-export function MediaList({ items, live = false, autoplay }: { items: Media[]; live?: boolean; autoplay?: string }) {
+ * page shows large; afterwards its pages fold into a strip. `watchable` (signed-in browsing is on) with `tab` (the
+ * chat's browser tab): Watch while Odie browses, "Open the page live" afterwards. `who`: the assistant's name for the
+ * live view's bar. */
+export function MediaList({ items, live = false, autoplay, tab: chatTab, watchable = false, who }: { items: Media[]; live?: boolean; autoplay?: string; tab?: string; watchable?: boolean; who?: string }) {
   const { shots, rest } = groupMedia(items);
   const now = liveShot(items, live);
+  const last = shots.length ? shots[shots.length - 1] : null;
+  const tab = watchTab(shots, chatTab, watchable);
+  // The live view is kept here, not in the live preview: it stays open when the answer finishes and the preview
+  // becomes a strip.
+  const [watching, setWatching] = useState(false);
+  const openLive = tab ? () => setWatching(true) : undefined;
   return (
     <div className="flex flex-col gap-2.5">
-      {now ? <LiveBrowser shot={now} count={shots.length} /> : shots.length > 0 && <ScreenshotStrip shots={shots} />}
+      {now ? <LiveBrowser shot={now} count={shots.length} onWatch={openLive} /> : shots.length > 0 && <ScreenshotStrip shots={shots} onOpenLive={openLive} />}
+      {watching && tab && <LiveView tab={tab} site={site(last?.url ?? "")} chat={false} watch who={who} onClose={() => setWatching(false)} />}
       {rest.map((m) => (m.kind === "memo" ? <VoiceMemo key={m.id} m={m} autoPlay={m.id === autoplay} /> : m.kind === "podcast" ? <Podcast key={m.id} m={m} />
         : m.kind === "file" && m.deck ? <DeckCard key={m.id} m={m} /> : m.kind === "file" ? <FileCard key={m.id} m={m} />
         : m.kind === "picture" ? <PictureCard key={m.id} m={m} /> : m.kind === "video" ? <VideoCard key={m.id} m={m} /> : m.kind === "audio" ? <AudioCard key={m.id} m={m} />
