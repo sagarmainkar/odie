@@ -15,6 +15,35 @@ export function groupThreads(list: Thread[], today: string): { label: string; it
   return out;
 }
 
+const IMPORTED_FROM = 101;  // imported threads are chat-<date>-101 and up (odie/replay_threads.py FIRST_SEGMENT)
+
+/** Is this thread part of everyday Odie's chat of `today`? "chat-2026-10-05" and "chat-2026-10-05-2" -> yes;
+ *  an imported "chat-2026-10-05-101" -> no; "chat-2026-10-04" -> no. */
+function isTodaysPart(id: string, today: string): boolean {
+  if (id === `chat-${today}`) return true;
+  if (!id.startsWith(`chat-${today}-`)) return false;
+  const number = Number(id.slice(`chat-${today}-`.length));
+  return number < IMPORTED_FROM;
+}
+
+/** The listed thread that is exactly the chat the drawer's top row ("Today's chat" / "Current chat") opens, so the
+ *  list doesn't show it a second time; null when none is. A pinned one stays listed: its star is how it is unpinned.
+ *    everyday Odie, today's only chat "chat-2026-10-05"            -> "chat-2026-10-05"
+ *    everyday Odie, "chat-2026-10-05" and a New chat "-2" today      -> null (the top row shows both together)
+ *    a personality whose current thread is "chat-2026-10-03-4"       -> "chat-2026-10-03-4"
+ *    a personality whose history hasn't answered yet (no thread)     -> null */
+export function sameAsTopRow(list: Thread[], today: string, pick: string, pickThread: string | null): string | null {
+  let topRow: Thread | undefined;
+  if (pick) {
+    topRow = list.find((t) => t.id === pickThread);
+  } else {
+    const todaysParts = list.filter((t) => isTodaysPart(t.id, today));
+    if (todaysParts.length === 1) topRow = todaysParts[0];
+  }
+  if (!topRow || topRow.pinned) return null;
+  return topRow.id;
+}
+
 /** "18:40" for today, "Sat 3 Oct" otherwise. */
 export function whenText(t: Thread, today: string): string {
   const d = new Date(t.updated * 1000);

@@ -1,7 +1,7 @@
 import { AnimatePresence, motion } from "framer-motion";
 import { useEffect, useState, type ReactNode } from "react";
 import { getJSON, postJSON, todayISO } from "../api";
-import { groupThreads, whenText, type Thread } from "../threads";
+import { groupThreads, sameAsTopRow, whenText, type Thread } from "../threads";
 import { usePick } from "../pick";
 import { Icon } from "./Tile";
 import { ToBody } from "./ToBody";
@@ -45,13 +45,20 @@ function useThreadList(active: boolean, reload: number) {
 type ThreadList = ReturnType<typeof useThreadList>;
 
 /** Every conversation: a title row (with `actions` at its end), search, pinned first, then by day. Tap to open one;
- *  the star pins it. Drawn inside the sheet on a phone and in the sidebar on a desktop. */
-function ThreadsPanel({ threads, current, onOpen, actions }: { threads: ThreadList; current: string | null; onOpen: (t: Thread | null) => void; actions: ReactNode }) {
+ *  the star pins it. Drawn inside the sheet on a phone and in the sidebar on a desktop. `pickThread` is the picked
+ *  personality's current thread (its history says which), the one its "Current chat" row opens. */
+function ThreadsPanel({ threads, current, pickThread, onOpen, actions }: { threads: ThreadList; current: string | null; pickThread: string | null; onOpen: (t: Thread | null) => void; actions: ReactNode }) {
   const { list, q, setQ, pin } = threads;
   const pick = usePick();
   const firstRow = pick ? "Current chat" : "Today's chat";  // a personality's chat doesn't start fresh each day
   const today = todayISO();
-  const groups = list ? groupThreads(list, today) : [];
+  // The top row already opens one chat: the list below doesn't show it again (a search shows everything).
+  let listed = list ?? [];
+  if (!q) {
+    const shownAbove = sameAsTopRow(listed, today, pick, pickThread);
+    listed = listed.filter((t) => t.id !== shownAbove);
+  }
+  const groups = groupThreads(listed, today);
   return (
     <>
       <div className="px-4 pb-3 flex items-center gap-2">
@@ -73,10 +80,10 @@ function ThreadsPanel({ threads, current, onOpen, actions }: { threads: ThreadLi
           </button>
         )}
         {list === null && <div className="px-3 py-4 text-[14px] text-muted">Loading…</div>}
-        {list?.length === 0 && <div className="px-3 py-4 text-[14px] text-muted">{q ? "Nothing matches." : "No earlier chats yet."}</div>}
+        {list !== null && listed.length === 0 && <div className="px-3 py-4 text-[14px] text-muted">{q ? "Nothing matches." : "No earlier chats yet."}</div>}
         {groups.map((g) => (
           <div key={g.label} className="mt-3">
-            <div className="px-3 pb-1 text-[12px] font-bold text-muted uppercase tracking-[.05em]">{g.label}</div>
+            <div className="px-3 pb-1 text-[13px] leading-5 font-bold text-muted">{g.label}</div>
             {g.items.map((t) => (
               <div key={t.id} className={`flex items-center gap-1 rounded-[16px] ${current === t.id ? "bg-well" : ""}`}>
                 <button onClick={() => onOpen(t)} className="flex-1 min-w-0 text-left px-3 py-2.5">
@@ -96,8 +103,8 @@ function ThreadsPanel({ threads, current, onOpen, actions }: { threads: ThreadLi
 }
 
 /** Threads on a phone and a tablet: a sheet that slides in from the left over the chat. */
-export function ThreadsSheet({ open, current, onClose, onOpen }: {
-  open: boolean; current: string | null; onClose: () => void; onOpen: (t: Thread | null) => void;
+export function ThreadsSheet({ open, current, pickThread, onClose, onOpen }: {
+  open: boolean; current: string | null; pickThread: string | null; onClose: () => void; onOpen: (t: Thread | null) => void;
 }) {
   const threads = useThreadList(open, 0);
   return (
@@ -109,7 +116,7 @@ export function ThreadsSheet({ open, current, onClose, onOpen }: {
             <motion.aside key="sheet" role="dialog" aria-label="Threads"
               className="fixed z-50 left-0 top-0 bottom-0 w-[86%] max-w-[400px] bg-ground border-r border-line shadow-2xl flex flex-col safe-top"
               initial={{ x: "-100%" }} animate={{ x: 0 }} exit={{ x: "-100%" }} transition={{ duration: 0.28, ease: [0.2, 0.8, 0.2, 1] }}>
-              <ThreadsPanel threads={threads} current={current} onOpen={onOpen}
+              <ThreadsPanel threads={threads} current={current} pickThread={pickThread} onOpen={onOpen}
                 actions={<button onClick={onClose} aria-label="Close" className="pill w-10 h-10 px-0"><Icon name="x" size={16} /></button>} />
             </motion.aside>
           </>
@@ -120,13 +127,13 @@ export function ThreadsSheet({ open, current, onClose, onOpen }: {
 }
 
 /** Threads on a desktop: always open, a column on the chat's left. `reload` changes after each reply and new chat. */
-export function ThreadsSidebar({ current, onOpen, onNewChat, reload }: {
-  current: string | null; onOpen: (t: Thread | null) => void; onNewChat: () => void; reload: number;
+export function ThreadsSidebar({ current, pickThread, onOpen, onNewChat, reload }: {
+  current: string | null; pickThread: string | null; onOpen: (t: Thread | null) => void; onNewChat: () => void; reload: number;
 }) {
   const threads = useThreadList(true, reload);
   return (
     <aside aria-label="Threads" className="shrink-0 w-[300px] h-full flex flex-col safe-top border-r border-line bg-overlay backdrop-blur-xl">
-      <ThreadsPanel threads={threads} current={current} onOpen={onOpen}
+      <ThreadsPanel threads={threads} current={current} pickThread={pickThread} onOpen={onOpen}
         actions={<button onClick={onNewChat} className="pill pill-flat h-10 text-[13.5px]"><Icon name="plus" size={16} /> New chat</button>} />
     </aside>
   );

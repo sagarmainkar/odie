@@ -672,7 +672,7 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
 
   return (
     <div className="flex h-full">
-      {wide && <ThreadsSidebar current={thread?.id ?? null} onOpen={setThread} onNewChat={() => void newChat()} reload={threadsReload} />}
+      {wide && <ThreadsSidebar current={thread?.id ?? null} pickThread={pickThread} onOpen={setThread} onNewChat={() => void newChat()} reload={threadsReload} />}
       <div className="relative flex flex-col h-full flex-1 min-w-0">
         <AnimatePresence>{talking && <TalkMode onClose={() => setTalking(false)} />}</AnimatePresence>
         <Switcher open={switcherOpen} onClose={() => setSwitcherOpen(false)} />
@@ -722,7 +722,7 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
               className={`w-8 h-8 grid place-items-center shrink-0 ${thread.pinned ? "text-gold" : "text-dim"}`}><Star on={thread.pinned} /></button>
           </div>
         )}
-        {!wide && <ThreadsSheet open={threadsOpen} current={thread?.id ?? null} onClose={() => setThreadsOpen(false)}
+        {!wide && <ThreadsSheet open={threadsOpen} current={thread?.id ?? null} pickThread={pickThread} onClose={() => setThreadsOpen(false)}
           onOpen={(t) => { setThreadsOpen(false); setThread(t); }} />}
 
         <div className="relative flex-1 min-h-0 flex flex-col">
