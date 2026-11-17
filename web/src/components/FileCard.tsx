@@ -14,13 +14,13 @@ export function FileCard({ m }: { m: Media }) {
   const kind = kindOf(name);
   const [icon, color] = LOOK[kind];
   return (
-    <div data-media="file" className="glass rounded-[20px] flex items-center gap-2 pl-3.5 pr-3 py-3 w-full max-w-[380px]">
+    <div data-media="file" className="glass rounded-tile flex items-center gap-2 pl-3.5 pr-3 py-3 w-full max-w-[380px]">
       <a href={mediaUrl(m)} download={name} aria-label={`Download ${name}, ${typeLabel(kind)}, ${size(m.size)}`}
         className="flex-1 min-w-0 flex items-center gap-3 active:opacity-70">
         <Tile icon={icon} color={color} small />
         <span className="flex-1 min-w-0">
-          <b className="block text-[14.5px] font-semibold leading-5 truncate">{name}</b>
-          <span className="block text-[12.5px] text-muted">{typeLabel(kind)} · {size(m.size)}</span>
+          <b className="block text-ui font-semibold leading-5 truncate">{name}</b>
+          <span className="block text-small text-muted">{typeLabel(kind)} · {size(m.size)}</span>
         </span>
         <span className="shrink-0 w-9 h-9 rounded-full bg-well grid place-items-center text-ink-2 rotate-180"><Icon name="up" size={17} /></span>
       </a>

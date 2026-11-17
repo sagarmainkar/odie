@@ -40,16 +40,16 @@ export function Section({ title, collapsed, children }: { title?: string; collap
 
   if (!collapsed) {
     return (
-      <div className="glass glass-solid rounded-[24px] px-4 py-3.5 my-2">
-        {title && <div className="text-[17px] leading-[23px] font-bold tracking-[-0.01em] mb-1"><InlineText text={title} /></div>}
+      <div className="glass glass-solid rounded-card px-4 py-3.5 my-2">
+        {title && <div className="text-title leading-[23px] font-bold tracking-[-0.01em] mb-1"><InlineText text={title} /></div>}
         {body}
       </div>
     );
   }
   return (
-    <div className="glass glass-solid rounded-[24px] px-4 my-2">
+    <div className="glass glass-solid rounded-card px-4 my-2">
       <button type="button" onClick={() => setOpen(!open)} aria-expanded={open} className="w-full flex items-center gap-2 py-3.5 text-left">
-        <span className="flex-1 min-w-0 text-[16px] leading-[22px] font-bold tracking-[-0.01em]"><InlineText text={title ?? ""} /></span>
+        <span className="flex-1 min-w-0 text-body leading-[22px] font-bold tracking-[-0.01em]"><InlineText text={title ?? ""} /></span>
         <motion.svg animate={{ rotate: open ? 90 : 0 }} transition={{ duration: 0.2, ease: [0.2, 0.8, 0.2, 1] }} className="shrink-0 text-muted"
           width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
           <path d="M9 6l6 6-6 6" />

@@ -36,23 +36,23 @@ export function Form(written: FormBlock) {
 /** The form as drawn for these values: live, or grey and still once sent. */
 export function FormView({ form, values, sent, ready, onChange, onSend }: ViewProps) {
   const inCard = useContext(InCard);
-  const frame = inCard ? "my-2" : "glass glass-solid rounded-[20px] px-4 py-3 my-2";
+  const frame = inCard ? "my-2" : "glass glass-solid rounded-tile px-4 py-3 my-2";
   const answered = sent !== null;
   return (
     <form className={`${frame} ${answered ? "opacity-60" : ""}`} aria-disabled={answered}
       onSubmit={(e) => { e.preventDefault(); onSend(); }}>
-      {form.title && <div className="text-[15px] leading-[21px] font-bold"><InlineText text={form.title} /></div>}
+      {form.title && <div className="text-body leading-[21px] font-bold"><InlineText text={form.title} /></div>}
       <fieldset disabled={answered} className="min-w-0 border-0 p-0 m-0">
         {form.fields.map((field, i) => (
           <div key={field.id}>
-            {startsGroup(form.fields, i) && <div className="pt-3 pb-0.5 text-[12px] font-bold text-muted"><InlineText text={field.group!} /></div>}
+            {startsGroup(form.fields, i) && <div className="pt-3 pb-0.5 text-caption font-bold text-muted"><InlineText text={field.group!} /></div>}
             <FieldView field={field} value={values[field.id]} onChange={(v) => onChange(field.id, v)} />
           </div>
         ))}
       </fieldset>
       <div className="flex items-center justify-end gap-3 mt-3">
-        {answered && <span className="flex-1 text-[12.5px] font-semibold text-muted">✓ Sent{sent.at !== null ? ` ${sentTime(sent.at)}` : ""}</span>}
-        <button type="submit" disabled={!ready} className="pill pill-solid h-11 px-5 text-[14.5px] shadow-none disabled:opacity-40">{form.submit}</button>
+        {answered && <span className="flex-1 text-small font-semibold text-muted">✓ Sent{sent.at !== null ? ` ${sentTime(sent.at)}` : ""}</span>}
+        <button type="submit" disabled={!ready} className="pill pill-solid h-11 px-5 text-ui shadow-none disabled:opacity-40">{form.submit}</button>
       </div>
     </form>
   );
@@ -74,8 +74,8 @@ function pickedOf(kind: FormField["kind"], value: FormValue | undefined): string
 }
 
 function FieldView({ field, value, onChange }: { field: FormField; value: FormValue | undefined; onChange: (v: FormValue) => void }) {
-  const labelClass = "block text-[13.5px] font-semibold text-ink-2";
-  const inputClass = "w-full min-w-0 rounded-[12px] border border-line bg-surface px-3 text-[15px] text-ink";
+  const labelClass = "block text-ui font-semibold text-ink-2";
+  const inputClass = "w-full min-w-0 rounded-control border border-line bg-surface px-3 text-body text-ink";
   if (field.kind === "slider") return <SliderView field={field} value={Number(value ?? field.value)} onChange={onChange} />;
   if (field.kind === "text") {
     const text = String(value ?? "");
@@ -100,7 +100,7 @@ function FieldView({ field, value, onChange }: { field: FormField; value: FormVa
           </select>
           {chosen?.preview && <PreviewButton url={chosen.preview} label={chosen.label} />}
         </span>
-        {chosen?.note && <span className="block text-[12px] leading-4 text-dim mt-1">{chosen.note}</span>}
+        {chosen?.note && <span className="block text-caption leading-4 text-dim mt-1">{chosen.note}</span>}
       </label>
     );
   }
@@ -131,9 +131,9 @@ function OptionPill({ option, role, on, onTap }: { option: FormOption; role: "ra
   return (
     <span className="inline-flex items-center gap-0.5 max-w-full">
       <button type="button" role={role} aria-checked={on} onClick={onTap}
-        className={`min-h-10 max-w-full rounded-[14px] border px-3.5 py-1.5 text-left text-[14px] leading-[18px] ${look}`}>
+        className={`min-h-10 max-w-full rounded-control border px-3.5 py-1.5 text-left text-ui leading-[18px] ${look}`}>
         <span className="block">{option.label}</span>
-        {option.note && <span className="block text-[11.5px] leading-[15px] font-normal text-dim">{option.note}</span>}
+        {option.note && <span className="block text-caption leading-[15px] font-normal text-dim">{option.note}</span>}
       </button>
       {option.preview && <PreviewButton url={option.preview} label={option.label} />}
     </span>
@@ -146,13 +146,13 @@ function SliderView({ field, value, onChange }: { field: Extract<FormField, { ki
   return (
     <label className="block py-2">
       <span className="flex items-baseline gap-2">
-        <span className="flex-1 min-w-0 text-[13.5px] font-semibold text-ink-2"><InlineText text={field.label} /></span>
-        <span className="text-[15px] font-bold tabular-nums whitespace-nowrap">{formatWithUnit(value, field.unit)}</span>
+        <span className="flex-1 min-w-0 text-ui font-semibold text-ink-2"><InlineText text={field.label} /></span>
+        <span className="text-body font-bold tabular-nums whitespace-nowrap">{formatWithUnit(value, field.unit)}</span>
       </span>
       <input type="range" className="slider mt-2" style={fill} min={field.min} max={field.max} step={field.step} value={value}
         onChange={(e) => onChange(Number(e.target.value))} />
       {field.ends && (
-        <span className="flex justify-between text-[11px] text-dim mt-0.5"><span>{field.ends[0]}</span><span>{field.ends[1]}</span></span>
+        <span className="flex justify-between text-tiny text-dim mt-0.5"><span>{field.ends[0]}</span><span>{field.ends[1]}</span></span>
       )}
     </label>
   );

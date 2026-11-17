@@ -11,12 +11,12 @@ export function PictureCard({ m }: { m: Media }) {
   const [open, setOpen] = useState(false);
   const name = m.filename || m.title;
   return (
-    <figure className="my-1 glass glass-solid rounded-[22px] p-2 max-w-[460px]" data-media="picture">
+    <figure className="my-1 glass glass-solid rounded-tile p-2 max-w-[460px]" data-media="picture">
       <button type="button" onClick={() => setOpen(true)} aria-label={`Show ${name} larger`} className="block text-left">
-        <img src={mediaUrl(m)} alt={name} loading="lazy" className="block max-w-full max-h-[360px] object-contain rounded-[16px] bg-well" />
+        <img src={mediaUrl(m)} alt={name} loading="lazy" className="block max-w-full max-h-[360px] object-contain rounded-control bg-well" />
       </button>
       <div className="flex items-center gap-2 pl-2 pr-1 pt-2 pb-1">
-        <figcaption className="flex-1 min-w-0 text-[12.5px] text-muted truncate">{name} · {size(m.size)}</figcaption>
+        <figcaption className="flex-1 min-w-0 text-small text-muted truncate">{name} · {size(m.size)}</figcaption>
         <ShareFile file={m} />
       </div>
       <ToBody>
@@ -24,8 +24,8 @@ export function PictureCard({ m }: { m: Media }) {
           {open && (
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setOpen(false)}
               className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex flex-col items-center justify-center p-4 safe-top safe-bottom" role="dialog" aria-label="Picture">
-              <motion.img initial={{ y: 14, opacity: 0 }} animate={{ y: 0, opacity: 1 }} src={mediaUrl(m)} alt={name} className="max-w-full max-h-[82vh] object-contain rounded-[28px] bg-white" />
-              <div className="mt-3 text-center text-[14px] text-white/85">{name}</div>
+              <motion.img initial={{ y: 14, opacity: 0 }} animate={{ y: 0, opacity: 1 }} src={mediaUrl(m)} alt={name} className="max-w-full max-h-[82vh] object-contain rounded-card bg-white" />
+              <div className="mt-3 text-center text-ui text-white/85">{name}</div>
             </motion.div>
           )}
         </AnimatePresence>
@@ -38,10 +38,10 @@ export function PictureCard({ m }: { m: Media }) {
 export function VideoCard({ m }: { m: Media }) {
   const name = m.filename || m.title;
   return (
-    <figure className="my-1 glass glass-solid rounded-[22px] p-2 max-w-[460px]" data-media="video">
-      <video src={mediaUrl(m)} controls playsInline preload="metadata" className="block w-full max-h-[360px] rounded-[16px] bg-black" aria-label={name} />
+    <figure className="my-1 glass glass-solid rounded-tile p-2 max-w-[460px]" data-media="video">
+      <video src={mediaUrl(m)} controls playsInline preload="metadata" className="block w-full max-h-[360px] rounded-control bg-black" aria-label={name} />
       <div className="flex items-center gap-2 pl-2 pr-1 pt-2 pb-1">
-        <figcaption className="flex-1 min-w-0 text-[12.5px] text-muted truncate">{name} · {size(m.size)}</figcaption>
+        <figcaption className="flex-1 min-w-0 text-small text-muted truncate">{name} · {size(m.size)}</figcaption>
         <ShareFile file={m} />
       </div>
     </figure>
@@ -52,9 +52,9 @@ export function VideoCard({ m }: { m: Media }) {
 export function AudioCard({ m }: { m: Media }) {
   const name = m.filename || m.title;
   return (
-    <figure className="my-1 glass glass-solid rounded-[22px] px-3 py-2.5 max-w-[460px]" data-media="audio">
+    <figure className="my-1 glass glass-solid rounded-tile px-3 py-2.5 max-w-[460px]" data-media="audio">
       <div className="flex items-center gap-2 mb-1.5">
-        <figcaption className="flex-1 min-w-0 text-[13.5px] font-semibold truncate">{name} <span className="font-normal text-muted">· {size(m.size)}</span></figcaption>
+        <figcaption className="flex-1 min-w-0 text-ui font-semibold truncate">{name} <span className="font-normal text-muted">· {size(m.size)}</span></figcaption>
         <ShareFile file={m} />
       </div>
       <audio src={mediaUrl(m)} controls preload="metadata" className="block w-full" aria-label={name} />

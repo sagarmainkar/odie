@@ -10,12 +10,12 @@ import type { CalcInput, CalcOutput } from "./parse";
 export function Calculator({ title, inputs, outputs }: { title?: string; inputs: CalcInput[]; outputs: CalcOutput[] }) {
   const inCard = useContext(InCard);
   const { values, set } = useContext(FenceValues);
-  const frame = inCard ? "my-2" : "glass glass-solid rounded-[20px] px-4 py-3.5 my-2";
+  const frame = inCard ? "my-2" : "glass glass-solid rounded-tile px-4 py-3.5 my-2";
   const outputColumns = outputs.length === 1 ? "grid-cols-1" : "grid-cols-2";
 
   return (
     <div className={frame}>
-      {title && <div className="text-[15px] leading-[21px] font-bold mb-1"><InlineText text={title} /></div>}
+      {title && <div className="text-body leading-[21px] font-bold mb-1"><InlineText text={title} /></div>}
       {inputs.map((input) => (
         <Slider key={input.id} input={input} value={values.get(input.id) ?? input.value} onMove={(v) => set(input.id, v)} />
       ))}
@@ -34,12 +34,12 @@ function Slider({ input, value, onMove }: { input: CalcInput; value: number; onM
   return (
     <label className="block py-2">
       <span className="flex items-baseline gap-2">
-        <span className="flex-1 min-w-0 text-[13.5px] font-semibold text-ink-2"><InlineText text={input.label} /></span>
-        <span className="text-[15px] font-bold tabular-nums whitespace-nowrap">{formatWithUnit(value, input.unit)}</span>
+        <span className="flex-1 min-w-0 text-ui font-semibold text-ink-2"><InlineText text={input.label} /></span>
+        <span className="text-body font-bold tabular-nums whitespace-nowrap">{formatWithUnit(value, input.unit)}</span>
       </span>
       <input type="range" className="slider mt-2" style={fill} min={input.min} max={input.max} step={input.step} value={value}
         onChange={(e) => onMove(Number(e.target.value))} />
-      <span className="flex justify-between text-[11px] text-dim tabular-nums mt-0.5">
+      <span className="flex justify-between text-tiny text-dim tabular-nums mt-0.5">
         <span>{formatWithUnit(input.min, input.unit)}</span>
         <span>{formatWithUnit(input.max, input.unit)}</span>
       </span>
@@ -53,9 +53,9 @@ function Result({ output, values }: { output: CalcOutput; values: ReadonlyMap<st
   let shown = "–";
   if (value !== null) shown = formatWithUnit(value, output.unit);
   return (
-    <div className="rounded-[16px] bg-ember-tint px-3.5 py-2.5 min-w-0">
-      <div className="text-[12px] font-semibold text-muted"><InlineText text={output.label} /></div>
-      <div className="text-[20px] leading-tight font-extrabold tracking-[-0.02em] tabular-nums mt-0.5 [overflow-wrap:anywhere]" aria-live="polite">{shown}</div>
+    <div className="rounded-control bg-ember-tint px-3.5 py-2.5 min-w-0">
+      <div className="text-caption font-semibold text-muted"><InlineText text={output.label} /></div>
+      <div className="text-heading leading-tight font-extrabold tracking-[-0.02em] tabular-nums mt-0.5 [overflow-wrap:anywhere]" aria-live="polite">{shown}</div>
     </div>
   );
 }

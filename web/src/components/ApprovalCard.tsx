@@ -103,29 +103,29 @@ export function ApprovalCard({ a, onDecided, showResult = true }: { a: Approval;
     const ok = status === "approved";
     return (
       <motion.div layout transition={{ duration: 0.24, ease: EASE }}
-        className={`glass rounded-[22px] px-3.5 py-3 flex flex-col gap-1 ${ok ? "bg-[linear-gradient(160deg,var(--t-good-tint),transparent_70%)]" : ""}`}>
+        className={`glass rounded-tile px-3.5 py-3 flex flex-col gap-1 ${ok ? "bg-[linear-gradient(160deg,var(--t-good-tint),transparent_70%)]" : ""}`}>
         <div className="flex items-center gap-2.5">
           <Tile icon={ok ? "check" : "x"} color={ok ? "green" : "ink"} small />
-          <span className="text-[14px] text-muted flex-1 min-w-0 truncate"><b className={`font-bold ${ok ? "text-good" : "text-ink-2"}`}>{st.label}</b> · {a.summary}</span>
+          <span className="text-ui text-muted flex-1 min-w-0 truncate"><b className={`font-bold ${ok ? "text-good" : "text-ink-2"}`}>{st.label}</b> · {a.summary}</span>
         </div>
-        {allowedUntil && <div className="text-[13px] leading-[18px] text-muted pl-[42px]">Commands in this chat run without asking until {allowedUntil} (or until Odie restarts), except ones that read secrets, delete, or send data out.</div>}
-        {chatPass && <div className="text-[13px] leading-[18px] text-muted pl-[42px]">{chatPassNote(chatPass.kind, clockTime(chatPass.until))}</div>}
-        {showResult && result && <div className="text-[13px] leading-[18px] text-muted pl-[42px]">{result}</div>}
+        {allowedUntil && <div className="text-small leading-[18px] text-muted pl-[42px]">Commands in this chat run without asking until {allowedUntil} (or until Odie restarts), except ones that read secrets, delete, or send data out.</div>}
+        {chatPass && <div className="text-small leading-[18px] text-muted pl-[42px]">{chatPassNote(chatPass.kind, clockTime(chatPass.until))}</div>}
+        {showResult && result && <div className="text-small leading-[18px] text-muted pl-[42px]">{result}</div>}
       </motion.div>
     );
   }
 
   const primary = "pill pill-solid shadow-none";
   const secondary = "pill shadow-none";
-  const banner = "flex items-start gap-2 bg-warn-tint rounded-2xl px-3 py-2 text-[13px] leading-[18px] text-ink-2";
+  const banner = "flex items-start gap-2 bg-warn-tint rounded-2xl px-3 py-2 text-small leading-[18px] text-ink-2";
   return (
     <motion.div layout initial={{ opacity: 0, y: 12, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} transition={{ duration: 0.24, ease: EASE }}
-      className={`glass rounded-[26px] p-4 flex flex-col gap-3 bg-[linear-gradient(160deg,var(--t-warn-tint),transparent_70%)] ${careful ? "!border-gold" : "!border-[rgba(255,178,63,.35)]"}`}>
+      className={`glass rounded-card p-4 flex flex-col gap-3 bg-[linear-gradient(160deg,var(--t-warn-tint),transparent_70%)] ${careful ? "!border-gold" : "!border-[rgba(255,178,63,.35)]"}`}>
       <div className="flex items-center gap-3">
         <Tile icon={tile.icon} color={tile.color} />
         <div className="flex-1 min-w-0">
-          <div className="text-[15px] font-bold leading-snug break-words">{a.summary}</div>
-          <div className="text-[12.5px] text-muted">{a.tool === "run_shell" ? "On this computer" : a.tool === "install_skill" ? "New skill · read it, then approve"
+          <div className="text-body font-bold leading-snug break-words">{a.summary}</div>
+          <div className="text-small text-muted">{a.tool === "run_shell" ? "On this computer" : a.tool === "install_skill" ? "New skill · read it, then approve"
             : typeof a.detail?.app === "string" ? `${a.detail.app} · needs your tap` : `${TOOL_WORD[a.tool] ?? a.tool} · needs your tap`}</div>
         </div>
       </div>
@@ -133,47 +133,47 @@ export function ApprovalCard({ a, onDecided, showResult = true }: { a: Approval;
         <div className={banner}><Warn /><span>Odie read mail from <b className="font-semibold">{latest.from}</b> ({latest.subject}) just before this. Make sure it's what you asked for, not what the mail asked for.</span></div>
       )}
       {a.risk === "mail_earlier" && latest && (
-        <div className="text-[13px] leading-[18px] text-muted">Earlier in this conversation Odie read mail from {latest.from.replace(/<.*>/, "").trim()}. Just so you know.</div>
+        <div className="text-small leading-[18px] text-muted">Earlier in this conversation Odie read mail from {latest.from.replace(/<.*>/, "").trim()}. Just so you know.</div>
       )}
       {unknown && <div className={banner}><Warn /><span>I can't show you what this draft contains. Safer to decline and ask Odie to draft it again.</span></div>}
       {why && <div className={banner}><Warn /><span>{why}</span></div>}
       {shot && <img src={mediaUrl({ id: shot })} alt="The page it would act on" className="w-full max-h-[260px] object-cover object-top rounded-2xl border border-line" />}
       {body && (
         <div className="bg-well rounded-2xl px-3.5 py-2.5">
-          <div className={`${a.tool === "install_skill" ? "font-mono text-[12px] leading-[17px] overflow-x-auto" : "text-[15px] leading-[22px]"} text-ink-2 whitespace-pre-wrap ${showAll ? "" : "line-clamp-6"}`}>{body}</div>
+          <div className={`${a.tool === "install_skill" ? "font-mono text-caption leading-[17px] overflow-x-auto" : "text-body leading-[22px]"} text-ink-2 whitespace-pre-wrap ${showAll ? "" : "line-clamp-6"}`}>{body}</div>
           {(body.split("\n").length > 6 || body.length > 360) && (
-            <button onClick={() => setShowAll((v) => !v)} className="mt-1 text-[13px] text-ember-text font-semibold min-h-8">{showAll ? "Show less" : "Show all"}</button>
+            <button onClick={() => setShowAll((v) => !v)} className="mt-1 text-small text-ember-text font-semibold min-h-8">{showAll ? "Show less" : "Show all"}</button>
           )}
         </div>
       )}
       {command && (
         <div className="flex flex-col gap-1">
-          {cwd && <div className="text-[12px] text-dim font-mono">in {cwd}</div>}
-          <pre className="font-mono text-[13px] leading-[1.55] bg-well rounded-2xl px-3.5 py-3 whitespace-pre-wrap break-words">{command}</pre>
+          {cwd && <div className="text-caption text-dim font-mono">in {cwd}</div>}
+          <pre className="font-mono text-small leading-[1.55] bg-well rounded-2xl px-3.5 py-3 whitespace-pre-wrap break-words">{command}</pre>
         </div>
       )}
       <div className="flex gap-2 pt-1">
-        <button onClick={() => decide(true)} disabled={busy} className={`flex-1 h-12 text-[16px] ${careful ? secondary : primary}`}>
+        <button onClick={() => decide(true)} disabled={busy} className={`flex-1 h-12 text-body ${careful ? secondary : primary}`}>
           {busy && <span className="spinner" />}{a.tool === "run_shell" ? "Run it" : a.tool === "gmail_send_draft" ? "Send it" : "Do it"}
         </button>
-        <button onClick={() => decide(false)} disabled={busy} className={`flex-1 h-12 text-[16px] ${careful ? primary : secondary}`}>
+        <button onClick={() => decide(false)} disabled={busy} className={`flex-1 h-12 text-body ${careful ? primary : secondary}`}>
           {careful ? "Don't do this" : "Not now"}
         </button>
       </div>
       {a.tool === "run_shell" && !careful && !smart && (
-        <button onClick={() => decide(true, { allow_minutes: 30 })} disabled={busy} className="w-full text-center text-[13.5px] font-semibold text-muted py-1.5 disabled:opacity-50">
+        <button onClick={() => decide(true, { allow_minutes: 30 })} disabled={busy} className="w-full text-center text-ui font-semibold text-muted py-1.5 disabled:opacity-50">
           Run it, and allow commands for 30 min
         </button>
       )}
       {chatPassLine && (
         <div className="flex flex-col items-center gap-0.5">
-          <button onClick={() => decide(true, { allow_chat: true })} disabled={busy} className="w-full min-h-11 px-2 text-center text-[13.5px] leading-[18px] font-semibold text-muted py-1.5 disabled:opacity-50">
+          <button onClick={() => decide(true, { allow_chat: true })} disabled={busy} className="w-full min-h-11 px-2 text-center text-ui leading-[18px] font-semibold text-muted py-1.5 disabled:opacity-50">
             {CHAT_PASS_BUTTON}
           </button>
-          <div className="text-[12px] leading-4 text-muted text-center px-2">{chatPassLine}</div>
+          <div className="text-caption leading-4 text-muted text-center px-2">{chatPassLine}</div>
         </div>
       )}
-      <div className="text-[12px] leading-4 text-muted -mt-1">
+      <div className="text-caption leading-4 text-muted -mt-1">
         {smart ? (chatPassLine ? "Smart mode asks for this kind of command." : "Smart mode: this one always asks.") : "Sending, deleting, invites, commands, app actions and new code always ask first; reading your own notes and mail doesn't. Every action is logged."}
         {expiresIn(a.created_at) && <> · {expiresIn(a.created_at)}</>}
       </div>
@@ -214,7 +214,7 @@ const STAMP_LOOK: Record<string, { tone: string; mark: string }> = {
 export function ApprovalStamp({ a }: { a: Approval }) {
   const look = STAMP_LOOK[a.status] ?? STAMP_LOOK.expired;
   return (
-    <div className={`flex items-center gap-1.5 px-1 text-[13px] leading-[18px] font-semibold ${look.tone}`}>
+    <div className={`flex items-center gap-1.5 px-1 text-small leading-[18px] font-semibold ${look.tone}`}>
       {look.mark && <span aria-hidden="true">{look.mark}</span>}
       <span>{stampWords(a)}</span>
     </div>

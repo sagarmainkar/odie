@@ -27,12 +27,12 @@ function PodcastCard({ m }: { m: Media }) {
   const who = live ? speakingAt(m, p.time) : -1;
   const words = playerWords(m);
   return (
-    <div className="glass rounded-[26px] p-4 w-full max-w-[420px] flex flex-col gap-3" data-media={m.kind} data-ready={p.ready ? "1" : "0"}>
+    <div className="glass rounded-card p-4 w-full max-w-[420px] flex flex-col gap-3" data-media={m.kind} data-ready={p.ready ? "1" : "0"}>
       <div className="flex items-center gap-3">
         <div className="flex -space-x-2 shrink-0">
           {hosts.map((h, i) => (
             <span key={h.name} title={h.name} aria-label={`${h.name}${who === i ? ", speaking" : ""}`}
-              className="w-11 h-11 rounded-full grid place-items-center text-[16px] font-bold text-white transition-transform duration-200"
+              className="w-11 h-11 rounded-full grid place-items-center text-body font-bold text-white transition-transform duration-200"
               style={{ background: toneAt(m, i), zIndex: who === i ? 2 : 1, transform: who === i ? "scale(1.08)" : "none",
                 boxShadow: who === i ? `0 0 0 3px var(--t-surface), 0 0 0 5px ${toneAt(m, i)}` : "0 0 0 2px var(--t-surface)" }}>
               {hostInitial(h.name)}
@@ -40,9 +40,9 @@ function PodcastCard({ m }: { m: Media }) {
           ))}
         </div>
         <div className="flex-1 min-w-0">
-          <div className="text-[11px] uppercase tracking-[0.08em] font-bold text-muted">{words.label}</div>
-          <div className="text-[15.5px] font-semibold leading-5 truncate">{m.title}</div>
-          <div className="text-[12.5px] text-muted truncate">{who >= 0 ? `${hosts[who].name} is speaking` : castLine(m)}</div>
+          <div className="text-tiny uppercase tracking-[0.08em] font-bold text-muted">{words.label}</div>
+          <div className="text-body font-semibold leading-5 truncate">{m.title}</div>
+          <div className="text-small text-muted truncate">{who >= 0 ? `${hosts[who].name} is speaking` : castLine(m)}</div>
         </div>
         <ShareFile file={m} />
       </div>
@@ -62,18 +62,18 @@ function StoryCard({ m }: { m: Media }) {
   const live = p.playing || p.time > 0;
   const words = playerWords(m);
   return (
-    <div className="glass rounded-[26px] p-4 w-full max-w-[420px] flex flex-col gap-3" data-media={m.kind} data-ready={p.ready ? "1" : "0"}>
+    <div className="glass rounded-card p-4 w-full max-w-[420px] flex flex-col gap-3" data-media={m.kind} data-ready={p.ready ? "1" : "0"}>
       <div className="flex items-start gap-3">
         <div className="flex-1 min-w-0">
-          <div className="text-[11px] uppercase tracking-[0.08em] font-bold text-muted">{words.label}</div>
-          <div className="text-[15.5px] font-semibold leading-5 line-clamp-2">{m.title}</div>
-          {m.teaser && <p data-teaser="" className="text-[13px] leading-[18px] text-ink-2 mt-1 line-clamp-2">{m.teaser}</p>}
+          <div className="text-tiny uppercase tracking-[0.08em] font-bold text-muted">{words.label}</div>
+          <div className="text-body font-semibold leading-5 line-clamp-2">{m.title}</div>
+          {m.teaser && <p data-teaser="" className="text-small leading-[18px] text-ink-2 mt-1 line-clamp-2">{m.teaser}</p>}
         </div>
         <ShareFile file={m} />
       </div>
       {live && (
         <button onClick={() => setCastOpened(!castOpened)} aria-expanded={castOpened}
-          className="text-left text-[12.5px] text-muted truncate -mt-1">
+          className="text-left text-small text-muted truncate -mt-1">
           {castOpened ? "Hide who's who" : castLine(m)}
         </button>
       )}
@@ -97,7 +97,7 @@ function WhoIsWho({ m }: { m: Media }) {
         return (
           <li key={h.name} className="flex items-center gap-2.5 min-w-0">
             <FaceAvatar m={m} host={h} i={i} size={30} />
-            <span className="text-[13px] leading-[17px] min-w-0">
+            <span className="text-small leading-[17px] min-w-0">
               <b style={{ color: textToneAt(m, i) }}>{h.name}</b>
               {role && <span className="text-muted"> · {role}</span>}
             </span>
@@ -135,10 +135,10 @@ export function StoryStage({ m, time, playing, onOpen }: { m: Media; time: numbe
         ))}
       </div>
       {now && (
-        <button onClick={onOpen} aria-label="Show the full transcript" className="text-center rounded-[14px] px-2 py-1 active:bg-well">
+        <button onClick={onOpen} aria-label="Show the full transcript" className="text-center rounded-control px-2 py-1 active:bg-well">
           <span aria-hidden className="flex flex-col gap-0.5">
-            <span data-line="before" className="text-[12.5px] leading-[17px] text-muted opacity-70 line-clamp-1 min-h-[17px]">{before?.text ?? ""}</span>
-            <span data-line="now" className="text-[14.5px] leading-[20px] font-medium line-clamp-3 min-h-[60px]" style={{ color: nowTone }}>{now.text}</span>
+            <span data-line="before" className="text-small leading-[17px] text-muted opacity-70 line-clamp-1 min-h-[17px]">{before?.text ?? ""}</span>
+            <span data-line="now" className="text-ui leading-[20px] font-medium line-clamp-3 min-h-[60px]" style={{ color: nowTone }}>{now.text}</span>
           </span>
         </button>
       )}
@@ -162,7 +162,7 @@ function SpeakerName({ m, time, playing }: { m: Media; time: number; playing: bo
   return (
     <div data-speaker-line="" aria-hidden style={{ color: tone }}
       className={`h-[22px] flex items-center justify-center gap-2 min-w-0 transition-opacity duration-300 motion-reduce:transition-none ${dimmed}`}>
-      <b className="text-[15px] leading-[22px] truncate">{name}</b>
+      <b className="text-body leading-[22px] truncate">{name}</b>
       <span className="talk-bars" data-talking={talking}><i></i><i></i><i></i></span>
     </div>
   );
@@ -198,7 +198,7 @@ function Scrubber({ m, p }: { m: Media; p: Player }) {
         className="h-2 rounded-full bg-well cursor-pointer relative overflow-hidden">
         <div className="absolute inset-y-0 left-0 rounded-full bg-ember" style={{ width: `${pct}%` }} />
       </div>
-      <div className="flex justify-between text-[12px] text-muted tabular-nums mt-1"><span>{clock(p.time)}</span><span>{clock(p.duration)}</span></div>
+      <div className="flex justify-between text-caption text-muted tabular-nums mt-1"><span>{clock(p.time)}</span><span>{clock(p.duration)}</span></div>
     </div>
   );
 }
@@ -208,11 +208,11 @@ function Controls({ m, p }: { m: Media; p: Player }) {
   const words = playerWords(m);
   return (
     <div className="flex items-center justify-center gap-7">
-      <button onClick={() => p.seek(p.time - 15)} aria-label="Back 15 seconds" className="w-11 h-11 rounded-full grid place-items-center text-[13px] font-bold text-ink-2 active:bg-well">−15</button>
+      <button onClick={() => p.seek(p.time - 15)} aria-label="Back 15 seconds" className="w-11 h-11 rounded-full grid place-items-center text-small font-bold text-ink-2 active:bg-well">−15</button>
       <button onClick={p.toggle} aria-label={p.playing ? words.pause : words.play} className="w-14 h-14 rounded-full bg-ember text-on-ember grid place-items-center">
         <PlayPause playing={p.playing} size={24} />
       </button>
-      <button onClick={() => p.seek(p.time + 15)} aria-label="Forward 15 seconds" className="w-11 h-11 rounded-full grid place-items-center text-[13px] font-bold text-ink-2 active:bg-well">+15</button>
+      <button onClick={() => p.seek(p.time + 15)} aria-label="Forward 15 seconds" className="w-11 h-11 rounded-full grid place-items-center text-small font-bold text-ink-2 active:bg-well">+15</button>
     </div>
   );
 }
@@ -227,11 +227,11 @@ function Transcript({ m, p, open, setOpen }: { m: Media; p: Player; open: boolea
   if (turns.length === 0) return null;
   return (
     <>
-      <button onClick={() => setOpen(!open)} className="self-start text-[12.5px] text-muted font-semibold">{open ? "Hide transcript" : "Transcript"}</button>
+      <button onClick={() => setOpen(!open)} className="self-start text-small text-muted font-semibold">{open ? "Hide transcript" : "Transcript"}</button>
       {open && (
         <div className="flex flex-col gap-1 max-h-[300px] overflow-y-auto no-scrollbar -mx-1">
           {turns.map((t, i) => (
-            <button key={i} onClick={() => p.seek(t.start)} className={`text-left text-[13.5px] leading-[20px] rounded-[12px] px-2 py-1 ${i === turn ? "bg-well" : ""}`}>
+            <button key={i} onClick={() => p.seek(t.start)} className={`text-left text-ui leading-[20px] rounded-control px-2 py-1 ${i === turn ? "bg-well" : ""}`}>
               <b style={{ color: tone(t.host) }}>{t.host}</b> <span className="text-ink-2">{t.text}</span>
             </button>
           ))}

@@ -63,33 +63,33 @@ function ThreadsPanel({ threads, current, pickThread, onOpen, actions }: { threa
   return (
     <>
       <div className="px-4 pb-3 flex items-center gap-2">
-        <div className="text-[21px] font-bold tracking-[-0.015em] flex-1">Threads</div>
+        <div className="text-heading font-bold tracking-[-0.015em] flex-1">Threads</div>
         {actions}
       </div>
       <div className="px-4 pb-2">
         <div className="flex items-center gap-2 h-11 px-3.5 rounded-full bg-well border border-line">
           <span className="text-muted"><Icon name="search" size={16} /></span>
           <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search your chats" type="search" autoCorrect="off"
-            className="flex-1 min-w-0 bg-transparent outline-none text-[15px]" />
+            className="flex-1 min-w-0 bg-transparent outline-none text-body" />
         </div>
       </div>
       <div className="flex-1 overflow-y-auto no-scrollbar px-2 pb-8">
         {!q && (
-          <button onClick={() => onOpen(null)} className={`w-full flex items-center gap-3 px-3 py-3 rounded-[16px] text-left ${current === null ? "bg-well" : ""}`}>
-            <span className="w-9 h-9 rounded-[12px] grid place-items-center bg-ember-tint text-ember-text"><Icon name="chat" size={16} /></span>
-            <span className="flex-1"><b className="text-[15px] font-semibold block">{firstRow}</b><span className="text-[12.5px] text-muted">Where new messages go</span></span>
+          <button onClick={() => onOpen(null)} className={`w-full flex items-center gap-3 px-3 py-3 rounded-control text-left ${current === null ? "bg-well" : ""}`}>
+            <span className="w-9 h-9 rounded-control grid place-items-center bg-ember-tint text-ember-text"><Icon name="chat" size={16} /></span>
+            <span className="flex-1"><b className="text-body font-semibold block">{firstRow}</b><span className="text-small text-muted">Where new messages go</span></span>
           </button>
         )}
-        {list === null && <div className="px-3 py-4 text-[14px] text-muted">Loading…</div>}
-        {list !== null && listed.length === 0 && <div className="px-3 py-4 text-[14px] text-muted">{q ? "Nothing matches." : "No earlier chats yet."}</div>}
+        {list === null && <div className="px-3 py-4 text-ui text-muted">Loading…</div>}
+        {list !== null && listed.length === 0 && <div className="px-3 py-4 text-ui text-muted">{q ? "Nothing matches." : "No earlier chats yet."}</div>}
         {groups.map((g) => (
           <div key={g.label} className="mt-3">
-            <div className="px-3 pb-1 text-[13px] leading-5 font-bold text-muted">{g.label}</div>
+            <div className="px-3 pb-1 text-small leading-5 font-bold text-muted">{g.label}</div>
             {g.items.map((t) => (
-              <div key={t.id} className={`flex items-center gap-1 rounded-[16px] ${current === t.id ? "bg-well" : ""}`}>
+              <div key={t.id} className={`flex items-center gap-1 rounded-control ${current === t.id ? "bg-well" : ""}`}>
                 <button onClick={() => onOpen(t)} className="flex-1 min-w-0 text-left px-3 py-2.5">
-                  <span className="block text-[15px] font-medium truncate">{t.title}</span>
-                  <span className="block text-[12.5px] text-muted truncate">{t.snippet ?? `${whenText(t, today)} · ${t.messages} messages`}</span>
+                  <span className="block text-body font-medium truncate">{t.title}</span>
+                  <span className="block text-small text-muted truncate">{t.snippet ?? `${whenText(t, today)} · ${t.messages} messages`}</span>
                 </button>
                 <button onClick={() => void pin(t)} aria-label={t.pinned ? "Unpin" : "Pin"} className={`w-10 h-10 grid place-items-center shrink-0 ${t.pinned ? "text-gold" : "text-dim"}`}>
                   <Star on={t.pinned} />
@@ -150,7 +150,7 @@ export function ThreadsSidebar({ open, onHide, hideRef, current, pickThread, onO
   const hideTitle = `Hide threads (${shortcutText(onApple())})`;
   const actions = (
     <>
-      <button onClick={onNewChat} className="pill pill-flat h-10 text-[13.5px]"><Icon name="plus" size={16} /> New chat</button>
+      <button onClick={onNewChat} className="pill pill-flat h-10 text-ui"><Icon name="plus" size={16} /> New chat</button>
       <button ref={hideRef} onClick={onHide} aria-label="Hide threads" title={hideTitle}
         className="w-9 h-9 -mr-1.5 grid place-items-center rounded-full text-muted hover:text-ink hover:bg-well">
         <Icon name="sidebar" size={18} />

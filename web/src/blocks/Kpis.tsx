@@ -12,10 +12,10 @@ export function KpiCard({ item, trendColour }: { item: KpiItem; trendColour?: st
   const isText = typeof item.value === "string";
   const shown = kpiValue(item);
   const full = kpiValue(item, { full: true });
-  const valueSize = isText ? "text-[16px] leading-snug" : "text-[22px] leading-tight tabular-nums";
+  const valueSize = isText ? "text-body leading-snug" : "text-display-sm leading-tight tabular-nums";
   return (
-    <div className="glass glass-solid rounded-[20px] px-3.5 py-3 flex flex-col">
-      <div className="text-[12px] font-semibold text-muted">{item.label}</div>
+    <div className="glass glass-solid rounded-tile px-3.5 py-3 flex flex-col">
+      <div className="text-caption font-semibold text-muted">{item.label}</div>
       <div className={`${valueSize} font-extrabold tracking-[-0.02em] mt-0.5 [overflow-wrap:anywhere]`} title={full !== shown ? full : undefined}>
         {isText ? <InlineText text={shown} /> : shown}
       </div>

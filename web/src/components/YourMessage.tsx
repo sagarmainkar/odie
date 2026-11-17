@@ -12,14 +12,14 @@ export function YourMessage({ text: sent, images, via }: { text: string; images?
     <div className="ml-auto max-w-[80%] w-fit flex flex-col items-end gap-0.5">
       {hasPhotos && (
         <div className="flex gap-0.5 justify-end flex-wrap mb-1">
-          {images.map((id) => <img key={id} src={`/api/uploads/${id}`} alt="" className="w-[140px] h-[140px] object-cover rounded-[18px]" />)}
+          {images.map((id) => <img key={id} src={`/api/uploads/${id}`} alt="" className="w-[140px] h-[140px] object-cover rounded-tile" />)}
         </div>
       )}
       {text && (
         <>
-          <div className="bubble-me rounded-[24px] rounded-br-[8px] px-4 py-3 text-[15.5px] leading-[1.5] whitespace-pre-wrap break-words">{text}</div>
+          <div className="bubble-me rounded-card rounded-br-inner px-4 py-3 text-body leading-[1.5] whitespace-pre-wrap break-words">{text}</div>
           <div className="flex items-center gap-2 mr-1 text-muted">
-            {via === "terminal" && <span className="text-[12px]">via Terminal</span>}
+            {via === "terminal" && <span className="text-caption">via Terminal</span>}
             <CopyButton text={text} label="Copy message" />
           </div>
         </>

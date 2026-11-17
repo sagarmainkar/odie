@@ -52,9 +52,9 @@ const SOURCE_COLORS = ["#3b66ff", "#ff7430", "#20b679", "#8455ff"];
 /** Images a private reply holds until the user taps (signed-in browsing). */
 export function HeldImages({ urls, onShow }: { urls: string[]; onShow: () => void }) {
   return (
-    <button type="button" onClick={onShow} className="my-2 flex items-center gap-2 rounded-[14px] bg-well px-3.5 py-2.5 text-[13.5px] text-ink-2 text-left active:opacity-80">
+    <button type="button" onClick={onShow} className="my-2 flex items-center gap-2 rounded-control bg-well px-3.5 py-2.5 text-ui text-ink-2 text-left active:opacity-80">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden><rect x="3" y="5" width="18" height="14" rx="2" /><circle cx="9" cy="10" r="1.6" /><path d="M21 16l-5-5-8 8" /></svg>
-      <span className="flex-1">{heldLabel(urls)}<span className="block text-[12px] text-muted">This chat read a signed-in page, so images wait for your tap.</span></span>
+      <span className="flex-1">{heldLabel(urls)}<span className="block text-caption text-muted">This chat read a signed-in page, so images wait for your tap.</span></span>
     </button>
   );
 }
@@ -77,29 +77,29 @@ function Strip({ spec }: { spec: ImagesSpec }) {
   const tiles = shown.slice(0, 3);
   return (
     <figure className="imgs my-2">
-      {spec.title && <figcaption className="text-[13px] font-semibold text-muted mb-2 px-1">{spec.title}</figcaption>}
+      {spec.title && <figcaption className="text-small font-semibold text-muted mb-2 px-1">{spec.title}</figcaption>}
       {layout === "news" ? (
         <div className="flex gap-3 overflow-x-auto no-scrollbar -mx-4 px-4 pb-3 snap-x snap-mandatory scroll-px-4 @xl:grid @xl:grid-cols-3 @xl:overflow-visible @xl:mx-0 @xl:px-0">
           {shown.map((im, k) => (
-            <button key={im.i} onClick={() => setOpen(im.i)} className="glass glass-solid shrink-0 w-[74%] @xl:w-auto snap-start rounded-[26px] p-2 pb-3.5 text-left">
+            <button key={im.i} onClick={() => setOpen(im.i)} className="glass glass-solid shrink-0 w-[74%] @xl:w-auto snap-start rounded-card p-2 pb-3.5 text-left">
               <img src={im.url} alt={im.caption ?? ""} loading="lazy" referrerPolicy="no-referrer" onError={() => fail(im.i)}
-                className="h-[138px] w-full object-cover rounded-[20px] bg-well" />
+                className="h-[138px] w-full object-cover rounded-tile bg-well" />
               {im.source && (
-                <div className="flex items-center gap-1.5 mx-2 mt-3 mb-1.5 text-[12px] font-bold text-muted min-w-0">
-                  <i className="w-[18px] h-[18px] shrink-0 rounded-full grid place-items-center not-italic text-[10px] text-white" style={{ background: SOURCE_COLORS[k % 4] }}>{im.source.replace(/^https?:\/\/(www\.)?/, "").charAt(0).toUpperCase()}</i>
+                <div className="flex items-center gap-1.5 mx-2 mt-3 mb-1.5 text-caption font-bold text-muted min-w-0">
+                  <i className="w-[18px] h-[18px] shrink-0 rounded-full grid place-items-center not-italic text-tiny text-white" style={{ background: SOURCE_COLORS[k % 4] }}>{im.source.replace(/^https?:\/\/(www\.)?/, "").charAt(0).toUpperCase()}</i>
                   <span className="truncate">{im.source}</span>
                 </div>
               )}
-              {im.caption && <div className={`mx-2 text-[15px] leading-[1.35] font-bold line-clamp-2 ${im.source ? "" : "mt-3"}`}>{im.caption}</div>}
+              {im.caption && <div className={`mx-2 text-body leading-[1.35] font-bold line-clamp-2 ${im.source ? "" : "mt-3"}`}>{im.caption}</div>}
             </button>
           ))}
         </div>
       ) : (
         <div className={`grid gap-2 ${tiles.length === 1 ? "grid-cols-1 grid-rows-[240px] @xl:grid-rows-[360px]" : tiles.length === 2 ? "grid-cols-2 grid-rows-[200px] @xl:grid-rows-[300px]" : "grid-cols-[1.4fr_1fr] grid-rows-[130px_110px] @xl:grid-rows-[190px_160px]"}`}>
           {tiles.map((im, k) => (
-            <button key={im.i} onClick={() => setOpen(im.i)} className={`relative overflow-hidden rounded-[20px] shadow-[var(--t-shadow-card)] ${tiles.length === 3 && k === 0 ? "row-span-2" : ""}`}>
+            <button key={im.i} onClick={() => setOpen(im.i)} className={`relative overflow-hidden rounded-tile shadow-[var(--t-shadow-card)] ${tiles.length === 3 && k === 0 ? "row-span-2" : ""}`}>
               <img src={im.url} alt={im.caption ?? ""} loading="lazy" referrerPolicy="no-referrer" onError={() => fail(im.i)} className="w-full h-full object-cover bg-well" />
-              {k === 2 && shown.length > 3 && <span className="absolute inset-0 grid place-items-center bg-black/45 text-white text-[20px] font-bold">+{shown.length - 3}</span>}
+              {k === 2 && shown.length > 3 && <span className="absolute inset-0 grid place-items-center bg-black/45 text-white text-heading font-bold">+{shown.length - 3}</span>}
             </button>
           ))}
         </div>
@@ -110,8 +110,8 @@ function Strip({ spec }: { spec: ImagesSpec }) {
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setOpen(null)}
               className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex flex-col items-center justify-center p-4 safe-top safe-bottom" role="dialog" aria-label="Image">
               {uuidOf(cur.url) ? <OwnPhotoLarge uuid={uuidOf(cur.url)!} big={bigUrl(cur.url)} caption={cur.caption} /> : (<>
-                <motion.img initial={{ y: 14, opacity: 0 }} animate={{ y: 0, opacity: 1 }} src={bigUrl(cur.url)} alt={cur.caption ?? ""} referrerPolicy="no-referrer" className="max-w-full max-h-[78vh] object-contain rounded-[28px]" />
-                {(cur.caption || cur.source) && <div className="mt-3 text-center text-[14px] text-white/85">{cur.caption}{cur.source ? <span className="block text-[12px] text-white/55">{cur.source}</span> : null}</div>}
+                <motion.img initial={{ y: 14, opacity: 0 }} animate={{ y: 0, opacity: 1 }} src={bigUrl(cur.url)} alt={cur.caption ?? ""} referrerPolicy="no-referrer" className="max-w-full max-h-[78vh] object-contain rounded-card" />
+                {(cur.caption || cur.source) && <div className="mt-3 text-center text-ui text-white/85">{cur.caption}{cur.source ? <span className="block text-caption text-white/55">{cur.source}</span> : null}</div>}
               </>)}
             </motion.div>
           )}

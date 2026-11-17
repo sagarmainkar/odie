@@ -12,10 +12,10 @@ import { avatarColour, initialOf, rowLead } from "./rowAvatar";
  *  the page. */
 export function List({ title, ranked, items }: { title?: string; ranked: boolean; items: ListItem[] }) {
   const inCard = useContext(InCard);
-  const frame = inCard ? "my-2" : "glass glass-solid rounded-[20px] my-2 overflow-hidden";
+  const frame = inCard ? "my-2" : "glass glass-solid rounded-tile my-2 overflow-hidden";
   return (
     <div className={frame}>
-      {title && <div className={`${inCard ? "" : "px-4"} pt-3 pb-1 text-[13px] font-bold text-muted`}><InlineText text={title} /></div>}
+      {title && <div className={`${inCard ? "" : "px-4"} pt-3 pb-1 text-small font-bold text-muted`}><InlineText text={title} /></div>}
       {items.map((item, i) => <ListRow key={i} item={item} rank={ranked ? i + 1 : null} flush={inCard} />)}
     </div>
   );
@@ -31,22 +31,22 @@ function ListRow({ item, rank, flush }: { item: ListItem; rank: number | null; f
   const body = (
     <>
       {rank !== null && (
-        <span className="w-7 h-7 shrink-0 rounded-full grid place-items-center bg-ember-tint text-ember-text text-[13px] font-bold tabular-nums">{rank}</span>
+        <span className="w-7 h-7 shrink-0 rounded-full grid place-items-center bg-ember-tint text-ember-text text-small font-bold tabular-nums">{rank}</span>
       )}
-      {lead === "image" && <img src={item.image} alt="" loading="lazy" referrerPolicy="no-referrer" className="w-11 h-11 shrink-0 rounded-[12px] object-cover bg-well" />}
+      {lead === "image" && <img src={item.image} alt="" loading="lazy" referrerPolicy="no-referrer" className="w-11 h-11 shrink-0 rounded-control object-cover bg-well" />}
       {lead === "icon" && item.icon && (
-        <span className="w-9 h-9 shrink-0 rounded-[12px] grid place-items-center bg-ember-tint text-ember-text"><Icon name={item.icon} size={17} stroke={2.2} /></span>
+        <span className="w-9 h-9 shrink-0 rounded-control grid place-items-center bg-ember-tint text-ember-text"><Icon name={item.icon} size={17} stroke={2.2} /></span>
       )}
       {lead === "initial" && (
-        <span className="w-9 h-9 shrink-0 rounded-full grid place-items-center text-white text-[15px] font-bold" style={{ background: avatarColour(item.title) }} aria-hidden="true">
+        <span className="w-9 h-9 shrink-0 rounded-full grid place-items-center text-white text-body font-bold" style={{ background: avatarColour(item.title) }} aria-hidden="true">
           {initialOf(item.title)}
         </span>
       )}
       <span className="flex-1 min-w-0">
-        <span className="block text-[15px] leading-[20px] font-semibold"><InlineText text={item.title} /></span>
-        {item.subtitle && <span className="block text-[13px] leading-[18px] text-muted mt-0.5 line-clamp-2"><InlineText text={item.subtitle} /></span>}
+        <span className="block text-body leading-[20px] font-semibold"><InlineText text={item.title} /></span>
+        {item.subtitle && <span className="block text-small leading-[18px] text-muted mt-0.5 line-clamp-2"><InlineText text={item.subtitle} /></span>}
       </span>
-      {item.value && <span className="shrink-0 text-[14px] font-bold tabular-nums whitespace-nowrap"><InlineText text={item.value} /></span>}
+      {item.value && <span className="shrink-0 text-ui font-bold tabular-nums whitespace-nowrap"><InlineText text={item.value} /></span>}
       {(item.run || item.url) && <Chevron />}
     </>
   );

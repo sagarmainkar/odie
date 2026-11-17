@@ -4,7 +4,7 @@ import { fmt, partColour, seriesName, type ChartSeries } from "./chartData";
  *  `at` (stacked bars and areas), each name has its value at that x label after it, in the chart's unit. */
 export function ChartLegend({ series, at, unit }: { series: ChartSeries[]; at?: number; unit?: string }) {
   return (
-    <div className="flex flex-wrap gap-x-3 gap-y-1 mt-1.5 text-[12px] leading-4 text-muted">
+    <div className="flex flex-wrap gap-x-3 gap-y-1 mt-1.5 text-caption leading-4 text-muted">
       {series.map((s, k) => {
         const value = at === undefined ? null : s.data[at] ?? null;
         return (

@@ -21,8 +21,8 @@ export function Enlarge({ label, children }: { label: string; children: ReactNod
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} role="dialog" aria-label={label}
             className="fixed inset-0 z-50 bg-[var(--t-surface-2)] flex flex-col safe-top safe-bottom">
             <div className="flex items-center justify-between px-4 py-2">
-              <span className="text-[13px] font-semibold text-muted">{label}</span>
-              <button type="button" onClick={() => setOpen(false)} aria-label="Close" className="w-9 h-9 rounded-full bg-well text-ink grid place-items-center text-[18px]">×</button>
+              <span className="text-small font-semibold text-muted">{label}</span>
+              <button type="button" onClick={() => setOpen(false)} aria-label="Close" className="w-9 h-9 rounded-full bg-well text-ink grid place-items-center text-title">×</button>
             </div>
             <div className="enlarged flex-1 overflow-auto px-4 pb-6 [touch-action:pan-x_pan-y_pinch-zoom]">
               <div className="md min-w-full">{children}</div>

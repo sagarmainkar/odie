@@ -55,25 +55,25 @@ export function ReminderCurtain() {
       {current && (
         <motion.div key={current.id} role="dialog" aria-label="Reminder" initial={{ y: -140, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: -140, opacity: 0 }}
           transition={{ type: "spring", stiffness: 260, damping: 26 }} className="fixed top-0 left-0 right-0 z-40 flex justify-center px-3 pt-[max(12px,env(safe-area-inset-top))] pointer-events-none">
-          <div className="glass glass-solid rounded-[26px] px-4 py-3.5 w-full max-w-[560px] shadow-[0_24px_60px_-24px_rgba(60,40,20,.45)] pointer-events-auto">
+          <div className="glass glass-solid rounded-card px-4 py-3.5 w-full max-w-[560px] shadow-[0_24px_60px_-24px_rgba(60,40,20,.45)] pointer-events-auto">
             <div className="flex items-start gap-3">
               <Avatar size={40} state="approval" />
               <div className="flex-1 min-w-0">
-                <div className="text-[12.5px] font-semibold text-muted">{persona.name} · reminder</div>
-                <div className="text-[15.5px] leading-[21px] font-semibold mt-0.5 break-words">{current.text}</div>
-                {queue.length > 1 && <div className="text-[12px] text-dim mt-1">{queue.length - 1} more waiting</div>}
+                <div className="text-small font-semibold text-muted">{persona.name} · reminder</div>
+                <div className="text-body leading-[21px] font-semibold mt-0.5 break-words">{current.text}</div>
+                {queue.length > 1 && <div className="text-caption text-dim mt-1">{queue.length - 1} more waiting</div>}
               </div>
             </div>
             {choosingSnooze ? (
               <div className="flex gap-2 mt-3">
                 {snoozeChoices(new Date()).map((choice) => (
-                  <button key={choice.label} type="button" onClick={() => void snooze(current, choice.until)} className="pill flex-1 h-11 text-[14px] shadow-none">{choice.label}</button>
+                  <button key={choice.label} type="button" onClick={() => void snooze(current, choice.until)} className="pill flex-1 h-11 text-ui shadow-none">{choice.label}</button>
                 ))}
               </div>
             ) : (
               <div className="flex gap-2 mt-3">
-                <button type="button" onClick={() => void dismiss(current)} className="pill flex-1 h-11 text-[15px] shadow-none">Dismiss</button>
-                <button type="button" onClick={() => setChoosingSnooze(true)} className="pill pill-solid flex-1 h-11 text-[15px] shadow-none">Snooze</button>
+                <button type="button" onClick={() => void dismiss(current)} className="pill flex-1 h-11 text-body shadow-none">Dismiss</button>
+                <button type="button" onClick={() => setChoosingSnooze(true)} className="pill pill-solid flex-1 h-11 text-body shadow-none">Snooze</button>
               </div>
             )}
           </div>

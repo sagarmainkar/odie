@@ -94,12 +94,12 @@ export function PieChart({ spec }: { spec: ChartSpec }) {
   const headlineTitle = headline.full !== headline.value ? headline.full : undefined;
 
   return (
-    <figure className="chart chart-pie glass glass-solid rounded-[26px] px-4 pt-4 pb-3 my-2">
-      <figcaption className="text-[13px] font-semibold text-muted truncate">{spec.title ?? spec.series[0].name ?? "Chart"}</figcaption>
+    <figure className="chart chart-pie glass glass-solid rounded-card px-4 pt-4 pb-3 my-2">
+      <figcaption className="text-small font-semibold text-muted truncate">{spec.title ?? spec.series[0].name ?? "Chart"}</figcaption>
       {!donut && (
         <div className="flex items-baseline gap-2 mt-0.5 min-w-0">
-          <span className="text-[30px] leading-tight font-extrabold tracking-[-0.03em] tabular-nums" title={headlineTitle}>{headline.value}</span>
-          <span className="text-[12px] text-muted truncate">{headline.label}</span>
+          <span className="text-display-lg leading-tight font-extrabold tracking-[-0.03em] tabular-nums" title={headlineTitle}>{headline.value}</span>
+          <span className="text-caption text-muted truncate">{headline.label}</span>
         </div>
       )}
       <div className="chart-pie-body">
@@ -130,7 +130,7 @@ export function PieChart({ spec }: { spec: ChartSpec }) {
         </table>
         <ChartTip tip={tip} />
       </div>
-      {spec.source && <div className="text-[11px] text-dim text-right">{spec.source}</div>}
+      {spec.source && <div className="text-tiny text-dim text-right">{spec.source}</div>}
     </figure>
   );
 }
