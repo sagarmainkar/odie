@@ -91,6 +91,26 @@
   --t-shadow-card: 0 1px 0 rgba(255,255,255,.03) inset, 0 24px 48px -26px rgba(0,0,0,.7);
   color-scheme: dark;
 }
+/* A personality's own light (light.ts sets data-light on the root; .light-N marks one avatar). Three washes for the
+   day and three for the night, a face colour, and a ring for its picture. Everyday Odie has no data-light. */
+:root[data-light="1"] { --w1: #CDEBD6; --w2: #F3F0BE; --w3: #CFE6F5; --t-bubble: linear-gradient(150deg, #E6F6EC, #EAF3FB); }
+:root[data-light="2"] { --w1: #FFD1DC; --w2: #FFE2C4; --w3: #E6D6FF; --t-bubble: linear-gradient(150deg, #FFEAF0, #F6ECFF); }
+:root[data-light="3"] { --w1: #BFE4F5; --w2: #D3DCFF; --w3: #CFF0E4; --t-bubble: linear-gradient(150deg, #E6F4FB, #ECEFFF); }
+:root[data-light="4"] { --w1: #FFE1B0; --w2: #FFD2C4; --w3: #FFF1C2; --t-bubble: linear-gradient(150deg, #FFF3DE, #FFECE6); }
+:root[data-light="5"] { --w1: #DDD2FF; --w2: #F8CBE6; --w3: #CFE0FF; --t-bubble: linear-gradient(150deg, #EEEBFF, #FBEAF6); }
+:root[data-light="6"] { --w1: #D9E0EA; --w2: #E8E1F0; --w3: #DCECEE; --t-bubble: linear-gradient(150deg, #EEF1F6, #F1EEF6); }
+:root[data-tod="night"][data-light="1"] { --w1: #14463A; --w2: #3A4A1E; --w3: #123E55; --t-bubble: linear-gradient(150deg, #1E4A3E, #24405A); }
+:root[data-tod="night"][data-light="2"] { --w1: #5A2340; --w2: #55301E; --w3: #3A2A66; --t-bubble: linear-gradient(150deg, #5A2A46, #45305E); }
+:root[data-tod="night"][data-light="3"] { --w1: #0F4A66; --w2: #2A2F78; --w3: #0F4A40; --t-bubble: linear-gradient(150deg, #1E4A62, #2E3270); }
+:root[data-tod="night"][data-light="4"] { --w1: #5C3A12; --w2: #5A2A22; --w3: #4A4212; --t-bubble: linear-gradient(150deg, #5A4020, #5A2E2A); }
+:root[data-tod="night"][data-light="5"] { --w1: #3A2A7A; --w2: #5A2456; --w3: #1E3A70; --t-bubble: linear-gradient(150deg, #3A2E78, #55285A); }
+:root[data-tod="night"][data-light="6"] { --w1: #2A3446; --w2: #3A3050; --w3: #1E3E44; --t-bubble: linear-gradient(150deg, #303A4C, #3A3452); }
+.light-1 { --face: #3FB98C; --ring: conic-gradient(from 200deg, #8fe0c0, #cfe6a0, #8fd0f0, #8fe0c0); }
+.light-2 { --face: #EE7F9A; --ring: conic-gradient(from 200deg, #ff9fb8, #ffc9a0, #d6b0ff, #ff9fb8); }
+.light-3 { --face: #3FA7D6; --ring: conic-gradient(from 200deg, #8fd6ff, #9fb0ff, #8fe6d0, #8fd6ff); }
+.light-4 { --face: #F2A541; --ring: conic-gradient(from 200deg, #ffd08a, #ffab94, #ffe69a, #ffd08a); }
+.light-5 { --face: #A77BF0; --ring: conic-gradient(from 200deg, #b9a8ff, #ff9fd6, #9fc0ff, #b9a8ff); }
+.light-6 { --face: #7C8AA5; --ring: conic-gradient(from 200deg, #b0bccf, #c9bfe0, #a8cfd6, #b0bccf); }
 
 html, body, #root { height: 100%; }
 @supports (height: 100dvh) { #root { height: 100dvh; } }
@@ -227,7 +247,7 @@ input, button, textarea { font-family: inherit; }
 /* The face (components/Orb.tsx). Idle: one colour, still, a blink now and then. Each state changes a part, never the
    layout, so the same markup serves the 36px avatar and the 210px Talk screen. */
 .face { display: block; width: 100%; height: 100%; overflow: visible; }
-.face-body { fill: var(--t-brand); transition: fill .3s; }
+.face-body { fill: var(--face, var(--t-brand)); transition: fill .3s; }
 .face-eye { transform-box: fill-box; transform-origin: center; animation: face-blink 4.6s ease-in-out infinite; }
 .face-eye:last-of-type { animation-delay: .05s; }
 .face-pupil { transform-box: fill-box; transform-origin: center; transition: transform .25s; }
@@ -257,7 +277,7 @@ input, button, textarea { font-family: inherit; }
 @keyframes orb-talk { from { transform: scale(.97); } to { transform: scale(1.06); } }
 
 /* ---------- photo avatar in an iridescent ring ---------- */
-.av { display: inline-block; flex: 0 0 auto; border-radius: 50%; padding: 2px; background: conic-gradient(from 200deg, #8fdcff, #a99bff, #ff9fd6, #ffd6a0, #8fdcff); }
+.av { display: inline-block; flex: 0 0 auto; border-radius: 50%; padding: 2px; background: var(--ring, conic-gradient(from 200deg, #8fdcff, #a99bff, #ff9fd6, #ffd6a0, #8fdcff)); }
 /* The photo breathes, pulses and glows like the orb would */
 .av { position: relative; isolation: isolate; }
 .av.breathe { animation: orb-breathe 5s ease-in-out infinite; }

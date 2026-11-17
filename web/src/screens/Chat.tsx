@@ -10,6 +10,7 @@ import { ideasFor } from "../ideas";
 import { getJSON, postJSON, todayISO } from "../api";
 import { speak, stopSpeaking } from "../voice";
 import { usePickedPersona } from "../persona";
+import { lightOf } from "../light";
 import { usePick } from "../pick";
 import { clearElsewhere, noteElsewhere, somethingElsewhere, useElsewhere, usePersonalities } from "../personalities";
 import { Switcher } from "../components/Switcher";
@@ -159,6 +160,15 @@ function NewChatDivider({ ts, name }: { ts?: number; name: string }) {
   return (
     <div className="flex justify-center min-h-11 items-center"><span className="self-center text-[12px] font-semibold text-muted px-3 py-1 rounded-full bg-well text-center">New chat{ts ? ` · ${fmtTime(ts)}` : ""} · {name} doesn't see anything above</span></div>
   );
+}
+
+/** Whether the header shows how full the conversation is: only once it is half full, so a fresh chat's header is calm.
+ *    2K of 32K used   -> false, nothing in the header
+ *    16K of 32K used  -> true, the ring shows 50%
+ *    a limit of 0 (not known yet) -> false */
+export function ctxWorthShowing(used: number, limit: number): boolean {
+  if (limit <= 0) return false;
+  return used / limit >= 0.5;
 }
 
 function ContextRing({ used, limit }: { used: number; limit: number }) {
@@ -678,7 +688,7 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
             aria-label={`Switch personality. Talking to ${name}${someoneElseWaits ? "; someone else has something for you" : ""}`}
             className="flex items-center justify-center gap-2.5 min-w-0 text-left rounded-[18px] px-2 py-1 -my-1 active:bg-well">
             <span className="relative shrink-0">
-              <Avatar size={40} state={orb} who={picked} />
+              <Avatar size={40} state={orb} who={picked} light={lightOf(pick)} />
               <i className={`absolute right-0 bottom-0 w-3 h-3 rounded-full border-2 border-[var(--t-ground)] ${busy || orb === "approval" ? "bg-gold" : "bg-good"}`} aria-hidden="true" />
               {someoneElseWaits && <i className="absolute -left-0.5 -top-0.5 w-3 h-3 rounded-full border-2 border-[var(--t-ground)] bg-ember" aria-hidden="true" />}
             </span>
@@ -694,7 +704,7 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
           </button>
           <div className="flex items-center gap-1.5">
             {!wide && <button onClick={() => setThreadsOpen(true)} aria-label="Threads" title="Threads" className="pill w-11 px-0"><Glyph name="menu" size={18} /></button>}
-            {ctx && ctxKnown && !thread && (
+            {ctx && ctxKnown && !thread && ctxWorthShowing(ctx.used, ctx.limit) && (
               <button onClick={() => { setCtxNote(true); setTimeout(() => setCtxNote(false), 4000); }} aria-label={`Conversation ${ctxText}`} title={ctxText}
                 className="pill h-11 px-2.5 text-[12px] font-bold"><ContextRing used={ctx.used} limit={ctx.limit} /></button>
             )}
@@ -733,7 +743,7 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
             {morningOnTop && <MorningHello reply={morningOnTop} onChip={(t) => void send(t)} />}
             {msgs.length === 0 && pick !== "" && (
               <div className="min-h-[60dvh] flex flex-col items-center justify-center text-center pt-5">
-                <Avatar size={132} halo who={picked} />
+                <Avatar size={132} halo who={picked} light={lightOf(pick)} />
                 <h2 className="text-[26px] font-bold tracking-[-0.02em] mt-7">Say hello to {name}.</h2>
                 <p className="text-muted mt-1.5 max-w-[30ch]">What you say here stays in {name}'s own threads and memory.</p>
               </div>
@@ -774,7 +784,7 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
                     ) : (
                       <motion.div {...enter} className="flex flex-col gap-2.5">
                         <div className="flex items-center gap-2 text-[12.5px] text-muted font-semibold">
-                          <Avatar size={36} who={picked} /><span className="text-[13.5px]"><b className="text-ink-2 font-bold">{name}</b>{m.live ? " · reminder" : ""}{m.ts ? ` · ${fmtTime(m.ts)}` : ""}</span>
+                          <Avatar size={36} who={picked} light={lightOf(pick)} /><span className="text-[13.5px]"><b className="text-ink-2 font-bold">{name}</b>{m.live ? " · reminder" : ""}{m.ts ? ` · ${fmtTime(m.ts)}` : ""}</span>
                         </div>
                         <Steps tools={m.tools} running={streaming} />
                         {m.awaiting && (

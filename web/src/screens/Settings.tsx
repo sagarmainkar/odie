@@ -16,6 +16,7 @@ import { DevicesSection } from "../components/DevicesSection";
 import { UpdateSection } from "../components/UpdateSection";
 import { BrowserSection } from "../components/BrowserSection";
 import { personaChanged, usePickedPersona } from "../persona";
+import { lightOf } from "../light";
 import { setPick, usePick } from "../pick";
 import { deletePersonality, personalitiesChanged, usePersonalities } from "../personalities";
 import { avatarUrl, deleteWords, modelsUrl, pickedBrainSub, personaUrl, showsDelete, showsWhoLine, soulUrl, whoLine, type PickedBrain } from "../settingsPick";
@@ -175,7 +176,7 @@ function AssistantSection() {
       )}
       <Switcher open={switcherOpen} onClose={() => setSwitcherOpen(false)} />
       <button onClick={() => fileRef.current?.click()} aria-label="Change photo" className="relative">
-        <Avatar size={96} who={persona} />
+        <Avatar size={96} who={persona} light={lightOf(pick)} />
         {busy && <span className="absolute inset-0 flex items-center justify-center"><span className="spinner" /></span>}
       </button>
       <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={upload} />
