@@ -969,6 +969,8 @@ def _odie_home_paths() -> tuple[str, str]:
 
 
 def _inside(path: str, place: str) -> bool:
+    """Whether a path is the place or inside it: ("/h/.odie/app/x", "/h/.odie") -> True; ("/h/.odie", "/h/.odie") ->
+    True; ("/h/.odie-old/x", "/h/.odie") -> False."""
     return path == place or path.startswith(place.rstrip("/") + "/")
 
 
