@@ -592,7 +592,7 @@ async def mcp_connect(body: ConnectIn, request: Request) -> dict[str, Any]:
     store = request.app.state.store
     pick = _personality(request)
     servers, _ = read_config()
-    name = next((n for n, sp in servers.items() if isinstance(sp, dict) and sp.get("url") == spec["url"]), None)
+    name = _same_link(servers, spec["url"], store, pick)
     if name is None and not body.add:
         same = [n for n, sp in servers.items() if isinstance(sp, dict) and presets.preset_of(str(sp.get("url") or "")) == body.preset]
         usable = [n for n in same if access.allowed(store, n, pick)]  # the picked one's own; another's is never a candidate
@@ -616,6 +616,22 @@ async def mcp_connect(body: ConnectIn, request: Request) -> dict[str, Any]:
         access.set_allowed(store, shared, pick, False)
     await request.app.state.runner.load_plugins()
     return {"ok": True, "name": name, "tools": checked["tools"], "replaced": replaced}
+
+
+def _same_link(servers: dict, url: str, store, pick: str) -> str | None:
+    """The connection a link is for: one with that very link, preferring those the picked one can use, since one link
+    can serve several accounts (Zapier's, with a code each).
+      Mira's zapier and Odie's zapier-2, the same link; Odie connects it again -> "zapier-2"
+      only Mira's has the link; Odie connects it                          -> "zapier" (then left as it is: not his alone)
+      no connection has the link                                          -> None"""
+    from odie.plugins import access
+    with_link = [n for n, sp in servers.items() if isinstance(sp, dict) and sp.get("url") == url]
+    usable = [n for n in with_link if access.allowed(store, n, pick)]
+    if usable:
+        return usable[0]
+    if with_link:
+        return with_link[0]
+    return None
 
 
 @router.post("/mcp/{name}/reads_free")

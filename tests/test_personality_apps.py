@@ -861,3 +861,21 @@ async def test_a_switch_that_clears_a_clash_loads_the_refused_server_again(api, 
     assert (await api.post("/api/mcp/mail/access", json={"on": False})).status_code == 200
     status = {e.name: e.status for e in runner.plugins["servers"]}
     assert status == {"mail": "ok", "mail-2": "ok"}  # loaded again: no restart needed
+
+
+ZAPIER_SHARED_LINK = "https://mcp.zapier.com/api/mcp/mcp"  # one link for every account; the code says whose
+
+
+async def test_reconnecting_with_a_new_code_replaces_ones_own_connection_of_a_shared_link(api, store, connecting):
+    from odie.plugins import mcp
+    mira = personalities.create(store, "Mira")
+    hers = await api.post(f"/api/mcp/connect?personality={mira.id}", json={"preset": "zapier", "url": ZAPIER_SHARED_LINK,
+                                                                             "key": "business-1234"})
+    odies = await api.post("/api/mcp/connect", json={"preset": "zapier", "url": ZAPIER_SHARED_LINK, "key": "personal-1234"})
+    assert (hers.json()["name"], odies.json()["name"]) == ("zapier", "zapier-2")
+    again = await api.post("/api/mcp/connect", json={"preset": "zapier", "url": ZAPIER_SHARED_LINK, "key": "personal-5678"})
+    assert (again.json()["name"], again.json()["replaced"]) == ("zapier-2", True)  # his own, as Settings said
+    saved = mcp.read_config()[0]
+    assert set(saved) == {"zapier", "zapier-2"}
+    assert saved["zapier"]["headers"] == {"Authorization": "Bearer business-1234"}  # hers untouched
+    assert saved["zapier-2"]["headers"] == {"Authorization": "Bearer personal-5678"}
