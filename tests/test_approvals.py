@@ -195,7 +195,8 @@ async def test_resume_posts_no_filler_when_the_model_said_nothing(isolated_setti
     got = await _resume_and_collect(r, aid, True, [event])
     assert [e for e in got if e["type"] == "message"] == []
     assert s.get_approval(aid)["result_text"] == ""
-    assert got[-1] == {"type": "approval_done", "id": aid, "status": "approved", "text": ""}
+    assert got[-1] == {"type": "approval_done", "id": aid, "status": "approved", "text": "",
+                       "session_id": "chat-2026-10-01"}  # its thread: the live stream sends it only where that is picked
     rejected = s.create_approval("chat-2026-10-01", "inv-2", "req-2", "gmail_send_draft", {"draft_id": "d2"}, summary="Send", detail={},
                                  provenance=[], call_id="c9")
     got = await _resume_and_collect(r, rejected, False, [])
