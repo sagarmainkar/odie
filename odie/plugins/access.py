@@ -113,18 +113,24 @@ def give_back_to_odie(store: Store, gone: str) -> list[str]:
     configured, _ = read_config()
     known = known_tools(store)
     others = [p.id for p in personalities.list_all(store)]
+    every_server = set(configured) | set(known) | _servers_with_switches(store)  # configured or not, known or not
     given_back = []
     for server in sorted(off_for(store, ODIE)):
         was_hers = allowed(store, server, gone)
         someone_uses_it = any(allowed(store, server, who) for who in others)
         if not was_hers or someone_uses_it:
             continue
-        like_another = any(could_clash(server, other, configured, known) for other in configured if other != server)
+        like_another = any(could_clash(server, other, configured, known) for other in every_server if other != server)
         if like_another:
             continue
         set_allowed(store, server, ODIE, True)
         given_back.append(server)
     return given_back
+
+
+def _servers_with_switches(store: Store) -> set[str]:
+    """Every server someone has a switch row for, whether or not mcp.json still names it."""
+    return {r["server"] for r in store.query("select distinct server from app_access")}
 
 
 def skills_off_in(store: Store, session_id: str | None) -> frozenset[str]:
@@ -324,11 +330,16 @@ def could_clash(first: str, second: str, configured: dict[str, dict], known: dic
     by looking like one service (same_service), so an unknown is never taken for "no clash".
       mail and mail-2, both listed send_email          -> True
       mail and notes, both known, nothing in common    -> False
-      mail failed to list ever, mail-2 the same host   -> True"""
+      mail failed to list ever, mail-2 the same host   -> True
+      a server with no known tools and no spec at all  -> True (nothing to tell them apart by)"""
     first_tools, second_tools = set(known.get(first) or ()), set(known.get(second) or ())
     if first_tools and second_tools:
         return bool(first_tools & second_tools)
-    return same_service(configured.get(first) or {}, configured.get(second) or {})
+    first_spec, second_spec = configured.get(first) or {}, configured.get(second) or {}
+    nothing_known = (not first_tools and not first_spec) or (not second_tools and not second_spec)
+    if nothing_known:
+        return True  # no tools and no spec to compare: it could be anything, so it counts as a clash
+    return same_service(first_spec, second_spec)
 
 
 def clash_for(store: Store, server: str, pid: str, configured: dict[str, dict]) -> str | None:

@@ -92,6 +92,10 @@ def test_removing_a_server_removes_its_switches(store):
 
 async def test_deleting_a_personality_removes_its_switches(store):
     from odie.app.runner import OdieRunner
+    from odie.plugins import mcp
+    mcp.write_config({"home-mail": {"url": "https://home.example.invalid/mcp", "title": "Home mail"},
+                      "work-mail": {"url": "https://work.example.invalid/mcp", "title": "Work mail"}})
+    access.remember_tools(store, {"home-mail": ["read_home"], "work-mail": ["read_work"]})  # nothing in common
     mira = personalities.create(store, "Mira")
     access.set_allowed(store, "home-mail", mira.id, False)
     access.set_allowed(store, "home-mail", ODIE, False)
@@ -399,6 +403,9 @@ async def test_deleting_the_one_an_app_belonged_to_gives_it_back_to_odie(store):
     left its switch wouldn't even show, so it goes back on for everyday Odie, and the log says so. An app another
     personality still uses stays as it is."""
     from odie.app.runner import OdieRunner
+    from odie.plugins import mcp
+    mcp.write_config({"work-mail": {"url": "https://work.example.invalid/mcp", "title": "Work mail"},
+                      "coach-app": {"url": "https://coach.example.invalid/mcp", "title": "Coach"}})
     mira = personalities.create(store, "Mira")
     coach = personalities.create(store, "Coach")
     access.added(store, "work-mail", mira.id)
@@ -906,3 +913,20 @@ async def test_a_wrong_skill_name_is_answered_only_with_skills_usable_in_that_th
     assert "mcp-tides-home" in odies_hint and "mcp-tides," not in odies_hint and not odies_hint.endswith("mcp-tides.")
     hers = await hint_in("chat-2026-11-17-2")
     assert "mcp-tides" in hers and "mcp-tides-home" not in hers
+
+
+async def test_with_nothing_known_of_odies_other_server_hers_stays_off_for_him(store):
+    """Nothing at all is known of a server Odie has a switch for (no tools ever listed, no spec to compare): her
+    server could be the same service, so it is not handed to him."""
+    from odie.app.runner import OdieRunner
+    from odie.plugins import mcp
+    mcp.write_config({"mail-2": WORK_MAIL})
+    mira = personalities.create(store, "Mira")
+    access.added(store, "mail-2", mira.id)
+    access.set_allowed(store, "mail", mira.id, False)  # a server of Odie's that Odie knows nothing more about
+    r = OdieRunner(store)
+    try:
+        await personalities.delete(store, r, mira.id)
+    finally:
+        await r.close()
+    assert not access.allowed(store, "mail-2", ODIE)
