@@ -598,6 +598,7 @@ class OdieRunner:
         self._window_unknown = True  # the provider has not said the model's context size yet: ask again next time
         self.plugins: dict = {"skills": [], "servers": []}
         self._stop: set[str] = set()  # sessions the user asked to stop
+        self._new_thread_lock = asyncio.Lock()  # one new personality thread at a time (odie.personalities)
         from odie.skills import builder
         builder.hooks.update(store=store, reload=self.load_plugins, reserved=lambda: self._all_tool_names())
         from odie import trackers
@@ -631,6 +632,32 @@ class OdieRunner:
         row = self.store.one("select value_json from settings where key=?", (f"segment:{date}",))
         n = int(row["value_json"]) if row else 1
         return f"chat-{date}" if n == 1 else f"chat-{date}-{n}"
+
+    def current_thread(self, personality: str) -> str | None:
+        """A personality's current chat: its latest thread, however old, until the user taps New chat (it has no
+        thread-a-day rhythm, unlike everyday Odie). None when it has no thread yet."""
+        return self.store.get_setting(f"current:{personality}")
+
+    async def session_for(self, personality: str, date: str) -> str:
+        """The thread a message for this personality goes to, with no thread named: everyday Odie -> today's chat
+        (current_session_id); a personality -> its current thread, made now if it has none."""
+        if not personality:
+            return self.current_session_id(date)
+        async with self._new_thread_lock:
+            current = self.current_thread(personality)
+            if current:
+                return current
+            return await self._new_thread(personality, date)
+
+    async def _new_thread(self, personality: str, date: str) -> str:
+        """A new thread for a personality, which becomes its current chat. The thread is claimed for it before its
+        session exists, so there is never a moment when it could be taken for an everyday thread."""
+        from odie import personalities, threads
+        sid = threads.next_free_id(self.store, date)
+        personalities.claim(self.store, sid, personality)
+        await self._ensure_session(sid)
+        self.store.set_setting(f"current:{personality}", sid)
+        return sid
 
     def _set_segment(self, date: str, n: int) -> None:
         self.store.execute("insert into settings(key,value_json) values(?,?) on conflict(key) do update set value_json=excluded.value_json",
@@ -1002,22 +1029,33 @@ class OdieRunner:
         start = max(0, end - limit) if limit else 0
         return {"items": items[start:end], "total": total, "start": start}
 
-    async def history(self, date: str, limit: int | None = None, before: int | None = None) -> dict[str, Any]:
-        """All segments of the day, oldest first, paged: the last `limit` items ending at index `before`."""
+    async def history(self, date: str, limit: int | None = None, before: int | None = None,
+                      personality: str = "") -> dict[str, Any]:
+        """Everyday Odie: all its segments of the day, oldest first, paged: the last `limit` items ending at index
+        `before`. A personality's threads are never part of the day (their numbers are simply skipped). A personality:
+        its current thread, with "thread" saying which one (None, and no items, when it has no thread yet)."""
+        from odie import personalities, threads
+        if personality:
+            current = self.current_thread(personality)
+            if current is None:
+                return {"items": [], "total": 0, "start": 0, "thread": None}
+            shown = await self.session_history(current, limit=limit, before=before)
+            shown["thread"] = current
+            return shown
         s = config.settings
         items: list[dict[str, Any]] = []
         sids: list[str] = []
-        n = 1
-        while True:
-            sid = f"chat-{date}" if n == 1 else f"chat-{date}-{n}"
+        not_odies = personalities.owned_sessions(self.store)
+        for sid in threads.session_ids_on(date):
+            if sid in not_odies:
+                continue
             sess = await self.session_service.get_session(app_name=s.app_name, user_id=s.user_id, session_id=sid)
             if sess is None:
-                break
+                continue
             lines = events_to_history(sess.events)
             lines = steps_with_allowed(self.store, sid, self._marked(sid, lines))
             items += with_session(sid, lines)
             sids.append(sid)
-            n += 1
         items = merge_approvals(items, self.store.approvals_in_sessions(sids))
         total = len(items)
         end = min(before, total) if before is not None else total
@@ -1325,13 +1363,21 @@ class OdieRunner:
         sess = await self.session_service.get_session(app_name=s.app_name, user_id=s.user_id, session_id=sid)
         return {"used": self.context_tokens(sess.events) if sess else 0, "limit": limit}
 
-    async def new_chat(self, date: str) -> str:
-        """The user asked for a clean slate: continue in a new segment with nothing carried over."""
+    async def new_chat(self, date: str, personality: str = "") -> str:
+        """The user asked for a clean slate: continue in a new segment with nothing carried over. For a personality it
+        is a new thread of its own, which becomes its current chat (no "(New chat.)" divider: each of its threads
+        stands alone)."""
+        from odie import threads
+        if personality:
+            async with self._new_thread_lock:
+                before = self.current_thread(personality)
+                new_thread = await self._new_thread(personality, date)
+            self.store.audit("user", "new_chat", result_summary=f"{before or '-'} -> {new_thread}", session_id=new_thread)
+            return new_thread
         sid = self.current_session_id(date)
         async with self.lock_for(sid):
-            n = (int(sid.rsplit("-", 1)[1]) if sid.count("-") == 4 else 1) + 1
-            new_sid = f"chat-{date}-{n}"
-            self._set_segment(date, n)
+            new_sid = threads.next_free_id(self.store, date)  # above every number in use that day, a personality's too
+            self._set_segment(date, threads.segment_of(new_sid))
         await self._ensure_session(new_sid)
         self.invalidate_prompt()
         await self.post_message(NEW_CHAT, session_id=new_sid)

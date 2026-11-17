@@ -3,12 +3,18 @@ or everyday Odie. Most tests here try to cross one of those lines."""
 import io
 import re
 import sqlite3
+import time
 
 import pytest
 from PIL import Image
 
 from odie import config, persona, personalities, threads
+from odie.app.runner import OdieRunner
 from odie.store.db import Store
+from tests.test_threads import _say
+
+D = "2026-11-17"
+ODIE = personalities.ODIE
 
 
 @pytest.fixture
@@ -16,6 +22,18 @@ def store(isolated_settings, tmp_path):
     s = Store(tmp_path / "assistant.db")
     s.init_schema()
     return s
+
+
+@pytest.fixture
+async def runner(store):
+    r = OdieRunner(store)
+    yield r
+    await r.close()
+
+
+def _said(history: dict) -> list[str]:
+    """The user's words in a history answer, oldest first."""
+    return [item["text"] for item in history["items"] if item["role"] == "user"]
 
 
 def _jpeg() -> bytes:
@@ -133,3 +151,94 @@ def test_a_picture_for_a_personality_leaves_odies_alone(store):
     persona.delete_picture(aid)
     assert persona.avatar_path(aid) is None
     assert persona.avatar_path(odies) is not None
+
+
+# ── thread ids and the current chat ──
+
+def test_segment_of():
+    assert threads.segment_of("chat-2026-11-17") == 1
+    assert threads.segment_of("chat-2026-11-17-4") == 4
+
+
+async def test_the_next_free_id_is_above_every_id_in_use(runner):
+    assert threads.next_free_id(runner.store, D) == f"chat-{D}-2"  # nothing yet: never the bare id
+    await _say(runner, f"chat-{D}-5", "user", "x", time.time())
+    assert threads.session_ids_on(D) == [f"chat-{D}-5"]
+    assert threads.next_free_id(runner.store, D) == f"chat-{D}-6"
+    mira = personalities.create(runner.store, "Mira")
+    personalities.claim(runner.store, f"chat-{D}-9", mira.id)  # claimed, its session not made yet
+    assert threads.next_free_id(runner.store, D) == f"chat-{D}-10"
+
+
+async def test_a_personalitys_thread_never_takes_the_bare_id(runner):
+    mira = personalities.create(runner.store, "Mira")
+    assert runner.current_thread(mira.id) is None
+    sid = await runner.session_for(mira.id, D)
+    assert sid == f"chat-{D}-2"
+    assert personalities.of_session(runner.store, sid) == mira.id
+    assert runner.current_thread(mira.id) == sid
+    assert await runner.session_for(mira.id, D) == sid  # asked again: the same thread
+    assert runner.current_session_id(D) == f"chat-{D}"  # the bare id stays Odie's
+    assert await runner.session_for(ODIE, D) == f"chat-{D}"
+    assert personalities.of_session(runner.store, f"chat-{D}") == ODIE
+
+
+async def test_odies_new_chat_skips_a_taken_number(runner):
+    mira = personalities.create(runner.store, "Mira")
+    await _say(runner, f"chat-{D}", "user", "Morning", time.time())
+    hers = await runner.session_for(mira.id, D)
+    assert hers == f"chat-{D}-2"
+    new = await runner.new_chat(D)
+    assert new == f"chat-{D}-3"
+    assert runner.current_session_id(D) == new
+    assert personalities.of_session(runner.store, new) == ODIE
+    assert personalities.of_session(runner.store, hers) == mira.id
+
+
+async def test_the_day_view_is_odies_and_skips_gaps(runner):
+    mira = personalities.create(runner.store, "Mira")
+    t = time.time()
+    await _say(runner, f"chat-{D}", "user", "Odie one", t)
+    hers = await runner.session_for(mira.id, D)
+    await _say(runner, hers, "user", "Only for Mira", t + 1)
+    third = await runner.new_chat(D)
+    await _say(runner, third, "user", "Odie three", t + 2)
+    day = await runner.history(D)
+    assert _said(day) == ["Odie one", "Odie three"]
+    assert "thread" not in day
+    her_view = await runner.history(D, personality=mira.id)
+    assert _said(her_view) == ["Only for Mira"]
+    assert her_view["thread"] == hers
+
+
+async def test_a_personality_with_no_thread_has_an_empty_view_and_gets_no_thread_from_looking(runner):
+    mira = personalities.create(runner.store, "Mira")
+    view = await runner.history(D, personality=mira.id)
+    assert view["items"] == [] and view["thread"] is None
+    assert runner.current_thread(mira.id) is None
+    assert personalities.sessions_of(runner.store, mira.id) == []
+
+
+async def test_a_personalitys_thread_goes_on_past_midnight(runner):
+    mira = personalities.create(runner.store, "Mira")
+    sid = await runner.session_for(mira.id, "2026-11-17")
+    assert await runner.session_for(mira.id, "2026-11-18") == sid  # the same thread, a day later
+    assert runner.current_session_id("2026-11-18") == "chat-2026-11-18"  # the new day's bare id is Odie's
+    assert personalities.of_session(runner.store, "chat-2026-11-18") == ODIE
+    assert await runner.new_chat("2026-11-18", mira.id) == "chat-2026-11-18-2"
+    assert runner.current_thread(mira.id) == "chat-2026-11-18-2"
+    assert personalities.sessions_of(runner.store, mira.id) == [sid, "chat-2026-11-18-2"]
+
+
+async def test_the_thread_list_is_by_personality(runner):
+    mira = personalities.create(runner.store, "Mira")
+    coach = personalities.create(runner.store, "Coach")
+    t = time.time()
+    await _say(runner, f"chat-{D}", "user", "Everyday question", t)
+    hers = await runner.session_for(mira.id, D)
+    await _say(runner, hers, "user", "The lighthouse plan", t + 1)
+    assert [x["id"] for x in threads.list_threads(runner.store)] == [f"chat-{D}"]
+    assert [x["id"] for x in threads.list_threads(runner.store, personality=mira.id)] == [hers]
+    assert threads.list_threads(runner.store, personality=coach.id) == []
+    assert threads.list_threads(runner.store, q="lighthouse") == []  # a word said only to Mira
+    assert [x["id"] for x in threads.list_threads(runner.store, q="lighthouse", personality=mira.id)] == [hers]
