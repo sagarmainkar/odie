@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   SAME_AS_ODIE, appsUrl, avatarUrl, brainChoiceUrl, brainHeading, canUseLabel, canUseUrl, connectNote, connectUrl, deleteWords, goneWords, modelsUrl,
-  personaUrl, pickedBrainSub, sharedCreativityLine, showsCanUse, showsDelete, showsSameAsOdie, showsWhoLine, soulUrl, whoLine,
+  personaUrl, pickedBrainSub, sharedCreativityLine, showsCanUse, switchProblem, showsDelete, showsSameAsOdie, showsWhoLine, soulUrl, whoLine,
 } from "./settingsPick";
 
 describe("Settings follows the picked personality", () => {
@@ -114,5 +114,17 @@ describe("Connecting a service again says what it will do", () => {
 describe("Creativity under a personality", () => {
   it("says it is shared with everyday Odie", () => {
     expect(sharedCreativityLine("Mira")).toBe("Shared with everyday Odie: this one setting is for Mira and Odie alike.");
+  });
+});
+
+describe("A refused app switch says why", () => {
+  it("shows the server's words, such as a second connection of a service", () => {
+    const words = "Mira already has these tools from 'mail-2'; switch that one off for Mira first.";
+    expect(switchProblem(new Error(words))).toBe(words);
+  });
+
+  it("says something plain when there are no words", () => {
+    expect(switchProblem(new Error(""))).toBe("That didn't change. Try again.");
+    expect(switchProblem("nope")).toBe("That didn't change. Try again.");
   });
 });

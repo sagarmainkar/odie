@@ -103,3 +103,11 @@ export function connectNote(rows: { title: string; canUse: boolean; onlyPick: bo
 export function sharedCreativityLine(name: string): string {
   return `Shared with everyday Odie: this one setting is for ${name} and Odie alike.`;
 }
+
+/** What an app's "<name> can use this" switch says when the server refused it: the server's own words (a second
+ *  connection of a service the picked one already has), or a plain line when there are none.
+ *    Error("Mira already has these tools from 'mail-2'; …") -> those words;  Error("") or anything else -> the plain line */
+export function switchProblem(e: unknown): string {
+  if (e instanceof Error && e.message) return e.message;
+  return "That didn't change. Try again.";
+}

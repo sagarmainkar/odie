@@ -3,7 +3,7 @@ import { getJSON, postJSON } from "../api";
 import { usePickedPersona } from "../persona";
 import { usePersonalities } from "../personalities";
 import { usePick } from "../pick";
-import { appsUrl, canUseLabel, canUseUrl, connectNote, connectUrl, showsCanUse } from "../settingsPick";
+import { appsUrl, canUseLabel, canUseUrl, connectNote, connectUrl, showsCanUse, switchProblem } from "../settingsPick";
 import { checkSummary, formFromServer, linkCarriesToken, serverTitle, specFromForm, ownSkills, statusLabel, toolLabel, type Check, type Preset, type ServerForm, type ServerRow, type SkillRow } from "../plugins";
 import { Collapse } from "./Collapse";
 import { Switch } from "./Switch";
@@ -54,6 +54,7 @@ export function PluginsSection() {
   const personalities = usePersonalities();
   const howMany = personalities.list.length;
   const [skills, setSkills] = useState<SkillRow[] | null>(null);
+  const [refused, setRefused] = useState<{ pick: string; name: string; words: string } | null>(null);  // a "can use this" switch the server refused
   const [servers, setServers] = useState<ServerRow[] | null>(null);
   const [configError, setConfigError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -177,9 +178,10 @@ export function PluginsSection() {
               <div className="flex items-center gap-3 mt-1 pl-[46px]">
                 <span className="flex-1 min-w-0 text-[13px] leading-[18px] text-muted">{canUseLabel(picked.name)}</span>
                 <Switch label={`${canUseLabel(picked.name)}: ${serverTitle(m)}`} on={m.canUse} disabled={busy}
-                  onChange={(v) => act(() => postJSON(canUseUrl(m.name, pick), { on: v }))} />
+                  onChange={(v) => { setRefused(null); void act(() => postJSON(canUseUrl(m.name, pick), { on: v }).catch((e) => setRefused({ pick, name: m.name, words: switchProblem(e) }))); }} />
               </div>
             )}
+            {refused?.pick === pick && refused.name === m.name && <div className="mt-1 pl-[46px] text-[12.5px] leading-[18px] text-warn-ink [overflow-wrap:anywhere]" role="status">{refused.words}</div>}
             </div>
           ))}
         {adding && (
