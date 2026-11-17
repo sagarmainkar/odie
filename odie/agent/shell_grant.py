@@ -43,7 +43,7 @@ _RULES: list[tuple[str, re.Pattern[str]]] = [
         r"\.(rm|rmSync|unlinkSync|rmdirSync)\(|\bsubprocess\b|\bos\.system\b|child_process")),
     ("sends data out", re.compile(
         r"\bcurl\b[^|;]*(-[a-zA-Z]*X\s*(POST|PUT|PATCH|DELETE)|--request\s+(POST|PUT|PATCH|DELETE)|--data|--json|"
-        r"\s-[a-zA-Z]*[dFTK](\s|\S)|--form|--upload|--config)|\bwget\b[^|;]*--post|"
+        r"\s-[a-zA-Z]*[dFTK](\s|\S)|--form|--upload|--config)|\bwget\b[^|;]*(--post|--body|--method)|"
         r"\b(scp|ssh|ftp|sftp|nc|ncat|sendmail|telnet|socat)\b|\bosascript\b[\s\S]*\bsend\b|\bshortcuts\s+run\b|\brsync\b[^|;]*\S+:|"
         r"\bnpm\s+publish\b|\bgh\s+(pr|issue|release)\s+create\b|\bmail\s+-s\b|"
         r"\brequests\.(post|put|patch|delete)\b|\bhttpx\.(post|put|patch|delete)\b|\bsmtplib\b|"
