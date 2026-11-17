@@ -72,7 +72,8 @@ function CreativityCard({ creativity, isClaude }: { creativity: Creativity; isCl
 /** "Same as Odie": a personality's first choice, which follows everyday Odie's brain. */
 function SameAsOdie({ on, busy, odie, onChoose }: { on: boolean; busy: boolean; odie?: Data["odie"]; onChoose: () => void }) {
   return (
-    <div className="glass rounded-[26px] overflow-hidden">
+    // shrink-0: an overflow-hidden item in the screen's scrolling column would otherwise be squashed to nothing
+    <div className="glass rounded-[26px] overflow-hidden shrink-0">
       <button onClick={onChoose} disabled={busy} className="w-full text-left flex items-center gap-3 px-4 min-h-[52px] py-2 active:bg-well">
         <span className={`w-2 h-2 rounded-full shrink-0 ${on ? "bg-iris" : "bg-line-2"}`} />
         <span className="flex-1 min-w-0">
@@ -145,7 +146,7 @@ export function Brain() {
       </div>
 
       {current?.gone && (
-        <div className="glass rounded-[26px] p-4 flex flex-col gap-1">
+        <div className="glass rounded-[26px] p-4 flex flex-col gap-1 shrink-0">
           <div className="text-[17px] leading-[22px] font-medium"><ModelName id={current.model} /></div>
           <div className="flex items-start gap-2 text-[13px] leading-[18px] text-muted">
             <span className="w-1.5 h-1.5 rounded-full bg-gold mt-1.5 shrink-0" />
