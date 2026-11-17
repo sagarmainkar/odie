@@ -323,6 +323,7 @@ class Browser:
         self._live: dict[str, tuple[Callable, Callable]] = {}  # tab -> (on_frame, on_page): the user's live view of it
         self._snapping: set[str] = set()  # live tabs whose sharp picture is being taken
         self._dirty: set[str] = set()  # and that changed meanwhile
+        self._cast_seen: dict[str, str] = {}  # live tab -> the screencast's last picture, to tell a change from an echo
         self._input_locks: dict[str, asyncio.Lock] = {}  # live tabs: one input or one picture at a time
         self._fences: dict[str, set[str]] = {}  # tab -> the only sites its page may go to (a private chat's steps)
         self._main: dict[str, str] = {}  # tab -> its main frame's id (a page's main frame id is its target id)
@@ -717,13 +718,16 @@ class Browser:
         self._live[tab] = (on_frame, on_page)
         if emulate:
             await self._phone_shaped(tab, s, width, height)
-        await self._cast(s, width, height)
+        await self._cast(tab, s, width, height)
         await on_page(await self._live_page(s))
 
-    async def _cast(self, s: str, width: int, height: int) -> None:
+    async def _cast(self, tab: str, s: str, width: int, height: int) -> None:
         """Start the tab's screencast at the phone's size. One that is already running is stopped first: Chrome
-        refuses a second start ("Screencast is already active")."""
+        refuses a second start ("Screencast is already active"). The last picture seen is forgotten, so the first one
+        of this cast always reaches the phone (a phone that joins again must get a picture of a page that hasn't
+        changed)."""
         assert self._cdp
+        self._cast_seen.pop(tab, None)
         try:
             await self._cdp.send("Page.stopScreencast", session=s)
         except CDPError:
@@ -732,13 +736,26 @@ class Browser:
                                                       "everyNthFrame": 1}, session=s)
 
     async def _phone_shaped(self, tab: str, s: str, width: int, height: int) -> None:
-        """The user drives: the tab goes phone-shaped with touch, and anywhere they like (no fence)."""
+        """The user drives: the tab goes phone-shaped with touch, and anywhere they like (no fence). It waits for a live
+        picture being taken to finish (the tab's input lock): Chrome puts the page's old shape back after a screenshot,
+        so a new shape sent during one was lost, and Take control left a watched page desktop-shaped."""
         assert self._cdp
         self.fence(tab, None)
         self._emulated.add(tab)
-        await self._cdp.send("Emulation.setDeviceMetricsOverride", {"width": width, "height": height, "deviceScaleFactor": 2,
-                                                                    "mobile": True}, session=s)
-        await self._cdp.send("Emulation.setTouchEmulationEnabled", {"enabled": True, "maxTouchPoints": 5}, session=s)
+        async with self._input_lock(tab):
+            await self._cdp.send("Emulation.setDeviceMetricsOverride", {"width": width, "height": height, "deviceScaleFactor": 2,
+                                                                        "mobile": True}, session=s)
+            await self._cdp.send("Emulation.setTouchEmulationEnabled", {"enabled": True, "maxTouchPoints": 5}, session=s)
+
+    async def _desktop_shaped(self, tab: str, s: str) -> None:
+        """The user's turn is over: the tab is desktop-shaped again, without touch. Like _phone_shaped it waits for a
+        live picture being taken to finish, or Chrome puts the phone shape back after it and Odie's next steps (and
+        their screenshots) stay phone-shaped."""
+        assert self._cdp
+        async with self._input_lock(tab):
+            await self._cdp.send("Emulation.setTouchEmulationEnabled", {"enabled": False}, session=s)
+            await self._cdp.send("Emulation.setDeviceMetricsOverride", {"width": VIEW[0], "height": VIEW[1], "deviceScaleFactor": 1,
+                                                                        "mobile": False}, session=s)
 
     async def live_control(self, tab: str, width: int, height: int) -> None:
         """A watcher takes control (odie.signin.live): from here the tab is the user's to drive, phone-shaped, and the
@@ -747,12 +764,19 @@ class Browser:
         if s is None or tab not in self._live or self._cdp is None:
             raise BrowserError("The live view isn't on for this tab.")
         await self._phone_shaped(tab, s, width, height)
-        await self._cast(s, width, height)
+        await self._cast(tab, s, width, height)
 
     async def _live_frame(self, tab: str, s: str, params: dict) -> None:
         """The screencast says the page changed; the phone gets a sharp picture of it. Headless Chrome casts at 1x (a
         desktop page shrunk onto a phone is a blur), while a screenshot keeps the 2x scale. One at a time per tab: a
-        change during one is sent right after it."""
+        change during one is sent right after it.
+        Taking the screenshot makes Chrome cast the page once more, though nothing on it changed. That echo is told by
+        its picture being the same as the last cast's, and dropped: a still page being watched sent 25 pictures a
+        second, for as long as it was watched; now it sends one."""
+        cast = params.get("data", "")
+        if cast and cast == self._cast_seen.get(tab):
+            return  # the same picture as last time: the echo of the screenshot just taken, not a change on the page
+        self._cast_seen[tab] = cast
         if tab in self._snapping:
             self._dirty.add(tab)
             return
@@ -840,6 +864,7 @@ class Browser:
         if self._live.pop(tab, None) is None:
             return
         self._busy -= 1
+        self._cast_seen.pop(tab, None)
         s = self._tabs.get(tab)
         emulated = tab in self._emulated
         self._emulated.discard(tab)
@@ -847,9 +872,7 @@ class Browser:
             if s and self._cdp is not None and self.running:
                 await self._cdp.send("Page.stopScreencast", session=s)
                 if emulated:  # only a tab the user drove was made phone-shaped; a watched one never changed
-                    await self._cdp.send("Emulation.setTouchEmulationEnabled", {"enabled": False}, session=s)
-                    await self._cdp.send("Emulation.setDeviceMetricsOverride", {"width": VIEW[0], "height": VIEW[1],
-                                                                                "deviceScaleFactor": 1, "mobile": False}, session=s)
+                    await self._desktop_shaped(tab, s)
         except (CDPError, ConnectionError, TimeoutError):
             pass  # the tab went away with the user's turn
         finally:

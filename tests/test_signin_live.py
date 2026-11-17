@@ -286,6 +286,12 @@ TAP_PAGE = """<!doctype html><meta name="viewport" content="width=device-width">
 <div style="height:4000px"></div></body>"""
 
 
+# A page that never stops changing, so the live view keeps taking pictures of it (most real pages do: a clock, an ad,
+# a spinner). The tab's shape must still change when the user takes control and when they hand back.
+BUSY_PAGE = """<!doctype html><meta name="viewport" content="width=device-width"><title>busy</title><body style="margin:0">
+<div id="c" style="font-size:40px"></div><script>setInterval(() => { c.textContent = Date.now(); }, 30);</script></body>"""
+
+
 DESKTOP_PAGE = """<!doctype html><title>Desktop sign-in</title><body style="margin:0;width:980px">
 <div style="height:260px;background:#eee">header</div>
 <form style="margin-left:380px"><label>Email <input id="e" style="width:300px;height:30px;font-size:13px"></label></form></body>"""
@@ -302,7 +308,7 @@ def tap_site():
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.end_headers()
             port = self.server.server_port
-            pages = {"/desktop": DESKTOP_PAGE,
+            pages = {"/desktop": DESKTOP_PAGE, "/busy": BUSY_PAGE,
                      "/framed": f'<!doctype html><title>X sign-in</title><main>Sign in to X</main><iframe src="http://localhost:{port}/button"></iframe>',
                      "/button": '<!doctype html><title>Sign in with Google</title><script>setTimeout(() => location.reload(), 400);</script>'}
             self.wfile.write(pages.get(self.path, TAP_PAGE).encode())
@@ -367,9 +373,11 @@ async def test_real_frames_and_a_tap(tmp_path, tap_site):
 
 @pytest.mark.skipif(__import__("odie.browser.find", fromlist=["installed"]).installed() is None, reason="no Chrome here")
 async def test_watching_leaves_the_real_page_as_it_is_until_control(tmp_path, tap_site):
-    """In real Chrome: a watched tab keeps its desktop shape and its fence while frames arrive; Take control makes it
-    phone-shaped and lifts the fence; forward goes forward; stopping puts the desktop shape back. A tab that was only
-    watched is never reshaped at all."""
+    """In real Chrome, on a page that never stops changing: a watched tab keeps its desktop shape and its fence while
+    frames arrive; Take control makes it phone-shaped and lifts the fence; forward goes forward; stopping puts the
+    desktop shape back. A tab that was only watched is never reshaped at all.
+    (Found on the way: Chrome puts a page's old shape back after a screenshot, so a new shape sent while a live picture
+    was being taken was lost. Take control left the page desktop-shaped, and a stop left it phone-shaped.)"""
     from odie.browser import find
     from odie.browser.engine import Browser, BrowserError
 
@@ -383,8 +391,11 @@ async def test_watching_leaves_the_real_page_as_it_is_until_control(tmp_path, ta
 
     async def on_page(info):
         pass
+
+    async def many_frames():
+        return len(frames) >= 10
     try:
-        await b.open("chat", f"http://127.0.0.1:{tap_site}/")
+        await b.open("chat", f"http://127.0.0.1:{tap_site}/busy")
         s = b._tabs["chat"]
 
         async def title():
@@ -396,26 +407,73 @@ async def test_watching_leaves_the_real_page_as_it_is_until_control(tmp_path, ta
             await b.live_control("chat", 390, 844)  # nothing is live on the tab yet
         b.fence("chat", {"127.0.0.1"})
         await b.live_start("chat", 390, 844, on_frame, on_page, emulate=False)
-        assert await _until(lambda: _true(frames))
-        assert frames[0][0].startswith("/9j/")
+        assert await _until(many_frames)  # pictures keep being taken
+        assert frames[0][0].startswith("/9j/") and _jpeg_size(frames[-1][0])[0] == 1280
         assert await width() == 1280 and b._fences.get("chat") == {"127.0.0.1"}  # watching changed nothing
         assert b.held_by("chat") is None
 
         await b.live_control("chat", 390, 844)
-        assert await _until(lambda: _eq(width, 390))  # the user's to drive now
+        assert await _until(lambda: _eq(width, 390))  # the user's to drive now, even with a picture in flight
         assert "chat" not in b._fences
+        frames.clear()
+        assert await _until(many_frames)
+        assert _jpeg_size(frames[-1][0])[0] == 780  # and the pictures are phone-shaped, at 2x
         await b.live_input("chat", {"t": "go", "url": f"http://127.0.0.1:{tap_site}/desktop"})
         assert await _until(lambda: _eq(title, "Desktop sign-in"))
         await b.live_input("chat", {"t": "back"})
-        assert await _until(lambda: _eq(title, "start"))
+        assert await _until(lambda: _eq(title, "busy"))
         await b.live_input("chat", {"t": "forward"})
         assert await _until(lambda: _eq(title, "Desktop sign-in"))
+        await b.live_input("chat", {"t": "back"})
+        assert await _until(lambda: _eq(title, "busy"))
+        frames.clear()
+        assert await _until(many_frames)
         await b.live_stop("chat")
-        assert await _until(lambda: _eq(width, 1280))  # desktop-shaped again
+        assert await _until(lambda: _eq(width, 1280))  # desktop-shaped again, for Odie's next step
 
         await b.live_start("chat", 390, 844, on_frame, on_page, emulate=False)  # watched, never driven
         await b.live_stop("chat")
         assert await width() == 1280 and "chat" not in b._emulated
+    finally:
+        await b.close()
+
+
+@pytest.mark.skipif(__import__("odie.browser.find", fromlist=["installed"]).installed() is None, reason="no Chrome here")
+async def test_a_still_page_sends_one_picture_not_a_stream(tmp_path, tap_site):
+    """Taking the live picture makes Chrome cast the page again, and that echo used to be answered with another
+    picture: a still page being watched sent about 25 a second for as long as it was watched. Now the echo is dropped;
+    a real change still arrives, and a phone that joins again still gets its first picture."""
+    import asyncio
+
+    from odie.browser import find
+    from odie.browser.engine import Browser
+
+    async def allow_all(url):
+        return True
+    b = Browser(tmp_path / "profile", find.installed(), policy=allow_all, ip_ok=lambda ip: True)
+    frames = []
+
+    async def on_frame(jpeg, meta):
+        frames.append(jpeg)
+
+    async def on_page(info):
+        pass
+    try:
+        await b.open("chat", f"http://127.0.0.1:{tap_site}/")
+        s = b._tabs["chat"]
+        await b.live_start("chat", 390, 844, on_frame, on_page, emulate=False)
+        assert await _until(lambda: _true(frames))
+        await asyncio.sleep(1.5)
+        assert len(frames) <= 3, f"{len(frames)} pictures of a page that didn't change"
+
+        frames.clear()
+        await b._eval(s, "document.body.style.background = 'crimson'")
+        assert await _until(lambda: _true(frames))  # a change on the page reaches the phone
+
+        await asyncio.sleep(0.5)
+        frames.clear()
+        await b.live_start("chat", 390, 844, on_frame, on_page, emulate=False)  # the phone joins again
+        assert await _until(lambda: _true(frames))  # and gets a picture, though nothing changed
     finally:
         await b.close()
 
