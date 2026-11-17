@@ -75,7 +75,7 @@ function Sheet({ tab, site, username = "", startWith = "login", onClose }: { tab
           )}
           <button type="button" onClick={() => onClose(null)} className="pill h-12 px-5 text-[15px] shadow-none">Cancel</button>
         </div>
-        <div className="text-[12px] leading-4 text-dim">Odie's browser types this into {site} itself. The AI never sees it.</div>
+        <div className="text-[12px] leading-4 text-muted">Odie's browser types this into {site} itself. The AI never sees it.</div>
       </motion.form>
     </motion.div>
   );

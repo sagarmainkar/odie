@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Icon } from "./Tile";
-import { allowedPill, argLine, metaLine, outputHead, type Tool } from "../steps";
+import { allowedPill, argLine, cutAtWord, metaLine, outputHead, stepsCount, type Tool } from "../steps";
 
 export type { Tool };
 
@@ -43,6 +43,9 @@ export function stepsSummary(tools: Tool[]): string {
   const labels = [...new Set(tools.map((t) => toolLabel({ ...t, done: true })))];
   return labels.map((l, i) => (i ? l.charAt(0).toLowerCase() + l.slice(1) : l)).join(", ");
 }
+
+// How many characters of summary fit after "12 steps · " on a 390px phone at 13.5px semibold (measured in the browser).
+const SUMMARY_FITS = 30;
 
 /** The pill's colours by who let the step run: your tap in the brand's tint, a pass in green, a refusal in red, a
  * lapsed card muted.
@@ -143,7 +146,8 @@ export function Steps({ tools, running }: { tools: Tool[]; running: boolean }) {
   const current = [...tools].reverse().find((t) => !t.done);
   const working = running && !!current;
   const open = manual ?? working;  // open while it works, folds itself when done; a tap decides from then on
-  const title = working ? `${toolLabel(current!)}…` : stepsSummary(tools);
+  // While it works: the step running now. Once done: the count, then what it did, cut at a word to fit one line.
+  const title = working ? `${toolLabel(current!)}…` : cutAtWord(stepsSummary(tools), SUMMARY_FITS);
   return (
     <div className="flex flex-col py-0.5">
       <button type="button" onClick={() => setManual(!open)} aria-expanded={open}
@@ -151,8 +155,8 @@ export function Steps({ tools, running }: { tools: Tool[]; running: boolean }) {
         <svg width="15" height="15" viewBox="0 0 24 24" aria-hidden="true" className="shrink-0" style={{ fill: working ? "var(--t-ink-2)" : "var(--t-dim)" }}>
           <path d="M12 2l2.4 7.2L22 12l-7.6 2.8L12 22l-2.4-7.2L2 12l7.6-2.8z" />
         </svg>
+        {!working && <span className="shrink-0 text-[12px] text-dim">{stepsCount(tools.length)} ·</span>}
         <span role="status" className={`min-w-0 truncate text-[13.5px] font-semibold ${working ? "shimmer-text" : "text-ink-2 trace-fade"}`}>{title}</span>
-        {!working && <span className="shrink-0 text-[12px] text-dim">{tools.length} step{tools.length > 1 ? "s" : ""}</span>}
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--t-dim)" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"
           className="shrink-0 transition-transform duration-300" style={{ transform: open ? "rotate(180deg)" : "none" }} aria-hidden="true">
           <path d="M6 9l6 6 6-6" />

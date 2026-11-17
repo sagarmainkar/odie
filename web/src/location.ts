@@ -5,7 +5,13 @@ import { postJSON } from "./api";
 export type LocationInfo = { on: boolean | null; place: string; seen: string; home: string; home_set_by_user: boolean };
 export type LocationRow = { sub: string; meta: string; state: "ok" | "off" | "none" };
 
-export const ASK_TEXT = "Share where you are, for better answers? Odie uses the place name, not coordinates, in what it sends to your chat model.";
+/** The ask above the composer, naming whoever the chat is with: "Mira" -> "… Mira uses the place name, …".
+ *  No name yet ("") -> Odie's. */
+export function askText(name: string): string {
+  let who = name.trim();
+  if (!who) who = "Odie";
+  return `Share where you are, for better answers? ${who} uses the place name, not coordinates, in what it sends to your chat model.`;
+}
 export const NOTE_TEXT = "Your model gets the place name; a point may reach OpenStreetMap if none nearby is known.";
 
 /** Whether the one-line ask shows: only while nobody has answered it (`on` is null) and this browser can give a position.

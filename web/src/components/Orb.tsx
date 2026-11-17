@@ -13,10 +13,10 @@ export function moodClass(state: OrbState): string {
  * moves its mouth; waiting for a tap it raises a brow in a warm glow. The same face is the app's icon. All the motion
  * is CSS (styles.css, .face-*), so it costs nothing while idle and stops under reduced motion.
  */
-export function Orb({ state = "idle", size = 40, halo = false }: { state?: OrbState; size?: number; halo?: boolean }) {
+export function Orb({ state = "idle", size = 40, halo = false, light = 0 }: { state?: OrbState; size?: number; halo?: boolean; light?: number }) {
   const mood = moodClass(state);
   return (
-    <span className={`orb ${mood} ${halo ? "orb-halo" : ""}`} style={{ width: size, height: size, ["--s" as string]: `${size}px` }} role="img" aria-label={state}>
+    <span className={`orb ${mood} ${halo ? "orb-halo" : ""} ${light ? `light-${light}` : ""}`} style={{ width: size, height: size, ["--s" as string]: `${size}px` }} role="img" aria-label={state}>
       <svg className="face" viewBox="-100 -100 200 200" aria-hidden="true">
         <defs>
           <linearGradient id="odie-iris" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stopColor="#7D8CFF" /><stop offset=".55" stopColor="#B08BFF" /><stop offset="1" stopColor="#FF9CC8" /></linearGradient>

@@ -80,7 +80,7 @@ function Main() {
       <div className={`h-full flex flex-col mx-auto w-full lg:flex-1 lg:min-w-0 ${columnWidth(tab)}`}>
         <div className="flex-1 min-h-0">
           {/* Chat stays mounted so a streaming answer survives a trip to Today. */}
-          <div className={tab === "chat" ? "h-full" : "hidden"}><Chat orb={orb} setOrb={setOrb} /></div>
+          <div className={tab === "chat" ? "h-full" : "hidden"}><Chat orb={orb} setOrb={setOrb} showing={tab === "chat"} /></div>
           {tab === "today" && <Today />}
           {tab === "settings" && <Settings />}
           {tab === "brain" && <Brain />}

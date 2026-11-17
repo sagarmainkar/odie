@@ -170,10 +170,10 @@ export function ApprovalCard({ a, onDecided, showResult = true }: { a: Approval;
           <button onClick={() => decide(true, { allow_chat: true })} disabled={busy} className="w-full min-h-11 px-2 text-center text-[13.5px] leading-[18px] font-semibold text-muted py-1.5 disabled:opacity-50">
             {CHAT_PASS_BUTTON}
           </button>
-          <div className="text-[12px] leading-4 text-dim text-center px-2">{chatPassLine}</div>
+          <div className="text-[12px] leading-4 text-muted text-center px-2">{chatPassLine}</div>
         </div>
       )}
-      <div className="text-[12px] leading-4 text-dim -mt-1">
+      <div className="text-[12px] leading-4 text-muted -mt-1">
         {smart ? (chatPassLine ? "Smart mode asks for this kind of command." : "Smart mode: this one always asks.") : "Sending, deleting, invites, commands, app actions and new code always ask first; reading your own notes and mail doesn't. Every action is logged."}
         {expiresIn(a.created_at) && <> · {expiresIn(a.created_at)}</>}
       </div>

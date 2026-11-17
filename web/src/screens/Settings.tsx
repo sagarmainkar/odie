@@ -16,6 +16,7 @@ import { DevicesSection } from "../components/DevicesSection";
 import { UpdateSection } from "../components/UpdateSection";
 import { BrowserSection } from "../components/BrowserSection";
 import { personaChanged, usePickedPersona } from "../persona";
+import { lightOf } from "../light";
 import { setPick, usePick } from "../pick";
 import { deletePersonality, personalitiesChanged, usePersonalities } from "../personalities";
 import { avatarUrl, deleteWords, modelsUrl, pickedBrainSub, personaUrl, showsDelete, showsWhoLine, soulUrl, whoLine, type PickedBrain } from "../settingsPick";
@@ -23,6 +24,7 @@ import { Switcher } from "../components/Switcher";
 import { profileChanged, useProfile } from "../profile";
 import { has, useCaps } from "../capabilities";
 import { EMBED_EVERY_CHOICES, embedEveryLabel, notesRow, type VaultInfo } from "../vault";
+import { memoryPlace } from "../memoryPlace";
 import { photosRow, type PhotosInfo } from "../photos";
 import { engineLine, previewUrl, voiceGroups, voiceSection, withPhononVoices, type PhononAnswer } from "../voiceSettings";
 import { AnotherVoice } from "../components/AnotherVoice";
@@ -56,7 +58,7 @@ function Row({ ok, title, sub, meta, right, chevron, icon }: { ok?: Dot; title: 
       ) : ok !== undefined && <StatusDot ok={ok} />}
       <div className="flex-1 min-w-0">
         <div className="text-[15px] leading-5 font-medium">{title}</div>
-        {sub && <div className="text-[13px] leading-[18px] text-muted truncate">{sub}</div>}
+        {sub && <div className="text-[13px] leading-[18px] text-muted line-clamp-2">{sub}</div>}
         {meta && <div className="text-[12px] leading-4 text-dim mt-0.5">{meta}</div>}
       </div>
       {right && <div className="text-[13px] text-muted shrink-0">{right}</div>}
@@ -175,7 +177,7 @@ function AssistantSection() {
       )}
       <Switcher open={switcherOpen} onClose={() => setSwitcherOpen(false)} />
       <button onClick={() => fileRef.current?.click()} aria-label="Change photo" className="relative">
-        <Avatar size={96} who={persona} />
+        <Avatar size={96} who={persona} light={lightOf(pick)} />
         {busy && <span className="absolute inset-0 flex items-center justify-center"><span className="spinner" /></span>}
       </button>
       <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={upload} />
@@ -318,7 +320,7 @@ function VoiceSection() {
           );
         })}
         {eng.id === "phonon" && eng.available && <AnotherVoice onKept={kept} />}
-        {eng.id === "maya1" && <div className="text-[12px] leading-4 text-dim px-1">The first preview loads Maya1 (about half a minute). Replies are read with laughs, sighs and other expressions where they fit.</div>}
+        {eng.id === "maya1" && <div className="text-[12px] leading-4 text-muted px-1">The first preview loads Maya1 (about half a minute). Replies are read with laughs, sighs and other expressions where they fit.</div>}
         <div className="flex items-start gap-3 pt-1">
           <div className="flex-1 min-w-0">
             <div className="text-[14.5px] font-medium">Speak reminders</div>
@@ -341,10 +343,15 @@ function MemoryRow() {
   const file = v?.memory_file ?? "";
   const dir = v?.settings.dir ?? "";
   const inVault = !!dir && file.startsWith(dir);
-  const home = file.replace(/^\/Users\/[^/]+/, "~");
+  const place = memoryPlace(file, dir);  // the file's name, then its folder shortened; the whole path is the title
+  const where = (
+    <span title={file} className="block">
+      <span className="block truncate text-muted">{place.name}</span>
+      <span className="block truncate">{place.folder}</span>
+    </span>
+  );
   return <Row icon={{ icon: "brain", color: "violet" }} ok={true} title="Long-term memory" sub="Reviewed every 10 turns"
-    meta={<span className="font-mono [overflow-wrap:anywhere]">{inVault ? file.slice(dir.length).replace(/^\//, "") : home}</span>}
-    right={inVault ? <Pill tone="moss">Obsidian</Pill> : undefined} />;
+    meta={where} right={inVault ? <Pill tone="moss">Obsidian</Pill> : undefined} />;
 }
 
 function skippedList(steps: Step[]): string {
@@ -628,6 +635,28 @@ export function Settings() {
         <div className="contents lg:flex lg:flex-col lg:gap-6 lg:min-w-0">
           <AssistantSection />
 
+          {/* How the picked one talks: what the owner edits after a switch, so it sits right under who it is. */}
+          <div className="glass rounded-[26px] overflow-hidden shrink-0 -mt-3">
+            <button onClick={() => setSoulOpen((v) => !v)} className="w-full text-left active:bg-well" aria-expanded={soulOpen}>
+              <Row icon={{ icon: "spark", color: "pink" }} ok={soul ? true : "loading"} title={`How ${picked.name} talks`} sub={soul?.custom ? "Your own words in use" : "The default personality"} chevron />
+            </button>
+            <AnimatePresence initial={false}>
+              {soulOpen && (
+                <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.2 }} className="overflow-hidden">
+                  <div className="px-4 pb-4 pt-1 flex flex-col gap-2.5">
+                    <textarea value={soulDraft} onChange={(e) => setSoulDraft(e.target.value)} rows={7} spellCheck={false}
+                      className="w-full bg-well border border-line rounded-[12px] p-3 text-[14px] leading-[22px] outline-none focus:border-line-2" />
+                    <div className="flex gap-2 items-center">
+                      <button onClick={() => saveSoul(soulDraft)} className="h-11 px-4 rounded-[14px] bg-ember text-on-ember font-semibold text-[15px]">Save</button>
+                      <button onClick={() => saveSoul("")} className="h-11 px-4 rounded-[14px] border border-line-2 text-[15px]">Reset</button>
+                      <AnimatePresence>{soulSaved && <motion.span initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="text-[13px] text-moss-text">{soulSaved}</motion.span>}</AnimatePresence>
+                    </div>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+
           <Section title="Connections">
             {has(caps, "google") && <GoogleRows g={g} flash={flash} setupAction={g && !g.client_configured ? googleAction : null} reload={() => getJSON<Google>("/api/google/status").then(setG).catch(() => {})} />}
             <a href="#brain" className="block active:bg-well">
@@ -664,27 +693,6 @@ export function Settings() {
           </Section>
 
           <VoiceSection />
-
-          <Section title="Personality">
-            <button onClick={() => setSoulOpen((v) => !v)} className="w-full text-left active:bg-well" aria-expanded={soulOpen}>
-              <Row icon={{ icon: "spark", color: "pink" }} ok={soul ? true : "loading"} title={`How ${picked.name} talks`} sub={soul?.custom ? "Your own words in use" : "The default personality"} chevron />
-            </button>
-            <AnimatePresence initial={false}>
-              {soulOpen && (
-                <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.2 }} className="overflow-hidden">
-                  <div className="px-4 pb-4 pt-1 flex flex-col gap-2.5">
-                    <textarea value={soulDraft} onChange={(e) => setSoulDraft(e.target.value)} rows={7} spellCheck={false}
-                      className="w-full bg-well border border-line rounded-[12px] p-3 text-[14px] leading-[22px] outline-none focus:border-line-2" />
-                    <div className="flex gap-2 items-center">
-                      <button onClick={() => saveSoul(soulDraft)} className="h-11 px-4 rounded-[14px] bg-ember text-on-ember font-semibold text-[15px]">Save</button>
-                      <button onClick={() => saveSoul("")} className="h-11 px-4 rounded-[14px] border border-line-2 text-[15px]">Reset</button>
-                      <AnimatePresence>{soulSaved && <motion.span initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="text-[13px] text-moss-text">{soulSaved}</motion.span>}</AnimatePresence>
-                    </div>
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </Section>
 
           <Section title="Memory">
             <NotesRow />

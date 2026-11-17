@@ -2,16 +2,17 @@ import { AnimatePresence, motion } from "framer-motion";
 import { useEffect, useState } from "react";
 import { usePersona, type Persona } from "../persona";
 import { createPersonality, odieLine, rowLine, useElsewhere, usePersonalities } from "../personalities";
+import { lightOf } from "../light";
 import { setPick, usePick } from "../pick";
 import { Avatar } from "./Avatar";
 import { Icon } from "./Tile";
 import { ToBody } from "./ToBody";
 
-function Row({ who, line, picked, waiting, onPick }: { who: Persona; line: string; picked: boolean; waiting: boolean; onPick: () => void }) {
+function Row({ who, light, line, picked, waiting, onPick }: { who: Persona; light: number; line: string; picked: boolean; waiting: boolean; onPick: () => void }) {
   return (
     <button onClick={onPick} aria-current={picked ? "true" : undefined}
       className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-[18px] text-left ${picked ? "bg-well" : ""}`}>
-      <Avatar size={44} who={who} />
+      <Avatar size={44} who={who} light={light} />
       <span className="flex-1 min-w-0">
         <b className="block text-[16px] font-semibold truncate">{who.name}</b>
         <span className={`block text-[13px] truncate ${waiting ? "text-ember-text font-semibold" : "text-muted"}`}>{line}</span>
@@ -68,11 +69,11 @@ export function Switcher({ open, onClose }: { open: boolean; onClose: () => void
                 <button onClick={onClose} aria-label="Close" className="pill w-10 h-10 px-0"><Icon name="x" size={16} /></button>
               </div>
               <div className="flex-1 overflow-y-auto no-scrollbar px-2 pb-2">
-                <Row who={odie} line={odieLine(odieNote, odieCards)} picked={pick === ""} waiting={odieNote !== undefined || odieCards > 0} onPick={() => choose("")} />
+                <Row who={odie} light={0} line={odieLine(odieNote, odieCards)} picked={pick === ""} waiting={odieNote !== undefined || odieCards > 0} onPick={() => choose("")} />
                 {list.map((p) => {
                   const note = p.id === pick ? undefined : seen[p.id];
                   const line = rowLine(p, note);
-                  return <Row key={p.id} who={{ name: p.name, avatar_url: p.avatar_url }} line={line} picked={p.id === pick}
+                  return <Row key={p.id} who={{ name: p.name, avatar_url: p.avatar_url }} light={lightOf(p.id)} line={line} picked={p.id === pick}
                     waiting={line === "needs you" || line === "new"} onPick={() => choose(p.id)} />;
                 })}
               </div>

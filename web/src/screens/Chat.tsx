@@ -10,6 +10,8 @@ import { ideasFor } from "../ideas";
 import { getJSON, postJSON, todayISO } from "../api";
 import { speak, stopSpeaking } from "../voice";
 import { usePickedPersona } from "../persona";
+import { lightOf } from "../light";
+import { ctxWorthShowing } from "../contextRing";
 import { usePick } from "../pick";
 import { clearElsewhere, noteElsewhere, somethingElsewhere, useElsewhere, usePersonalities } from "../personalities";
 import { Switcher } from "../components/Switcher";
@@ -46,7 +48,8 @@ import type { OrbState } from "../components/Orb";
 import { streamChat, type ChatEvent } from "../sse";
 import { ConnectCard } from "../components/ConnectCard";
 import { splitConnect } from "../google";
-import { Star, ThreadsSheet, ThreadsSidebar } from "../components/ThreadsSheet";
+import { Star, ThreadsPill, ThreadsSheet, ThreadsSidebar } from "../components/ThreadsSheet";
+import { useThreadsSidebar } from "../threadsSidebar";
 import { useWide } from "../layout";
 import { belongsHere, type Thread } from "../threads";
 import { drawnText } from "../blocks/drawnText";
@@ -202,7 +205,7 @@ function TimeDivider({ ts }: { ts: number }) {
   );
 }
 
-export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => void }) {
+export function Chat({ orb, setOrb, showing }: { orb: OrbState; setOrb: (s: OrbState) => void; showing: boolean }) {
   // The count on Back to Today: what the background watch flagged that Today hasn't shown yet. Chat stays mounted, so it's
   // read again each time chat comes back into view.
   const [needYou, setNeedYou] = useState(0);
@@ -257,8 +260,25 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
   useEffect(() => { if (!busy) setStopping(false); }, [busy]);  // eslint-disable-line react-hooks/exhaustive-deps
   const [thread, setThread] = useState<Thread | null>(null);  // null = today's chat
   const [threadsOpen, setThreadsOpen] = useState(false);
-  // On a desktop Threads stays open beside the chat instead of sliding in (layout.ts); it reloads after each reply.
+  // On a desktop Threads is a sidebar beside the chat instead of sliding in (layout.ts); it reloads after each reply.
   const wide = useWide();
+  // There the sidebar can be hidden (this device remembers it) and brought back; Cmd+\ / Ctrl+\ toggles it while the
+  // chat is the screen showing. Focus follows the change to the button that undoes it.
+  const sidebar = useThreadsSidebar(wide && showing);
+  const threadsPillRef = useRef<HTMLButtonElement>(null);
+  const hideThreadsRef = useRef<HTMLButtonElement>(null);
+  function hideSidebar() {
+    sidebar.setOpen(false);
+    requestAnimationFrame(() => threadsPillRef.current?.focus());
+  }
+  function pressThreadsPill() {
+    if (!wide) {
+      setThreadsOpen(true);
+      return;
+    }
+    sidebar.setOpen(true);
+    requestAnimationFrame(() => hideThreadsRef.current?.focus());
+  }
   const [threadsReload, setThreadsReload] = useState(0);
   const threadRef = useRef<Thread | null>(null);
   const [chatKey, setChatKey] = useState(0);  // a new segment of today's chat: its Think harder is read again
@@ -662,7 +682,8 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
 
   return (
     <div className="flex h-full">
-      {wide && <ThreadsSidebar current={thread?.id ?? null} onOpen={setThread} onNewChat={() => void newChat()} reload={threadsReload} />}
+      {wide && <ThreadsSidebar open={sidebar.open} onHide={hideSidebar} hideRef={hideThreadsRef} current={thread?.id ?? null} pickThread={pickThread}
+        onOpen={setThread} onNewChat={() => void newChat()} reload={threadsReload} />}
       <div className="relative flex flex-col h-full flex-1 min-w-0">
         <AnimatePresence>{talking && <TalkMode onClose={() => setTalking(false)} />}</AnimatePresence>
         <Switcher open={switcherOpen} onClose={() => setSwitcherOpen(false)} />
@@ -678,7 +699,7 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
             aria-label={`Switch personality. Talking to ${name}${someoneElseWaits ? "; someone else has something for you" : ""}`}
             className="flex items-center justify-center gap-2.5 min-w-0 text-left rounded-[18px] px-2 py-1 -my-1 active:bg-well">
             <span className="relative shrink-0">
-              <Avatar size={40} state={orb} who={picked} />
+              <Avatar size={40} state={orb} who={picked} light={lightOf(pick)} />
               <i className={`absolute right-0 bottom-0 w-3 h-3 rounded-full border-2 border-[var(--t-ground)] ${busy || orb === "approval" ? "bg-gold" : "bg-good"}`} aria-hidden="true" />
               {someoneElseWaits && <i className="absolute -left-0.5 -top-0.5 w-3 h-3 rounded-full border-2 border-[var(--t-ground)] bg-ember" aria-hidden="true" />}
             </span>
@@ -693,8 +714,8 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
             </div>
           </button>
           <div className="flex items-center gap-1.5">
-            {!wide && <button onClick={() => setThreadsOpen(true)} aria-label="Threads" title="Threads" className="pill w-11 px-0"><Glyph name="menu" size={18} /></button>}
-            {ctx && ctxKnown && !thread && (
+            <ThreadsPill wide={wide} sidebarOpen={sidebar.open} onPress={pressThreadsPill} pillRef={threadsPillRef} />
+            {ctx && ctxKnown && !thread && ctxWorthShowing(ctx.used, ctx.limit) && (
               <button onClick={() => { setCtxNote(true); setTimeout(() => setCtxNote(false), 4000); }} aria-label={`Conversation ${ctxText}`} title={ctxText}
                 className="pill h-11 px-2.5 text-[12px] font-bold"><ContextRing used={ctx.used} limit={ctx.limit} /></button>
             )}
@@ -712,7 +733,7 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
               className={`w-8 h-8 grid place-items-center shrink-0 ${thread.pinned ? "text-gold" : "text-dim"}`}><Star on={thread.pinned} /></button>
           </div>
         )}
-        {!wide && <ThreadsSheet open={threadsOpen} current={thread?.id ?? null} onClose={() => setThreadsOpen(false)}
+        {!wide && <ThreadsSheet open={threadsOpen} current={thread?.id ?? null} pickThread={pickThread} onClose={() => setThreadsOpen(false)}
           onOpen={(t) => { setThreadsOpen(false); setThread(t); }} />}
 
         <div className="relative flex-1 min-h-0 flex flex-col">
@@ -733,7 +754,7 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
             {morningOnTop && <MorningHello reply={morningOnTop} onChip={(t) => void send(t)} />}
             {msgs.length === 0 && pick !== "" && (
               <div className="min-h-[60dvh] flex flex-col items-center justify-center text-center pt-5">
-                <Avatar size={132} halo who={picked} />
+                <Avatar size={132} halo who={picked} light={lightOf(pick)} />
                 <h2 className="text-[26px] font-bold tracking-[-0.02em] mt-7">Say hello to {name}.</h2>
                 <p className="text-muted mt-1.5 max-w-[30ch]">What you say here stays in {name}'s own threads and memory.</p>
               </div>
@@ -774,7 +795,7 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
                     ) : (
                       <motion.div {...enter} className="flex flex-col gap-2.5">
                         <div className="flex items-center gap-2 text-[12.5px] text-muted font-semibold">
-                          <Avatar size={36} who={picked} /><span className="text-[13.5px]"><b className="text-ink-2 font-bold">{name}</b>{m.live ? " · reminder" : ""}{m.ts ? ` · ${fmtTime(m.ts)}` : ""}</span>
+                          <Avatar size={36} who={picked} light={lightOf(pick)} /><span className="text-[13.5px]"><b className="text-ink-2 font-bold">{name}</b>{m.live ? " · reminder" : ""}{m.ts ? ` · ${fmtTime(m.ts)}` : ""}</span>
                         </div>
                         <Steps tools={m.tools} running={streaming} />
                         {m.awaiting && (

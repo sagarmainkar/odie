@@ -13,6 +13,7 @@ const P: Record<IconName, string> = {
   plus: '<path d="M12 5v14M5 12h14"/>',
   back: '<path d="M15 5l-7 7 7 7"/>',
   menu: '<path d="M4 8h16M4 16h16"/>',
+  sidebar: '<rect x="3.5" y="5" width="17" height="14" rx="3"/><path d="M9.5 5v14"/>',  // a window with a panel on its left
   play: '<path d="M8 5v14l11-7z" fill="currentColor" stroke="none"/>',
   speaker: '<path d="M4 10v4h4l5 4V6L8 10z"/><path d="M16.5 9a4 4 0 0 1 0 6M19 6.5a7.5 7.5 0 0 1 0 11"/>',
   copy: '<rect x="9" y="9" width="11" height="11" rx="3"/><path d="M5 15V7a2 2 0 0 1 2-2h8"/>',
@@ -50,7 +51,7 @@ const P: Record<IconName, string> = {
   alert: '<path d="M12 4.5 21 19.5H3z"/><path d="M12 10.5v4M12 17v.01"/>',
 };
 
-export type IconName = "mail" | "gmail" | "icloud" | "rupee" | "bell" | "cal" | "check" | "clock" | "mic" | "up" | "plus" | "back" | "menu" | "play" | "speaker" | "copy" | "search" | "note" | "globe" | "terminal" | "chart" | "photo" | "spark" | "chat" | "gear" | "x" | "brain" | "sun" | "moon" | "sunset" | "trash" | "send" | "refresh" | "wave"
+export type IconName = "mail" | "gmail" | "icloud" | "rupee" | "bell" | "cal" | "check" | "clock" | "mic" | "up" | "plus" | "back" | "menu" | "sidebar" | "play" | "speaker" | "copy" | "search" | "note" | "globe" | "terminal" | "chart" | "photo" | "spark" | "chat" | "gear" | "x" | "brain" | "sun" | "moon" | "sunset" | "trash" | "send" | "refresh" | "wave"
   | "heart" | "plane" | "bed" | "food" | "walk" | "pin" | "trophy" | "lock" | "star" | "leaf" | "flame" | "ticket" | "info" | "alert";
 export type TileColor = "blue" | "orange" | "violet" | "yellow" | "green" | "pink" | "ink";
 
