@@ -242,3 +242,13 @@ async def test_the_thread_list_is_by_personality(runner):
     assert threads.list_threads(runner.store, personality=coach.id) == []
     assert threads.list_threads(runner.store, q="lighthouse") == []  # a word said only to Mira
     assert [x["id"] for x in threads.list_threads(runner.store, q="lighthouse", personality=mira.id)] == [hers]
+
+
+async def test_an_imported_thread_stays_out_of_the_day_and_does_not_push_the_numbers(runner):
+    # odie.replay_threads numbers imported threads from 101, far past any new chat of the day
+    t = time.time()
+    await _say(runner, f"chat-{D}", "user", "Good morning", t)
+    await _say(runner, f"chat-{D}-101", "user", "An imported conversation", t + 1)
+    assert threads.is_imported(f"chat-{D}-101") and not threads.is_imported(f"chat-{D}-3")
+    assert threads.next_free_id(runner.store, D) == f"chat-{D}-2"  # not 102
+    assert _said(await runner.history(D)) == ["Good morning"]

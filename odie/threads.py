@@ -26,6 +26,14 @@ def segment_of(sid: str) -> int:
     return 1
 
 
+def is_imported(sid: str) -> bool:
+    """Whether a thread was imported from a replay (odie.replay_threads numbers those from 101, far past any new chat
+    of a day), so it is a thread on its own and never part of a day's chat or of the day's numbering:
+    "chat-2026-10-11-101" -> True; "chat-2026-10-11-3" -> False; "chat-2026-10-11" -> False."""
+    from odie.replay_threads import FIRST_SEGMENT
+    return segment_of(sid) >= FIRST_SEGMENT
+
+
 def session_ids_on(date: str) -> list[str]:
     """Every chat session of that date in the session store, by number, whoever it belongs to:
     ["chat-2026-11-17", "chat-2026-11-17-3"]; a day nobody chatted -> []."""
@@ -46,13 +54,15 @@ def session_ids_on(date: str) -> list[str]:
 def next_free_id(store: Store, date: str) -> str:
     """The id for a new thread on that date: numbered 2 or more, and above every number already in use that day, in the
     session store or claimed in `threads` (a personality's thread is claimed a moment before its session is made).
-    The bare "chat-<date>" is never given out: it is everyday Odie's first chat of the day.
-      nothing yet today                         -> "chat-<date>-2"
-      Odie on chat-<date>, Mira on chat-<date>-2 -> "chat-<date>-3" """
+    The bare "chat-<date>" is never given out: it is everyday Odie's first chat of the day. Imported threads
+    (is_imported) have their own numbers and don't count.
+      nothing yet today                          -> "chat-<date>-2"
+      Odie on chat-<date>, Mira on chat-<date>-2 -> "chat-<date>-3"
+      only chat-<date> and an imported -101      -> "chat-<date>-2" """
     in_store = session_ids_on(date)
     claimed = [r["session_id"] for r in store.query("select session_id from threads where session_id=? or session_id like ?",
                                                     (f"chat-{date}", f"chat-{date}-%"))]
-    numbers = [segment_of(sid) for sid in [*in_store, *claimed] if valid_id(sid)]
+    numbers = [segment_of(sid) for sid in [*in_store, *claimed] if valid_id(sid) and not is_imported(sid)]
     highest = max(numbers, default=1)
     return f"chat-{date}-{highest + 1}"
 

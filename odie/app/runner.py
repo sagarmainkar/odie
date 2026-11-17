@@ -1032,7 +1032,8 @@ class OdieRunner:
     async def history(self, date: str, limit: int | None = None, before: int | None = None,
                       personality: str = "") -> dict[str, Any]:
         """Everyday Odie: all its segments of the day, oldest first, paged: the last `limit` items ending at index
-        `before`. A personality's threads are never part of the day (their numbers are simply skipped). A personality:
+        `before`. A personality's threads and imported threads are never part of the day (their numbers are simply
+        skipped). A personality:
         its current thread, with "thread" saying which one (None, and no items, when it has no thread yet)."""
         from odie import personalities, threads
         if personality:
@@ -1047,7 +1048,7 @@ class OdieRunner:
         sids: list[str] = []
         not_odies = personalities.owned_sessions(self.store)
         for sid in threads.session_ids_on(date):
-            if sid in not_odies:
+            if sid in not_odies or threads.is_imported(sid):  # an imported thread stands alone, as it always has
                 continue
             sess = await self.session_service.get_session(app_name=s.app_name, user_id=s.user_id, session_id=sid)
             if sess is None:
