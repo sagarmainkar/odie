@@ -2439,6 +2439,7 @@ async def morning_get(request: Request):
 class DecideIn(BaseModel):
     approve: bool
     allow_minutes: int | None = None  # run_shell only: also allow this conversation's commands for this long
+    allow_chat: bool = False  # Smart, run_shell only: don't ask again in this chat for this card's kind (30 min)
 
 
 
@@ -2460,6 +2461,28 @@ async def approval_get(approval_id: int, request: Request):
 _resuming: set[asyncio.Task] = set()  # strong refs to turns resuming after a tap
 
 
+def chat_pass_kind(store, row) -> str | None:
+    """The kind a tap on "don't ask again in this chat" may pass for this card, or None when the card doesn't offer it.
+    Offered only on a shell card that Odie itself marked as offering it (its detail, written when the card was made),
+    for a kind that may have a pass, while the mode is Smart.
+      Smart, run_shell card {"asks_because": "deletes or stops something", "chat_pass": true} -> that kind;
+      the same card in Careful -> None;  a card that says "reads secrets" -> None;  a mail card -> None."""
+    from odie import approvals_mode
+    from odie.agent import shell_grant
+    if row["tool"] != "run_shell" or not approvals_mode.is_smart(store):
+        return None
+    try:
+        detail = json.loads(row["detail_json"] or "{}")
+    except ValueError:
+        return None
+    if not isinstance(detail, dict) or detail.get("chat_pass") is not True:
+        return None
+    kind = detail.get("asks_because")
+    if not shell_grant.may_pass(kind):
+        return None
+    return kind
+
+
 @router.post("/approvals/{approval_id}/decide")
 async def approval_decide(approval_id: int, body: DecideIn, request: Request):
     """Answer at once so the card collapses; the paused turn resumes in its own task (it can take minutes) and
@@ -2468,6 +2491,18 @@ async def approval_decide(approval_id: int, body: DecideIn, request: Request):
     if row["status"] != "pending":
         raise HTTPException(409, f"already {row['status']}")
     out: dict[str, Any] = {"status": "approved" if body.approve else "rejected"}
+    if body.approve and body.allow_chat:
+        kind = chat_pass_kind(request.app.state.store, row)
+        if kind is None:
+            raise HTTPException(400, "This card doesn't offer that.")  # nothing approved: the card stays to tap
+        from datetime import datetime
+
+        from odie.agent import shell_grant
+        until = shell_grant.grant_kind(request.app.state.store, row["session_id"], kind, datetime.now())
+        request.app.state.store.audit("user", "shell_allowed_for_chat", tool="run_shell",
+                                      result_summary=f"{kind} until {until:%H:%M}", session_id=row["session_id"],
+                                      approval_id=approval_id)
+        out["chat_pass"] = {"kind": kind, "until": until.isoformat()}
     if body.approve and body.allow_minutes and row["tool"] == "run_shell":
         from datetime import datetime
 

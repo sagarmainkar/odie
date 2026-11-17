@@ -9,6 +9,7 @@ The check is ADK's require_confirmation predicate: it gets the tool's arguments 
 """
 from __future__ import annotations
 
+import json
 import os
 import re
 import shlex
@@ -1057,6 +1058,113 @@ def active(store: Store, session_id: str, now: datetime) -> bool:
         return False
 
 
+# ── "Don't ask again in this chat" (17 Nov 2026) ────────────────────────────────────────────────────────────────────
+# In Smart, a shell card's second button lets that kind of command (the reason on the card) run without asking in that
+# chat only, for GRANT_MINUTES. Kept in the settings as "shell_kinds:<chat id>" -> {"kinds": {kind: until}}: the key
+# ends with the chat's id, so erasing a thread (personalities.erase_rows_of) takes its passes too.
+
+CHAT_PASS = "allowed for this chat"
+# The kinds a pass may cover. Reading secrets, changing Odie itself, switching off another agent's approvals, sending
+# data out and a hidden path reached by a pattern are not here: those always ask.
+PASSABLE = frozenset({"deletes or stops something", "runs text as commands", "writes a file from code",
+                      "sets something to run later or at login", "installs software (runs its install scripts)",
+                      "edits files in place", OUTSIDE, REPLACES})
+
+
+def may_pass(kind: str | None) -> bool:
+    """Whether a card asking for this reason may offer "don't ask again in this chat": "deletes or stops something" ->
+    True; "installs software (runs its install scripts)" -> True; "reads secrets" -> False; "sends data out" -> False;
+    "touches Odie's own files" -> False; None, or a reason this list doesn't know -> False."""
+    return kind in PASSABLE
+
+
+def _kinds_key(session_id: str) -> str:
+    return f"shell_kinds:{session_id}"
+
+
+def grant_kind(store: Store, session_id: str, kind: str, now: datetime, minutes: int = GRANT_MINUTES) -> datetime:
+    """Let commands of this kind run in this chat without asking until now + minutes; returns that time. A kind that
+    may never have a pass (may_pass) is refused with ValueError and nothing is saved."""
+    if not may_pass(kind):
+        raise ValueError(f"No pass for {kind!r}.")
+    saved = store.get_setting(_kinds_key(session_id))
+    kinds = {}
+    if isinstance(saved, dict) and isinstance(saved.get("kinds"), dict):
+        kinds = dict(saved["kinds"])
+    until = now + timedelta(minutes=minutes)
+    kinds[kind] = until.isoformat()
+    store.set_setting(_kinds_key(session_id), {"kinds": kinds})
+    return until
+
+
+def kinds_passed(store: Store, session_id: str, now: datetime) -> set[str]:
+    """The kinds this chat has a running pass for. Each kind keeps its own time; a time that can't be read, or a kind
+    that may never have a pass, counts as none. Deletes passed at 10:00 -> {"deletes or stops something"} at 10:29, set()
+    at 10:31; another chat -> set()."""
+    saved = store.get_setting(_kinds_key(session_id))
+    if not isinstance(saved, dict) or not isinstance(saved.get("kinds"), dict):
+        return set()
+    running = set()
+    for kind, until in saved["kinds"].items():
+        try:
+            still_on = datetime.fromisoformat(until) > now
+        except (TypeError, ValueError):
+            continue
+        if still_on and may_pass(kind):
+            running.add(kind)
+    return running
+
+
+def card_offer(store: Store, session_id: str, command: str, cwd: str | None, now: datetime) -> dict[str, Any]:
+    """What a Smart shell card says about the pass: the reason it asks (the first kind this chat has no pass for) and
+    whether its second button is offered: only when that is the command's one missing kind and it may have a pass.
+    Careful: {} (its card is as it always was).
+      `rm old.txt` -> {"asks_because": "deletes or stops something", "chat_pass": True};
+      `cat ~/.env` -> {"asks_because": "reads secrets", "chat_pass": False};
+      `rm a && brew install b` -> {"asks_because": "deletes or stops something", "chat_pass": False} (two kinds; one
+      pass covers one), and with deletes already passed -> {"asks_because": "installs software (…)", "chat_pass": True}."""
+    if not approvals_mode.is_smart(store):
+        return {}
+    missing = _missing_kinds(store, session_id, command, cwd, now, smart=True)
+    if not missing:
+        return {"asks_because": None, "chat_pass": False}
+    offered = len(missing) == 1 and may_pass(missing[0])
+    return {"asks_because": missing[0], "chat_pass": offered}
+
+
+def _reasons_for(store: Store, command: str, cwd: str | None, smart: bool) -> list[str]:
+    """reasons_to_ask with this install's places: the workspace and vault, Odie's own port and folders."""
+    return reasons_to_ask(command, safe_dirs=safe_places(store), cwd=cwd, scratch_dirs=scratch_places(), smart=smart,
+                          own_port=_own_port(), odie_dirs=odie_places())
+
+
+def _missing_kinds(store: Store, session_id: str, command: str, cwd: str | None, now: datetime,
+                   smart: bool) -> list[str]:
+    """The reasons this command asks (as the mode reads it) that no pass of this chat covers; only Smart has chat
+    passes: Smart, `rm a && brew install b` with deletes passed -> ["installs software (runs its install scripts)"]."""
+    reasons = _reasons_for(store, command, cwd, smart)
+    if not smart:
+        return reasons
+    passed = kinds_passed(store, session_id, now)
+    return [why for why in reasons if why not in passed]
+
+
+def calls_allowed_for_chat(store: Store, session_id: str) -> set[str]:
+    """The ids of the shell calls in this chat that ran under a pass for their kind (from the audit log), so their step
+    says "allowed for this chat": {"c7"} after `rm old.txt` ran as c7 under a deletes pass; set() in a chat with none."""
+    rows = store.query("select args_json from audit_log where session_id=? and event='shell_auto_approved' "
+                       "and result_summary like ?", (session_id, f"{CHAT_PASS}%"))
+    calls = set()
+    for row in rows:
+        try:
+            args = json.loads(row["args_json"] or "{}")
+        except ValueError:
+            continue
+        if isinstance(args, dict) and args.get("call_id"):
+            calls.add(args["call_id"])
+    return calls
+
+
 def safe_places(store: Store) -> tuple[str, ...]:
     """Where a pass lets commands write besides /tmp: Odie's workspace, and the user's vault when one is set."""
     from odie import config
@@ -1074,6 +1182,12 @@ def scratch_places() -> tuple[str, ...]:
     return (str(config.settings.data_dir / "workspace"),)
 
 
+def _own_port() -> int:
+    """The port Odie itself answers on (a POST there always asks)."""
+    from odie import config
+    return config.settings.port
+
+
 def odie_places() -> tuple[str, ...]:
     """Odie's own folders, which a Smart write never counts as ordinary however they are named: its data folder, its
     settings folder and its home (~/.odie, or $ODIE_HOME)."""
@@ -1085,12 +1199,14 @@ def odie_places() -> tuple[str, ...]:
 def make_check(store: Store, clock: Callable[[], datetime] = datetime.now) -> Callable[..., bool]:
     """require_confirmation for run_shell: True means show the user the card."""
     def needs_tap(command: str = "", cwd: str | None = None, tool_context: Any = None, **_: Any) -> bool:
-        """Does this shell command need the user's tap? Decided in three steps:
+        """Does this shell command need the user's tap? Decided in four steps:
         1. Careful mode and no 'Allow for 30 min' pass in this chat (or it ran out) -> ask (the card). In Smart mode
            the pass isn't needed: the mode is read from the store on every call, so a flip mid-chat counts at once.
-        2. A pass or Smart, but the command is on the always-ask list (always_ask) -> ask anyway, and note it in the
-           audit log.
-        3. A pass or Smart, and an ordinary command -> run it without a card, and note it in the audit log.
+        2. A pass or Smart, and an ordinary command (no reason to ask: reasons_to_ask, read plainly in Smart) -> run it
+           without a card, and note it in the audit log.
+        3. Smart, and every reason it asks for has a running "don't ask again in this chat" pass (kinds_passed) -> run
+           it, and note "allowed for this chat (<kinds>)" with the call's id, so its step can say so.
+        4. Otherwise -> ask, and note the first reason no pass covers in the audit log.
 
         Examples:
           `ls ~/Downloads`, Careful, no pass -> card
@@ -1098,8 +1214,10 @@ def make_check(store: Store, clock: Callable[[], datetime] = datetime.now) -> Ca
           `rm old.txt`, with a pass          -> card anyway ("deletes or stops something")
           `cat ~/.env`, with a pass          -> card anyway ("reads secrets")
           `ls ~/Downloads`, Smart, no pass   -> runs, no card ("allowed by smart mode")
+          `crontab -l`, Smart                -> runs, no card (reading what runs at login)
           `rm old.txt`, Smart                -> card ("deletes or stops something")
-          `brew install x`, Smart            -> card ("installs software (runs its install scripts)")
+          `rm old.txt`, Smart, deletes allowed for this chat -> runs ("allowed for this chat (deletes or stops …)")
+          `brew install x`, Smart, deletes allowed for this chat -> card ("installs software (runs its install scripts)")
           `ls ~/Downloads`, Smart, a mail read this turn -> runs, no card (mail no longer counts)
         """
         session_id = session_id_of(tool_context)
@@ -1109,18 +1227,23 @@ def make_check(store: Store, clock: Callable[[], datetime] = datetime.now) -> Ca
         if not smart and not active(store, session_id, clock()):
             return True  # Careful, and no pass or it ran out
 
-        from odie import config
-        why = always_ask(command, safe_dirs=safe_places(store), cwd=cwd, scratch_dirs=scratch_places(), smart=smart,
-                         own_port=config.settings.port, odie_dirs=odie_places())
+        reasons = _reasons_for(store, command, cwd, smart)
+        passed = set()
+        if smart:
+            passed = kinds_passed(store, session_id, clock())
+        missing = [why for why in reasons if why not in passed]
         audit_args = {"command": command, "cwd": cwd}
-        if why is not None:
+        if missing:
             store.audit("agent", "shell_asked_under_grant", tool="run_shell", args=audit_args,
-                        result_summary=why, session_id=session_id)
+                        result_summary=missing[0], session_id=session_id)
             return True
 
         allowed_because = "allowed for 30 min"
         if smart:
             allowed_because = "allowed by smart mode"
+        if reasons:  # every one covered by this chat's passes
+            allowed_because = f"{CHAT_PASS} ({', '.join(reasons)})"
+            audit_args["call_id"] = getattr(tool_context, "function_call_id", None)
         store.audit("agent", "shell_auto_approved", tool="run_shell", args=audit_args,
                     result_summary=allowed_because, session_id=session_id)
         return False
