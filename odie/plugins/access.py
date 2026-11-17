@@ -339,13 +339,44 @@ def clash_for(store: Store, server: str, pid: str, configured: dict[str, dict]) 
                            -> "Mira already has these tools from 'mail-2'; switch that one off for Mira first."
       the same, mail-2 failed at the last load but listed them before -> the same words
       mail on for Mira, mail-2 off for her, or nothing in common       -> None"""
+    clashing = clashing_with(store, server, pid, configured)
+    if not clashing:
+        return None
+    return TAKEN.format(name=_name_of(store, pid), other=clashing[0])
+
+
+def clashing_with(store: Store, server: str, pid: str, configured: dict[str, dict]) -> list[str]:
+    """The other configured servers on for this one that could list this server's tool names (could_clash).
+      work-mail just added for Mira, home mail still on for her -> ["mail"]
+      nothing like it on for her                               -> []"""
     known = known_tools(store)
+    found = []
     for other in configured:
         if other == server or not allowed(store, other, pid):
             continue
         if could_clash(server, other, configured, known):
-            return TAKEN.format(name=_name_of(store, pid), other=other)
-    return None
+            found.append(other)
+    return found
+
+
+SWITCHED_FOR_IT = "{others} is now off for {name}, so {name} uses {added} instead."
+
+
+def make_room_for(store: Store, added_server: str, pid: str, configured: dict[str, dict]) -> str | None:
+    """A personality just added a server of its own: switch off for it the servers on for it that the new one could
+    clash with (each owner has one connection of a service at a time), and say so, or None when nothing was in the way.
+    Only for a personality: a server added with everyday Odie picked never switches his own off.
+      work-mail added with Mira picked, home mail on for her -> home mail off for her;
+                                                               "mail is now off for Mira, so Mira uses work-mail instead."
+      notes added with Mira picked, nothing like it         -> None"""
+    if pid == ODIE:
+        return None
+    in_the_way = clashing_with(store, added_server, pid, configured)
+    if not in_the_way:
+        return None
+    for other in in_the_way:
+        set_allowed(store, other, pid, False)
+    return SWITCHED_FOR_IT.format(others=", ".join(in_the_way), name=_name_of(store, pid), added=added_server)
 
 def _name_of(store: Store, pid: str) -> str:
     """Who a thread belongs to, by name: a personality's, or the name the user gave everyday Odie."""

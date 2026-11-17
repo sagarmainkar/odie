@@ -722,7 +722,7 @@ def _clash(tools: list[str], server: str, reserved: dict[str, str], by_servers: 
     """The first of a server's tools that it may not have, as "<tool> (<who has it>)", or None when it may load. A
     built-in's or a skill's tool name is never shared; another server's is, when may_share says no one has both on.
       write_note, already a built-in tool                         -> "write_note (Odie)"
-      send_email, also in `mail`, both on for everyday Odie        -> "send_email (mail)"
+      send_email, also in `mail`, both on for everyday Odie        -> "send_email (mail). Only one of them can be on…"
       send_email, also in `mail` (Odie's), this one Mira's alone   -> None: both load
       nothing in common                                            -> None"""
     for tool in tools:
@@ -731,8 +731,11 @@ def _clash(tools: list[str], server: str, reserved: dict[str, str], by_servers: 
         for other in by_servers.get(tool, []):
             shared_by_no_one = may_share is not None and may_share(other, server)
             if not shared_by_no_one:
-                return f"{tool} ({other})"
+                return f"{tool} ({other}). {ONE_OF_TWO}"
     return None
+
+
+ONE_OF_TWO = "Only one of them can be on for each one: switch one of the two off, or off for whoever has both."
 
 
 def _allowed_for(server: str, allowed: Callable[[str, str | None], bool] | None) -> Callable[[str | None], bool] | None:

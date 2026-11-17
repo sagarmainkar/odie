@@ -493,10 +493,11 @@ async def test_two_connections_with_the_same_tools_both_load_and_each_thread_rea
 async def test_two_connections_both_on_for_one_owner_still_clash_as_before(runner, store):
     from odie.plugins import mcp
     mcp.write_config({"mail": HOME_MAIL, "mail-2": WORK_MAIL})  # nobody switched anything: both are everyday Odie's
+    from odie.plugins.mcp import ONE_OF_TWO
     await runner.load_plugins()
     status = {e.name: (e.status, e.reason) for e in runner.plugins["servers"]}
     assert status["mail"] == ("ok", "")
-    assert status["mail-2"] == ("error", "tool names clash with find_email (mail)")  # today's words
+    assert status["mail-2"] == ("error", "tool names clash with find_email (mail). " + ONE_OF_TWO)  # today's words, and what to do
 
 
 async def test_a_remembered_call_resolves_to_the_owners_own_connection(runner, store):
@@ -823,3 +824,40 @@ def test_with_nothing_known_two_connections_of_one_service_count_as_clashing(sto
     assert access.clash_for(store, "notes", mira.id, configured) is None
     same_program = {"mail": HOME_MAIL, "mail-2": WORK_MAIL}  # one program, two accounts
     assert access.clash_for(store, "mail", mira.id, same_program) is not None
+
+
+# ── adding her own mail by hand while she is picked ──
+
+async def test_her_own_mail_added_by_hand_works_at_once(api, runner, store):
+    """Home mail is on for everyone; with Mira picked the owner adds work mail by the custom form. Work mail is hers,
+    home mail is switched off for her (the response says so), both load without a restart, and each thread reaches its
+    own account."""
+    from odie.plugins import mcp
+    mcp.write_config({"mail": HOME_MAIL})
+    await runner.load_plugins()
+    mira = personalities.create(store, "Mira")
+    saved = await api.post(f"/api/mcp?personality={mira.id}", json={"name": "work-mail", "spec": dict(WORK_MAIL)})
+    assert saved.status_code == 200
+    assert saved.json()["switched_off"] == ["mail"]
+    assert saved.json()["note"] == "mail is now off for Mira, so Mira uses work-mail instead."
+    status = {e.name: (e.status, e.reason) for e in runner.plugins["servers"]}
+    assert status == {"mail": ("ok", ""), "work-mail": ("ok", "")}
+    miras = await runner.session_for(mira.id, D)
+    Plays.script = {"Mira": [("load_skill", {"skill_name": "mcp-work-mail"}), ("send_email", {"text": "hi"}), "Sent."],
+                    "Odie": [("load_skill", {"skill_name": "mcp-mail"}), ("send_email", {"text": "hi"}), "Sent."]}
+    await _say(runner, "Mira sends a mail", miras)
+    await _say(runner, "Odie sends a mail", runner.current_session_id(D))
+    assert "the work account" in _sent(_of("Mira")) and "the home account" in _sent(_of("Odie"))
+
+
+async def test_a_switch_that_clears_a_clash_loads_the_refused_server_again(api, runner, store):
+    from odie.plugins import mcp
+    mcp.write_config({"mail": HOME_MAIL, "mail-2": WORK_MAIL})  # both everyday Odie's: the second is refused
+    await runner.load_plugins()
+    status = {e.name: (e.status, e.reason) for e in runner.plugins["servers"]}
+    said = "tool names clash with find_email (mail). Only one of them can be on for each one: switch one of the two off, " \
+        "or off for whoever has both."
+    assert status["mail-2"] == ("error", said)
+    assert (await api.post("/api/mcp/mail/access", json={"on": False})).status_code == 200
+    status = {e.name: e.status for e in runner.plugins["servers"]}
+    assert status == {"mail": "ok", "mail-2": "ok"}  # loaded again: no restart needed

@@ -54,6 +54,7 @@ export function PluginsSection() {
   const personalities = usePersonalities();
   const howMany = personalities.list.length;
   const [skills, setSkills] = useState<SkillRow[] | null>(null);
+  const [notice, setNotice] = useState("");  // what adding an app changed for the picked one, in the server's words
   const [refused, setRefused] = useState<{ pick: string; name: string; words: string } | null>(null);  // a "can use this" switch the server refused
   const [servers, setServers] = useState<ServerRow[] | null>(null);
   const [configError, setConfigError] = useState("");
@@ -98,6 +99,8 @@ export function PluginsSection() {
         setFormError(msg);
         return;
       }
+      const said: { note?: string } = await res.json().catch(() => ({}));
+      setNotice(said.note ?? "");  // "mail is now off for Mira, so Mira uses work-mail instead."
       setAdding(false); setEditing(null); setForm(EMPTY);
     });
   }
@@ -155,6 +158,7 @@ export function PluginsSection() {
 
       <Group title="Connected apps" summary={servers ? `${servers.filter((m) => m.enabled).length} on` : undefined}>
         {configError && <div className="px-4 py-3 text-[13px] text-warn-ink border-b border-line">{configError}</div>}
+        {notice && <div className="px-4 py-3 text-[13px] text-muted border-b border-line [overflow-wrap:anywhere]" role="status">{notice}</div>}
         {servers === null ? <div className="px-4 py-3.5 text-[14px] text-muted">Loading…</div>
           : servers.length === 0 && !adding ? <div className="px-4 py-3.5 text-[14px] text-muted">Nothing connected yet.</div>
           : servers.map((m) => (

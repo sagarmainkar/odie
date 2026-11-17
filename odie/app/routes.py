@@ -499,8 +499,18 @@ async def mcp_save(body: ServerIn, request: Request):
     write_config(servers)
     if is_new:
         _app_added(request, body.name, pick)
-    await request.app.state.runner.load_plugins()
-    return {"ok": True}
+    runner = request.app.state.runner
+    await runner.load_plugins()  # its tool names are known from here on, even when it was refused for a clash
+    out: dict[str, Any] = {"ok": True, "switched_off": [], "note": ""}
+    if is_new:
+        from odie.plugins import access
+        before = access.off_for(request.app.state.store, pick)
+        note = access.make_room_for(request.app.state.store, body.name, pick, servers)
+        if note:  # the picked one's other connection of the service was in the way: off for it now, and loaded again
+            out["switched_off"] = sorted(access.off_for(request.app.state.store, pick) - before)
+            out["note"] = note
+            await runner.load_plugins()
+    return out
 
 
 def _app_added(request: Request, name: str, pick: str) -> None:
@@ -653,7 +663,18 @@ async def mcp_access(name: str, body: OnIn, request: Request):
     access.set_allowed(store, name, pick, body.on)
     store.audit("user", "app_access", result_summary=f"{name} {'on' if body.on else 'off'} for {pick or 'everyday Odie'}")
     _forget_prompts(request)  # the prompt's capabilities (mail, the vault) follow the apps it may use
+    runner = request.app.state.runner
+    if _refused_for_a_clash(runner):  # this switch may have cleared it: load again, so it works without a restart
+        await runner.load_plugins()
     return {"ok": True}
+
+
+def _refused_for_a_clash(runner) -> bool:
+    """Whether a loaded server was refused because its tool names clash with another server's, which a switch can
+    clear: "tool names clash with send_email (mail). Only one…" -> True; every server loaded, or one that failed to
+    start -> False."""
+    from odie.plugins.mcp import ONE_OF_TWO
+    return any(e.status == "error" and ONE_OF_TWO in e.reason for e in runner.plugins.get("servers", []))
 
 
 @router.delete("/mcp/{name}")
