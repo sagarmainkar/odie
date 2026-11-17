@@ -1374,6 +1374,12 @@ class OdieRunner:
                 turn.MODEL.reset(brain)
         # The model's own words after the tool, its replies a paragraph each as the history folds them on reload, or ""
         # when it said nothing: no filler is made up.
+        lapsed = self.store.get_approval(approval_id)
+        if lapsed["status"] == "expired":  # the last guard lapsed it as the call was about to run: nothing ran
+            words = lapsed["result_text"] or ""
+            await self.bus.publish({"type": "approval_done", "id": approval_id, "status": "expired", "text": words,
+                                    "session_id": row["session_id"]})
+            return {"error": words}
         text = "\n\n".join(final)
         self.store.set_approval_result(approval_id, text)  # "" still marks the card finished (never None)
         if text.strip():

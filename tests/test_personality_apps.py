@@ -930,3 +930,36 @@ async def test_with_nothing_known_of_odies_other_server_hers_stays_off_for_him(s
     finally:
         await r.close()
     assert not access.allowed(store, "mail-2", ODIE)
+
+
+async def test_a_lapse_inside_the_resumed_turn_stays_a_lapse(runner, store, sending_asks, monkeypatch):
+    """The owner moves Odie to work mail just after resume_approval's own check passed: the last guard lapses the card
+    as the call is about to run. The card then stays lapsed, with its words, in the database and on every open app."""
+    await _home_and_work_mail(runner, store)
+    card = await _odies_card(runner)
+    real_check = access.card_moved
+    checks = {"n": 0}
+
+    def passes_once_then_the_owner_moves_odie(store_, row):
+        checks["n"] += 1
+        if checks["n"] == 1:
+            _move_odie_to_work_mail(store)
+            return None
+        return real_check(store_, row)
+    monkeypatch.setattr(access, "card_moved", passes_once_then_the_owner_moves_odie)
+    heard = []
+
+    async def listen():
+        async for event in runner.bus.subscribe():
+            heard.append(event)
+            if event["type"] == "approval_done":
+                break
+    listening = asyncio.create_task(listen())
+    await asyncio.sleep(0)
+    await runner.resume_approval(card["id"], True)
+    await asyncio.wait_for(listening, 2)
+    assert _accounts_that_sent() == []
+    row = store.get_approval(card["id"])
+    assert (row["status"], row["result_text"]) == ("expired", LAPSED)
+    done = [e for e in heard if e["type"] == "approval_done"]
+    assert [(e["status"], e["text"]) for e in done] == [("expired", LAPSED)]
