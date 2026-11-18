@@ -214,7 +214,7 @@ def uses_for(words: str | None, read_dirs: list, taint: str, app_names: list[str
       he named a folder                                      -> "folder" (no web, no apps)
       "check my mail for the invoice", "my inbox"            -> "apps:mail" (his apps, no web)
       "list my meetings", "my calendar"                      -> "apps:calendar"
-      a connected app named as a word ("use notion to …")    -> "apps"
+      a connected app named as a word ("use notion to …")    -> "app:notion" (that app only)
       anything else ("research e-bikes")                     -> "web" (the web, no apps)"""
     if taint:
         return "none"
@@ -227,15 +227,17 @@ def uses_for(words: str | None, read_dirs: list, taint: str, app_names: list[str
         return "apps:calendar"
     for name in app_names:
         if name and re.search(rf"(?<![\w-]){re.escape(name)}(?![\w-])", text, re.I):
-            return "apps"
+            return f"app:{name}"
     return "web"
 
 
 def uses_words(uses: str) -> str:
-    """What a job uses, as its card says it: "web" -> "the web"; "apps:mail" -> "your mail, no web"; "apps" -> "your
-    apps, no web"; "folder" -> "the folders you named, no web"; "none" -> "nothing outside its folder"."""
+    """What a job uses, as its card says it: "web" -> "the web"; "apps:mail" -> "your mail, no web"; "app:notion" ->
+    "notion, no web"; "folder" -> "the folders you named, no web"; "none" -> "nothing outside its folder"."""
     if uses == "web":
         return "the web"
+    if uses.startswith("app:"):
+        return f"{uses[len('app:'):]}, no web"
     if uses.startswith("apps"):
         what = {"apps:mail": "your mail", "apps:calendar": "your calendar"}.get(uses, "your apps")
         return f"{what}, no web"

@@ -33,7 +33,7 @@ def test_what_a_job_may_use_is_decided_by_code(words, read_dirs, taint, uses):
 
 def test_a_connected_apps_name_in_the_request_means_apps():
     from odie.workers.tools import uses_for
-    assert uses_for("Use notion to list my open pages", [], "", ["notion"]) == "apps"
+    assert uses_for("Use notion to list my open pages", [], "", ["notion"]) == "app:notion"
     assert uses_for("Explain the notion of entropy", [], "", ["notion-work"]) == "web"
 
 

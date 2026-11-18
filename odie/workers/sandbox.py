@@ -10,6 +10,8 @@ else:
     readable everywhere, which tools need to find their way; a folder's listing and a file's contents do not;
   - writes: the job's own folder only (its HOME, temp and package caches live inside it), and /dev's null and
     terminals. Not the home, not /tmp, not a cache, not a toolchain;
+  - no shared memory and no SysV IPC; semaphores only under the job's own name prefix (Python's multiprocessing is
+    steered there), so two jobs can't pass anything through them; no notification service;
   - processes: fork and exec, except EXEC_DENIED (open, osascript, launchctl, at, crontab, ssh, security, defaults,
     tmux, screen, sudo); signals only to its own; system services (mach-lookup) only MACH_ALLOWED (name lookup,
     network settings, certificate trust, user names, logging): LaunchServices, AppleEvents, the pasteboard, the
@@ -37,7 +39,7 @@ EXEC_DENIED = ("/usr/bin/open", "/usr/bin/osascript", "/bin/launchctl", "/usr/bi
                "/usr/local/bin/tmux", "/opt/homebrew/bin/screen", "/usr/sbin/lsof")
 MACH_ALLOWED = ("com.apple.dnssd.service", "com.apple.SystemConfiguration.configd", "com.apple.trustd",
                 "com.apple.trustd.agent", "com.apple.ocspd", "com.apple.system.opendirectoryd.libinfo",
-                "com.apple.system.notification_center", "com.apple.logd", "com.apple.system.logger")
+                "com.apple.logd", "com.apple.system.logger")  # not notifyd: two jobs could signal through it
 DNS_SOCKET = "/private/var/run/mDNSResponder"
 KEPT_ENV = ("USER", "LOGNAME", "LANG", "LC_ALL", "LC_CTYPE", "SHELL", "TERM")
 NONE = "none"
@@ -116,8 +118,10 @@ def profile(folder: Path, read_dirs: list[str] | tuple = (), network: str = NONE
         "(allow signal (target same-sandbox))",
         "(allow process-info* (target same-sandbox))",
         "(allow sysctl-read)",
-        "(allow ipc-posix-sem)",
-        "(allow ipc-posix-shm)",
+        # No shared memory, no SysV IPC: two jobs could pass his data through them (fourth review). Semaphores only
+        # under this job's own name prefix (Python's multiprocessing is steered there: sitecustomize below).
+        "(deny ipc-sysv*)",
+        f'(allow ipc-posix-sem (ipc-posix-name-prefix "{semaphore_prefix(folder)}-"))',
         "(allow file-ioctl)",
         "(allow system-socket)",
         "(allow file-read-metadata)",
@@ -136,6 +140,32 @@ def profile(folder: Path, read_dirs: list[str] | tuple = (), network: str = NONE
                   "(deny network-outbound (remote unix-socket))",
                   f"(allow network-outbound (literal {_quoted(DNS_SOCKET)}))"]
     return "\n".join(lines)
+
+
+def semaphore_prefix(folder: Path) -> str:
+    """The job's own prefix for POSIX semaphore names: "/mp-" and 8 characters from its folder, so no two jobs share
+    one (and Python's names, "/mp-<8>-<8>", stay inside macOS's 31 characters)."""
+    import hashlib
+    digest = hashlib.sha256(str(Path(folder).resolve()).encode()).hexdigest()[:8]
+    return f"/mp-{digest}"
+
+
+SITECUSTOMIZE = """try:
+    import multiprocessing.process as _odie_process
+    _odie_process.current_process()._config["semprefix"] = {prefix!r}
+except Exception:
+    pass
+"""
+
+
+def python_hook(folder: Path) -> Path:
+    """A folder in the job holding a sitecustomize.py that steers Python's multiprocessing semaphore names to the
+    job's own prefix (the only ones its sandbox allows); put on PYTHONPATH. A job that changes it only breaks its own
+    multiprocessing: the profile allows no other prefix."""
+    hook = Path(folder) / ".odie-python"
+    hook.mkdir(parents=True, exist_ok=True)
+    (hook / "sitecustomize.py").write_text(SITECUSTOMIZE.format(prefix=semaphore_prefix(folder)))
+    return hook
 
 
 def command(argv: list[str], folder: Path, read_dirs: list[str] | tuple = (), network: str = NONE,
@@ -157,7 +187,7 @@ def env(folder: Path) -> dict[str, str]:
     for name, place in places.items():
         place.mkdir(parents=True, exist_ok=True)
         out[name] = str(place)
-    out.update(PATH=SHELL_PATH, CI="1", GIT_TERMINAL_PROMPT="0")
+    out.update(PATH=SHELL_PATH, CI="1", GIT_TERMINAL_PROMPT="0", PYTHONPATH=str(python_hook(base)))
     return out
 
 

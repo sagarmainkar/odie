@@ -305,16 +305,14 @@ async def test_a_reports_words_reach_the_chat_model_fenced(world, tmp_path):
     assert post["shown"].startswith("✅ Done: Tides") and "<<<" not in post["shown"]  # what he sees
 
 
-def test_in_careful_mode_a_worker_refuses_app_tools_that_would_ask(world, tmp_path):
+def test_a_worker_refuses_app_writes_in_any_mode_and_runs_plain_reads(world, tmp_path):
     store, chat, _ = world
     job = a_job(store, tmp_path)
-    tool = Tool("write_note", server="notes")
-    tool._asks_in_careful = True
-    guard = worker.guard_for(store, job, chat)
-    store.set_setting("approvals.mode", "careful")
-    assert guard(tool, {"text": "x"}, None) is not None
-    store.set_setting("approvals.mode", "smart")
-    assert worker.guard_for(store, job, chat)(tool, {"text": "x"}, None) is None
+    for mode in ("careful", "smart"):
+        store.set_setting("approvals.mode", mode)
+        guard = worker.guard_for(store, job, chat)
+        assert guard(Tool("write_note", server="notes"), {"text": "x"}, None) is not None, mode
+        assert guard(Tool("list_notes", server="notes"), {}, None) is None, mode
 
 
 def test_media_comes_only_from_the_jobs_folder(world, tmp_path):

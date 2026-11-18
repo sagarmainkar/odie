@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -114,7 +115,53 @@ def no_web(job: Job) -> bool:
 def uses_apps(job: Job) -> bool:
     """Whether a Worker gets the personality's apps: only a job that uses them ("check my mail for …"), never with
     the web, a named folder or taint."""
-    return job.uses.startswith("apps") and not job.taint and not job.read_dirs
+    return job.uses.startswith("app") and not job.taint and not job.read_dirs
+
+
+def servers_for(store: Store, job: Job) -> set[str]:
+    """The connected apps an apps job gets, and only those (fourth review): his mail sources for "apps:mail", his
+    calendar sources for "apps:calendar" (the ones the watch found for this owner), the app he named for "app:<name>".
+      "apps:mail", sources work-mail (mail) and work-cal (calendar) -> {"work-mail"};  "app:notion" -> {"notion"}"""
+    from odie.watch import sources
+    if job.uses.startswith("app:"):
+        return {job.uses[len("app:"):]}
+    kind = job.uses.removeprefix("apps:")
+    return {s.server for s in sources.saved(store, job.personality) if s.kind == kind and s.server}
+
+
+# Words in an app tool's name that mean the web, whatever else it says (fetch_url, browser_navigate, tavily_search).
+WEB_NAME_WORDS = frozenset({"url", "urls", "http", "https", "web", "website", "browse", "browser", "navigate", "scrape",
+                            "crawl", "crawler", "puppeteer", "playwright", "firecrawl", "tavily", "exa", "serp",
+                            "download", "curl", "internet"})
+URL_IN_TEXT = re.compile(r"https?://|(?<![@\w.-])[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,}(/|\b)", re.I)
+
+
+def _strings(value) -> list[str]:
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, dict):
+        return [t for v in value.values() for t in _strings(v)]
+    if isinstance(value, (list, tuple)):
+        return [t for v in value for t in _strings(v)]
+    return []
+
+
+def app_may_run(tool, args: dict | None) -> bool:
+    """Whether a connected app's tool runs in a Worker without his tap: only a plain READ of his own data (fourth
+    review, 19 Nov 2026). Its name must say it reads (get, list, search, find, fetch: odie.plugins.mcp.is_read_name,
+    which also refuses any name with a change word: create, update, move, delete, send, post, add, upload…), must not
+    name the web (WEB_NAME_WORDS), the server must not mark it destructive, and no argument may hold an address
+    (http(s)://… or a bare domain; an email address is fine). Anything else waits for his tap (a card: the exact call).
+      gmail_search {"query": "from:asha@example.com"} -> True;  calendar_list_events -> True
+      gmail_create_draft, calendar_update_event, move_email, notion_create_page -> False (they change something)
+      fetch {"url": "https://…"}, browser_navigate, tavily_search -> False (the web)
+      search_notes {"query": "see example.com/x"} -> False (an address);  frobnicate_things -> False (unknown verb)"""
+    from odie.plugins.mcp import is_destructive, is_read_name, name_words
+    if not is_read_name(tool.name) or is_destructive(tool):
+        return False
+    if name_words(tool.name) & WEB_NAME_WORDS:
+        return False
+    return not any(URL_IN_TEXT.search(text) for text in _strings(args or {}))
 
 
 def tools_for(store: Store, job: Job, runner) -> list:
@@ -127,7 +174,9 @@ def tools_for(store: Store, job: Job, runner) -> list:
     from odie.workers.shell import make_worker_shell
     own = [make_worker_shell(store, job), *make_job_file_tools(job.folder)]
     if uses_apps(job):
-        return [*own, *(UnlockedToolset(t) for t in getattr(runner, "_plugin_toolsets", []))]
+        wanted = servers_for(store, job)
+        apps = [t for t in getattr(runner, "_plugin_toolsets", []) if getattr(t, "server", None) in wanted]
+        return [*own, *(UnlockedToolset(t) for t in apps)]
     if no_web(job):
         return own
     return [*own, *make_web_tools(store=store, browser_for=None, ask_first=False)]
@@ -146,19 +195,6 @@ def shell_reasons(store: Store, job: Job, command: str, cwd: str | None) -> list
                                        own_port=shell_grant._own_port(), odie_dirs=shell_grant.odie_places())
     own = allow.worker_reasons(command)
     return [*own, *(why for why in smart if why not in own)]
-
-
-def app_would_ask(store: Store, tool) -> bool:
-    """Whether a connected app's tool would ask in the user's chat right now. Smart: its name says it sends, pays,
-    publishes, removes or runs anything (odie.approvals_mode.asks_by_name), or its server marks it destructive.
-    Careful: whatever asks in Careful (the tool's own mark, as the watch and trackers read it).
-      Smart, GMAIL_SEND_EMAIL -> True;  Smart, GMAIL_FETCH_EMAILS -> False;  Smart, write_note -> False;
-      Careful, write_note (asks in Careful) -> True"""
-    from odie import approvals_mode
-    from odie.plugins.mcp import is_destructive
-    if not approvals_mode.is_smart(store) and getattr(tool, "_asks_in_careful", True):
-        return True
-    return approvals_mode.asks_by_name(tool.name) or is_destructive(tool)
 
 
 def refusal_words(why: str) -> str:
@@ -228,7 +264,7 @@ def guard_for(store: Store, job: Job, runner):
         switched_off = runner._apps_stop(tool, args, tool_context)
         if switched_off is not None:
             return switched_off
-        if not app_would_ask(store, tool):
+        if app_may_run(tool, {k: v for k, v in args.items() if k != REFUSED}):
             return None
         plain_args = {k: v for k, v in args.items() if k != REFUSED}
         if allow.covers(allowed, tool.name, plain_args, [allow.APP_WHY]):
