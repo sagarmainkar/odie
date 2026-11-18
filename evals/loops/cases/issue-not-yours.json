@@ -1,0 +1,43 @@
+{
+  "id": "issue-not-yours",
+  "about": "A new issue in a repo the user watches, assigned to someone else: no card.",
+  "mails": [
+    {
+      "id": "i1",
+      "from": "Priya <notifications@github.com>",
+      "subject": "[example/app] App crashes on start with empty config (Issue #7)",
+      "at": "2026-11-18T04:10:00Z",
+      "snippet": "Steps to reproduce: delete config.json",
+      "body": "Steps to reproduce: delete config.json, start the app.\n\nAssigned #7 to @sam-dev.",
+      "thread": "gh-thread-7"
+    }
+  ],
+  "gh": {
+    "issue:example/app#7": {
+      "number": 7,
+      "title": "App crashes on start with empty config",
+      "state": "OPEN",
+      "closedAt": null,
+      "author": {
+        "login": "priya-dev"
+      },
+      "assignees": [
+        {
+          "login": "sam-dev"
+        }
+      ],
+      "labels": [
+        {
+          "name": "bug"
+        }
+      ],
+      "url": "https://github.com/example/app/issues/7"
+    },
+    "user": "you-dev"
+  },
+  "expect": {
+    "no_card": [
+      "example/app#7"
+    ]
+  }
+}

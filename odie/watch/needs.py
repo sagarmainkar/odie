@@ -37,7 +37,9 @@ def cards(store, now: datetime, owner: str = ODIE) -> list[dict]:
     on_the_card = [i for i in card.get("needs_you", []) if not i.get("done")]
     shown = {i["ref"] for i in on_the_card}  # a hidden item's thread stays off the list too
     watch_items = [i for i in on_the_card if not hidden(i, now)]
-    out = [watch_card(i) for i in watch_items]
+    from odie.loops import cards as loop_cards
+    out = loop_cards.cards(store, owner, now)  # one card per ready loop (a pull request with its facts), first
+    out += [watch_card(i) for i in watch_items]
     tasks = [t for t in owners_tasks(store, now, owner) if shows_as_task(t, shown)]
     tasks.sort(key=lambda t: t["due_at"] or "9999")
     out += [task_card(t, now) for t in tasks]
@@ -81,6 +83,12 @@ def later(store, ref: str, now: datetime, owner: str = ODIE) -> str | None:
     ("task:12") is snoozed as the old Tomorrow button did, so it also rings then; a watch item gets a "hidden_until"
     on the card, which the next checks keep (report.apply never rewrites an item it has)."""
     until = later_until(now)
+    if ref.startswith("loop:"):
+        from odie.loops import cards as loop_cards
+        loop_id = ref[len("loop:"):]
+        if not loop_id.isdigit() or not loop_cards.later(store, int(loop_id), until, owner, now):
+            return None
+        return until
     if ref.startswith("task:"):
         task_id = ref[len("task:"):]
         if not task_id.isdigit() or store.one("select id from tasks where id=?", (int(task_id),)) is None:

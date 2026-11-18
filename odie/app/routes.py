@@ -800,7 +800,7 @@ async def tasks_closed_by_watch(request: Request):
 
     from odie.watch import bills
     since = datetime.now(ZoneInfo(config.settings.timezone)) - timedelta(days=3)
-    return bills.closed_by_watch(request.app.state.store, since)
+    return bills.closed_by_watch(request.app.state.store, since, _personality(request))
 
 
 @router.post("/tasks/{task_id}/reopen")
@@ -2388,31 +2388,83 @@ async def watch_get(request: Request) -> dict[str, Any]:
 
 @router.get("/needs_you")
 async def needs_you_get(request: Request) -> dict[str, Any]:
-    """Today's "Needs you" cards (odie.watch.needs), and the watch's last check for the line under them: when it
-    checked, through what, or what isn't working."""
+    """A Pulse's cards (odie.watch.needs), for whoever is picked: everyday Odie's (as Today always was) or a
+    personality's own. With them: the watch's last check for the line under them, what the watch did, what Odie is
+    still on (loops it is working on) and the loops it closed today (each with Reopen). Odie's Pulse also lists the
+    others as a count only ("Mira: 2 waiting"); a personality's says whether its Proactive intelligence is on."""
     from datetime import datetime
     from zoneinfo import ZoneInfo
 
+    from odie import personalities
+    from odie.loops import cards as loop_cards
     from odie.watch import needs, report
+    from odie.watch.owner import key
     store = request.app.state.store
+    pid = _personality(request)
     now = datetime.now(ZoneInfo(config.settings.timezone))
-    card = store.get_setting(report.CARD) or {}
-    watch = {k: card.get(k) for k in ("checked_at", "line", "off", "sources") if k in card}
-    if not card:
+    card = store.get_setting(key(report.CARD, pid)) or {}
+    watch = {k: card.get(k) for k in ("checked_at", "line", "off", "sources", "events") if k in card}
+    if not card and not pid:
         watch = {"off": "The first check runs a minute after Odie starts."}
-    items = needs.cards(store, now)
-    return {"items": items, "counts": needs.counts(items), "watch": watch, "notes": needs.recent_notes(store, now)}
+    items = needs.cards(store, now, pid)
+    out = {"items": items, "counts": needs.counts(items), "watch": watch, "notes": needs.recent_notes(store, now, pid),
+           "on_it": loop_cards.on_it(store, pid), "loops_done": loop_cards.done_today(store, pid, now)}
+    if pid:
+        out["proactive"] = _proactive_out(store, pid)
+        return out
+    others = []
+    for p in personalities.list_all(store):
+        waiting = len(needs.cards(store, now, p.id))
+        if waiting:
+            others.append({"id": p.id, "name": p.name, "waiting": waiting})
+    out["others"] = others
+    return out
+
+
+@router.post("/loops/{loop_id}/done")
+async def loop_done(loop_id: int, request: Request) -> dict[str, Any]:
+    """A loop card's Done: off the list and no longer followed. Only the picked one's own loop (else 404)."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from odie.loops import ledger
+    store = request.app.state.store
+    loop = ledger.get(store, loop_id)
+    if loop is None or loop["personality"] != _personality(request) or loop["state"] not in ledger.OPEN:
+        raise HTTPException(404, "That card isn't there any more.")
+    ledger.done(store, loop_id, datetime.now(ZoneInfo(config.settings.timezone)))
+    ledger.update(store, loop_id, datetime.now(ZoneInfo(config.settings.timezone)), tapped="done")
+    return {"ok": True}
+
+
+@router.post("/loops/{loop_id}/reopen")
+async def loop_reopen(loop_id: int, request: Request) -> dict[str, Any]:
+    """Done today's Reopen: Odie closed it wrongly; it opens again and is looked at once more."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from odie.loops import ledger
+    store = request.app.state.store
+    loop = ledger.get(store, loop_id)
+    if loop is None or loop["personality"] != _personality(request) or loop["state"] in ledger.OPEN:
+        raise HTTPException(404, "Nothing to reopen.")
+    ledger.reopen(store, loop_id, datetime.now(ZoneInfo(config.settings.timezone)))
+    store.audit("user", "loop_reopen", result_summary=loop["title"])
+    return {"ok": True}
 
 
 @router.post("/watch/done")
 async def watch_done(body: WatchDoneIn, request: Request) -> dict[str, Any]:
-    from odie.watch import report
+    """A watch card's Done, on the picked one's Pulse: off its card, and its thread no longer followed."""
+    from odie.watch import report, threads
+    from odie.watch.owner import key
     store = request.app.state.store
-    card = store.get_setting(report.CARD) or {}
+    pid = _personality(request)
+    card_key = key(report.CARD, pid)
+    card = store.get_setting(card_key) or {}
     card["needs_you"] = [i for i in card.get("needs_you", []) if i.get("ref") != body.ref]
-    store.set_setting(report.CARD, card)
-    from odie.watch import threads
-    threads.close(store, body.ref, "dismissed on Today", by_user=True)  # the watch stops following it too
+    store.set_setting(card_key, card)
+    threads.close(store, body.ref, "dismissed on Today", by_user=True, owner=pid)  # the watch stops following it too
     return {"ok": True}
 
 
@@ -2430,7 +2482,7 @@ async def needs_you_later(body: LaterIn, request: Request) -> dict[str, Any]:
     from odie.watch import needs
     store = request.app.state.store
     now = datetime.now(ZoneInfo(config.settings.timezone))
-    until = needs.later(store, body.ref, now)
+    until = needs.later(store, body.ref, now, _personality(request))
     if until is None:
         raise HTTPException(404, "That card isn't there any more.")
     if body.ref.startswith("task:"):
@@ -2440,12 +2492,14 @@ async def needs_you_later(body: LaterIn, request: Request) -> dict[str, Any]:
 
 @router.post("/watch/seen")
 async def watch_seen(request: Request) -> dict[str, Any]:
-    """Today was opened: everything on the card now has been seen (the count on chat's Back to Today goes)."""
+    """A Pulse was opened: everything on its card now has been seen (the count on chat's Back to Pulse goes)."""
     from odie.watch import report
+    from odie.watch.owner import key
     store = request.app.state.store
-    card = store.get_setting(report.CARD) or {}
+    card_key = key(report.CARD, _personality(request))
+    card = store.get_setting(card_key) or {}
     card["needs_you"] = [{**i, "seen": True} for i in card.get("needs_you", [])]
-    store.set_setting(report.CARD, card)
+    store.set_setting(card_key, card)
     return {"ok": True}
 
 

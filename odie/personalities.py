@@ -427,6 +427,8 @@ async def delete(store: Store, runner, pid: str) -> dict:
     access.forget_personality(store, pid)  # its connected apps' switches
     from odie.watch import owner as watch_owner
     watch_owner.forget(store, pid)  # its own watch: card, place in the mail, sources, Proactive switch
+    from odie.loops import ledger
+    ledger.forget_personality(store, pid)  # its open loops and their evidence
     await runner.forget_personality(pid)  # again: a turn that was finishing may have noted itself meanwhile
     shutil.rmtree(folder(pid), ignore_errors=True)
     (config.settings.data_dir / f"memory-{pid}.lock").unlink(missing_ok=True)

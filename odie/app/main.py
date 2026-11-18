@@ -202,6 +202,7 @@ def background_for(store: Store, runner):
     from datetime import datetime
     from zoneinfo import ZoneInfo
 
+    from odie.loops import clock as loops_clock
     from odie.watch import check as watch
     from odie.watch import owner as watch_owner
 
@@ -231,7 +232,28 @@ def background_for(store: Store, runner):
     # A personality with Proactive intelligence on checks its own mail the same way, one personality per wake-up.
     bg.add(Part("watch:personalities", personality_watch_part,
                 due=lambda _now: watch_owner.next_due(store, now()) is not None, limit=600))
+
+    async def loops_part() -> None:
+        await run_loops(store, runner, now())
+    # Then the loops whose time has come (odie.loops.clock): facts, one model call each, within the day's budget.
+    bg.add(Part("loops", loops_part, due=lambda _now: bool(loops_clock.due(store, now())), limit=600))
     return bg
+
+
+async def run_loops(store: Store, runner, now) -> list:
+    """Stage 4 for the due loops (odie.loops.clock): each thinks with its owner's brain, with no tools at all."""
+    from odie.loops import clock
+    if runner is None or not hasattr(runner, "background_turn"):
+        return []
+
+    def think_for(pid: str):
+        async def think(prompt: str, instruction: str) -> str:
+            return await runner.background_turn(prompt, timeout=120, instruction=instruction, bare=True, owner=pid)
+        return think
+
+    def push(title, body):
+        watch_pushed(store, runner, title, body)
+    return await clock.run(store, now, think_for, push)
 
 
 async def personality_watch(store: Store, runner, now) -> str | None:

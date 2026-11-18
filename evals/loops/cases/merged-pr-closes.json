@@ -1,0 +1,53 @@
+{
+  "id": "merged-pr-closes",
+  "about": "A pull request the user already merged from their phone: the mail says merged; GitHub agrees.",
+  "mails": [
+    {
+      "id": "m1",
+      "from": "Asha Rao <notifications@github.com>",
+      "subject": "Re: [example/app] Fix login redirect (PR #50)",
+      "at": "2026-11-18T03:30:00Z",
+      "snippet": "Merged #50 into main.",
+      "body": "Merged #50 into main.\n\nYou are receiving this because you authored the thread.",
+      "thread": "gh-thread-50"
+    }
+  ],
+  "gh": {
+    "pr:example/app#50": {
+      "number": 50,
+      "title": "Fix login redirect",
+      "state": "MERGED",
+      "isDraft": false,
+      "mergedAt": "2026-11-18T03:30:00Z",
+      "closedAt": null,
+      "author": {
+        "login": "asha-dev"
+      },
+      "headRefName": "branch-50",
+      "baseRefName": "main",
+      "additions": 41,
+      "deletions": 9,
+      "changedFiles": 3,
+      "isCrossRepository": false,
+      "reviewDecision": "REVIEW_REQUIRED",
+      "url": "https://github.com/example/app/pull/50",
+      "statusCheckRollup": [
+        {
+          "name": "tests",
+          "status": "COMPLETED",
+          "conclusion": "SUCCESS"
+        }
+      ]
+    },
+    "user": "you-dev"
+  },
+  "expect": {
+    "loops": 1,
+    "closed": [
+      "example/app#50"
+    ],
+    "no_card": [
+      "example/app#50"
+    ]
+  }
+}

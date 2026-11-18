@@ -195,6 +195,9 @@ async def run_check(store, now: datetime, turn, push, memory=None, memory_index:
     check.mails = await fetcher.new_mail()
     check.mail_read = True
     check.events = await fetcher.upcoming_events()
+    # A mail in a thread an open loop holds, or GitHub's mail about the same pull request, joins that loop in code.
+    from odie.loops import shortcut
+    check.loop_of = shortcut.attach_known(store, owner, check.mails, now)
     catching_up = needs_catch_up(fetcher)
     if not has_news(check, open_threads(store, now, owner), last_check, catching_up):
         card_events = await fetcher.events_ahead(CARD_DAYS)
@@ -213,6 +216,8 @@ async def run_check(store, now: datetime, turn, push, memory=None, memory_index:
             prompt = catch_up_prompt(prompt, [check.fenced(m) for m in older])
     reason = ""
     last_task_before = _last_task_id(store, owner)
+    from odie.loops import budget
+    budget.count(store, now)  # the day's proactive calls (odie.loops.budget): counted, never stopped
     try:
         await turn(prompt, tools, instruction)
     except Exception as e:  # noqa: BLE001 (a failed turn still leaves a card)
@@ -220,6 +225,7 @@ async def run_check(store, now: datetime, turn, push, memory=None, memory_index:
         log.warning("watch turn failed", exc_info=True)
     check.read = True  # read before the turn, for the nudge and for the card's counts
     if check.report is None:  # small models often stop short of report: one nudge, with what the check read
+        budget.count(store, now)
         try:
             await turn(nudge_text(check), tools, instruction)
         except Exception as e:  # noqa: BLE001

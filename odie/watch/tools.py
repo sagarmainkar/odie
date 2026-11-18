@@ -40,6 +40,7 @@ class Check:
         self.events: list[Event] = []
         self.sent: list[Mail] = []  # the user's sent mail that closed nothing in code (odie.watch.sent)
         self.report: dict | None = None
+        self.loop_of: dict[str, int] = {}  # mails code already attached to an open loop (odie.loops.shortcut)
         self.read = False  # the check has read the mail or the events
         self.mail_read = False  # the check has read its new mail (run_check reads it before the turn)
 
@@ -48,6 +49,8 @@ class Check:
         for k in ("from", "subject", "snippet"):
             if b[k]:  # an empty field stays as it is
                 b[k] = wrap_untrusted(str(b[k]))
+        if m.id in self.loop_of:  # already added to that open loop, by its thread or its pull request
+            b["loop"] = self.loop_of[m.id]
         return b
 
     def fenced_sent(self, m: Mail) -> dict:
@@ -199,6 +202,26 @@ def watch_tools(check: Check) -> list[FunctionTool]:
         check.report = {"needs_you": needs_you or [], "line": line or "", "done": done or []}
         return {"result": "Reported. The check is over."}
 
+    def open_loops() -> dict:
+        """The open loops (pull requests and issues you follow until they close), one line each: id, title, kind,
+        owner, state, refs and the last evidence. A mail with "loop": N was already added to loop N."""
+        from odie.loops import ledger
+        store, pid = check.fetcher.store, check.fetcher.owner
+        lines = [ledger.line(lp, ledger.events(store, lp["id"])) for lp in ledger.open_loops(store, pid)]
+        return {"result": "\n".join(lines) or "(none open)"}
+
+    def loop(title: str, kind: str, owner: str = "odie", refs: list[str] | None = None, mail_id: str = "",
+             next_step: str = "", loop_id: int = 0, close_why: str = "", priority: str = "normal") -> dict:
+        """Open a loop, add to one, or close one: one loop per real thing. kind: "pull request" or "issue". refs: its
+        GitHub name, as ["example/app#49"]. mail_id: the mail it came from. owner: odie (Odie can move it), you (only
+        the user can), them (waiting on someone). loop_id: the open loop this is about; with close_why it closes it
+        (the evidence: "merged 18 Nov"). A loop that already holds the same ref gets the mail added, not a second loop.
+        priority: high only when the user is asked for something soon (a review requested)."""
+        from odie.loops import writes
+        said = writes.from_watch(check, title=title, kind=kind, owner=owner, refs=refs or [], mail_id=mail_id,
+                                 next_step=next_step, loop_id=loop_id, close_why=close_why, priority=priority)
+        return {"result": said}
+
     return [FunctionTool(f) for f in (open_threads, what_you_sent, new_mail, upcoming_events, read_mail, read_thread,
                                        search_mail, sent_to, save_attachment, bills_and_orders, track_thread,
-                                       close_reminder, report)]
+                                       close_reminder, open_loops, loop, report)]

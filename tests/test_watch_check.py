@@ -276,7 +276,8 @@ def test_the_watch_reads_like_an_assistant():
     assert all(pile in text for pile in ("alerts", "bills", "events", "personal", "orders"))
     assert "suggestion" in text and "escape" not in text  # Done and Later are fixed: the model writes only the move
     assert "what_you_sent" in text and "answers it" in text  # the user's own mail closes what it answers (18 Nov)
-    assert len(text.split()) <= 1040  # it also reviews its threads and reads what the user sent; it runs every 30 minutes
+    assert len(text.split()) <= 1180  # it also reviews its threads, reads what the user sent and keeps loops (18 Nov)
+    assert "`open_loops`" in text and "one loop" in text and "a duplicate beats a wrong merge" in text
 
 
 

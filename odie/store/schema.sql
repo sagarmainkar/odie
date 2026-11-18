@@ -76,3 +76,43 @@ create table if not exists block_state (
   updated_at text not null,
   primary key (session_id, message_key, block_path)
 );
+
+-- open loops (proactive design §5): one row per real-world thing Odie follows until it closes, whatever source it came
+-- from (odie.loops.ledger). personality NULL = everyday Odie's, as tasks. loop_events is each loop's evidence, append-only.
+create table if not exists loops (
+  id integer primary key autoincrement,
+  personality text,
+  title text not null,
+  kind text not null default '',
+  owner text not null default 'odie' check (owner in ('odie','you','them')),
+  state text not null default 'new' check (state in ('new','working','ready','waiting','closed','dropped')),
+  next_step text not null default '',
+  playbook text not null default '',
+  priority text not null default 'normal' check (priority in ('high','normal','low')),
+  due_at text,
+  next_check_at text,
+  hidden_until text,
+  refs_json text not null default '[]',
+  has_news integer not null default 0,
+  result text not null default '',
+  brief text not null default '',
+  link text not null default '',
+  nudges integer not null default 0,
+  attempts integer not null default 0,
+  shown_at text,
+  tapped text,
+  closed_by text,
+  closed_why text,
+  created_at text not null,
+  updated_at text not null,
+  closed_at text
+);
+create table if not exists loop_events (
+  id integer primary key autoincrement,
+  loop_id integer not null,
+  at text not null,
+  source text not null,
+  ref text not null default '',
+  fact text not null
+);
+create index if not exists loop_events_loop on loop_events(loop_id);
