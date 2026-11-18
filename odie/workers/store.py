@@ -35,6 +35,7 @@ class Job:
     allowed: list = None  # what the user's tap allowed for this run (odie.workers.allow)
     taint: str = ""  # outside text the chat had read when it started ("mail", "web pages"): no web, no apps
     read_dirs: list = None  # folders of his the owner named for this job: its sandbox may read them, nothing else of his
+    uses: str = "web"  # what it may reach besides its folder, one of: web, apps[:mail|:calendar], folder, none
 
     @property
     def odies_own(self) -> bool:
@@ -49,16 +50,16 @@ def new_id() -> str:
 
 def create(store: Store, kind: str, title: str, brief: str, session_id: str | None, folder: Path,
            budget_seconds: int, personality: str = "", started_by: str = "you", loop_id: int | None = None,
-           job_id: str = "", taint: str = "", read_dirs: list | None = None) -> Job:
+           job_id: str = "", taint: str = "", read_dirs: list | None = None, uses: str = "web") -> Job:
     """A new row, queued. job_id: one made beforehand (the router names the folder after it); else a new one."""
     if not job_id:
         job_id = new_id()
     job = Job(job_id, kind, title, brief, session_id, folder, budget_seconds, personality, started_by, loop_id,
-              allowed=[], taint=taint, read_dirs=list(read_dirs or []))
+              allowed=[], taint=taint, read_dirs=list(read_dirs or []), uses=uses)
     store.execute("insert into jobs(id,kind,title,brief,personality,started_by,loop_id,status,session_id,folder,"
-                  "budget_seconds,taint,read_dirs_json,version,created_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                  "budget_seconds,taint,read_dirs_json,uses,version,created_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                   (job.id, kind, title, brief, personality or None, started_by, loop_id, "queued", session_id,
-                   str(folder), budget_seconds, taint, json.dumps(job.read_dirs), CURRENT, now_iso()))
+                   str(folder), budget_seconds, taint, json.dumps(job.read_dirs), uses, CURRENT, now_iso()))
     return job
 
 
@@ -66,7 +67,8 @@ def from_row(row: dict) -> Job:
     """A Job from its row (retry, recovery after a restart, the watchdog)."""
     return Job(row["id"], row["kind"], row["title"], row["brief"], row["session_id"], Path(row["folder"]),
                row["budget_seconds"], row["personality"] or "", row["started_by"], row["loop_id"], row["status"],
-               row["runs"], loads(row["allowed_json"]), row["taint"] or "", loads(row.get("read_dirs_json")))
+               row["runs"], loads(row["allowed_json"]), row["taint"] or "", loads(row.get("read_dirs_json")),
+               row.get("uses") or "web")
 
 
 def loads(text: str | None) -> list:

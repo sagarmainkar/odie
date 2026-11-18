@@ -42,22 +42,56 @@ def records_of(folder: Path) -> Path:
     return folder.parent / f".{folder.name}.odie"
 
 
+SWEEP_SECONDS = 5.0  # the longest a sweep keeps freezing new processes before it kills what it caught
+QUIET_PASSES = 3  # passes in a row that find nothing new: the job is frozen
+
+
+def _signal(pid: int, pgid: int, sig: int) -> None:
+    """Sends sig to the process and its whole group (a group of a job's process is always the job's: a process can
+    only join a group in its own session); one already gone, or not ours to signal, is fine."""
+    for send in (lambda: os.killpg(pgid, sig), lambda: os.kill(pid, sig)):
+        try:
+            send()
+        except (ProcessLookupError, PermissionError):
+            pass
+
+
 def sweep(folder: Path) -> int:
-    """Kills every process running in this job's sandbox, again until none is left (a process may fork while it
-    dies). Returns how many were killed."""
-    killed = 0
+    """Kills every process running in this job's sandbox (third review, 19 Nov 2026). A process can keep re-forking,
+    the parent dying at once, so killing what one look found leaves the newest copy alive. So it first FREEZES: each
+    pass stops (SIGSTOP) every process found and its whole group, which can then fork no more, until QUIET_PASSES
+    passes find nothing new or SWEEP_SECONDS pass; then it kills (SIGKILL) everything caught, and looks again.
+    Returns how many processes were killed."""
+    import time
     beside = records_of(folder)
+    caught: dict[int, int] = {}
+    groups: set[int] = set()
+    others: set[int] = set()  # pids already judged not the job's in this sweep
+    deadline = time.monotonic() + SWEEP_SECONDS
     for _ in range(SWEEP_ROUNDS):
-        found = sandbox.processes_in(folder, beside)
-        if not found:
+        quiet = 0
+        while quiet < QUIET_PASSES and time.monotonic() < deadline:
+            new = False
+            for pgid in groups:
+                _signal(pgid, pgid, signal.SIGSTOP)  # whatever its current members are, under whatever pids
+            for pid, pgid in sandbox.groups_in(folder, beside, others):
+                if pid in caught:
+                    continue
+                caught[pid] = pgid
+                groups.add(pgid)
+                new = True
+                _signal(pid, pgid, signal.SIGSTOP)
+            if new:
+                quiet = 0
+            else:
+                quiet += 1
+        for pid, pgid in caught.items():
+            _signal(pid, pgid, signal.SIGKILL)
+        for pgid in groups:
+            _signal(pgid, pgid, signal.SIGKILL)
+        if not sandbox.groups_in(folder, beside) or time.monotonic() >= deadline:
             break
-        for pid in found:
-            try:
-                os.kill(pid, signal.SIGKILL)
-                killed += 1
-            except (ProcessLookupError, PermissionError):
-                pass
-    return killed
+    return len(caught)
 
 
 def kill_job(job_id: str, folder: Path | None = None) -> int:

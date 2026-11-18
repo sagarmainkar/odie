@@ -32,9 +32,9 @@ def on_it(store, pid: str) -> list[dict]:
         if row["status"] not in jobs.GOING:
             continue
         may_read = [home_form(d) for d in jobs.loads(row.get("read_dirs_json"))]
-        next_words = ""
+        next_words = uses_line(row).replace("Uses:", "uses")
         if may_read:
-            next_words = "may read " + ", ".join(may_read)
+            next_words = "may read " + ", ".join(may_read) + ", no web"
         out.append({"id": row["id"], "title": row["title"], "state": STATE_OF[row["status"]], "next": next_words,
                     "stop": row["id"]})
     return out
@@ -120,7 +120,18 @@ def card(row: dict) -> dict:
             "badge": badge, "ask": f"What happened with job {row['id']} ({row['title']})?", "main": main,
             "other": {"label": "Done", "action": "job_clear", "value": row["id"]}, "pile": "alerts",
             "since": row["ended_at"] or "", "decide": False, "steps": steps_of(row),
-            "allow_hash": allow.needs_hash(allowable(row)), "may_read": [home_form(d) for d in read_dirs]}
+            "allow_hash": allow.needs_hash(allowable(row)), "may_read": [home_form(d) for d in read_dirs],
+            "uses": uses_line(row)}
+
+
+def uses_line(row: dict) -> str:
+    """What the card says the job may reach: "Uses: the web"; "Uses: your mail, no web"; "" for a job of named
+    folders (its "May read" line says it) or a tainted one (its badge says it)."""
+    from odie.workers.tools import uses_words
+    uses = row.get("uses") or "web"
+    if row.get("taint") or uses in ("folder", "none"):
+        return ""
+    return f"Uses: {uses_words(uses)}"
 
 
 def home_form(path: str) -> str:

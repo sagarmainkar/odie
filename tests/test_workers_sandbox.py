@@ -185,3 +185,19 @@ async def test_recovery_after_a_crash_kills_what_a_cut_off_job_left_running(job,
     found = subprocess.run(["pgrep", "-x", "sleep"], capture_output=True, text=True).stdout.split()
     assert [p for p in found if "48.25" in subprocess.run(["ps", "-o", "args=", "-p", p], capture_output=True,
                                                             text=True).stdout] == []
+
+
+@pytest.mark.parametrize("new_session_every_hop", [False, True])
+async def test_a_chain_that_keeps_re_forking_is_frozen_and_killed(job, new_session_every_hop):
+    # the parent dies at once on every hop, so the newest copy carries on under a new pid (and, if asked, a new session)
+    hop = "    os.setsid()\n" if new_session_every_hop else ""
+    (job / "hop.py").write_text("import os, time, signal\nsignal.signal(signal.SIGHUP, signal.SIG_IGN)\n"
+                                "if os.fork():\n    os._exit(0)\nos.setsid()\nend = time.time() + 20\nn = 0\n"
+                                "while time.time() < end:\n    if os.fork():\n        os._exit(0)\n" + hop +
+                                "    n += 1\n    if n % 50 == 0:\n        open('alive.txt', 'w').write(str(time.time()))\n")
+    tool = shell.make_worker_shell(None, SimpleNamespace(id="job-hop", folder=job, taint="", read_dirs=[]))
+    await tool.func("/usr/bin/python3 hop.py </dev/null >/dev/null 2>&1; echo launched")
+    before = (job / "alive.txt").read_text() if (job / "alive.txt").exists() else ""
+    await asyncio.sleep(1.5)
+    after = (job / "alive.txt").read_text() if (job / "alive.txt").exists() else ""
+    assert before == after  # nothing of it is running any more

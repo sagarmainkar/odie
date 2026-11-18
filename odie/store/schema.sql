@@ -123,7 +123,8 @@ create index if not exists loop_events_loop on loop_events(loop_id);
 -- the user's tap in the app allowed for the job's next run only. taint: the outside text the chat had read when it
 -- started the job ("mail", "web pages"): such a Worker gets no web and no apps. version: rows this code wrote are 2;
 -- an older install's rows (the bots experiment's jobs table, upgraded by Store.init_schema) stay 0 and are never shown,
--- told, recovered or retried.
+-- told, recovered or retried. uses: what the job may reach besides its folder, ONE of: web (the web), apps:mail /
+-- apps:calendar / apps (the personality's apps, no web), folder (named folders, no web), none (tainted: nothing).
 create table if not exists jobs (
   id text primary key,
   kind text not null,
@@ -145,6 +146,7 @@ create table if not exists jobs (
   cleared integer not null default 0,
   taint text not null default '',
   read_dirs_json text not null default '[]',
+  uses text not null default 'web',
   version integer not null default 0,
   created_at text not null,
   started_at text,

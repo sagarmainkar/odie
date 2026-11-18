@@ -222,6 +222,55 @@ async def pushers(ref: Ref) -> list[str] | None:
     return logins
 
 
+async def write_keys(ref: Ref) -> list[str] | None:
+    """The repo's deploy keys that can push (tier 0): `gh api repos/<r>/keys`, those with read_only false; None when
+    GitHub won't say (then the rail refuses to test). A key that can write could have pushed to his branch."""
+    try:
+        text = await run_gh(["api", f"repos/{ref.repo_path}/keys", "--paginate", "--jq",
+                             "[.[] | select(.read_only == false) | .title]"])
+    except GitHubError:
+        return None
+    return _json_pages(text)
+
+
+async def unsigned_commits(ref: Ref, you: str) -> list[str] | None:
+    """The pull request's commits GitHub doesn't show as signed and verified by him (tier 0; only asked when he chose
+    "signed commits only"): `gh api repos/<r>/pulls/<n>/commits`; short shas, or None when GitHub won't say."""
+    try:
+        text = await run_gh(["api", f"repos/{ref.repo_path}/pulls/{ref.number}/commits", "--paginate", "--jq",
+                             "[.[] | {sha: .sha, verified: .commit.verification.verified, login: (.author.login // \"\")}]"])
+    except GitHubError:
+        return None
+    rows = _json_pages(text)
+    if rows is None:
+        return None
+    out = []
+    for row in rows:
+        if not isinstance(row, dict):
+            return None
+        his = str(row.get("login") or "").lower() == (you or "").lower() and bool(you)
+        if row.get("verified") is not True or not his:
+            out.append(str(row.get("sha") or "")[:7])
+    return out
+
+
+def _json_pages(text: str) -> list | None:
+    """The JSON lists `gh --paginate --jq` printed, one per page, joined; None when one isn't a list."""
+    out = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            page = json.loads(line)
+        except ValueError:
+            return None
+        if not isinstance(page, list):
+            return None
+        out += page
+    return out
+
+
 async def pr_diff(ref: Ref) -> str:
     """Step brief's read (tier 0): `gh pr diff <n> --repo <owner/repo>`, cut at DIFF_MOST characters."""
     text = await run_gh(["pr", "diff", str(ref.number), "--repo", ref.repo_path])
@@ -237,9 +286,13 @@ async def root_files(ref: Ref) -> list[str]:
     return [line.strip() for line in text.splitlines() if line.strip()]
 
 
-async def clone(ref: Ref, folder: str) -> None:
-    """A copy of the repo in folder (inside a test job's own folder), through gh, signed in as the user."""
-    await run_gh(["repo", "clone", ref.repo_path, folder, "--", "--quiet"], seconds=CLONE_SECONDS)
+async def clone(ref: Ref, folder: str, checkout: bool = True) -> None:
+    """A copy of the repo in folder (inside a test job's own folder), through gh, signed in as the user. checkout
+    False: no files written yet (nothing of his git settings runs on them; odie.loops.pr_test checks out safely)."""
+    extra = ["--quiet"]
+    if not checkout:
+        extra.append("--no-checkout")
+    await run_gh(["repo", "clone", ref.repo_path, folder, "--", *extra], seconds=CLONE_SECONDS)
 
 
 async def merge(ref: Ref, sha: str) -> None:

@@ -24,13 +24,17 @@ import sys
 from pathlib import Path
 
 SANDBOX_EXEC = "/usr/bin/sandbox-exec"
-SYSTEM_READS = ("/System", "/usr", "/bin", "/sbin", "/Library", "/private/etc", "/private/var/db",
-                "/private/var/select", "/dev", "/opt/homebrew", "/usr/local")
+SYSTEM_READS = ("/System", "/usr", "/bin", "/sbin", "/Library", "/private/etc", "/private/var/db/timezone",
+                "/private/var/select", "/dev", "/opt/homebrew", "/usr/local")  # not /private/var/db's system logs
+# Files no named folder may ever show, wherever they sit below it (third review, 19 Nov 2026): anything hidden (a
+# part starting with "." : .env, .git, .ssh) and the usual names of keys and secrets.
+SECRET_NAME_PATTERNS = (r"(.*/)?\.", r"(.*/)?[^/]*\.(pem|key|p12|pfx|keystore|jks|ppk)$", r"(.*/)?id_[^/]*$",
+                        r"(.*/)?secrets?\.[^/]*$", r"(.*/)?credentials[^/]*$", r"(.*/)?[^/]*\.kdbx$")
 TOOLCHAINS = (".local/share/uv/python", ".local/bin", ".cargo/bin", ".rustup/toolchains")  # under the home, read-only
 EXEC_DENIED = ("/usr/bin/open", "/usr/bin/osascript", "/bin/launchctl", "/usr/bin/at", "/usr/bin/crontab",
                "/usr/bin/ssh", "/usr/bin/scp", "/usr/bin/sftp", "/usr/bin/security", "/usr/bin/defaults",
                "/usr/bin/pbcopy", "/usr/bin/pbpaste", "/usr/bin/sudo", "/usr/bin/screen", "/opt/homebrew/bin/tmux",
-               "/usr/local/bin/tmux", "/opt/homebrew/bin/screen")
+               "/usr/local/bin/tmux", "/opt/homebrew/bin/screen", "/usr/sbin/lsof")
 MACH_ALLOWED = ("com.apple.dnssd.service", "com.apple.SystemConfiguration.configd", "com.apple.trustd",
                 "com.apple.trustd.agent", "com.apple.ocspd", "com.apple.system.opendirectoryd.libinfo",
                 "com.apple.system.notification_center", "com.apple.logd", "com.apple.system.logger")
@@ -63,12 +67,44 @@ def toolchain_reads(home: Path | None = None) -> list[str]:
     return [str(home / p) for p in TOOLCHAINS if (home / p).exists()]
 
 
+def regex_quoted(path: str) -> str:
+    """A path inside a profile regex: every character that means something in a regex is escaped."""
+    return "".join("\\" + c if c in ".^$*+?()[]{}|\\" else c for c in path)
+
+
+def odie_places() -> list[str]:
+    """Odie's own folders wherever they are (its home, data and settings): never readable, whatever is named."""
+    from odie import config
+    places = [config.settings.data_dir, config.settings.config_dir, os.environ.get("ODIE_HOME")]
+    return [str(Path(p).expanduser().resolve()) for p in places if p]
+
+
+def denials_after_named(read_dirs, home: Path) -> list[str]:
+    """What no named folder can uncover, written after the named folders' allows (a later rule wins): below each named
+    folder, hidden files and folders and key or secret file names; and the home's own hidden places, its Library and
+    Odie's folders. The kernel matches the real path on disk, so a named folder spelled in another case
+    (~/library/…) still meets these."""
+    out = []
+    for d in read_dirs:
+        root = regex_quoted(str(Path(d).resolve()))
+        patterns = " ".join(f'(regex #"^{root}/{p}")' for p in SECRET_NAME_PATTERNS)
+        out.append(f"(deny file-read* {patterns})")
+    home_root = regex_quoted(str(home.resolve()))
+    out.append(f'(deny file-read* (regex #"^{home_root}/\\.") (subpath {_quoted(str(home.resolve() / "Library"))}) '
+               f"{_subpaths(odie_places())})")
+    return out
+
+
 def profile(folder: Path, read_dirs: list[str] | tuple = (), network: str = NONE, home: Path | None = None) -> str:
     """The default-deny profile for one job (this module's notes). folder: the job's own folder (read and write);
-    read_dirs: folders the owner named for it (read-only); network: NONE (a Worker) or INTERNET (a pull request's
-    test: the internet, never this computer). home: the user's home (tests pass a stand-in)."""
+    read_dirs: folders the owner named for it (read-only, never their hidden or secret files); network: NONE (a Worker)
+    or INTERNET (a pull request's test: the internet, never this computer). home: the user's home (tests pass a
+    stand-in). Order matters, a later rule winning: the system and the named folders, then what nothing may uncover,
+    then the toolchains (hidden folders under the home) and the job's own folder (inside Odie's) again."""
+    if home is None:
+        home = Path.home()
     job = str(Path(folder).resolve())
-    reads = [*SYSTEM_READS, *toolchain_reads(home), job, *(str(Path(d).resolve()) for d in read_dirs)]
+    reads = [*SYSTEM_READS, *(str(Path(d).resolve()) for d in read_dirs)]
     mach = " ".join(f"(global-name {_quoted(m)})" for m in MACH_ALLOWED)
     denied_exec = " ".join(f"(literal {_quoted(p)})" for p in EXEC_DENIED)
     lines = [
@@ -87,6 +123,8 @@ def profile(folder: Path, read_dirs: list[str] | tuple = (), network: str = NONE
         "(allow file-read-metadata)",
         '(allow file-read* (literal "/") (literal "/private") (literal "/private/var"))',
         f"(allow file-read* {_subpaths(reads)})",
+        *denials_after_named(read_dirs, home),
+        f"(allow file-read* {_subpaths([*toolchain_reads(home), job])})",
         f"(allow file-write* (subpath {_quoted(job)}) (literal \"/dev/null\") (literal \"/dev/tty\") "
         "(literal \"/dev/dtracehelper\") (regex #\"^/dev/fd/\") (regex #\"^/dev/ttys\"))",
         f"(allow mach-lookup {mach})",
@@ -190,21 +228,55 @@ def in_job_sandbox(pid: int, folder: Path, beside: Path) -> bool:
 
 def processes_in(folder: Path, beside: Path) -> list[int]:
     """Every process of this user running in the job's sandbox now (Odie itself never)."""
-    import subprocess
+    return [pid for pid, _ in groups_in(folder, beside)]
+
+
+_LISTPIDS = None
+
+
+def my_pids() -> list[int]:
+    """This user's processes, listed in-process (libproc's proc_listpids by uid): a fraction of a millisecond, so a
+    process that keeps re-forking is still alive when it is checked. `ps` (a fork and an exec) is the fallback."""
+    global _LISTPIDS
+    try:
+        import ctypes
+        if _LISTPIDS is None:
+            lib = ctypes.CDLL("/usr/lib/libproc.dylib")
+            _LISTPIDS = lib.proc_listpids
+            _LISTPIDS.restype = ctypes.c_int
+            _LISTPIDS.argtypes = [ctypes.c_uint32, ctypes.c_uint32, ctypes.c_void_p, ctypes.c_int]
+        size = 4096
+        buffer = (ctypes.c_int * size)()
+        used = _LISTPIDS(4, os.getuid(), buffer, ctypes.sizeof(buffer))  # 4: PROC_UID_ONLY
+        if used <= 0:
+            raise OSError("proc_listpids gave nothing")
+        return [pid for pid in buffer[: used // ctypes.sizeof(ctypes.c_int)] if pid > 0]
+    except Exception:  # noqa: BLE001
+        import subprocess
+        listing = subprocess.run(["/bin/ps", "-axo", "pid=,uid="], capture_output=True, text=True).stdout
+        mine = str(os.getuid())
+        return [int(line.split()[0]) for line in listing.splitlines() if len(line.split()) == 2 and line.split()[1] == mine]
+
+
+def groups_in(folder: Path, beside: Path, others: set[int] | None = None) -> list[tuple[int, int]]:
+    """Every process of this user running in the job's sandbox now, with its process group: [(pid, pgid)]. others:
+    pids already found not to be the job's in this sweep (skipped, and grown here), so a repeated look checks only new
+    processes, in microseconds: a chain that re-forks and moves to a new session every hop is still caught alive."""
     folder.mkdir(parents=True, exist_ok=True)  # both must exist for the check; a job may have removed its folder
     beside.mkdir(parents=True, exist_ok=True)
-    listing = subprocess.run(["/bin/ps", "-axo", "pid=,uid="], capture_output=True, text=True).stdout
-    mine = os.getuid()
+    if others is None:
+        others = set()
     found = []
-    for line in listing.splitlines():
-        parts = line.split()
-        if len(parts) != 2:
+    me = os.getpid()
+    for pid in sorted(my_pids(), reverse=True):  # newest first: a re-forking chain's head has the highest pid
+        if pid == me or pid in others:
             continue
-        pid, uid = int(parts[0]), int(parts[1])
-        if uid != mine or pid == os.getpid():
+        if sandboxed(pid) is False or not in_job_sandbox(pid, folder, beside):
+            others.add(pid)
             continue
-        if sandboxed(pid) is False:
-            continue  # not in any sandbox: not the job's (cheap check first)
-        if in_job_sandbox(pid, folder, beside):
-            found.append(pid)
+        try:
+            pgid = os.getpgid(pid)
+        except (ProcessLookupError, PermissionError):
+            continue
+        found.append((pid, pgid))
     return found

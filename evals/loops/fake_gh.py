@@ -7,6 +7,8 @@ FAKE_GH_DATA and appends each call's arguments to FAKE_GH_LOG, one JSON list per
   "contents:example/app": ["pyproject.toml"]  gh api repos/example/app/contents --jq .[].name
   "clone:example/app": "/tmp/…/app-origin"    gh repo clone example/app <folder> -- …  (a local git repo, cloned)
   "collaborators:example/app": ["asha-dev"]   gh api repos/example/app/collaborators … (the logins with push)
+  "keys:example/app": ["ci-deploy"]           gh api repos/example/app/keys … (deploy keys that can write; "error")
+  "commits:example/app#49": [{sha, verified, login}]  gh api repos/example/app/pulls/49/commits …
 gh pr merge <n> --repo <r> --squash --match-head-commit <sha> merges only when <sha> is the pull request's
 headRefOid; it then marks it MERGED in the data file, as GitHub would."""
 import json
@@ -34,6 +36,18 @@ if args[:1] == ["api"] and len(args) > 1 and args[1].startswith("repos/") and ar
         print("HTTP 403: Must have push access to view repository collaborators.", file=sys.stderr)
         sys.exit(1)
     print(json.dumps(data[f"collaborators:{repo}"]))  # what the --jq filter gives: the logins with push
+    sys.exit(0)
+if args[:1] == ["api"] and len(args) > 1 and args[1].startswith("repos/") and args[1].endswith("/keys"):
+    repo = args[1][len("repos/"):-len("/keys")]
+    keys = data.get(f"keys:{repo}", [])
+    if keys == "error":
+        print("HTTP 404: Not Found", file=sys.stderr)
+        sys.exit(1)
+    print(json.dumps(keys))  # the --jq filter's answer: titles of the keys that can write
+    sys.exit(0)
+if args[:1] == ["api"] and len(args) > 1 and args[1].startswith("repos/") and "/pulls/" in args[1] and args[1].endswith("/commits"):
+    key = args[1][len("repos/"):-len("/commits")].replace("/pulls/", "#")
+    print(json.dumps(data.get(f"commits:{key}", [])))  # [{sha, verified, login}]
     sys.exit(0)
 if args[:1] == ["api"] and len(args) > 1 and args[1].startswith("repos/") and args[1].endswith("/contents"):
     repo = args[1][len("repos/"):-len("/contents")]

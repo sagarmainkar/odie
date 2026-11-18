@@ -101,7 +101,7 @@ describe("Needs you on Pulse", () => {
     };
     const html = renderToStaticMarkup(<NeedsYou items={[job]} footer="" closed={[]} onAct={() => {}} onReopen={() => {}} />);
     expect(html).toContain(">Show all</button>");
-    expect(html).toContain("May read: ~/work/app");
+    expect(html).toContain("May read: ~/work/app, no web");
     expect(html).toContain(long);  // the whole command is in the card, only clamped until shown
   });
 });

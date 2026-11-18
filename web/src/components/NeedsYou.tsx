@@ -50,8 +50,11 @@ export function NeedsYou({ items, footer, closed, notes = [], loopsDone = [], jo
                 {n.badge && <span className={`chip ${badgeTone(n.badge) === "warn" ? "chip-warn" : "chip-soft"} mt-1.5 inline-flex`}>{n.badge}</span>}
               </span>
             </button>
+            {n.uses && <div className="min-[430px]:ml-12 text-small leading-[18px] text-muted">{n.uses}</div>}
             {!!n.may_read?.length && (
-              <div className="min-[430px]:ml-12 text-small leading-[18px] text-muted break-all">May read: {n.may_read.join(", ")}</div>
+              <div className="min-[430px]:ml-12 text-small leading-[18px] text-muted break-all">
+                May read: {n.may_read.join(", ")}, no web · read as plain files; hidden files and git history aren't available
+              </div>
             )}
             {!!n.steps?.length && (
               <ul className="min-[430px]:ml-12 flex flex-col gap-2" aria-label="Steps it needed">

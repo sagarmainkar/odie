@@ -105,10 +105,16 @@ class UnlockedToolset(BaseToolset):
 
 
 def no_web(job: Job) -> bool:
-    """Whether a Worker gets no web tools and no apps: its chat had read outside text (taint), or it may read folders
-    of the user's (a job reads his folders or the web, never both: what it read could leave through a web fetch).
-      started after reading mail -> True;  may read ~/work/app -> True;  neither -> False"""
-    return bool(job.taint) or bool(job.read_dirs)
+    """Whether a Worker gets no web tools: anything but a job that uses the web (odie.workers.tools.uses_for). A job
+    gets ONE of the web, his apps or his named folders, so what it read of his can't leave through a web fetch.
+      uses the web -> False;  uses your mail -> True;  may read ~/work/app -> True;  tainted -> True"""
+    return job.uses != "web" or bool(job.taint) or bool(job.read_dirs)
+
+
+def uses_apps(job: Job) -> bool:
+    """Whether a Worker gets the personality's apps: only a job that uses them ("check my mail for …"), never with
+    the web, a named folder or taint."""
+    return job.uses.startswith("apps") and not job.taint and not job.read_dirs
 
 
 def tools_for(store: Store, job: Job, runner) -> list:
@@ -120,10 +126,11 @@ def tools_for(store: Store, job: Job, runner) -> list:
     from odie.workers.files import make_job_file_tools
     from odie.workers.shell import make_worker_shell
     own = [make_worker_shell(store, job), *make_job_file_tools(job.folder)]
+    if uses_apps(job):
+        return [*own, *(UnlockedToolset(t) for t in getattr(runner, "_plugin_toolsets", []))]
     if no_web(job):
         return own
-    apps = [UnlockedToolset(t) for t in getattr(runner, "_plugin_toolsets", [])]
-    return [*own, *make_web_tools(store=store, browser_for=None, ask_first=False), *apps]
+    return [*own, *make_web_tools(store=store, browser_for=None, ask_first=False)]
 
 
 def shell_reasons(store: Store, job: Job, command: str, cwd: str | None) -> list[str]:
@@ -162,6 +169,26 @@ def refusal_words(why: str) -> str:
             "your report what you needed; they can allow it and run the job again.")
 
 
+WEB_TOOLS = frozenset({"web_fetch", "web_search"})
+MIXED = allow.MIXED
+
+
+def seen_of(job: Job) -> set:
+    """What has entered this run so far: "web" (a page or a search), "private" (an app's answer, a named folder)."""
+    seen = getattr(job, "_seen", None)
+    if seen is None:
+        seen = set()
+        job._seen = seen
+    return seen
+
+
+def reads_a_named_folder(job: Job, args: dict) -> bool:
+    """Whether a shell call reaches one of the job's named folders: it runs inside one, or names one."""
+    command = str(args.get("command") or "")
+    cwd = str(args.get("cwd") or "")
+    return any(cwd.startswith(d) or d in command for d in job.read_dirs or [])
+
+
 def guard_for(store: Store, job: Job, runner):
     """before_tool_callback: decides whether a Worker's call runs.
       run_shell with no cwd                        -> cwd becomes the job's folder, then the rules below
@@ -172,6 +199,7 @@ def guard_for(store: Store, job: Job, runner):
       an app tool that would ask in Smart (GMAIL_SEND_EMAIL), not allowed -> refused, noted, recorded
       anything else (web_search, write_file, an app's read)               -> runs"""
     allowed = job.allowed or []
+    seen = seen_of(job)
 
     def refuse(tool_name: str, args: dict, need: dict) -> dict:
         jobs.record_action(store, job.id, tool_name, args, refused=need["why"])
@@ -191,6 +219,10 @@ def guard_for(store: Store, job: Job, runner):
             if not missing:
                 return None
             return refuse(tool.name, args, allow.need_for_shell(command, missing[0], args.get("cwd")))
+        mixes = (tool.name in WEB_TOOLS and "private" in seen) or (
+            getattr(tool, "_odie_server", None) is not None and "web" in seen)
+        if mixes:  # the second layer: one run never carries his data to the web, nor a page's words to his apps
+            return refuse(tool.name, args, {"tool": tool.name, "args": {}, "why": MIXED})
         if getattr(tool, "_odie_server", None) is None:
             return None
         switched_off = runner._apps_stop(tool, args, tool_context)
@@ -206,11 +238,20 @@ def guard_for(store: Store, job: Job, runner):
 
 
 def after_for(store: Store, job: Job):
-    """after_tool_callback: every call that ran goes on the record with the size of its answer. A call the guard
-    refused is already on the record (ADK still calls this with the refusal as the answer): nothing more."""
+    """after_tool_callback: every call that ran goes on the record with the size of its answer, and what it brought
+    into the run is noted for the guard (a web result -> "web"; an app's answer or a named folder -> "private"). A
+    call the guard refused is already on the record (ADK still calls this with the refusal as the answer)."""
+    seen = seen_of(job)
+
     def after(tool, args, tool_context, tool_response):
         if isinstance(args, dict) and args.pop(REFUSED, None):
             return
+        if tool.name in WEB_TOOLS:
+            seen.add("web")
+        elif getattr(tool, "_odie_server", None) is not None:
+            seen.add("private")
+        elif tool.name == "run_shell" and isinstance(args, dict) and reads_a_named_folder(job, args):
+            seen.add("private")
         jobs.record_action(store, job.id, tool.name, args, result_chars=len(json.dumps(tool_response, default=str)))
     return after
 
@@ -316,6 +357,8 @@ async def tell(store: Store, runner, job: Job, text: str, media: list[dict]) -> 
     if owner_id and record is None:
         return  # its personality is gone: nobody to tell
     await runner.post_message(fenced_for_the_model(text), job.session_id, media=media or None, kind="job", shown=text)
+    from odie.workers import taint as job_taint
+    job_taint.note(store, job.session_id, job_taint.JOB)  # its words came from a run: later jobs from here are tainted
     title = persona.get(store)["name"]
     body = text[:160]
     if record is not None:

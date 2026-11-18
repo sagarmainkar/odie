@@ -32,10 +32,11 @@ EXTENSION = "installs software (an editor extension)"
 OUTSIDE_RUN = "starts something outside its sandbox"
 LOCAL_SERVICES = "talks to services on this computer"
 HIDDEN_HOME = "reads hidden files in your home"
+MIXED = "would mix the web with your apps or folders in one run"
 # Needs a tap on a job card may never cover: only the user, in chat, with a full approval.
 NEVER = frozenset({"reads secrets", "touches Odie's own files", ODIE_ITSELF, GITHUB,
                    "switches off another agent's approvals", "reaches a hidden file by a pattern", OTHER_APPS, GIT_RUNS,
-                   DOWNLOAD_RUN, CLIPBOARD, APP_DATA, EXTENSION, OUTSIDE_RUN, LOCAL_SERVICES, HIDDEN_HOME})
+                   DOWNLOAD_RUN, CLIPBOARD, APP_DATA, EXTENSION, OUTSIDE_RUN, LOCAL_SERVICES, HIDDEN_HOME, MIXED})
 PLAIN = {
     "deletes or stops something": "Delete or stop something",
     "writes a file outside /tmp": "Write a file outside its folder",
@@ -227,10 +228,27 @@ def bind_files(needs: list[dict], folder: Path) -> list[dict]:
     return out
 
 
+def visible(text: str) -> str:
+    """Text with every invisible or direction-changing character written out as an escape, so a card can't show one
+    recipient while the tap allows another (third review, 19 Nov 2026): Unicode's format characters (right-to-left
+    overrides U+202A-202E, isolates U+2066-2069, zero-width U+200B-200F, U+FEFF…) and control characters but tab and
+    newline. "asha@example.com\u202emoc" -> "asha@example.com\\u202emoc"; plain text -> unchanged."""
+    import unicodedata
+    out = []
+    for ch in text:
+        category = unicodedata.category(ch)
+        hidden = category == "Cf" or (category == "Cc" and ch not in "\n\t")
+        if hidden:
+            out.append(f"\\u{ord(ch):04x}")
+        else:
+            out.append(ch)
+    return "".join(out)
+
+
 def needs_hash(needs: list[dict]) -> str:
-    """A short hash of exactly the needs a card shows: the tap sends it back, and the server allows nothing if the
-    job's needs changed since (a different list, a different command)."""
-    text = json.dumps(needs, sort_keys=True, default=str)
+    """A short hash of exactly the needs a card shows (with invisible characters written out, as shown): the tap
+    sends it back, and the server allows nothing if the job's needs changed since."""
+    text = visible(json.dumps(needs, sort_keys=True, default=str, ensure_ascii=False))
     return hashlib.sha256(text.encode()).hexdigest()[:16]
 
 
@@ -253,11 +271,11 @@ def raw(need: dict) -> str:
     """The exact call, whole, for the card: the command; or the app call with every argument, who it goes to and what
     it attaches first (FIRST_FIELDS), never cut."""
     if need.get("tool") == "run_shell":
-        return need.get("command", "")
+        return visible(need.get("command", ""))
     args = need.get("args") or {}
     ordered = {k: args[k] for k in FIRST_FIELDS if k in args}
     ordered.update({k: v for k, v in args.items() if k not in ordered})
-    return f"{need.get('tool', '')} {json.dumps(ordered, ensure_ascii=False)}"
+    return visible(f"{need.get('tool', '')} {json.dumps(ordered, ensure_ascii=False)}")
 
 
 def line(need: dict) -> str:

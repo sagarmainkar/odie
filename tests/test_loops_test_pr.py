@@ -140,7 +140,7 @@ async def test_pr_facts_say_the_head_commit_the_files_and_whose_repo(store, fake
 def facts_of(**over):
     base = {"state": "open", "yours": True, "on_your_repo": True, "from_fork": False, "paths": ["app.py"], "files": 1,
             "head_sha": "a" * 40, "author": "asha-dev", "you": "asha-dev", "ref": "asha-dev/app#49",
-            "commit_authors": ["asha-dev"], "pushers": ["asha-dev"]}
+            "commit_authors": ["asha-dev"], "pushers": ["asha-dev"], "write_keys": []}
     return {**base, **over}
 
 
@@ -556,3 +556,26 @@ async def test_merge_is_refused_when_ci_runs_or_fails_at_the_tap(store, fake_gh,
 def test_no_merge_while_ci_is_pending():
     assert cards.may_merge({"carded": True, "ok": True, "checks": "running"}) is False
     assert cards.may_merge({"carded": True, "ok": True, "checks": "green"}) is True
+
+
+async def test_a_repo_with_a_deploy_key_that_writes_is_briefed_only(store, fake_gh, origin):
+    own_pr(fake_gh, origin())
+    fake_gh.data["keys:asha-dev/app"] = ["ci-deploy"]
+    fake_gh.save()
+    recipes.approve(store, "asha-dev/app", "make test", NOW)
+    lid = a_loop(store)
+    assert await choose.choose(store, ledger.get(store, lid), NOW, model_says(TEST)) == "ready"
+    assert "Not tested: a deploy key can push to the repo (ci-deploy)" in [e["fact"] for e in ledger.events(store, lid)]
+
+
+async def test_signed_commits_only_checks_every_commit_when_he_chose_it(store, fake_gh, origin):
+    from odie.loops import rail
+    sha = origin()
+    own_pr(fake_gh, sha)
+    fake_gh.data["commits:asha-dev/app#49"] = [{"sha": sha, "verified": False, "login": "asha-dev"}]
+    fake_gh.save()
+    recipes.approve(store, "asha-dev/app", "make test", NOW)
+    store.set_setting(rail.SIGNED_ONLY, True)
+    lid = a_loop(store)
+    assert await choose.choose(store, ledger.get(store, lid), NOW, model_says(TEST)) == "ready"
+    assert f"Not tested: a commit isn't signed by you ({sha[:7]})" in [e["fact"] for e in ledger.events(store, lid)]

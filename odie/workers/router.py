@@ -73,7 +73,7 @@ def waiting_for(store: Store, personality: str) -> int:
 
 def start(title: str, brief: str, session_id: str | None, personality: str = "", kind: str = "task",
           started_by: str = "you", loop_id: int | None = None, taint: str = "",
-          read_dirs: list | None = None) -> Job | None:
+          read_dirs: list | None = None, uses: str = "web") -> Job | None:
     """Start a job: the row, the folder, and a task that runs it when a slot is free. Returns the job, or None when it
     is Odie's own and today's ODIE_DAILY are used. A user's job with MAX_WAITING of theirs already waiting raises
     TooMany. taint: the outside text the starting chat had read (no web, no apps for its Worker). Needs the running loop."""
@@ -86,7 +86,8 @@ def start(title: str, brief: str, session_id: str | None, personality: str = "",
     job_id = jobs.new_id()
     folder = folder_for(title, job_id)
     job = jobs.create(store, kind, title, brief, session_id, folder, worker.BUDGET_SECONDS, personality=personality,
-                      started_by=started_by, loop_id=loop_id, job_id=job_id, taint=taint, read_dirs=read_dirs)
+                      started_by=started_by, loop_id=loop_id, job_id=job_id, taint=taint, read_dirs=read_dirs,
+                      uses=uses)
     launch(job)
     return job
 

@@ -131,9 +131,20 @@ async def run_test(command: str, repo: Path, folder: Path) -> tuple[int | None, 
     from odie.workers import sandbox, shell
     argv = sandbox.command(["/bin/sh", "-c", command], folder, network=sandbox.INTERNET)
     try:
-        return await run_command(argv, repo, TEST_SECONDS, env=sandbox.env(folder))
+        return await run_command(argv, repo, TEST_SECONDS, env=test_env(folder))
     finally:
         shell.sweep(folder)
+
+
+def test_env(folder: Path) -> dict[str, str]:
+    """The sandbox's environment, with the user's uv-managed Pythons put on PATH: uv uses them as they are (they are
+    readable, never writable) instead of downloading one into each job."""
+    from odie.workers import sandbox
+    env = sandbox.env(folder)
+    pythons = sorted(str(p) for p in (Path.home() / ".local/share/uv/python").glob("cpython-*/bin") if p.is_dir())
+    if pythons:
+        env["PATH"] = ":".join([env["PATH"], *pythons])
+    return env
 
 
 def keep_output(folder: Path, run: int, output: str) -> Path:
@@ -151,13 +162,28 @@ def keep_output(folder: Path, run: int, output: str) -> Path:
     return path
 
 
-GIT_SAFE = ("-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false")
+GIT_SAFE = ("-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "filter.lfs.smudge=",
+            "-c", "filter.lfs.process=", "-c", "filter.lfs.required=false")
+
+
+def git_env() -> dict[str, str]:
+    """Odie's own git, outside the sandbox, reads none of his git settings (no filters, LFS or helpers from his global
+    or system config run on the pull request's files): GIT_CONFIG_GLOBAL=/dev/null, GIT_CONFIG_NOSYSTEM=1."""
+    return {**clean_env(), "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_NOSYSTEM": "1"}
+
+
+def credential_args() -> tuple[str, ...]:
+    """gh as git's only credential helper (his own settings are off), so a private repo can still be fetched."""
+    gh = github.gh_path()
+    if not gh:
+        return ()
+    return ("-c", "credential.helper=", "-c", f"credential.helper=!{gh} auth git-credential")
 
 
 async def git(cwd: Path, *args: str) -> str:
-    """Odie's own git command in the clone: hooks and the file-system monitor are switched off, so nothing in the
-    repository runs (a clone brings no config or hooks of its own; the pull request's code runs only in the sandbox)."""
-    code, out = await run_command(["git", *GIT_SAFE, *args], cwd, GIT_SECONDS)
+    """Odie's own git command in the clone: hooks, the file-system monitor, LFS and every setting of his are off,
+    so nothing in the repository runs (the pull request's code runs only in the sandbox)."""
+    code, out = await run_command(["git", *GIT_SAFE, *credential_args(), *args], cwd, GIT_SECONDS, env=git_env())
     if code != 0:
         raise PrTestError(f"git {args[0]} failed: {out.strip()[:200]}")
     return out.strip()
@@ -170,7 +196,7 @@ async def checkout(ref: github.Ref, sha: str, folder: Path) -> Path:
     if repo.exists():
         shutil.rmtree(repo)
     try:
-        await github.clone(ref, str(repo))
+        await github.clone(ref, str(repo), checkout=False)
     except github.GitHubError as e:
         raise PrTestError(f"the clone failed: {e}") from e
     await git(repo, "fetch", "-q", "origin", f"pull/{ref.number}/head")

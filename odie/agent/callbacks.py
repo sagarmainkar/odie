@@ -256,7 +256,7 @@ class OdiePlugin(BasePlugin):
         from odie.plugins import access
         server = access.server_of_object(self.store, tool, session_id)  # the connection this very object reached
         from odie.workers import taint as job_taint
-        job_taint.note_call(self.store, session_id, tool.name, server)  # web or app text: later jobs from here are tainted
+        job_taint.note_call(self.store, session_id, tool.name, server, tool_args)  # web or app text: later jobs tainted
         summary = _summarise(result)
         if server is not None:
             summary = f"{server}: {summary}"

@@ -4,9 +4,11 @@ computer, from fresh `gh` facts only, never from what the model or a mail says. 
   - it is open and its head is not from a fork (`isCrossRepository` false);
   - nobody but him can push to the repo (`gh api repos/<r>/collaborators`, those with push; GitHub not answering
     counts as someone else): a commit's author is only an email a collaborator could forge, but a commit can only
-    reach his branch through an account with push. (Another way, not built: every commit signature-verified by
-    GitHub as his.) And every commit's author is his login, with fewer than 100 commits listed (GitHub lists at most
-    100, so more can't be checked);
+    reach his branch through an account with push; and no deploy key can write (a key, or a GitHub App or Action
+    holding one, could push commits under his email). When he chose "signed commits only" (the setting SIGNED_ONLY,
+    off by default: an unsigned workflow would be refused every time), every commit must also be signed and verified
+    by GitHub as his. And every commit's author is his login, with fewer than 100 commits listed (GitHub lists at
+    most 100, so more can't be checked);
   - GitHub listed every file it changes (it lists at most 100): more files than listed -> briefed only;
   - it leaves dependency, lock and package-tool config files alone (DEPENDENCY_NAMES / DEPENDENCY_GLOBS /
     DEPENDENCY_PATHS, read from `gh pr view --json files`), so the test installs only what he already runs: a
@@ -41,6 +43,7 @@ COMMAND_FILES = {"make": ("Makefile", "makefile", "GNUmakefile", "*.mk", "*.make
 DEPENDENCY_GLOBS = ("requirements*.txt", "constraints*.txt", "*.gemspec", "*.csproj", "build.gradle*",
                     "settings.gradle*", ".yarnrc*", "rust-toolchain*")
 NO_RECIPE = "no test command is approved for this repo yet"
+SIGNED_ONLY = "loops.signed_commits_only"  # his choice: test only pull requests whose every commit he signed
 
 
 def dependency_files(paths: list[str]) -> list[str]:
@@ -88,6 +91,8 @@ def why_not(facts: dict, recipe: str | None) -> str | None:
       from a fork                             -> "it comes from a fork"
       bob can push to the repo too            -> "others can push to the repo (bob)"
       GitHub won't list who can push          -> "GitHub didn't say who can push to the repo"
+      a deploy key with write access          -> "a deploy key can push to the repo (ci-deploy)"
+      he chose signed commits only, one isn't -> "a commit isn't signed by you (abc1234)"
       a commit by bob                         -> "it has commits by someone else (bob)"
       140 files changed, 100 listed           -> "it changes more files than GitHub listed (100 of 140)"
       changes the Makefile, recipe `make test` -> "it changes what `make test` runs (Makefile)"
@@ -108,6 +113,17 @@ def why_not(facts: dict, recipe: str | None) -> str | None:
     others_push = [p for p in pushers if p.lower() != (facts.get("you") or "").lower()]
     if others_push:
         return f"others can push to the repo ({', '.join(others_push[:3])})"
+    keys = facts.get("write_keys")
+    if keys is None:
+        return "GitHub didn't list the repo's deploy keys"
+    if keys:
+        return f"a deploy key can push to the repo ({', '.join(str(k) for k in keys[:3])})"
+    if facts.get("signed_only"):
+        unsigned = facts.get("unsigned")
+        if unsigned is None:
+            return "GitHub didn't say who signed the commits"
+        if unsigned:
+            return f"a commit isn't signed by you ({', '.join(unsigned[:3])})"
     commit_authors = facts.get("commit_authors") or []
     if not commit_authors:
         return "GitHub gave no commits"
