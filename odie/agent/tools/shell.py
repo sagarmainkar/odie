@@ -57,27 +57,33 @@ def make_shell_tool(home: Path | None = None, store=None) -> FunctionTool:
         deadline = loop.time() + TIMEOUT_S
         assert proc.stdout is not None
         try:
-            while True:
-                left = deadline - loop.time()
-                if left <= 0:
-                    timed_out = True
-                    break
-                chunk = await asyncio.wait_for(proc.stdout.read(4096), left)
-                if not chunk:
-                    break
-                chunks.append(chunk)
-                size += len(chunk)
-                if size > OUTPUT_CAP:
-                    truncated = True
-                    break
-        except asyncio.TimeoutError:
-            timed_out = True
-        if truncated or timed_out:
+            try:
+                while True:
+                    left = deadline - loop.time()
+                    if left <= 0:
+                        timed_out = True
+                        break
+                    chunk = await asyncio.wait_for(proc.stdout.read(4096), left)
+                    if not chunk:
+                        break
+                    chunks.append(chunk)
+                    size += len(chunk)
+                    if size > OUTPUT_CAP:
+                        truncated = True
+                        break
+            except asyncio.TimeoutError:
+                timed_out = True
+            if truncated or timed_out:
+                kill_group()
+            try:
+                await asyncio.wait_for(proc.wait(), 5)
+            except asyncio.TimeoutError:
+                kill_group()
+        except asyncio.CancelledError:
+            # The turn was stopped while the command ran: the command stops with it, children and all, so nothing it
+            # was about to do happens after the stop (`sleep 7 && echo x > f` cancelled at 1 s -> no f).
             kill_group()
-        try:
-            await asyncio.wait_for(proc.wait(), 5)
-        except asyncio.TimeoutError:
-            kill_group()
+            raise
         text = b"".join(chunks).decode(errors="replace")
         if timed_out:
             text += f"\n[stopped after {TIMEOUT_S} seconds]"
