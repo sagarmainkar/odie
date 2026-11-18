@@ -13,6 +13,7 @@ from odie.workers import allow
 from odie.workers import store as jobs
 
 CARD_DAYS = 3  # a stuck job's card stays this long unless cleared or run again
+BRIEF_MOST = 160  # characters of the report a card shows (the whole report is in the chat)
 STATE_OF = {"queued": "waiting for a slot", "running": "working"}
 
 
@@ -49,10 +50,14 @@ def needs_a_card(row: dict, now: datetime) -> bool:
 
 
 def why_of(row: dict) -> str:
-    """The card's line: what was needed ("I needed to: `x` (why)"), else why it failed, else the report's first line."""
+    """The card's line: what was needed, the first need with a long command cut ("I needed to: `x` (why) and 1 more"),
+    else why it failed, else the report's first line."""
     needed = jobs.needed(row)
     if needed:
-        return "I needed to: " + "; ".join(allow.line(n) for n in needed)
+        words = "I needed to: " + allow.line(needed[0], short=True)
+        if len(needed) > 1:
+            words += f" and {len(needed) - 1} more"
+        return words
     if row["status"] == "failed":
         return f"Didn't finish: {row['error'] or 'it stopped'}"
     if row["status"] == "stopped":
@@ -70,7 +75,7 @@ def card(row: dict) -> dict:
         main = {"label": "Allow it and run again", "action": "job_allow", "value": row["id"]}
     brief = ""
     if row["report"]:
-        brief = row["report"][:300]
+        brief = row["report"][:BRIEF_MOST]
     return {"ref": f"job:{row['id']}", "title": row["title"], "why": why_of(row), "brief": brief, "icon": "terminal",
             "badge": "", "ask": f"What happened with job {row['id']} ({row['title']})?", "main": main,
             "other": {"label": "Done", "action": "job_clear", "value": row["id"]}, "pile": "alerts",

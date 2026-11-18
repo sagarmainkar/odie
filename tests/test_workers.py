@@ -127,6 +127,7 @@ def test_an_allow_covers_a_passable_kind_and_otherwise_only_the_exact_call():
     assert not allow.covers([], "run_shell", {"command": "rm a"}, ["deletes or stops something"])
     both = ["deletes or stops something", "installs software (runs its install scripts)"]
     assert not allow.covers([deletes], "run_shell", {"command": "rm a && npm install x"}, both)  # every reason needs cover
+    assert allow.uncovered([deletes], "run_shell", {"command": "rm a && npm install x"}, both) == [both[1]]
 
 
 def test_what_was_needed_reads_as_a_line():
@@ -177,6 +178,8 @@ def test_an_allowed_retry_lets_exactly_that_through(world, tmp_path):
     guard = worker.guard_for(store, job, chat)
     assert guard(Tool("run_shell"), {"command": "rm ~/Documents/old.txt", "cwd": str(job.folder)}, None) is None
     assert guard(Tool("run_shell"), {"command": "cat ~/.env", "cwd": str(job.folder)}, None) is not None
+    refused = guard(Tool("run_shell"), {"command": "rm ~/Documents/old.txt && npm install left-pad", "cwd": str(job.folder)}, None)
+    assert refused["error"].startswith("Not run: it installs software")  # the reason his tap didn't cover
 
 
 # ── a run, end to end ────────────────────────────────────────────────────────

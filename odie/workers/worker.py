@@ -165,9 +165,10 @@ def guard_for(store: Store, job: Job, runner):
                 args["cwd"] = str(job.folder)
             command = str(args.get("command") or "")
             reasons = shell_reasons(store, job, command, args.get("cwd"))
-            if allow.covers(allowed, "run_shell", args, reasons):
+            missing = allow.uncovered(allowed, "run_shell", args, reasons)
+            if not missing:
                 return None
-            return refuse(tool.name, args, allow.need_for_shell(command, reasons[0]))
+            return refuse(tool.name, args, allow.need_for_shell(command, missing[0]))
         if getattr(tool, "_odie_server", None) is None:
             return None
         switched_off = runner._apps_stop(tool, args, tool_context)

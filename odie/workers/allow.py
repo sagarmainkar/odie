@@ -15,7 +15,7 @@ from odie.workers.store import loads
 
 APP_WHY = "sends, pays, publishes or removes something in an app"
 
-__all__ = ["APP_WHY", "covers", "line", "loads", "need_for_shell", "need_for_app"]
+__all__ = ["APP_WHY", "covers", "line", "loads", "need_for_shell", "need_for_app", "uncovered"]
 
 
 def need_for_shell(command: str, why: str) -> dict:
@@ -31,17 +31,23 @@ def _same_args(a: dict | None, b: dict | None) -> bool:
 
 
 def covers(allowed: list[dict], tool_name: str, args: dict | None, reasons: list[str]) -> bool:
-    """Whether what his tap allowed lets this call run. Every reason it would ask for must be covered:
-      allowed deletes (`rm old.txt`), now `rm -f build.log`           -> True  (deletes are a kind a pass may cover)
-      allowed deletes, now `cat ~/.env` (reads secrets)               -> False
-      allowed `npm install left-pad`, now the same command            -> True  (that exact call)
-      allowed `npm install left-pad`, now `npm install evil`          -> False (installs: only the exact call)
-      allowed GMAIL_SEND_EMAIL to asha@…, now the same args           -> True; to someone else -> False
-      nothing allowed                                                 -> False"""
+    """Whether what his tap allowed lets this call run: every reason it would ask for is covered (see uncovered):
+      allowed deletes (`rm old.txt`), now `rm -f build.log` -> True;  now `cat ~/.env` -> False"""
+    return not uncovered(allowed, tool_name, args, reasons)
+
+
+def uncovered(allowed: list[dict], tool_name: str, args: dict | None, reasons: list[str]) -> list[str]:
+    """The reasons this call would ask for that his tap did not allow, in order ([] = it may run):
+      allowed deletes (`rm old.txt`), now `rm -f build.log`           -> [] (deletes are a kind a pass may cover)
+      allowed deletes, now `cat ~/.env` (reads secrets)               -> ["reads secrets"]
+      allowed `npm install left-pad`, now the same command            -> [] (that exact call)
+      allowed `npm install left-pad`, now `npm install evil`          -> ["installs …"] (installs: only the exact call)
+      allowed GMAIL_SEND_EMAIL to asha@…, now the same args           -> []; to someone else -> [APP_WHY]
+      nothing allowed, `rm a`                                         -> ["deletes or stops something"]
+      allowed deletes, now `rm a && npm install x` (deletes, installs) -> ["installs software (…)"]"""
     from odie.agent.shell_grant import PASSABLE
-    if not reasons:
-        return True
     args = args or {}
+    missing = []
     for why in reasons:
         covered = False
         for a in allowed:
@@ -55,13 +61,20 @@ def covers(allowed: list[dict], tool_name: str, args: dict | None, reasons: list
             if covered:
                 break
         if not covered:
-            return False
-    return True
+            missing.append(why)
+    return missing
 
 
-def line(need: dict) -> str:
+SHORT = 70  # characters of a command a card shows (the chat's report shows it whole)
+
+
+def line(need: dict, short: bool = False) -> str:
     """A need in words for the report and the card: "`rm old.txt` (deletes or stops something)";
-    "GMAIL_SEND_EMAIL (sends, pays, publishes or removes something in an app)"."""
+    "GMAIL_SEND_EMAIL (sends, pays, publishes or removes something in an app)". short: a long command is cut for a
+    card: "`D=/private/tmp/…/notes; ls -l "$D"; …` (writes a file outside /tmp)" -> its first SHORT characters + "…"."""
     if need.get("tool") == "run_shell":
-        return f"`{need.get('command', '')}` ({need.get('why', '')})"
+        command = need.get("command", "")
+        if short and len(command) > SHORT:
+            command = command[:SHORT].rstrip() + "…"
+        return f"`{command}` ({need.get('why', '')})"
     return f"{need.get('tool', '')} ({need.get('why', '')})"

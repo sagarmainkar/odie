@@ -44,8 +44,8 @@ export function NeedsYou({ items, footer, closed, notes = [], loopsDone = [], jo
               <Tile icon={n.icon} color={tileColour(n.icon)} />
               <span className="flex-1 min-w-0">
                 <span className="block text-body leading-[21px] font-semibold break-words">{n.title}</span>
-                {n.why && <span className="block text-small leading-[18px] text-muted mt-0.5 line-clamp-2">{n.why}</span>}
-                {n.brief && <span className="block text-small leading-[18px] text-ink-2 mt-1 line-clamp-3">{n.brief}</span>}
+                {n.why && <span className="text-small leading-[18px] text-muted mt-0.5 line-clamp-2">{n.why}</span>}
+                {n.brief && <span className="text-small leading-[18px] text-ink-2 mt-1 line-clamp-3">{n.brief}</span>}
                 {n.badge && <span className={`chip ${badgeTone(n.badge) === "warn" ? "chip-warn" : "chip-soft"} mt-1.5 inline-flex`}>{n.badge}</span>}
               </span>
             </button>

@@ -145,3 +145,12 @@ def test_the_terminals_key_can_never_allow_retry_stop_or_clear():
     for what in ("allow", "retry", "stop", "clear"):
         assert devices.terminal_may("POST", f"/api/jobs/job-abc123/{what}") is False
     assert devices.terminal_may("GET", "/api/jobs") is False
+
+
+def test_a_long_command_and_more_needs_read_short_on_the_card(store, tmp_path):
+    long_one = {"tool": "run_shell", "command": "D=/a/very/long/folder/name/that/goes/on; ls -l \"$D\"; cat \"$D/notes.txt\"; echo done",
+                "why": "writes a file outside /tmp"}
+    jid = ended_job(store, tmp_path, outcome="blocked", needed=[long_one, CHMOD])
+    card = next(c for c in needs.cards(store, now()) if c["ref"] == f"job:{jid}")
+    assert card["why"].endswith("…` (writes a file outside /tmp) and 1 more")
+    assert len(card["why"]) < 140
