@@ -40,7 +40,7 @@ def _due(value: str | None) -> str | None:
 
 
 def track(store, ref: str, kind: str, title: str, stage: str, due: str | None = None, why: str = "",
-          mail_thread: str = "", mail_source: str = "", owner: str = ODIE) -> str:
+          mail_thread: str = "", mail_source: str = "", owner: str = ODIE, sender: str = "") -> str:
     """Opens, moves or closes one of the watch's threads, and says what it did. Decides by the stage and whether the
     watch already follows this ref:
       ("mail:o1", "order", "Order: desk lamp", "placed", due "2026-10-24"), none open -> opens a waiting thread
@@ -67,7 +67,8 @@ def track(store, ref: str, kind: str, title: str, stage: str, due: str | None = 
         return "I didn't catch the due date: give it as 2026-10-24 or 2026-10-24T18:00."
     fires = kind in FIRES
     if row is None:
-        notes = json.dumps({"thread": mail_thread, "source": mail_source, "kind": kind, "due": due_at})
+        notes = json.dumps({"thread": mail_thread, "source": mail_source, "kind": kind, "due": due_at,
+                            "sender": sender.strip().lower()})  # whose mail: only a reply to them closes it
         reminder_at = due_at if fires else None
         tid = store.add_task(title.strip(), KINDS[kind], due_at=reminder_at, source_kind=SOURCE_KIND, source_ref=ref,
                              origin="agent", notes=notes, personality=owner or None)
@@ -148,7 +149,8 @@ def open_threads(store, now: datetime, owner: str = ODIE) -> list[dict]:
         due = facts.get("due") or r["due_at"]
         out.append({"id": r["id"], "ref": r["source_ref"], "kind": facts.get("kind", ""), "title": r["title"],
                     "stage": r["detail"] or "", "due": due, "overdue": _overdue(due, now),
-                    "thread": facts.get("thread", ""), "source": facts.get("source", ""), "opened_at": r["created_at"]})
+                    "thread": facts.get("thread", ""), "source": facts.get("source", ""), "opened_at": r["created_at"],
+                    "sender": facts.get("sender", "")})
     out.sort(key=lambda t: (t["due"] is None, t["due"] or ""))  # soonest due first, undated last
     return out
 

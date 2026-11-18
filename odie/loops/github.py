@@ -21,7 +21,7 @@ REF_RE = re.compile(r"^([A-Za-z0-9][A-Za-z0-9-]{0,38})/([A-Za-z0-9._-]{1,100})#(
 NOTIFICATION_RE = re.compile(r"\[([A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9._-]{1,100})\].*\((?:PR |Issue )?#([1-9][0-9]{0,6})\)")
 GITHUB_SENDERS = ("notifications@github.com", "noreply@github.com")
 PR_FIELDS = ("number,title,state,isDraft,mergedAt,closedAt,author,headRefName,baseRefName,additions,deletions,"
-             "changedFiles,isCrossRepository,reviewDecision,url,statusCheckRollup")
+             "changedFiles,isCrossRepository,reviewDecision,reviewRequests,url,statusCheckRollup")
 ISSUE_FIELDS = "number,title,state,closedAt,author,assignees,labels,url"
 
 
@@ -105,6 +105,7 @@ async def run_gh(args: list[str]) -> str:
         out, err = await asyncio.wait_for(proc.communicate(), GH_SECONDS)
     except TimeoutError:
         proc.kill()
+        await proc.wait()  # reaped, so no stopped gh is left behind
         raise GitHubError(f"gh took longer than {GH_SECONDS} seconds.")
     if proc.returncode != 0:
         raise GitHubError((err.decode(errors="replace").strip() or "gh failed")[:300])
@@ -137,12 +138,16 @@ def _login(person) -> str:
 
 async def pr_facts(ref: Ref) -> dict:
     """Step pr_facts (tier 0): `gh pr view <n> --repo <owner/repo> --json …`, reduced to the facts the brief and the
-    card use."""
+    card use, with whose it is: `yours` (the signed-in user wrote it) and `review_asked_of_you`."""
     raw = json.loads(await run_gh(["pr", "view", str(ref.number), "--repo", ref.repo_path, "--json", PR_FIELDS]))
     state = str(raw.get("state") or "").lower()
+    you = await whoami()
+    author = _login(raw.get("author"))
+    asked = [_login(r) for r in raw.get("reviewRequests") or []]  # a team's request has no login
     return {"ref": str(ref), "kind": "pull request", "title": str(raw.get("title") or "")[:200], "state": state,
+            "you": you, "yours": bool(you) and author == you, "review_asked_of_you": bool(you) and you in asked,
             "draft": bool(raw.get("isDraft")), "merged_at": raw.get("mergedAt"), "closed_at": raw.get("closedAt"),
-            "author": _login(raw.get("author")), "head": str(raw.get("headRefName") or ""),
+            "author": author, "head": str(raw.get("headRefName") or ""),
             "base": str(raw.get("baseRefName") or ""), "additions": int(raw.get("additions") or 0),
             "deletions": int(raw.get("deletions") or 0), "files": int(raw.get("changedFiles") or 0),
             "from_fork": bool(raw.get("isCrossRepository")), "review": str(raw.get("reviewDecision") or ""),

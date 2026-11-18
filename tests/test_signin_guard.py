@@ -224,8 +224,9 @@ async def test_a_chat_stays_private_after_a_signed_in_read(store, isolated_setti
 
 
 def test_background_checks_keep_the_web_and_the_browser(store):
-    """The guard's predicates answer "no tap" outside a chat, so trackers and the watch keep searching, fetching and
-    browsing (cookie-free); anything else that asks (the shell) is still refused, and they never buy."""
+    """The guard's predicates answer "no tap" outside a chat, so trackers keep searching, fetching and browsing
+    (cookie-free); anything else that asks (the shell) is still refused, and they never buy. The watch has read mail
+    before its turn starts, so it stays off the web except a Watch-for address (test_pulse_review)."""
     from odie.agent.tools.browser import make_browser_tools
     from odie.agent.tools.shell import make_shell_tool
     from odie.agent.tools.web import make_web_tools
@@ -234,9 +235,9 @@ def test_background_checks_keep_the_web_and_the_browser(store):
     web = {t.name: t for t in make_web_tools(store=store)}
     br = {t.name: t for t in make_browser_tools(store, browser_for=lambda: None)}
     ctx = SimpleNamespace(session=SimpleNamespace(id="tracker-7"))
-    for check in (tracker_guard, watch_guard):
-        assert check(web["web_search"], {"query": "airpods price"}, ctx) is None
-        assert check(web["web_fetch"], {"url": "https://shop.example/p"}, ctx) is None
+    assert tracker_guard(web["web_search"], {"query": "airpods price"}, ctx) is None
+    assert tracker_guard(web["web_fetch"], {"url": "https://shop.example/p"}, ctx) is None
+    assert watch_guard(web["web_fetch"], {"url": "https://shop.example/p"}, ctx) is not None
     assert tracker_guard(br["browser_open"], {"url": "https://shop.example/p"}, ctx) is None
     assert tracker_guard(br["find_images"], {"query": "goa"}, ctx) is None
     guard.LAST_URL["tracker-7"] = "https://www.amazon.in/cart"

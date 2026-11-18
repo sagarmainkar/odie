@@ -172,7 +172,7 @@ def scheduler_enabled() -> bool:
 BRIEF_LIMIT = 900  # seconds: the morning round makes the brief and the hello, two model calls, each gathering first
 
 
-def watch_pushed(store: Store, runner, title: str, body: str) -> None:
+def watch_pushed(store: Store, runner, title: str, body: str, owner: str = "") -> None:
     """The watch found something the owner must see (an urgent mail, an app that stopped working): a push to the
     phone, which opens Today's Needs you, and a `watch` event on the bus, so an open app that gets no web push (the
     Mac) hears it too. A push that fails is logged and never keeps the bus quiet.
@@ -180,11 +180,20 @@ def watch_pushed(store: Store, runner, title: str, body: str) -> None:
     import time
 
     from odie.push import send as push
+    url = pulse_url(owner)
     try:
-        push.send_to_all(store, title, body, url="/#today", tag="watch")
+        push.send_to_all(store, title, body, url=url, tag="watch")
     except Exception:  # noqa: BLE001
         logging.getLogger("odie").warning("watch push failed", exc_info=True)
     runner.bus.emit({"type": "watch", "title": title, "body": body, "ts": time.time()})
+
+
+def pulse_url(owner: str) -> str:
+    """Where a push opens: the Pulse of whose it is. Everyday Odie -> "/#today"; Mira -> "/#today?personality=<her id>"
+    (the app picks her on opening it)."""
+    if not owner:
+        return "/#today"
+    return f"/#today?personality={owner}"
 
 
 def background_for(store: Store, runner):
@@ -251,9 +260,11 @@ async def run_loops(store: Store, runner, now) -> list:
             return await runner.background_turn(prompt, timeout=120, instruction=instruction, bare=True, owner=pid)
         return think
 
-    def push(title, body):
-        watch_pushed(store, runner, title, body)
-    return await clock.run(store, now, think_for, push)
+    def push_for(pid: str):
+        def push(title, body):
+            watch_pushed(store, runner, title, body, owner=pid)
+        return push
+    return await clock.run(store, now, think_for, push_for)
 
 
 async def personality_watch(store: Store, runner, now) -> str | None:
@@ -271,7 +282,7 @@ async def personality_watch(store: Store, runner, now) -> str | None:
                                             free=watch.MAY_WRITE, skills=watch.calendar_skills(store, pid), owner=pid)
 
     def push(title, body):
-        watch_pushed(store, runner, title, body)
+        watch_pushed(store, runner, title, body, owner=pid)
     memory = runner.memory_of(pid)
     index = runner.memory_index(pid)
     await watch.run_check(store, now, turn, push, memory=memory, memory_index=index, owner=pid)

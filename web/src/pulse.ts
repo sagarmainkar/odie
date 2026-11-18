@@ -40,3 +40,10 @@ export function asksToTurnOn(state: { offered: boolean; on: boolean } | null | u
   if (!state) return false;
   return state.offered && !state.on;
 }
+
+/** Whether an answer still belongs on screen: it was asked for the personality that is picked now. A Pulse asked for
+ *  Mira that comes back after the switch to Odie is dropped, so her cards never show (or get a tap) as Odie's.
+ *    ("abc", "abc") -> true;  ("abc", "") -> false;  ("", "") -> true */
+export function stillPicked(askedFor: string, pickedNow: string): boolean {
+  return askedFor === pickedNow;
+}

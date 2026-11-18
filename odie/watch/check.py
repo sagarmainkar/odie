@@ -74,23 +74,22 @@ def guard(tool, args, tool_context) -> dict | None:
     changing memory, the shell, handing files over, closing tasks and the browser.
     Example: new_mail -> None (runs); update_memory -> refused; browser_open -> refused (the browser keeps signed-in
     sites); task_update -> refused (the watch closes a paid bill's reminder with its own close_reminder);
-    calendar_create_event, calendar_update_event -> None (MAY_WRITE); web_fetch before any mail is read -> None, and
-    after the turn has read mail or events (new_mail, read_mail, upcoming_events, search_mail, sent_to, read_thread)
-    -> refused, unless it fetches an address the user wrote in a Watch for entry (fetch_allowed_after_mail): a mail's
-    hidden instructions could otherwise carry what the check read out to a web address."""
+    calendar_create_event, calendar_update_event -> None (MAY_WRITE); web_fetch, web_search, find_images -> refused
+    from the turn's first call, unless it fetches an address the user wrote in a Watch for entry
+    (fetch_allowed_after_mail): code reads the mail before the turn and its words are in the turn from the start
+    (loop evidence, the catch-up, the nudge), so a mail's hidden instructions could otherwise carry what the check
+    read out to a web address. track, stop_tracker -> refused: a tracker made from mail text would later fetch the
+    web on its own."""
     from odie.trackers import guard as trackers_guard
-    from odie.watch.tools import READ_MAIL
     if tool.name in MAY_WRITE:
         return None
-    state = getattr(tool_context, "state", None) or {}  # a context without a turn state has read nothing yet
-    read_mail = bool(state.get(READ_MAIL))
-    if read_mail and tool.name in REACHES_OUT and not fetch_allowed_after_mail(tool.name, args):
+    if tool.name in REACHES_OUT and not fetch_allowed_after_mail(tool.name, args):
         return {"error": "Not after reading mail in this check: report it as a needs-you item instead."}
     refused = trackers_guard(tool, args, tool_context)
     if refused:
         return refused
     not_for_the_watch = tool.name in ("update_memory", "forget_memory", "run_shell", "hand_over", "task_update",
-                                      "watch_close")
+                                      "watch_close", "track", "stop_tracker")
     is_browser = tool.name.startswith("browser_")
     if not_for_the_watch or is_browser:
         return {"error": "Not allowed in the background watch: report it as a needs-you item instead."}
@@ -152,6 +151,23 @@ def nudge_text(check) -> str:
             f"Events: {json.dumps([e.brief() for e in check.events], ensure_ascii=False)}")
 
 
+def watches_a_page(watch: str) -> bool:
+    """Whether the user's Watch for names a web address, so the check runs its turn every time even with nothing new
+    in the mail: that page changes on its own. "- HN: watch https://news.example.org/item?id=1" -> True; "- Passport:
+    tell me when it comes" -> False; no Watch for -> False."""
+    return bool(addresses_in(watch))
+
+
+def note_tried(store, now: datetime, owner: str) -> None:
+    """Notes when this watch last tried, even with nothing to read, so odie.watch.owner.next_due moves on to the next
+    personality instead of picking this one every wake-up."""
+    from odie.watch.fetch import STATE
+    from odie.watch.owner import key
+    state_key = key(STATE, owner)
+    state = store.get_setting(state_key) or {}
+    store.set_setting(state_key, {**state, "tried_at": now.isoformat(timespec="seconds")})
+
+
 def has_news(check, open_threads: list[dict], last_check, catching_up: bool) -> bool:
     """Whether a check has anything new for the model to read; without, no model call (proactive design §4, for every
     owner). New: a mail, a mail the user sent that code didn't already match, an event that is new, moved or cancelled,
@@ -181,6 +197,7 @@ async def run_check(store, now: datetime, turn, push, memory=None, memory_index:
         store.set_setting(card_key, {"checked_at": now.isoformat(timespec="seconds"), "line": "", "needs_you": [], "events": [],
                                      "sources": {}, "off": "Connect Gmail and Calendar (Zapier, Composio or another app) to see them here.",
                                      "done": kept})
+        note_tried(store, now, owner)  # a personality with nothing to read waits its turn like the others
         return "off"
     fetcher = Fetcher(store, now, owner)
     check = Check(fetcher)
@@ -199,13 +216,28 @@ async def run_check(store, now: datetime, turn, push, memory=None, memory_index:
     from odie.loops import shortcut
     check.loop_of = shortcut.attach_known(store, owner, check.mails, now)
     catching_up = needs_catch_up(fetcher)
-    if not has_news(check, open_threads(store, now, owner), last_check, catching_up):
+    failing = rep.failing_now(store, fetcher.statuses, owner)  # read against the last check, so before commit()
+
+    def ping(title: str, body: str) -> None:
+        try:
+            push(title, body)
+        except Exception:  # noqa: BLE001
+            log.warning("watch: a push failed", exc_info=True)
+
+    def say_failing() -> None:
+        for app in failing:  # Pulse's Needs you says it too, until the app works again
+            ping(pushes.title_for(store, owner, f"{app} stopped working"), "Fix it in Settings → Connected apps.")
+    watch = ""
+    if memory is not None:
+        watch = watch_for(memory)
+    news = has_news(check, open_threads(store, now, owner), last_check, catching_up)
+    if not news and not watches_a_page(watch):
         card_events = await fetcher.events_ahead(CARD_DAYS)
         rep.nothing_new(store, now, card_events, fetcher.statuses, owner)
         fetcher.commit()
+        say_failing()
         return "quiet"
     tools = watch_tools(check)
-    watch = watch_for(memory) if memory is not None else ""
     WATCH_FOR_ADDRESSES.clear()
     WATCH_FOR_ADDRESSES.update(addresses_in(watch))
     instruction = _instruction(memory_index, watch)
@@ -236,7 +268,6 @@ async def run_check(store, now: datetime, turn, push, memory=None, memory_index:
     card_events = await fetcher.events_ahead(CARD_DAYS)
     added_task = _last_task_id(store, owner) > last_task_before  # task_add ran during the check: a reminder for the user
     first = bool(fetcher.first)
-    failing = rep.failing_now(store, fetcher.statuses, owner)  # read against the last check, so before commit()
     r = check.report
     to_push: list[dict] = []
     try:
@@ -251,17 +282,12 @@ async def run_check(store, now: datetime, turn, push, memory=None, memory_index:
         # raised (a timeout) and left no report leaves its mail for the next check (fetch.Fetcher.commit)
         fetcher.commit(turn_failed=bool(reason) and r is None)
 
-    def ping(title: str, body: str) -> None:
-        try:
-            push(title, body)
-        except Exception:  # noqa: BLE001
-            log.warning("watch: a push failed", exc_info=True)
-    for app in failing:  # Today's Needs you says it too, until the app works again
-        ping(pushes.title_for(store, owner, f"{app} stopped working"), "Fix it in Settings → Connected apps.")
+    say_failing()
     if r is None:
         return "fallback"
     for it in to_push:  # what needs the user soon: a push each, within the day's shared budget; the card is on Pulse
-        pushes.started_by_odie(store, now, owner, it["title"], it["why"], ping)
+        if pushes.started_by_odie(store, now, owner, it["title"], it["why"], ping, ref=it["ref"]):
+            rep.flag_pushed(store, it["ref"], owner)
     from odie.agent.tools.files import hand_over, workspace
     ws = workspace().resolve()
     for d in r["done"]:

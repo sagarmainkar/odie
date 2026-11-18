@@ -45,11 +45,12 @@ export function NeedsYou({ items, footer, closed, notes = [], loopsDone = [], on
                 {n.badge && <span className={`chip ${badgeTone(n.badge) === "warn" ? "chip-warn" : "chip-soft"} mt-1.5 inline-flex`}>{n.badge}</span>}
               </span>
             </button>
-            {/* The move first and solid, then Done and Later; on a phone a long move takes its own line. */}
-            <div className="flex flex-wrap gap-2 pl-12">
+            {/* The move first and solid, then Done and Later, always on one row: a long move ends in "…" (its whole
+                label is its title), Done and Later keep their size. Under the tile only on a wide phone or larger (430px up). */}
+            <div className="flex gap-2 min-[430px]:pl-12" data-buttons="one-row">
               {buttonsOf(n).map((a, i) => (
-                <button key={a.action + i} type="button" onClick={() => onAct(n, a)}
-                  className={i === 0 ? "pill pill-solid h-9 px-4 text-ui shadow-none max-w-full truncate" : "pill h-9 px-3.5 text-ui"}>{a.label}</button>
+                <button key={a.action + i} type="button" onClick={() => onAct(n, a)} title={a.label}
+                  className={i === 0 ? "pill pill-solid h-9 px-4 text-ui shadow-none min-w-0 shrink max-w-[60%]" : "pill h-9 px-3 text-ui shrink-0"}><span className="truncate">{a.label}</span></button>
               ))}
             </div>
           </motion.div>

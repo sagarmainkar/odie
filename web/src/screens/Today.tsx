@@ -1,8 +1,8 @@
-import { everyday, setPick, usePick } from "../pick";
+import { getPick, setPick, usePick } from "../pick";
 import { usePickedPersona } from "../persona";
 import { lightOf } from "../light";
 import { OnIt } from "../components/OnIt";
-import { asksToTurnOn, otherLine, pulseKicker, type LoopDone, type OnIt as OnItItem, type Other } from "../pulse";
+import { asksToTurnOn, otherLine, pulseKicker, stillPicked, type LoopDone, type OnIt as OnItItem, type Other } from "../pulse";
 import type { Proactive } from "../proactive";
 import { AnimatePresence, motion } from "framer-motion";
 import { NeedsYou } from "../components/NeedsYou";
@@ -99,7 +99,9 @@ export function Today() {
   const [checked, setChecked] = useState("");  // under "Needs you": when the watch last checked, or what isn't working
   const [notes, setNotes] = useState<WatchNote[]>([]);  // what the watch told the user in the last day
   const loadNeeds = useCallback(() => {
+    const askedFor = getPick();
     getJSON<PulseGot>("/api/needs_you").then((g) => {
+      if (!stillPicked(askedFor, getPick())) return;  // the pick changed meanwhile: that one's cards never show here
       setNeeds(g.items);
       setNotes(g.notes ?? []);
       setOnIt(g.on_it ?? []);
@@ -113,11 +115,16 @@ export function Today() {
     void postJSON("/api/watch/seen", {}).catch(() => {});
   }, []);
   // Another pick: its own Pulse, never the last one's cards while it loads.
-  useEffect(() => { setNeeds(null); setOnIt([]); setLoopsDone([]); setOthers([]); setProactive(null); setItsEvents([]); setWatchClosed([]); }, [pick]);
-  const loadApprovals = useCallback(() => { getJSON<Approval[]>(everyday("/api/approvals")).then(setApprovals).catch(() => {}); }, []);
+  useEffect(() => { setNeeds(null); setOnIt([]); setLoopsDone([]); setOthers([]); setProactive(null); setItsEvents([]); setWatchClosed([]); setApprovals([]); }, [pick]);
+  // The picked one's cards waiting for a tap (a personality's Pulse shows its own, as its avatar does).
+  const loadApprovals = useCallback(() => {
+    const askedFor = getPick();
+    getJSON<Approval[]>("/api/approvals").then((a) => { if (stillPicked(askedFor, getPick())) setApprovals(a); }).catch(() => {});
+  }, []);
   const loadTasks = useCallback(() => {
     loadNeeds();
-    getJSON<WatchClosedItem[]>("/api/tasks/closed_by_watch").then(setWatchClosed).catch(() => {});
+    const askedFor = getPick();
+    getJSON<WatchClosedItem[]>("/api/tasks/closed_by_watch").then((c) => { if (stillPicked(askedFor, getPick())) setWatchClosed(c); }).catch(() => {});
   }, [loadNeeds]);
   const loadUp = useCallback(() => {
     getJSON<{ items: UpItem[]; sources: Record<string, boolean> }>("/api/upcoming").then(setUp).catch(() => {}).finally(() => setUpLoading(false));

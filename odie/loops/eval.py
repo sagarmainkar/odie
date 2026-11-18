@@ -4,6 +4,7 @@ cards. Each case is its mails, what GitHub says (a fake gh answers from it) and 
   {"loops": 1}                    one loop for the whole case (fourteen mails about one pull request)
   {"closed": ["example/app#50"]}  that loop closed, with a reason
   {"cards": [...]}, {"no_card": [...]}  which loops end as a card on Pulse, and which never do
+A case may start with loops already there ("open_loops": [{title, kind, refs, done}]).
 
 run_case takes the turn and the model call as arguments: tests pass scripted ones (deterministic, so the code's part
 is held to the score), and odie/loops_eval.py passes the real model (scripts/loops_eval.sh)."""
@@ -77,6 +78,16 @@ def score(case: dict, store) -> dict:
     return {"right": checks - len(wrong), "of": checks, "wrong": wrong, "loops": count}
 
 
+def seed_loops(store, case: dict, now: datetime) -> None:
+    """The loops a case starts with ("open_loops"): each open and due, or closed by the user's Done ("done": true)."""
+    from datetime import timedelta
+    for seed in case.get("open_loops", []):
+        lid = ledger.open_loop(store, "", now - timedelta(hours=6), seed["title"], seed["kind"], refs=seed["refs"],
+                               playbook="github-pr", fact="seen before")
+        if seed.get("done"):
+            ledger.done(store, lid, now - timedelta(hours=5))
+
+
 async def run_case(store, case: dict, now: datetime, turn, think, folder: Path) -> dict:
     """One case end to end: its mails through the watch's turn (stages 1 and 2), then stage 4 for every loop that is
     due, then the score. turn(prompt, tools, instruction) and think(prompt, instruction) are the model's."""
@@ -86,6 +97,7 @@ async def run_case(store, case: dict, now: datetime, turn, think, folder: Path) 
     use_fake_gh(case, folder)
     store.execute("delete from loop_events")
     store.execute("delete from loops")
+    seed_loops(store, case, now)
     check = Check(EvalFetcher(store, now, case))
     check.mails = await check.fetcher.new_mail()
     check.mail_read = True

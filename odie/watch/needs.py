@@ -91,7 +91,10 @@ def later(store, ref: str, now: datetime, owner: str = ODIE) -> str | None:
         return until
     if ref.startswith("task:"):
         task_id = ref[len("task:"):]
-        if not task_id.isdigit() or store.one("select id from tasks where id=?", (int(task_id),)) is None:
+        if not task_id.isdigit():
+            return None
+        mine, values = bills.whose_tasks(owner)  # only a task on this owner's Pulse: never another one's
+        if store.one(f"select id from tasks where id=? and {mine}", (int(task_id), *values)) is None:
             return None
         store.snooze_task(int(task_id), until)
         return until

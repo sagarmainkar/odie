@@ -50,16 +50,22 @@ async def sensible_think(prompt, instruction):
     facts = json.loads(fenced[fenced.index("{"):fenced.rindex("}") + 1])
     if facts["state"] in ("merged", "closed"):
         return json.dumps({"choice": "drop", "why": facts["state"]})
-    if facts["kind"] == "issue" and not facts["assigned_to_you"]:
+    if facts["kind"] == "issue":
+        if facts["assigned_to_you"]:
+            return json.dumps({"choice": "ready", "why": "assigned to you", "brief": "A bug assigned to you."})
         return json.dumps({"choice": "drop", "why": "not assigned to you"})
-    if facts.get("draft"):
+    if facts.get("draft") or facts["checks"] == "running":
         return json.dumps({"choice": "wait", "why": "draft", "hours": 4})
-    return json.dumps({"choice": "ready", "why": "review requested", "brief": "Small and green."})
+    if facts["review_asked_of_you"] or (facts["yours"] and facts["checks"] == "red"):
+        return json.dumps({"choice": "ready", "why": "for you", "brief": "Needs you."})
+    return json.dumps({"choice": "wait", "why": "nothing asked of you", "hours": 6})
 
 
 async def test_every_case_scores_right_with_a_naive_model(store, tmp_path):
     cases = loops_eval.load_cases()
-    assert {c["id"] for c in cases} >= {"fourteen-mails-one-pr", "merged-pr-closes", "issue-not-yours", "two-prs-alike"}
+    assert {c["id"] for c in cases} >= {"fourteen-mails-one-pr", "merged-pr-closes", "issue-not-yours", "two-prs-alike",
+                                        "lone-merged-mail", "own-pr-ci-failing", "a-draft-waits", "issue-assigned-to-you",
+                                        "done-pr-gets-mail"}
     results = []
     for case in cases:
         folder = tmp_path / case["id"]

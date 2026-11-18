@@ -10,7 +10,7 @@ from google.adk.tools import FunctionTool
 from odie.agent.callbacks import wrap_untrusted
 from odie.watch import bills, threads
 from odie.watch.calls import CallError
-from odie.watch.fetch import Event, Fetcher, Mail
+from odie.watch.fetch import Event, Fetcher, Mail, address_of
 
 BILLS_DAYS = 45  # how far ahead bills_and_orders looks for a bill's or an order's event
 READ_MAIL = "watch_read_mail"  # turn state: the turn has read mail or events, other people's text (check.guard)
@@ -178,10 +178,11 @@ def watch_tools(check: Check) -> list[FunctionTool]:
         if mail is None and not knows_the_thread(ref):
             return {"result": f"This check doesn't know {ref}: find the mail with search_mail (or read it from "
                               "new_mail) first, so the thread can be read again later."}
-        thread = mail.thread if mail is not None else ""
-        source = mail.source if mail is not None else ""
+        thread, source, sender = "", "", ""
+        if mail is not None:
+            thread, source, sender = mail.thread, mail.source, address_of(mail.frm)
         said = threads.track(check.fetcher.store, ref, kind, title, stage, due=due or None, why=why,
-                             mail_thread=thread, mail_source=source, owner=check.fetcher.owner)
+                             mail_thread=thread, mail_source=source, owner=check.fetcher.owner, sender=sender)
         return {"result": said}
 
     def close_reminder(task_id: int, why: str) -> dict:
@@ -208,7 +209,9 @@ def watch_tools(check: Check) -> list[FunctionTool]:
         from odie.loops import ledger
         store, pid = check.fetcher.store, check.fetcher.owner
         lines = [ledger.line(lp, ledger.events(store, lp["id"])) for lp in ledger.open_loops(store, pid)]
-        return {"result": "\n".join(lines) or "(none open)"}
+        if not lines:
+            return {"result": "(none open)"}
+        return {"result": wrap_untrusted("\n".join(lines))}  # titles and evidence carry mail subjects
 
     def loop(title: str, kind: str, owner: str = "odie", refs: list[str] | None = None, mail_id: str = "",
              next_step: str = "", loop_id: int = 0, close_why: str = "", priority: str = "normal") -> dict:

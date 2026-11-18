@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { asksToTurnOn, onItLine, otherLine, pulseKicker } from "./pulse";
-import { followsPick } from "./pick";
+import { asksToTurnOn, onItLine, otherLine, pulseKicker, stillPicked } from "./pulse";
+import { followsPick, pickFromHash } from "./pick";
 import { railItems } from "./layout";
 
 describe("Pulse", () => {
@@ -33,7 +33,20 @@ describe("Pulse", () => {
     expect(followsPick("/api/watch/done")).toBe(true);
     expect(followsPick("/api/tasks/closed_by_watch")).toBe(true);
     expect(followsPick("/api/tasks")).toBe(false);
-    expect(followsPick("/api/watch")).toBe(false);  // the chat's count stays Odie's
+    expect(followsPick("/api/watch")).toBe(true);  // the chat's count on Back to Pulse is the picked one's
+  });
+
+  it("drops an answer that came back after the pick changed", () => {
+    expect(stillPicked("abc", "abc")).toBe(true);
+    expect(stillPicked("abc", "")).toBe(false);
+    expect(stillPicked("", "")).toBe(true);
+  });
+
+  it("picks the personality a push opens", () => {
+    expect(pickFromHash("#today?personality=abc")).toBe("abc");
+    expect(pickFromHash("#today?personality=")).toBe("");
+    expect(pickFromHash("#today")).toBe(null);
+    expect(pickFromHash("#chat?q=hi")).toBe(null);
   });
 
   it("is the rail's first tab", () => {

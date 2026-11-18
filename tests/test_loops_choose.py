@@ -120,7 +120,7 @@ async def test_the_clock_picks_due_loops_within_the_budget(store, fake_gh):
         asked_for.append(pid)
         return model_says('{"choice": "wait", "why": "later", "hours": 2}')
     store.set_setting(budget.KEY, {"day": NOW.date().isoformat(), "used": budget.CALLS_DAILY - 1})
-    ran = await clock.run(store, NOW, think_for, lambda t, b: None)
+    ran = await clock.run(store, NOW, think_for, lambda pid: (lambda t, b: None))
     assert ran == [(first, "wait")]  # one call left today: the second loop waits for tomorrow
     assert asked_for == [""]
     assert budget.left(store, NOW) == 0

@@ -1,0 +1,50 @@
+{
+  "id": "lone-merged-mail",
+  "about": "A merged mail for a pull request Odie never followed: nothing for the user (no loop, or one closed at once).",
+  "mails": [
+    {
+      "id": "lm1",
+      "from": "Asha Rao <notifications@github.com>",
+      "subject": "Re: [example/app] Update README badges (PR #55)",
+      "at": "2026-11-18T03:00:00Z",
+      "snippet": "Merged #55 into main.",
+      "body": "Merged #55 into main.",
+      "thread": "gh-thread-55"
+    }
+  ],
+  "gh": {
+    "pr:example/app#55": {
+      "number": 55,
+      "title": "Update README badges",
+      "state": "MERGED",
+      "isDraft": false,
+      "mergedAt": "2026-11-18T03:00:00Z",
+      "closedAt": null,
+      "author": {
+        "login": "asha-dev"
+      },
+      "headRefName": "branch-55",
+      "baseRefName": "main",
+      "additions": 41,
+      "deletions": 9,
+      "changedFiles": 3,
+      "isCrossRepository": false,
+      "reviewDecision": "REVIEW_REQUIRED",
+      "reviewRequests": [],
+      "url": "https://github.com/example/app/pull/55",
+      "statusCheckRollup": [
+        {
+          "name": "tests",
+          "status": "COMPLETED",
+          "conclusion": "SUCCESS"
+        }
+      ]
+    },
+    "user": "you-dev"
+  },
+  "expect": {
+    "no_card": [
+      "example/app#55"
+    ]
+  }
+}

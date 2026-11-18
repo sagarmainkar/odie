@@ -100,12 +100,18 @@ def own_inbox_apps(store, configured: dict[str, dict], pid: str) -> list[str]:
 
 
 def last_check(store, owner: str) -> datetime | None:
-    """When this owner's watch last checked, or None (never, or a time that can't be read)."""
+    """When this owner's watch last checked or last tried (with nothing to read), the later of the two, or None
+    (never, or times that can't be read). Checked 09:00, tried 09:30 -> 09:30; neither -> None."""
     state = store.get_setting(key("watch.state", owner)) or {}
-    try:
-        return datetime.fromisoformat(state["last_check"])
-    except (KeyError, TypeError, ValueError):
+    times = []
+    for name in ("last_check", "tried_at"):
+        try:
+            times.append(datetime.fromisoformat(state[name]))
+        except (KeyError, TypeError, ValueError):
+            continue
+    if not times:
         return None
+    return max(times)
 
 
 def next_due(store, now: datetime) -> str | None:

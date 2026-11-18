@@ -1,6 +1,6 @@
 """What the user sent closes what it answers (18 Nov 2026). Every check reads the user's own sent mail since the last
 check (fetch.Fetcher.sent_mail). Closing it takes two steps:
-  1. here, in code, before the model runs: a sent mail in the same mail thread as an open reply closes it, with the
+  1. here, in code, before the model runs: a sent mail in the same mail thread as an open reply, to its sender, closes it, with the
      reason in the user's words ("you replied 18 Nov 14:20"): the watch's thread for it, and its card item;
   2. what closed nothing goes to the check as "What you sent" (the watch's what_you_sent tool), with the skill's rule:
      close an item when what the user sent answers it (to the same person, about the same thing).
@@ -15,6 +15,26 @@ from odie.watch import report, threads
 from odie.watch.fetch import Mail, when_of
 
 STAYS_OPEN = frozenset({"bill", "bills", "order", "orders"})  # thread kinds and card piles a reply doesn't close
+
+
+def answers(mail: Mail, sender: str) -> bool:
+    """Whether the user's mail in an item's thread went to the person the item is about: a reply, not a forward or a
+    note to someone else. To "Asha <ASHA@example.com>, Priya <…>" for sender asha@example.com -> True; a forward to
+    Priya only -> False; an item with no sender kept (made before this was noted) -> False: the model judges it from
+    "What you sent" instead."""
+    wanted = (sender or "").strip().lower()
+    if not wanted:
+        return False
+    return wanted in (mail.to or "").lower()
+
+
+def newest_reply(mails: list[Mail], sender: str) -> Mail | None:
+    """Of the user's mails in one thread (oldest first), the newest that answers the sender (answers), or None. A reply
+    to Asha at 14:20 then a forward to Priya at 14:30 -> the 14:20 reply; only the forward -> None."""
+    replies = [m for m in mails if answers(m, sender)]
+    if not replies:
+        return None
+    return replies[-1]
 
 
 def closes_by_its_thread(kind_or_pile: str) -> bool:
@@ -43,20 +63,20 @@ def close_answered(store, now: datetime, sent: list[Mail], owner: str = "") -> l
       a bill in thread t5, the user's mail in t5 -> stays open; that mail is returned for the model to judge
     owner: whose watch it is (odie.watch.owner); only its own threads and card change."""
     from odie.watch.owner import key
-    newest_in: dict[str, Mail] = {}
+    in_thread: dict[str, list[Mail]] = {}
     for mail in sorted(sent, key=lambda m: when_of(m.at)):
         if mail.thread:
-            newest_in[mail.thread] = mail  # the latest one wins
+            in_thread.setdefault(mail.thread, []).append(mail)  # oldest first
     closed_threads: set[str] = set()
     for followed in threads.open_threads(store, now, owner):
-        mail = newest_in.get(followed["thread"])
+        mail = newest_reply(in_thread.get(followed["thread"], []), followed["sender"])
         if mail is None or not closes_by_its_thread(followed["kind"]):
             continue
         threads.close(store, followed["ref"], replied_words(mail, now), owner=owner)
         closed_threads.add(mail.thread)
     card = store.get_setting(key(report.CARD, owner)) or {}
     for item in list(card.get("needs_you", [])):
-        mail = newest_in.get(item.get("thread", ""))
+        mail = newest_reply(in_thread.get(item.get("thread", ""), []), item.get("sender", ""))
         if mail is None or not closes_by_its_thread(item.get("pile", "")):
             continue
         report.drop_item(store, item["ref"], owner)

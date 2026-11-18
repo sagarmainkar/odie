@@ -92,6 +92,24 @@ def find_by_refs(store, pid: str, refs: list[str]) -> dict | None:
     return None
 
 
+def find_done_by_user(store, pid: str, refs: list[str]) -> dict | None:
+    """The owner's loop the user closed with Done that holds one of these refs, or None. Later mail about it is kept
+    as evidence, quietly: Done means "stop following", so it opens no new loop and no card. A loop Odie closed by
+    evidence (merged) is not one: news about it is the model's to judge.
+      ["example/app#49"], #49 closed with Done -> that loop;  #50 closed as merged -> None;  #49 still open -> None"""
+    wanted = {r for r in refs if r}
+    if not wanted:
+        return None
+    mine, values = _whose(pid)
+    rows = store.query(f"select * from loops where state in ('closed','dropped') and closed_by = ? and {mine} "
+                       "order by id desc", (CLOSED_BY_USER, *values))
+    for row in rows:
+        loop = _row(row)
+        if wanted & set(loop["refs"]):
+            return loop
+    return None
+
+
 def attach(store, loop_id: int, now: datetime, source: str, ref: str, fact: str, refs: list[str] | None = None,
            news: bool = True) -> None:
     """Evidence for a loop: the fact, any new refs it brings, and "has news" so the clock looks at it again."""

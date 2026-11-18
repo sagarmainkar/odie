@@ -34,10 +34,11 @@ def spend(store, now: datetime) -> bool:
     return True
 
 
-def hold(store, now: datetime, title: str, body: str) -> None:
-    """Keeps a push that was over the budget for the digest."""
+def hold(store, now: datetime, title: str, body: str, owner: str = "", ref: str = "") -> None:
+    """Keeps a push that was over the budget for the digest (phase 5 reads push.held; until then the item is on
+    Pulse only), with whose it is and its card's ref."""
     held = list(store.get_setting(HELD) or [])
-    held.append({"at": now.isoformat(timespec="seconds"), "title": title, "body": body})
+    held.append({"at": now.isoformat(timespec="seconds"), "title": title, "body": body, "owner": owner, "ref": ref})
     store.set_setting(HELD, held[-KEEP_HELD:])
 
 
@@ -63,13 +64,13 @@ def one_line(text: str, most: int = 160) -> str:
     return lines[0][:most]
 
 
-def started_by_odie(store, now: datetime, owner: str, title: str, body: str, send) -> bool:
+def started_by_odie(store, now: datetime, owner: str, title: str, body: str, send, ref: str = "") -> bool:
     """Sends one push Odie decided on (a needs-you item, a loop's card) when today's budget allows, else holds it for
     the digest. True when it was sent. `send(title, body)` does the sending."""
     whole_title = title_for(store, owner, title)
     line = one_line(body)
     if not spend(store, now):
-        hold(store, now, whole_title, line)
+        hold(store, now, whole_title, line, owner, ref)
         return False
     send(whole_title, line)
     return True

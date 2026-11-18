@@ -48,13 +48,17 @@ def due(store, now: datetime) -> list[dict]:
     return out
 
 
-async def run(store, now: datetime, think_for, push, most: int = PER_TICK) -> list[tuple[int, str]]:
+async def run(store, now: datetime, think_for, push_for=None, most: int = PER_TICK) -> list[tuple[int, str]]:
     """Runs stage 4 for the due loops, at most `most`, while today's budget of calls lasts. think_for(pid) gives the
-    model call for that owner's brain. Returns [(loop id, what happened)]."""
+    model call for that owner's brain; push_for(pid) its push (opening that owner's Pulse), or None for no pushes.
+    Returns [(loop id, what happened)]."""
     ran = []
     for loop in due(store, now)[:most]:
         if budget.left(store, now) <= 0:
             break
+        push = None
+        if push_for is not None:
+            push = push_for(loop["personality"])
         got = await choose.choose(store, loop, now, think_for(loop["personality"]), push)
         ran.append((loop["id"], got))
     return ran

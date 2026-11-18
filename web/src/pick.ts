@@ -45,7 +45,7 @@ export function usePick(): string {
  *  live stream, and its Pulse (its Needs you, its loops, its watch's card and what it closed). Everything else (tasks,
  *  the watch's count, Odie's own name and picture) is the same whoever is picked. */
 const FOLLOWS = ["/api/chat", "/api/history", "/api/threads", "/api/approvals", "/api/events", "/api/needs_you", "/api/loops",
-  "/api/watch/seen", "/api/watch/done", "/api/tasks/closed_by_watch"];
+  "/api/watch", "/api/tasks/closed_by_watch"];
 
 /** Whether a call is one of those: "/api/threads?q=x" -> true; "/api/approvals/7/decide" -> true;
  *  "/api/tasks" -> false; "/api/chats" -> false (only the path itself, or what is under it). */
@@ -71,6 +71,16 @@ export function withPickOf(url: string, pick: string, always = false): string {
  *  waiting is Odie's even while the chat is with a personality:  "/api/approvals" -> "/api/approvals?personality=". */
 export function everyday(url: string): string {
   return withPickOf(url, "", true);
+}
+
+/** The personality an address asks for, as a push for one opens its Pulse ("/#today?personality=<id>"):
+ *    "#today?personality=abc" -> "abc";  "#today?personality=" -> "" (everyday Odie);  "#today" or "#chat?q=hi" -> null
+ *  (the address says nothing: keep the pick). */
+export function pickFromHash(hash: string): string | null {
+  const query = hash.split("?")[1];
+  if (query === undefined) return null;
+  const said = new URLSearchParams(query).get("personality");
+  return said;
 }
 
 export function withPick(url: string, always = false): string {

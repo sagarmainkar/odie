@@ -71,8 +71,10 @@ def test_reads_sent_mail_only_from_gmail_style_apps():
 
 
 def test_a_reply_in_the_same_thread_closes_the_reply_owed_in_code(store):
-    threads.track(store, "mail:g1", "reply", "Reply to A Person", "owed", mail_thread="t1", mail_source="mail:gmail-calendar")
-    card_with(store, {"ref": "mail:g1", "title": "Reply to A Person", "thread": "t1", "pile": "alerts"})
+    threads.track(store, "mail:g1", "reply", "Reply to A Person", "owed", mail_thread="t1", mail_source="mail:gmail-calendar",
+                  sender="a.person@example.com")
+    card_with(store, {"ref": "mail:g1", "title": "Reply to A Person", "thread": "t1", "pile": "alerts",
+                      "sender": "a.person@example.com"})
     left = sent.close_answered(store, AFTERNOON, [mine("s1", "t1"), mine("s2", "t7", subject="Lunch?")])
     assert [m.id for m in left] == ["s2"]  # what closed nothing goes to the check as "What you sent"
     assert threads.open_refs(store) == set()
@@ -82,7 +84,8 @@ def test_a_reply_in_the_same_thread_closes_the_reply_owed_in_code(store):
 
 
 def test_a_card_item_with_no_thread_followed_closes_too_and_shows_in_done_today(store):
-    card_with(store, {"ref": "mail:g2", "title": "Reply to Sam", "thread": "t2", "pile": "personal"},
+    card_with(store, {"ref": "mail:g2", "title": "Reply to Sam", "thread": "t2", "pile": "personal",
+                      "sender": "a.person@example.com"},
               {"ref": "mail:g3", "title": "New sign-in", "thread": "t3", "pile": "alerts"})
     sent.close_answered(store, AFTERNOON, [mine("s1", "t2")])
     assert [i["ref"] for i in store.get_setting(report.CARD)["needs_you"]] == ["mail:g3"]
@@ -110,6 +113,7 @@ def test_a_card_item_keeps_its_mails_thread(store):
     mails = [Mail("g1", "A Person <a.person@example.com>", "Hello", "2026-11-18T08:00:00Z", "hi", [], "mail:gm", thread="t1")]
     report.apply(store, AFTERNOON, [{"ref": "mail:g1", "title": "Reply to A Person"}], "", mails, [], {}, first=True)
     assert store.get_setting(report.CARD)["needs_you"][0]["thread"] == "t1"
+    assert store.get_setting(report.CARD)["needs_you"][0]["sender"] == "a.person@example.com"  # a reply must go to them
 
 
 async def test_the_check_reads_what_you_sent_and_that_counts_as_reading_mail(store):
@@ -134,7 +138,8 @@ async def test_a_check_closes_a_reply_the_user_sent_before_the_model_runs(store,
                    "subject": "Re: New consultation", "date": "2026-10-08T04:00:00Z", "snippet": "Tuesday works."}]
     mcp.write_config({"gmail-calendar": spec_for("gmailmcp", tmp_path, mail=GM_INVITE,
                                                  query_hits={f"in:sent after:{since}": sent_by_me})})
-    threads.track(store, "mail:g1", "reply", "Reply to A Person", "owed", mail_thread="t1", mail_source="mail:gmail-calendar")
+    threads.track(store, "mail:g1", "reply", "Reply to A Person", "owed", mail_thread="t1", mail_source="mail:gmail-calendar",
+                  sender="a.person@example.com")
     seen = {}
 
     async def turn(prompt, tools, instruction):

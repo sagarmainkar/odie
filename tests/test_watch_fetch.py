@@ -330,7 +330,7 @@ async def test_after_a_mailbox_read_the_turn_cannot_reach_the_web(store, tmp_pat
     from odie.watch import check as watch_check
     check, tools = await gmail_check(store, tmp_path, query_hits={"from:x.example.com": OLDER})
     ctx = Ctx()
-    assert watch_check.guard(Named("web_fetch"), {"url": "https://example.com"}, ctx) is None  # before: allowed
+    assert "error" in watch_check.guard(Named("web_fetch"), {"url": "https://example.com"}, ctx)  # refused from the start
     await tools["search_mail"].func(query="from:x.example.com", tool_context=ctx)
     for name in ("web_fetch", "web_search", "find_images"):
         assert "error" in watch_check.guard(Named(name), {}, ctx)

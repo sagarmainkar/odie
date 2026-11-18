@@ -43,6 +43,12 @@ def from_watch(check, title: str, kind: str, owner: str, refs: list[str], mail_i
     if loop_id:
         return _about_one(store, pid, now, int(loop_id), close_why, evidence_ref, fact, all_refs)
     held = ledger.find_by_refs(store, pid, all_refs)
+    stopped = None
+    if held is None:
+        stopped = ledger.find_done_by_user(store, pid, all_refs)
+    if stopped is not None:  # the user said Done: kept as evidence, quietly; no new loop, no card
+        ledger.attach(store, stopped["id"], now, "mail", evidence_ref, fact or title, refs=all_refs, news=False)
+        return f"Added to loop #{stopped['id']}, which the user closed with Done: nothing more to do."
     if held is not None:
         ledger.attach(store, held["id"], now, "mail", evidence_ref, fact or title, refs=all_refs)
         return f"Added to loop #{held['id']} (it already follows {', '.join(set(all_refs) & set(held['refs']))})."
@@ -59,7 +65,11 @@ def _about_one(store, pid: str, now, loop_id: int, close_why: str, evidence_ref:
                refs: list[str]) -> str:
     """Adds to or closes one named loop: it must be this owner's and still open."""
     loop = ledger.get(store, loop_id)
-    if loop is None or loop["personality"] != pid or loop["state"] not in ledger.OPEN:
+    if loop is None or loop["personality"] != pid:
+        return f"No open loop #{loop_id}."
+    if loop["closed_by"] == ledger.CLOSED_BY_USER:
+        return f"Loop #{loop_id} was closed by the user with Done: nothing more to do."
+    if loop["state"] not in ledger.OPEN:
         return f"No open loop #{loop_id}."
     if close_why.strip():
         ledger.close(store, loop_id, now, "odie", close_why)

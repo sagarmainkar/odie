@@ -1,4 +1,4 @@
-import { everyday } from "./pick";
+import { everyday, getPick, pickFromHash, setPick } from "./pick";
 import { useCallback, useEffect, useState } from "react";
 import type { OrbState } from "./components/Orb";
 import { Chat } from "./screens/Chat";
@@ -61,7 +61,13 @@ function Main() {
     getJSON<unknown[]>(everyday("/api/approvals")).then((a) => setPending(a.length)).catch(() => {});
   }, []);
   useEffect(() => {
-    const on = () => setTab(tabFromHash(location.hash));
+    // A push for a personality opens its Pulse: "#today?personality=<id>" picks it on this device.
+    const follow = () => {
+      const asked = pickFromHash(location.hash);
+      if (asked !== null && asked !== getPick()) setPick(asked);
+    };
+    follow();
+    const on = () => { follow(); setTab(tabFromHash(location.hash)); };
     window.addEventListener("hashchange", on);
     loadPending();
     return () => window.removeEventListener("hashchange", on);

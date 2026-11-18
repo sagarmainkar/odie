@@ -93,3 +93,26 @@ def test_old_closes_leave_done_today(store):
     ledger.close(store, lid, now() - timedelta(days=2), "odie", "merged")
     from odie.loops import cards
     assert cards.done_today(store, "", now()) == []
+
+
+async def test_the_watch_count_follows_the_pick(api, store):
+    mira = personalities.create(store, "Mira").id
+    store.set_setting(f"watch.card:{mira}", {"needs_you": [{"ref": "mail:1", "title": "x"}, {"ref": "mail:2", "title": "y"}]})
+    store.set_setting("watch.card", {"needs_you": [{"ref": "mail:9", "title": "z"}]})
+    assert (await api.get(f"/api/watch?personality={mira}")).json()["unseen"] == 2
+    assert (await api.get("/api/watch")).json()["unseen"] == 1
+
+
+def test_a_personalitys_push_opens_its_own_pulse(store, monkeypatch):
+    from odie.app import main
+    from odie.push import send
+    sent = []
+    monkeypatch.setattr(send, "send_to_all", lambda store_, title, body, url="/", tag=None: sent.append(url))
+
+    class Bus:
+        def emit(self, event):
+            pass
+    runner = type("R", (), {"bus": Bus()})()
+    main.watch_pushed(store, runner, "Mira · Invoice", "due Friday", owner="ab12cd34ef56")
+    main.watch_pushed(store, runner, "Reply to Asha", "today")
+    assert sent == ["/#today?personality=ab12cd34ef56", "/#today"]

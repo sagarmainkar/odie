@@ -15,15 +15,15 @@ describe("Needs you on Pulse", () => {
     expect(html).toContain("Pay electricity bill ₹2,480");
     expect(html).toContain("Overdue");
     expect(html).toContain("chip-warn");
-    const buttons = [...html.matchAll(/>(Tell me more|Done|Later)<\/button>/g)].map((m) => m[1]);
+    const buttons = [...html.matchAll(/>(Tell me more|Done|Later)<\/span><\/button>/g)].map((m) => m[1]);
     expect(buttons).toEqual(["Tell me more", "Done", "Later"]);
     expect(html).toContain("checked 12:30 · next 13:00");
   });
   it("an older server's card without Later still shows its two buttons", () => {
     const { later: _gone, ...older } = bill;
     const html = renderToStaticMarkup(<NeedsYou items={[older]} footer="" closed={[]} onAct={() => {}} onReopen={() => {}} />);
-    expect(html).toContain(">Done</button>");
-    expect(html).not.toContain(">Later</button>");
+    expect(html).toContain(">Done</span></button>");
+    expect(html).not.toContain(">Later</span></button>");
   });
   it("folds what the watch closed into one line, and says all clear when nothing needs you", () => {
     const closed = [{ id: 3, title: "Order: desk lamp", why: "delivered", closed: "2026-10-23T08:00:00" }];
@@ -50,7 +50,9 @@ describe("Needs you on Pulse", () => {
     const html = renderToStaticMarkup(<NeedsYou items={[pr]} footer="" closed={[]} loopsDone={done} onAct={() => {}} onReopen={() => {}} open />);
     expect(html).toContain("Open · CI green · 3 files, +41 −9");
     expect(html).toContain("Sorts threads newest first.");
-    expect([...html.matchAll(/>(Open PR #49|Done|Later)<\/button>/g)].map((m) => m[1])).toEqual(["Open PR #49", "Done", "Later"]);
+    expect([...html.matchAll(/>(Open PR #49|Done|Later)<\/span><\/button>/g)].map((m) => m[1])).toEqual(["Open PR #49", "Done", "Later"]);
+    expect(html).not.toContain("flex-wrap");  // the three buttons stay on one row; a long move ends in "…"
+    expect(html).toContain('title="Open PR #49"');
     expect(html).toContain("1 done today");
     expect(html).toContain("Merged 18 Nov 09:00");
     expect(html).toContain(">Reopen</button>");

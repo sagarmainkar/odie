@@ -206,15 +206,17 @@ function TimeDivider({ ts }: { ts: number }) {
 }
 
 export function Chat({ orb, setOrb, showing }: { orb: OrbState; setOrb: (s: OrbState) => void; showing: boolean }) {
-  // The count on Back to Today: what the background watch flagged that Today hasn't shown yet. Chat stays mounted, so it's
-  // read again each time chat comes back into view.
+  // The count on Back to Pulse: what the picked one's background watch flagged that its Pulse hasn't shown yet. Chat
+  // stays mounted, so it's read again each time chat comes back into view, and on a switch of personality.
   const [needYou, setNeedYou] = useState(0);
+  const pickForCount = usePick();
   useEffect(() => {
+    setNeedYou(0);
     const load = () => { if (location.hash.startsWith("#chat") || location.hash === "") getJSON<{ unseen?: number }>("/api/watch").then((w) => setNeedYou(w.unseen ?? 0)).catch(() => {}); };
     load();
     window.addEventListener("hashchange", load);
     return () => window.removeEventListener("hashchange", load);
-  }, []);
+  }, [pickForCount]);
   const you = useProfile()?.user_name ?? "";
   const caps = useCaps();
   const signedInBrowsing = has(caps, "signin");  // the live view exists only with it on: Watch shows only then

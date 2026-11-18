@@ -170,6 +170,11 @@
           "status": "COMPLETED",
           "conclusion": "SUCCESS"
         }
+      ],
+      "reviewRequests": [
+        {
+          "login": "you-dev"
+        }
       ]
     },
     "user": "you-dev"

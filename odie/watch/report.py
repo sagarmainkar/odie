@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from odie.watch.fetch import Event, Mail
+from odie.watch.fetch import Event, Mail, address_of
 from odie.watch.owner import ODIE, key
 
 CARD, FLAGGED, HELD = "watch.card", "watch.flagged", "watch.held"  # everyday Odie's keys; a personality's: owner.key
@@ -140,8 +140,9 @@ def _mail_fields(ref: str, mails: list[Mail], statuses: dict | None = None) -> d
     fields = {"from": sender_name(mail.frm), "subject": mail.subject[:120], "when": mail.at,
               "gist": (mail.snippet or "")[:160], "badges": badges_of(mail.sources or [mail.source], statuses or {}),
               "app": holds_the_id}
-    if mail.thread:  # the user's own reply in this thread closes the item (odie.watch.sent)
+    if mail.thread:  # the user's own reply in this thread, to this sender, closes the item (odie.watch.sent)
         fields["thread"] = mail.thread
+        fields["sender"] = address_of(mail.frm).lower()
     return fields
 
 
@@ -190,9 +191,15 @@ def apply(store, now: datetime, needs_you: list[dict], line: str, mails: list[Ma
     if quiet(now):
         store.set_setting(held_key, [*(store.get_setting(held_key) or []), *push][-20:])
         return []
-    push = push[:MAX_PUSH]
-    store.set_setting(flagged_key, [*(i["ref"] for i in push), *flagged][:500])
-    return push
+    return push[:MAX_PUSH]  # flagged (said) only once a push really goes out: flag_pushed
+
+
+def flag_pushed(store, ref: str, owner: str = ODIE) -> None:
+    """Notes that an item was pushed, so it is never pushed again. One held over the day's budget isn't flagged: it
+    stays in push.held for the digest (odie.watch.pushes)."""
+    flagged_key = key(FLAGGED, owner)
+    flagged = list(store.get_setting(flagged_key) or [])
+    store.set_setting(flagged_key, [ref, *flagged][:500])
 
 
 def fallback(store, now: datetime, mails: list[Mail], events: list[Event], statuses: dict, reason: str,

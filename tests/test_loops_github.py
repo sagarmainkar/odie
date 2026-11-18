@@ -104,3 +104,14 @@ async def test_no_gh_installed_is_a_plain_error(monkeypatch):
     monkeypatch.setenv("ODIE_GH", "/nonexistent/gh")
     with pytest.raises(github.GitHubError):
         await github.pr_facts(github.Ref("example", "app", 1))
+
+
+async def test_pr_facts_say_whether_it_is_yours_and_whether_your_review_is_asked(fake_gh):
+    fake_gh.data["user"] = "you-dev"
+    fake_gh.data["pr:example/app#49"] = {**OPEN_PR, "reviewRequests": [{"login": "you-dev"}, {"name": "core-team"}]}
+    fake_gh.data["pr:example/app#60"] = {**OPEN_PR, "number": 60, "author": {"login": "you-dev"}, "reviewRequests": []}
+    fake_gh.save()
+    asked = await github.pr_facts(github.Ref("example", "app", 49))
+    assert asked["you"] == "you-dev" and asked["yours"] is False and asked["review_asked_of_you"] is True
+    own = await github.pr_facts(github.Ref("example", "app", 60))
+    assert own["yours"] is True and own["review_asked_of_you"] is False

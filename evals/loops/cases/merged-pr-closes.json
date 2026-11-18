@@ -1,6 +1,6 @@
 {
   "id": "merged-pr-closes",
-  "about": "A pull request the user already merged from their phone: the mail says merged; GitHub agrees.",
+  "about": "A pull request Odie already follows was merged from the phone: the mail says merged, GitHub agrees. Its loop closes with evidence.",
   "mails": [
     {
       "id": "m1",
@@ -9,7 +9,7 @@
       "at": "2026-11-18T03:30:00Z",
       "snippet": "Merged #50 into main.",
       "body": "Merged #50 into main.\n\nYou are receiving this because you authored the thread.",
-      "thread": "gh-thread-50"
+      "thread": "gh-thread-50b"
     }
   ],
   "gh": {
@@ -49,5 +49,14 @@
     "no_card": [
       "example/app#50"
     ]
-  }
+  },
+  "open_loops": [
+    {
+      "title": "app #50 Fix login redirect",
+      "kind": "pull request",
+      "refs": [
+        "example/app#50"
+      ]
+    }
+  ]
 }

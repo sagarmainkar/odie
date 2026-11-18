@@ -1,0 +1,50 @@
+{
+  "id": "a-draft-waits",
+  "about": "A colleague's draft pull request, CI still running, nothing asked of the user.",
+  "mails": [
+    {
+      "id": "dr1",
+      "from": "Priya <notifications@github.com>",
+      "subject": "[example/app] WIP: dark mode tokens (PR #62)",
+      "at": "2026-11-18T04:40:00Z",
+      "snippet": "Opened as a draft.",
+      "body": "Priya opened a draft pull request.",
+      "thread": "gh-thread-62"
+    }
+  ],
+  "gh": {
+    "pr:example/app#62": {
+      "number": 62,
+      "title": "WIP: dark mode tokens",
+      "state": "OPEN",
+      "isDraft": true,
+      "mergedAt": null,
+      "closedAt": null,
+      "author": {
+        "login": "priya-dev"
+      },
+      "headRefName": "branch-62",
+      "baseRefName": "main",
+      "additions": 41,
+      "deletions": 9,
+      "changedFiles": 3,
+      "isCrossRepository": false,
+      "reviewDecision": "REVIEW_REQUIRED",
+      "reviewRequests": [],
+      "url": "https://github.com/example/app/pull/62",
+      "statusCheckRollup": [
+        {
+          "name": "tests",
+          "status": "IN_PROGRESS",
+          "conclusion": ""
+        }
+      ]
+    },
+    "user": "you-dev"
+  },
+  "expect": {
+    "no_card": [
+      "example/app#62"
+    ]
+  }
+}

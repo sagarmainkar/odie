@@ -22,7 +22,7 @@ describe("withPickOf", () => {
     expect(withPickOf("/api/tasks", "abc")).toBe("/api/tasks");
     expect(withPickOf("/api/persona", "abc")).toBe("/api/persona");  // Odie's own name and picture, for Today and the rest
     expect(withPickOf("/api/persona", "abc", true)).toBe("/api/persona?personality=abc");  // Settings asks for the picked one's
-    expect(followsPick("/api/watch")).toBe(false);
+    expect(followsPick("/api/watch")).toBe(true);  // each one's own watch (Pulse)
     expect(followsPick("/api/chats")).toBe(false);  // only the path itself or what is under it
   });
 

@@ -1,11 +1,11 @@
-import { usePersona } from "../persona";
+import { usePickedPersona } from "../persona";
 import { Orb } from "./Orb";
 import { Icon } from "./Tile";
 
 /** Today's way into Chat: a floating frosted bar with the orb, like a message field. On a desktop it centres under Today's
  *  column, beside the 84px rail (half of it: 42px), and is a little wider. */
 export function AskBar({ pending }: { pending: number }) {
-  const { name } = usePersona();
+  const { name } = usePickedPersona();  // "Ask Mira anything" on Mira's Pulse
   return (
     <a href="#chat" className="glass fixed left-1/2 lg:left-[calc(50%+42px)] -translate-x-1/2 bottom-[max(env(safe-area-inset-bottom),14px)] w-[calc(100%-28px)] max-w-[452px] lg:max-w-[560px] z-20 h-[62px] rounded-full pl-2.5 pr-2 flex items-center gap-3 text-body text-muted active:scale-[.98] transition-transform">
       <Orb size={40} />

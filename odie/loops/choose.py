@@ -65,10 +65,10 @@ def parse_choice(text: str) -> dict | None:
 
 
 def prompt_for(loop: dict, evidence: list[dict], facts: dict) -> str:
-    """What the model reads: the loop in one line, its recent evidence and the fresh facts, both fenced (mail subjects
-    and GitHub titles are other people's words)."""
+    """What the model reads: the loop in one line, its recent evidence and the fresh facts, each fenced (the title
+    and the evidence carry mail subjects, the facts GitHub titles: other people's words)."""
     said = "\n".join(f"- {e['at'][:16]} {e['source']}: {e['fact']}" for e in evidence[-EVIDENCE_LINES:])
-    return (f"Loop: {ledger.line(loop, evidence)}\n\nEvidence so far:\n{wrap_untrusted(said or '(none)')}\n\n"
+    return (f"Loop:\n{wrap_untrusted(ledger.line(loop, evidence))}\n\nEvidence so far:\n{wrap_untrusted(said or '(none)')}\n\n"
             f"Facts from GitHub just now:\n{wrap_untrusted(json.dumps(facts, ensure_ascii=False))}\n\n"
             "Choose drop, wait or ready.")
 
@@ -141,7 +141,7 @@ async def choose(store, loop: dict, now: datetime, think, push=None) -> str:
     if not was_ready:
         ledger.update(store, loop["id"], now, shown_at=now.isoformat(timespec="seconds"))
     if push is not None and not was_ready and loop["priority"] == "high":
-        pushes.started_by_odie(store, now, loop["personality"], loop["title"], headline, push)
+        pushes.started_by_odie(store, now, loop["personality"], loop["title"], headline, push, ref=f"loop:{loop['id']}")
     return "ready"
 
 

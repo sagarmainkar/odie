@@ -2377,8 +2377,9 @@ async def watch_get(request: Request) -> dict[str, Any]:
     from zoneinfo import ZoneInfo
 
     from odie.watch import needs, report
+    from odie.watch.owner import key
     store = request.app.state.store
-    card = store.get_setting(report.CARD)
+    card = store.get_setting(key(report.CARD, _personality(request)))  # the picked one's own watch
     if not card:
         return {"off": "The first check runs a minute after Odie starts.", "needs_you": [], "events": [], "unseen": 0}
     now = datetime.now(ZoneInfo(config.settings.timezone))

@@ -1,0 +1,146 @@
+{
+  "date": "2026-11-18",
+  "odie_commit": "ab65146",
+  "provider": "ollama",
+  "model": "deepseek-v4.1-flash:1017-cloud",
+  "totals": {
+    "right": 17,
+    "of": 17,
+    "wrong": []
+  },
+  "results": [
+    {
+      "id": "a-draft-waits",
+      "error": "",
+      "ran": [
+        [
+          1,
+          "wait"
+        ]
+      ],
+      "score": {
+        "right": 1,
+        "of": 1,
+        "wrong": [],
+        "loops": 1
+      }
+    },
+    {
+      "id": "done-pr-gets-mail",
+      "error": "",
+      "ran": [],
+      "score": {
+        "right": 2,
+        "of": 2,
+        "wrong": [],
+        "loops": 1
+      }
+    },
+    {
+      "id": "fourteen-mails-one-pr",
+      "error": "",
+      "ran": [
+        [
+          3,
+          "ready"
+        ]
+      ],
+      "score": {
+        "right": 2,
+        "of": 2,
+        "wrong": [],
+        "loops": 1
+      }
+    },
+    {
+      "id": "issue-assigned-to-you",
+      "error": "",
+      "ran": [
+        [
+          4,
+          "ready"
+        ]
+      ],
+      "score": {
+        "right": 2,
+        "of": 2,
+        "wrong": [],
+        "loops": 1
+      }
+    },
+    {
+      "id": "issue-not-yours",
+      "error": "",
+      "ran": [
+        [
+          5,
+          "drop"
+        ]
+      ],
+      "score": {
+        "right": 1,
+        "of": 1,
+        "wrong": [],
+        "loops": 1
+      }
+    },
+    {
+      "id": "lone-merged-mail",
+      "error": "",
+      "ran": [],
+      "score": {
+        "right": 1,
+        "of": 1,
+        "wrong": [],
+        "loops": 0
+      }
+    },
+    {
+      "id": "merged-pr-closes",
+      "error": "",
+      "ran": [],
+      "score": {
+        "right": 3,
+        "of": 3,
+        "wrong": [],
+        "loops": 1
+      }
+    },
+    {
+      "id": "own-pr-ci-failing",
+      "error": "",
+      "ran": [
+        [
+          7,
+          "ready"
+        ]
+      ],
+      "score": {
+        "right": 2,
+        "of": 2,
+        "wrong": [],
+        "loops": 1
+      }
+    },
+    {
+      "id": "two-prs-alike",
+      "error": "",
+      "ran": [
+        [
+          8,
+          "wait"
+        ],
+        [
+          9,
+          "wait"
+        ]
+      ],
+      "score": {
+        "right": 3,
+        "of": 3,
+        "wrong": [],
+        "loops": 2
+      }
+    }
+  ]
+}
