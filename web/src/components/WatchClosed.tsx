@@ -22,10 +22,10 @@ export function WatchClosed({ items, onReopen }: { items: WatchClosedItem[]; onR
             <Icon name="check" size={18} stroke={2.6} />
           </span>
           <div className="flex-1 min-w-0">
-            <div className="text-[15px] leading-[1.35] font-semibold break-words text-ink-2">{t.title}</div>
-            <div className="text-[12.5px] leading-[17px] text-good mt-0.5">{whyLine(t.why)}</div>
+            <div className="text-body leading-[1.35] font-semibold break-words text-ink-2">{t.title}</div>
+            <div className="text-small leading-[17px] text-good mt-0.5">{whyLine(t.why)}</div>
           </div>
-          <button type="button" onClick={() => onReopen(t.id)} className="pill h-8 px-3 text-[12.5px] shrink-0">Reopen</button>
+          <button type="button" onClick={() => onReopen(t.id)} className="pill h-8 px-3 text-small shrink-0">Reopen</button>
         </div>
       ))}
     </div>

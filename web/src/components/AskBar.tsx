@@ -7,7 +7,7 @@ import { Icon } from "./Tile";
 export function AskBar({ pending }: { pending: number }) {
   const { name } = usePersona();
   return (
-    <a href="#chat" className="glass fixed left-1/2 lg:left-[calc(50%+42px)] -translate-x-1/2 bottom-[max(env(safe-area-inset-bottom),14px)] w-[calc(100%-28px)] max-w-[452px] lg:max-w-[560px] z-20 h-[62px] rounded-full pl-2.5 pr-2 flex items-center gap-3 text-[16px] text-muted active:scale-[.98] transition-transform">
+    <a href="#chat" className="glass fixed left-1/2 lg:left-[calc(50%+42px)] -translate-x-1/2 bottom-[max(env(safe-area-inset-bottom),14px)] w-[calc(100%-28px)] max-w-[452px] lg:max-w-[560px] z-20 h-[62px] rounded-full pl-2.5 pr-2 flex items-center gap-3 text-body text-muted active:scale-[.98] transition-transform">
       <Orb size={40} />
       <span className="flex-1 min-w-0 truncate">Ask {name} anything</span>
       {pending > 0 && <span className="chip chip-warn">{pending} waiting</span>}

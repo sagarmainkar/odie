@@ -17,13 +17,13 @@ function Chip({ status }: { status: string }) {
 function Group({ title, summary, children }: { title: string; summary?: string; children: React.ReactNode }) {
   return (
     <Collapse title={title} summary={summary}>
-      <div className="glass rounded-[26px] overflow-hidden">{children}</div>
+      <div className="glass rounded-card overflow-hidden">{children}</div>
     </Collapse>
   );
 }
 
 const EMPTY: ServerForm = { name: "", title: "", target: "", description: "", env: [["", ""]] };
-const field = "h-11 px-3 rounded-[14px] bg-well border border-line outline-none text-[15px]";
+const field = "h-11 px-3 rounded-control bg-well border border-line outline-none text-body";
 
 async function postCheck(url: string, body: unknown): Promise<Check> {
   const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
@@ -34,12 +34,12 @@ async function postCheck(url: string, body: unknown): Promise<Check> {
 
 /** What the connection check found: the tools, and which ask for a tap. */
 function CheckResult({ check }: { check: Check }) {
-  if (!check.ok) return <div className="text-[13px] text-warn-ink [overflow-wrap:anywhere]">{check.reason}</div>;
+  if (!check.ok) return <div className="text-small text-warn-ink [overflow-wrap:anywhere]">{check.reason}</div>;
   return (
-    <div className="rounded-[14px] bg-well px-3 py-2.5 flex flex-col gap-1">
-      <div className="text-[13px] font-semibold">{checkSummary(check.tools)}</div>
+    <div className="rounded-control bg-well px-3 py-2.5 flex flex-col gap-1">
+      <div className="text-small font-semibold">{checkSummary(check.tools)}</div>
       {check.tools.length > 0 && (
-        <div className="text-[12.5px] leading-[18px] text-muted [overflow-wrap:anywhere]">{check.tools.map((t) => toolLabel(t.name) + (t.asks ? " (asks)" : "")).join(" · ")}</div>
+        <div className="text-small leading-[18px] text-muted [overflow-wrap:anywhere]">{check.tools.map((t) => toolLabel(t.name) + (t.asks ? " (asks)" : "")).join(" · ")}</div>
       )}
     </div>
   );
@@ -132,18 +132,18 @@ export function PluginsSection() {
   return (
     <>
       <Group title="Your skills" summary={mine ? `${mine.filter((x) => x.status !== "disabled" && x.status !== "error").length} on` : undefined}>
-        {mine === null ? <div className="px-4 py-3.5 text-[14px] text-muted">Loading…</div>
-          : mine.length === 0 ? <div className="px-4 py-3.5 text-[14px] text-muted">None yet. Ask Odie to build one, like "a skill that plans my week".</div>
+        {mine === null ? <div className="px-4 py-3.5 text-ui text-muted">Loading…</div>
+          : mine.length === 0 ? <div className="px-4 py-3.5 text-ui text-muted">None yet. Ask Odie to build one, like "a skill that plans my week".</div>
           : mine.map((s) => (
             <div key={s.name} className="flex items-start gap-3 px-4 py-3 border-b border-line last:border-b-0">
               <Tile icon="brain" color="pink" small />
               <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 flex-wrap"><b className="text-[15px] font-semibold">{s.title || s.name}</b><Chip status={s.status} /></div>
-                <div className="text-[13px] leading-[18px] text-muted mt-0.5 [overflow-wrap:anywhere]">{s.summary || s.description || "—"}</div>
-                <div className="text-[12px] text-dim mt-0.5">{s.tools.length ? `${s.tools.length} tool${s.tools.length > 1 ? "s" : ""}` : "Instructions only"}</div>
-                {s.reason && s.status !== "blocked" && <div className="text-[12.5px] text-warn-ink mt-1 [overflow-wrap:anywhere]">{s.reason}</div>}
+                <div className="flex items-center gap-2 flex-wrap"><b className="text-body font-semibold">{s.title || s.name}</b><Chip status={s.status} /></div>
+                <div className="text-small leading-[18px] text-muted mt-0.5 [overflow-wrap:anywhere]">{s.summary || s.description || "—"}</div>
+                <div className="text-caption text-dim mt-0.5">{s.tools.length ? `${s.tools.length} tool${s.tools.length > 1 ? "s" : ""}` : "Instructions only"}</div>
+                {s.reason && s.status !== "blocked" && <div className="text-small text-warn-ink mt-1 [overflow-wrap:anywhere]">{s.reason}</div>}
                 {s.status === "blocked" && (
-                  <button disabled={busy} onClick={() => act(() => postJSON(`/api/skills/${s.name}/trust`, {}))} className="pill pill-solid h-9 text-[13px] shadow-none mt-2">
+                  <button disabled={busy} onClick={() => act(() => postJSON(`/api/skills/${s.name}/trust`, {}))} className="pill pill-solid h-9 text-small shadow-none mt-2">
                     Allow code
                   </button>
                 )}
@@ -157,22 +157,22 @@ export function PluginsSection() {
       </Group>
 
       <Group title="Connected apps" summary={servers ? `${servers.filter((m) => m.enabled).length} on` : undefined}>
-        {configError && <div className="px-4 py-3 text-[13px] text-warn-ink border-b border-line">{configError}</div>}
-        {notice && <div className="px-4 py-3 text-[13px] text-muted border-b border-line [overflow-wrap:anywhere]" role="status">{notice}</div>}
-        {servers === null ? <div className="px-4 py-3.5 text-[14px] text-muted">Loading…</div>
-          : servers.length === 0 && !adding ? <div className="px-4 py-3.5 text-[14px] text-muted">Nothing connected yet.</div>
+        {configError && <div className="px-4 py-3 text-small text-warn-ink border-b border-line">{configError}</div>}
+        {notice && <div className="px-4 py-3 text-small text-muted border-b border-line [overflow-wrap:anywhere]" role="status">{notice}</div>}
+        {servers === null ? <div className="px-4 py-3.5 text-ui text-muted">Loading…</div>
+          : servers.length === 0 && !adding ? <div className="px-4 py-3.5 text-ui text-muted">Nothing connected yet.</div>
           : servers.map((m) => (
             <div key={m.name} className="px-4 py-3 border-b border-line">
             <div className="flex items-start gap-3">
               <button type="button" onClick={() => openEdit(m)} className="flex items-start gap-3 flex-1 min-w-0 text-left" aria-label={`Edit ${serverTitle(m)}`}>
                 <Tile icon={m.name === "vault" ? "note" : "globe"} color={m.name === "vault" ? "violet" : "blue"} small />
                 <span className="flex-1 min-w-0">
-                  <span className="flex items-center gap-2 flex-wrap"><b className="text-[15px] font-semibold">{serverTitle(m)}</b><Chip status={m.enabled ? m.status : "disabled"} /></span>
-                  <span className="block text-[13px] leading-[18px] text-muted mt-0.5 [overflow-wrap:anywhere]">
+                  <span className="flex items-center gap-2 flex-wrap"><b className="text-body font-semibold">{serverTitle(m)}</b><Chip status={m.enabled ? m.status : "disabled"} /></span>
+                  <span className="block text-small leading-[18px] text-muted mt-0.5 [overflow-wrap:anywhere]">
                     {m.tools.length ? m.tools.map(toolLabel).join(" · ") : m.spec.description || m.spec.url || m.spec.command}
                   </span>
-                  {m.readsFree && <span className="block text-[12px] text-dim mt-0.5">Reading doesn't need a tap</span>}
-                  {m.reason && <span className="block text-[12.5px] text-warn-ink mt-1 [overflow-wrap:anywhere]">{m.reason}</span>}
+                  {m.readsFree && <span className="block text-caption text-dim mt-0.5">Reading doesn't need a tap</span>}
+                  {m.reason && <span className="block text-small text-warn-ink mt-1 [overflow-wrap:anywhere]">{m.reason}</span>}
                 </span>
               </button>
               <Switch label={`${serverTitle(m)} on`} on={m.enabled} disabled={busy} onChange={(v) => act(() => postJSON(`/api/mcp/${m.name}/enabled`, { enabled: v }))} />
@@ -180,87 +180,87 @@ export function PluginsSection() {
             {showsCanUse(pick, howMany, m.canUse) && (
               // Whether whoever is picked may use this app; the switch above stays the whole app's, for everyone.
               <div className="flex items-center gap-3 mt-1 pl-[46px]">
-                <span className="flex-1 min-w-0 text-[13px] leading-[18px] text-muted">{canUseLabel(picked.name)}</span>
+                <span className="flex-1 min-w-0 text-small leading-[18px] text-muted">{canUseLabel(picked.name)}</span>
                 <Switch label={`${canUseLabel(picked.name)}: ${serverTitle(m)}`} on={m.canUse} disabled={busy}
                   onChange={(v) => { setRefused(null); void act(() => postJSON(canUseUrl(m.name, pick), { on: v }).catch((e) => setRefused({ pick, name: m.name, words: switchProblem(e) }))); }} />
               </div>
             )}
-            {refused?.pick === pick && refused.name === m.name && <div className="mt-1 pl-[46px] text-[12.5px] leading-[18px] text-warn-ink [overflow-wrap:anywhere]" role="status">{refused.words}</div>}
+            {refused?.pick === pick && refused.name === m.name && <div className="mt-1 pl-[46px] text-small leading-[18px] text-warn-ink [overflow-wrap:anywhere]" role="status">{refused.words}</div>}
             </div>
           ))}
         {adding && (
           <div className="px-4 py-3.5 flex flex-col gap-2.5 border-b border-line">
-            <div className="text-[14px] font-semibold">{editing ? `Edit ${form.title || form.name}` : "Connect another app (MCP)"}</div>
+            <div className="text-ui font-semibold">{editing ? `Edit ${form.title || form.name}` : "Connect another app (MCP)"}</div>
             <input value={form.title ?? ""} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="Name you'll see, e.g. GitHub"
-              className="h-11 px-3 rounded-[14px] bg-well border border-line outline-none text-[15px]" />
+              className="h-11 px-3 rounded-control bg-well border border-line outline-none text-body" />
             <input value={form.name} disabled={!!editing} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Short id, e.g. github" autoCapitalize="none" autoCorrect="off"
-              className="h-11 px-3 rounded-[14px] bg-well border border-line outline-none text-[15px] disabled:opacity-60" />
+              className="h-11 px-3 rounded-control bg-well border border-line outline-none text-body disabled:opacity-60" />
             <input value={form.target} onChange={(e) => setForm({ ...form, target: e.target.value })} placeholder="Command (npx -y …) or URL (https://…/mcp)" autoCapitalize="none" autoCorrect="off"
-              className="h-11 px-3 rounded-[14px] bg-well border border-line outline-none text-[15px]" />
+              className="h-11 px-3 rounded-control bg-well border border-line outline-none text-body" />
             <input value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="What it's for (one line, optional)"
-              className="h-11 px-3 rounded-[14px] bg-well border border-line outline-none text-[15px]" />
-            <div className="text-[12.5px] text-muted">Secrets (env for a command, headers for a URL){editing ? " · •••• keeps the saved value" : ""}</div>
+              className="h-11 px-3 rounded-control bg-well border border-line outline-none text-body" />
+            <div className="text-small text-muted">Secrets (env for a command, headers for a URL){editing ? " · •••• keeps the saved value" : ""}</div>
             {form.env.map(([k, v], i) => (
               <div key={i} className="flex gap-2">
                 <input value={k} onChange={(e) => setForm({ ...form, env: form.env.map((r, j) => (j === i ? [e.target.value, r[1]] : r)) })} placeholder="KEY" autoCapitalize="none"
-                  className="flex-1 min-w-0 h-10 px-3 rounded-[12px] bg-well border border-line outline-none text-[14px]" />
+                  className="flex-1 min-w-0 h-10 px-3 rounded-control bg-well border border-line outline-none text-ui" />
                 <input value={v} type="password" onChange={(e) => setForm({ ...form, env: form.env.map((r, j) => (j === i ? [r[0], e.target.value] : r)) })} placeholder="value"
-                  className="flex-1 min-w-0 h-10 px-3 rounded-[12px] bg-well border border-line outline-none text-[14px]" />
+                  className="flex-1 min-w-0 h-10 px-3 rounded-control bg-well border border-line outline-none text-ui" />
               </div>
             ))}
-            <button type="button" onClick={() => setForm({ ...form, env: [...form.env, ["", ""]] })} className="self-start text-[13px] text-ember-text font-semibold">+ Another secret</button>
+            <button type="button" onClick={() => setForm({ ...form, env: [...form.env, ["", ""]] })} className="self-start text-small text-ember-text font-semibold">+ Another secret</button>
             {editingRow && (
               <div className="flex items-start gap-3 py-1">
                 <div className="flex-1 min-w-0">
-                  <div className="text-[14px] font-medium">Reading doesn't need a tap</div>
-                  <div className="text-[12.5px] leading-[18px] text-muted">Only tools that find, get, list, search or fetch. Sending, creating, changing and deleting always ask.</div>
+                  <div className="text-ui font-medium">Reading doesn't need a tap</div>
+                  <div className="text-small leading-[18px] text-muted">Only tools that find, get, list, search or fetch. Sending, creating, changing and deleting always ask.</div>
                 </div>
                 <Switch label="Reading doesn't need a tap" on={editingRow.readsFree} disabled={busy}
                   onChange={(v) => act(() => postJSON(`/api/mcp/${editingRow.name}/reads_free`, { on: v }))} />
               </div>
             )}
             {check && <CheckResult check={check} />}
-            {formError && <div className="text-[13px] text-warn-ink">{formError}</div>}
+            {formError && <div className="text-small text-warn-ink">{formError}</div>}
             <div className="flex gap-2 flex-wrap">
-              <button disabled={busy} onClick={checkForm} className="pill h-10 text-[14px] shadow-none">{busy && !check ? "Checking…" : "Check"}</button>
-              <button disabled={busy} onClick={addServer} className="pill pill-solid h-10 text-[14px] shadow-none">{check && !check.ok ? "Save anyway" : editing ? "Save" : "Connect"}</button>
-              <button onClick={closeForm} className="pill h-10 text-[14px] shadow-none">Cancel</button>
+              <button disabled={busy} onClick={checkForm} className="pill h-10 text-ui shadow-none">{busy && !check ? "Checking…" : "Check"}</button>
+              <button disabled={busy} onClick={addServer} className="pill pill-solid h-10 text-ui shadow-none">{check && !check.ok ? "Save anyway" : editing ? "Save" : "Connect"}</button>
+              <button onClick={closeForm} className="pill h-10 text-ui shadow-none">Cancel</button>
               {editing && (
                 <button disabled={busy} onClick={() => { if (confirm(`Remove ${form.title || form.name}?`)) void act(async () => { await del(`/api/mcp/${editing}`); closeForm(); }); }}
-                  className="ml-auto text-[13.5px] font-semibold text-warn-ink">Remove</button>
+                  className="ml-auto text-ui font-semibold text-warn-ink">Remove</button>
               )}
             </div>
           </div>
         )}
         {preset && (
           <div className="px-4 py-3.5 flex flex-col gap-2.5 border-b border-line">
-            <div className="text-[14px] font-semibold">Connect {preset.title}</div>
-            <div className="text-[12.5px] leading-[18px] text-muted">{preset.where} Your data then goes through {preset.title}.</div>
-            {note && <div className="text-[12.5px] leading-[18px] text-warn-ink">{note}</div>}
+            <div className="text-ui font-semibold">Connect {preset.title}</div>
+            <div className="text-small leading-[18px] text-muted">{preset.where} Your data then goes through {preset.title}.</div>
+            {note && <div className="text-small leading-[18px] text-warn-ink">{note}</div>}
             <input value={link} type="text" autoComplete="off" autoCapitalize="none" autoCorrect="off" spellCheck={false} onChange={(e) => { setLink(e.target.value); setPresetCheck(null); }} placeholder={`The ${preset.title} server link (https://…)`}
               aria-label={`${preset.title} server link`} className={field} />
-            {linkCarriesToken(link) && <div className="text-[12.5px] leading-[18px] text-muted">This link has its code in it, so leave the code box empty.</div>}
+            {linkCarriesToken(link) && <div className="text-small leading-[18px] text-muted">This link has its code in it, so leave the code box empty.</div>}
             <input value={key} type="password" autoComplete="off" onChange={(e) => { setKey(e.target.value); setPresetCheck(null); }} placeholder={preset.key_label}
               aria-label={preset.key_label} className={field} />
             {presetCheck && <CheckResult check={presetCheck} />}
             <div className="flex gap-2 flex-wrap">
-              <button disabled={busy || !link.trim()} onClick={() => connectPreset(true)} className="pill h-10 text-[14px] shadow-none">{busy && !presetCheck ? "Checking…" : "Check"}</button>
-              <button disabled={busy || !presetCheck?.ok} onClick={() => connectPreset(false)} className="pill pill-solid h-10 text-[14px] shadow-none">Connect</button>
-              <button onClick={closePreset} className="pill h-10 text-[14px] shadow-none">Cancel</button>
+              <button disabled={busy || !link.trim()} onClick={() => connectPreset(true)} className="pill h-10 text-ui shadow-none">{busy && !presetCheck ? "Checking…" : "Check"}</button>
+              <button disabled={busy || !presetCheck?.ok} onClick={() => connectPreset(false)} className="pill pill-solid h-10 text-ui shadow-none">Connect</button>
+              <button onClick={closePreset} className="pill h-10 text-ui shadow-none">Cancel</button>
             </div>
-            <div className="text-[12px] leading-4 text-muted">The link and key stay on this computer, in a file only you can read.</div>
+            <div className="text-caption leading-4 text-muted">The link and key stay on this computer, in a file only you can read.</div>
           </div>
         )}
         {!adding && !preset && (
-          <div className="px-4 pt-3 text-[12.5px] leading-[18px] text-muted">
+          <div className="px-4 pt-3 text-small leading-[18px] text-muted">
             Connect your mail, calendar and other apps. Zapier and Composio link many apps in one go; any other MCP server works too.
           </div>
         )}
         <div className="px-4 py-3 flex gap-2 flex-wrap">
           {!adding && !preset && presets.map((p) => (
-            <button key={p.id} onClick={() => openPreset(p)} className="pill pill-flat h-10 text-[14px]">{p.title}</button>
+            <button key={p.id} onClick={() => openPreset(p)} className="pill pill-flat h-10 text-ui">{p.title}</button>
           ))}
-          {!adding && !preset && <button onClick={() => { setForm(EMPTY); setEditing(null); setAdding(true); }} className="pill pill-flat h-10 text-[14px]">Another app</button>}
+          {!adding && !preset && <button onClick={() => { setForm(EMPTY); setEditing(null); setAdding(true); }} className="pill pill-flat h-10 text-ui">Another app</button>}
           <button disabled={busy} onClick={() => act(() => postJSON("/api/plugins/reload", {}))} aria-label="Reload skills and apps" title="Reload skills and apps" className="pill pill-flat w-10 h-10 px-0 ml-auto">
             <span className={`flex ${busy ? "animate-spin" : ""}`}><Icon name="refresh" size={15} /></span>
           </button>

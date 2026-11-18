@@ -19,7 +19,7 @@ function downloads(m: Media): Download[] {
 function DownloadButton({ d, dark = false }: { d: Download; dark?: boolean }) {
   return (
     <a href={mediaUrl(d)} download={d.filename} onClick={(e) => e.stopPropagation()} aria-label={`Download ${d.filename}, ${d.label}, ${size(d.size)}`}
-      className={`h-10 px-3.5 rounded-full flex items-center gap-2 text-[13.5px] font-semibold shrink-0 ${dark ? "bg-white/15 text-white" : "bg-well text-ink-2 active:bg-line"}`}>
+      className={`h-10 px-3.5 rounded-full flex items-center gap-2 text-ui font-semibold shrink-0 ${dark ? "bg-white/15 text-white" : "bg-well text-ink-2 active:bg-line"}`}>
       <span className="rotate-180 grid place-items-center"><Icon name="up" size={15} /></span>
       {d.label}<span className={`font-normal ${dark ? "text-white/70" : "text-muted"}`}>{size(d.size)}</span>
     </a>
@@ -34,25 +34,25 @@ export function DeckCard({ m }: { m: Media }) {
   const files = downloads(m);
   const title = (m.title || m.filename || "Deck").replace(/ · PowerPoint$/, "");
   return (
-    <div className="glass rounded-[22px] w-full max-w-[440px] overflow-hidden" data-media="deck">
+    <div className="glass rounded-tile w-full max-w-[440px] overflow-hidden" data-media="deck">
       <div className="flex items-center gap-3 px-3.5 pt-3 pb-2.5">
         <Tile icon="chart" color="orange" small />
         <span className="flex-1 min-w-0">
-          <b className="block text-[14.5px] font-semibold leading-5 truncate">{title}</b>
-          <span className="block text-[12.5px] text-muted">{deckLine(m)}</span>
+          <b className="block text-ui font-semibold leading-5 truncate">{title}</b>
+          <span className="block text-small text-muted">{deckLine(m)}</span>
         </span>
       </div>
       {shown.length > 0 && (
         <div className="flex gap-2 overflow-x-auto no-scrollbar snap-x snap-mandatory px-3.5 pb-1">
           {shown.map((p, i) => (
             <button key={p.thumb} onClick={() => setOpen(i)} aria-label={`Open slide ${i + 1}`} className="relative shrink-0 snap-start">
-              <img src={mediaUrl({ id: p.thumb })} alt="" loading="lazy" className="w-[168px] aspect-video rounded-[12px] object-cover bg-well border border-line" />
-              <span className="absolute left-1.5 bottom-1.5 px-1.5 rounded-md bg-black/55 text-white text-[10.5px] font-semibold leading-[17px]">{i + 1}</span>
+              <img src={mediaUrl({ id: p.thumb })} alt="" loading="lazy" className="w-[168px] aspect-video rounded-control object-cover bg-well border border-line" />
+              <span className="absolute left-1.5 bottom-1.5 px-1.5 rounded-md bg-black/55 text-white text-tiny font-semibold leading-[17px]">{i + 1}</span>
             </button>
           ))}
           {more > 0 && (
             <button onClick={() => setOpen(shown.length)} aria-label={`${more} more slides`}
-              className="shrink-0 w-[72px] aspect-[72/94.5] rounded-[12px] bg-well border border-line text-[14px] font-semibold text-muted snap-start">+{more}</button>
+              className="shrink-0 w-[72px] aspect-[72/94.5] rounded-control bg-well border border-line text-ui font-semibold text-muted snap-start">+{more}</button>
           )}
         </div>
       )}
@@ -60,7 +60,7 @@ export function DeckCard({ m }: { m: Media }) {
         {files.map((d) => <DownloadButton key={d.id} d={d} />)}
         <ShareFile file={files[0]} />
       </div>
-      {deck.note && <div className="px-3.5 pb-3 -mt-1 text-[12px] leading-[16px] text-muted">{deck.note}</div>}
+      {deck.note && <div className="px-3.5 pb-3 -mt-1 text-caption leading-[16px] text-muted">{deck.note}</div>}
       {createPortal(  // on the page itself: a card's backdrop filter would trap a fixed overlay inside the card
         <AnimatePresence>{open !== null && <DeckViewer pages={deck.pages} at={open} setAt={setOpen} files={files} title={title} />}</AnimatePresence>,
         document.body)}
@@ -131,20 +131,20 @@ function DeckViewer({ pages, at, setAt, files, title }: { pages: DeckPage[]; at:
       className="fixed inset-0 z-50 bg-black/92 flex flex-col" onClick={() => setAt(null)}
       onTouchStart={start} onTouchMove={move} onTouchEnd={end}>
       <div className="flex items-center gap-3 px-4 pt-[max(16px,env(safe-area-inset-top))] pb-3 text-white">
-        <div className="flex-1 min-w-0 text-[15px] font-semibold truncate" onClick={keep}>{title}</div>
-        <span className="text-[13px] text-white/70 shrink-0 tabular-nums">{at + 1} / {pages.length}</span>
+        <div className="flex-1 min-w-0 text-body font-semibold truncate" onClick={keep}>{title}</div>
+        <span className="text-small text-white/70 shrink-0 tabular-nums">{at + 1} / {pages.length}</span>
         <button ref={close} onClick={(e) => { keep(e); setAt(null); }} aria-label="Close" className="w-9 h-9 rounded-full bg-white/15 grid place-items-center shrink-0">✕</button>
       </div>
       <div className="flex-1 min-h-0 flex items-center justify-center px-2 overflow-hidden" style={{ touchAction: "none" }}>
         {p && <img ref={img} key={p.view} src={mediaUrl({ id: p.view })} alt={`Slide ${at + 1}`} onClick={keep} draggable={false}
           style={{ transform: `translate(${zoom.x}px, ${zoom.y}px) scale(${zoom.s})`, transition: touch.current ? "none" : "transform .18s ease-out" }}
-          className="max-w-full max-h-full object-contain rounded-[8px] shadow-2xl select-none" />}
+          className="max-w-full max-h-full object-contain rounded-inner shadow-2xl select-none" />}
         {pages[at + 1] && <link rel="preload" as="image" href={mediaUrl({ id: pages[at + 1].view })} />}
       </div>
       <div className="flex flex-col gap-3 px-4 pt-3 pb-[max(16px,env(safe-area-inset-bottom))] text-white">
         <div className="flex items-center justify-between">
           <button onClick={(e) => { keep(e); go(-1); }} disabled={at === 0} aria-label="Previous slide" className="w-11 h-11 rounded-full bg-white/15 disabled:opacity-30">‹</button>
-          <span className="text-[12.5px] text-white/55">Swipe for the next slide</span>
+          <span className="text-small text-white/55">Swipe for the next slide</span>
           <button onClick={(e) => { keep(e); go(1); }} disabled={at === pages.length - 1} aria-label="Next slide" className="w-11 h-11 rounded-full bg-white/15 disabled:opacity-30">›</button>
         </div>
         <div className="flex flex-wrap justify-center gap-2">

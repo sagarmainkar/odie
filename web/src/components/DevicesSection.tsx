@@ -60,68 +60,68 @@ export function DevicesSection() {
 
   return (
     <section className="flex flex-col gap-2">
-      <div className="text-[13px] leading-5 font-bold text-muted px-1.5">Devices</div>
+      <div className="text-small leading-5 font-bold text-muted px-1.5">Devices</div>
       {status && !status.on && (
-        <div className="glass rounded-[26px] px-4 py-3.5 flex flex-col gap-2.5">
-          <div className="text-[15px] font-semibold">Turn on device pairing</div>
-          <div className="text-[13px] leading-[19px] text-muted">Right now anyone who can reach this address can use Odie. With pairing on, only the devices you pair can. Pair your phone first (Add a device), then turn it on here: this browser is paired as you do.</div>
-          <button disabled={busy} onClick={() => turn(true)} className="pill pill-solid h-10 text-[14px] shadow-none self-start">Turn on</button>
+        <div className="glass rounded-card px-4 py-3.5 flex flex-col gap-2.5">
+          <div className="text-body font-semibold">Turn on device pairing</div>
+          <div className="text-small leading-[19px] text-muted">Right now anyone who can reach this address can use Odie. With pairing on, only the devices you pair can. Pair your phone first (Add a device), then turn it on here: this browser is paired as you do.</div>
+          <button disabled={busy} onClick={() => turn(true)} className="pill pill-solid h-10 text-ui shadow-none self-start">Turn on</button>
         </div>
       )}
-      <div className="glass rounded-[26px] overflow-hidden">
-        {list === null && <div className="px-4 py-3.5 text-[14px] text-muted">Loading…</div>}
-        {list?.length === 0 && <div className="px-4 py-3.5 text-[14px] text-muted">No device is paired yet.</div>}
+      <div className="glass rounded-card overflow-hidden">
+        {list === null && <div className="px-4 py-3.5 text-ui text-muted">Loading…</div>}
+        {list?.length === 0 && <div className="px-4 py-3.5 text-ui text-muted">No device is paired yet.</div>}
         {list?.map((d) => (
           <div key={d.id} className="flex items-center gap-3 px-4 py-3 min-h-14 border-b border-line">
             <Tile icon="lock" color={d.this ? "green" : "ink"} small />
             <div className="flex-1 min-w-0">
-              <div className="text-[15px] leading-5 font-medium truncate">{d.name}{d.this && <span className="chip chip-good ml-2 align-middle">This device</span>}</div>
-              <div className="text-[13px] leading-[18px] text-muted">{lastSeen(d.last_seen_at)}</div>
+              <div className="text-body leading-5 font-medium truncate">{d.name}{d.this && <span className="chip chip-good ml-2 align-middle">This device</span>}</div>
+              <div className="text-small leading-[18px] text-muted">{lastSeen(d.last_seen_at)}</div>
             </div>
-            <button disabled={busy} onClick={() => remove(d)} className="text-[13.5px] font-semibold text-warn-ink shrink-0 h-11 px-1">Remove</button>
+            <button disabled={busy} onClick={() => remove(d)} className="text-ui font-semibold text-warn-ink shrink-0 h-11 px-1">Remove</button>
           </div>
         ))}
         {made ? (
           <div className="px-4 py-4 flex flex-col items-center gap-2.5 border-b border-line text-center">
             {!loopback(made.url) && (
-              <div className="w-[220px] rounded-[14px] overflow-hidden [&_svg]:w-full [&_svg]:h-auto" aria-label="QR code for pairing" dangerouslySetInnerHTML={{ __html: made.svg }} />
+              <div className="w-[220px] rounded-control overflow-hidden [&_svg]:w-full [&_svg]:h-auto" aria-label="QR code for pairing" dangerouslySetInnerHTML={{ __html: made.svg }} />
             )}
-            <div className="font-mono text-[24px] tracking-[0.18em] font-semibold" aria-label="Pairing code">{made.code}</div>
-            <div className="text-[13px] leading-[19px] text-muted max-w-[300px]">
+            <div className="font-mono text-display-sm tracking-[0.18em] font-semibold" aria-label="Pairing code">{made.code}</div>
+            <div className="text-small leading-[19px] text-muted max-w-[300px]">
               {loopback(made.url)
                 ? "Valid once, for 10 minutes. This browser has Odie open at this computer's own address, which another device can't reach: on the new device, open Odie at this computer's network address and type the code."
                 : `Valid once, for 10 minutes. On the new device, scan the QR code with the camera, or open ${new URL(made.url).host} and type the code.`}
             </div>
-            <button onClick={() => { setMade(null); load(); }} className="pill h-10 text-[14px] shadow-none">Done</button>
+            <button onClick={() => { setMade(null); load(); }} className="pill h-10 text-ui shadow-none">Done</button>
           </div>
         ) : (
           <button disabled={busy} onClick={addDevice} className="w-full flex items-center gap-3 px-4 py-3 min-h-14 border-b border-line text-left active:bg-well">
             <Tile icon="plus" color="blue" small />
-            <span className="flex-1 text-[15px] font-medium">Add a device</span>
+            <span className="flex-1 text-body font-medium">Add a device</span>
           </button>
         )}
         {passcode ? (
           <div className="px-4 py-4 flex flex-col gap-2 border-b border-line">
-            <div className="text-[13px] text-muted">Your recovery passcode</div>
-            <div className="font-mono text-[18px] font-semibold rounded-[12px] bg-well px-3 py-2.5 select-all">{passcode}</div>
-            <div className="text-[12.5px] leading-[18px] text-muted">Write it down somewhere safe. It isn't shown again. Typed on a new device, it pairs that device.</div>
-            <button onClick={() => setPasscode("")} className="pill h-10 text-[14px] shadow-none self-start">I wrote it down</button>
+            <div className="text-small text-muted">Your recovery passcode</div>
+            <div className="font-mono text-title font-semibold rounded-control bg-well px-3 py-2.5 select-all">{passcode}</div>
+            <div className="text-small leading-[18px] text-muted">Write it down somewhere safe. It isn't shown again. Typed on a new device, it pairs that device.</div>
+            <button onClick={() => setPasscode("")} className="pill h-10 text-ui shadow-none self-start">I wrote it down</button>
           </div>
         ) : (
           <button disabled={busy} onClick={newPasscode} className="w-full flex items-center gap-3 px-4 py-3 min-h-14 border-b border-line text-left active:bg-well">
             <Tile icon="spark" color="violet" small />
             <span className="flex-1 min-w-0">
-              <b className="block text-[15px] font-medium">New recovery passcode</b>
-              <span className={`block text-[13px] leading-[18px] ${needsPasscode(status) ? "text-warn-ink" : "text-muted"}`}>
+              <b className="block text-body font-medium">New recovery passcode</b>
+              <span className={`block text-small leading-[18px] ${needsPasscode(status) ? "text-warn-ink" : "text-muted"}`}>
                 {needsPasscode(status) ? "None yet. Without one, losing your only paired device locks you out." : "Four words that pair a device when no other is at hand"}
               </span>
             </span>
           </button>
         )}
         {status?.on && (
-          <button disabled={busy} onClick={() => turn(false)} className="w-full px-4 py-3 text-left text-[13.5px] text-muted active:bg-well">Turn off device pairing</button>
+          <button disabled={busy} onClick={() => turn(false)} className="w-full px-4 py-3 text-left text-ui text-muted active:bg-well">Turn off device pairing</button>
         )}
-        {error && <div className="px-4 pb-3 pt-1 text-[13px] text-warn-ink">{error}</div>}
+        {error && <div className="px-4 pb-3 pt-1 text-small text-warn-ink">{error}</div>}
       </div>
     </section>
   );

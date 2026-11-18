@@ -11,10 +11,10 @@ export function AnotherVoiceView({ name, state, onName, onTry }: ViewProps) {
     <div className="flex flex-col gap-1.5">
       <form className="flex gap-2" onSubmit={(e) => { e.preventDefault(); if (canTry(name, state)) onTry(); }}>
         <input value={name} onChange={(e) => onName(e.target.value)} placeholder="Another voice name" aria-label="Another voice name"
-          maxLength={NAME_LIMIT + 20} className="flex-1 min-w-0 h-11 rounded-[12px] border border-line bg-surface px-3 text-[15px]" />
-        <button type="submit" disabled={!canTry(name, state)} className="h-11 px-4 rounded-[12px] bg-well text-[14px] font-semibold disabled:opacity-40">Try it</button>
+          maxLength={NAME_LIMIT + 20} className="flex-1 min-w-0 h-11 rounded-control border border-line bg-surface px-3 text-body" />
+        <button type="submit" disabled={!canTry(name, state)} className="h-11 px-4 rounded-control bg-well text-ui font-semibold disabled:opacity-40">Try it</button>
       </form>
-      {line && <div role="status" className={`text-[12.5px] leading-[18px] px-1 ${refused ? "text-warn" : "text-muted"}`}>{line}</div>}
+      {line && <div role="status" className={`text-small leading-[18px] px-1 ${refused ? "text-warn" : "text-muted"}`}>{line}</div>}
     </div>
   );
 }

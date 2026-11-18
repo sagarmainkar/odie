@@ -31,11 +31,11 @@ function Checklist({ s }: { s: SetupState }) {
         {STEPS.map((step) => {
           const st = chipState(step, s);
           const style = st === "done" ? "bg-moss-tint text-moss-text" : st === "skipped" ? "bg-well text-dim line-through" : st === "current" ? "glass-solid text-ink font-semibold" : "bg-well text-muted";
-          return <span key={step} className={`shrink-0 h-8 px-3 rounded-full grid place-items-center text-[12.5px] ${style}`}>{st === "done" ? "✓ " : ""}{LABEL[step]}</span>;
+          return <span key={step} className={`shrink-0 h-8 px-3 rounded-full grid place-items-center text-small ${style}`}>{st === "done" ? "✓ " : ""}{LABEL[step]}</span>;
         })}
       </div>
       {s.current && BY_HAND[s.current] && (
-        <a href={BY_HAND[s.current]} className="text-[13px] text-muted self-start py-2.5">Do it in Settings instead</a>
+        <a href={BY_HAND[s.current]} className="text-small text-muted self-start py-2.5">Do it in Settings instead</a>
       )}
     </div>
   );
@@ -77,46 +77,46 @@ function BrainStep({ onDone }: { onDone: () => void }) {
   const company = CLOUD.find((c) => c.id === cloud)!.company;
   return (
     <div className="flex flex-col gap-4">
-      <div className="text-[15px] leading-[22px] text-ink-2">First, a brain. Pick a model and I'll check it can do the job: about 30 seconds.</div>
+      <div className="text-body leading-[22px] text-ink-2">First, a brain. Pick a model and I'll check it can do the job: about 30 seconds.</div>
       <div className="flex gap-2">
         <input value={query} onChange={(e) => setQuery(e.target.value)} type="search" aria-label="Find a model" placeholder="Find a model, e.g. gemma, glm, claude"
-          autoCapitalize="none" autoCorrect="off" className="flex-1 min-w-0 h-11 px-4 rounded-full bg-well border border-line outline-none text-[15px] focus:border-line-2" />
-        <button onClick={load} className="h-11 px-4 rounded-full border border-line-2 text-[13.5px] font-medium shrink-0">Look again</button>
+          autoCapitalize="none" autoCorrect="off" className="flex-1 min-w-0 h-11 px-4 rounded-full bg-well border border-line outline-none text-body focus:border-line-2" />
+        <button onClick={load} className="h-11 px-4 rounded-full border border-line-2 text-ui font-medium shrink-0">Look again</button>
       </div>
-      <div className="glass rounded-[26px] overflow-hidden">
-        {!data && <div className="px-4 py-3 text-[14px] text-muted">Looking for models…</div>}
-        {data && rows.length === 0 && <div className="px-4 py-3 text-[14px] text-muted">No models found on this computer. Use a cloud key below, or start LM Studio or Ollama and come back.</div>}
+      <div className="glass rounded-card overflow-hidden">
+        {!data && <div className="px-4 py-3 text-ui text-muted">Looking for models…</div>}
+        {data && rows.length === 0 && <div className="px-4 py-3 text-ui text-muted">No models found on this computer. Use a cloud key below, or start LM Studio or Ollama and come back.</div>}
         {rows.map(({ p, m }, i) => {
           const id = `${p.id}/${m.id}`;
           const r = reports[id];
           return (
             <div key={id} className={`px-4 py-3 flex flex-col gap-1.5 ${i < rows.length - 1 ? "border-b border-line" : ""}`}>
               <div className="flex items-center gap-2">
-                <span className="flex-1 min-w-0 text-[15px] truncate">{m.id}</span>
-                <span className="text-[12px] text-muted shrink-0">{p.name}{m.local ? " · on this computer" : " · cloud"}</span>
+                <span className="flex-1 min-w-0 text-body truncate">{m.id}</span>
+                <span className="text-caption text-muted shrink-0">{p.name}{m.local ? " · on this computer" : " · cloud"}</span>
               </div>
-              {r && <div role="status" className={`text-[13px] ${tone(r) === "good" ? "text-moss-text" : tone(r) === "bad" ? "text-ember-text" : "text-warn-ink"}`}>{said(r)}</div>}
+              {r && <div role="status" className={`text-small ${tone(r) === "good" ? "text-moss-text" : tone(r) === "bad" ? "text-ember-text" : "text-warn-ink"}`}>{said(r)}</div>}
               <div className="flex gap-2">
-                <button onClick={() => check(p.id, m.id)} disabled={checking !== null} className="h-9 px-3.5 rounded-full border border-line-2 text-[13.5px] font-medium flex items-center gap-2">
+                <button onClick={() => check(p.id, m.id)} disabled={checking !== null} className="h-9 px-3.5 rounded-full border border-line-2 text-ui font-medium flex items-center gap-2">
                   {checking === id ? <><span className="spinner" /> Checking…</> : r ? "Check again" : "Check"}
                 </button>
-                {(brainDone(r) || (r && !anyGood)) && <button onClick={() => use(p.id, m.id)} className="h-9 px-3.5 rounded-full bg-ember text-on-ember text-[13.5px] font-semibold">{brainDone(r) ? "Use this" : "Use it anyway"}</button>}
+                {(brainDone(r) || (r && !anyGood)) && <button onClick={() => use(p.id, m.id)} className="h-9 px-3.5 rounded-full bg-ember text-on-ember text-ui font-semibold">{brainDone(r) ? "Use this" : "Use it anyway"}</button>}
               </div>
             </div>
           );
         })}
       </div>
-      <form onSubmit={(e) => { e.preventDefault(); if (key.trim()) saveKey(); }} className="glass rounded-[26px] p-4 flex flex-col gap-2.5">
-        <div className="text-[14px] font-semibold">Or use a cloud model with a key</div>
+      <form onSubmit={(e) => { e.preventDefault(); if (key.trim()) saveKey(); }} className="glass rounded-card p-4 flex flex-col gap-2.5">
+        <div className="text-ui font-semibold">Or use a cloud model with a key</div>
         <div className="flex gap-1.5 flex-wrap">
-          {CLOUD.map((c) => <button type="button" key={c.id} onClick={() => setCloud(c.id)} className={`h-10 px-3.5 rounded-full text-[13.5px] ${cloud === c.id ? "glass-solid font-semibold" : "bg-well text-muted"}`}>{c.name}</button>)}
+          {CLOUD.map((c) => <button type="button" key={c.id} onClick={() => setCloud(c.id)} className={`h-10 px-3.5 rounded-full text-ui ${cloud === c.id ? "glass-solid font-semibold" : "bg-well text-muted"}`}>{c.name}</button>)}
         </div>
         <input type="password" autoComplete="off" value={key} onChange={(e) => setKey(e.target.value)} placeholder={`${CLOUD.find((c) => c.id === cloud)!.name} key`}
-          className="h-11 px-4 rounded-full bg-well border border-line outline-none text-[15px] focus:border-line-2" />
-        <div className="text-[12px] leading-4 text-warn-ink">Your chats, notes and memory will go to {company}.</div>
-        {keyError && <div className="text-[13px] text-ember-text">{keyError}</div>}
-        <button type="submit" disabled={!key.trim()} className="self-end h-10 px-5 rounded-full bg-ember text-on-ember text-[14px] font-semibold whitespace-nowrap disabled:opacity-50">Save key</button>
-        <a href="https://lmstudio.ai" target="_blank" rel="noreferrer" className="text-[12.5px] leading-[18px] text-muted">Want everything to stay on this computer? Set up a local model ↗</a>
+          className="h-11 px-4 rounded-full bg-well border border-line outline-none text-body focus:border-line-2" />
+        <div className="text-caption leading-4 text-warn-ink">Your chats, notes and memory will go to {company}.</div>
+        {keyError && <div className="text-small text-ember-text">{keyError}</div>}
+        <button type="submit" disabled={!key.trim()} className="self-end h-10 px-5 rounded-full bg-ember text-on-ember text-ui font-semibold whitespace-nowrap disabled:opacity-50">Save key</button>
+        <a href="https://lmstudio.ai" target="_blank" rel="noreferrer" className="text-small leading-[18px] text-muted">Want everything to stay on this computer? Set up a local model ↗</a>
       </form>
     </div>
   );
@@ -134,15 +134,15 @@ function KeyCardView({ card, onSaved }: { card: KeyCard; onSaved: (provider: str
     setKey("");
     onSaved(card.provider);
   }
-  if (saved) return <div className="text-[13px] text-moss-text">✓ {card.label} key saved</div>;
+  if (saved) return <div className="text-small text-moss-text">✓ {card.label} key saved</div>;
   return (
-    <form onSubmit={(e) => { e.preventDefault(); if (key.trim()) save(); }} className="glass rounded-[22px] p-3.5 flex flex-col gap-2">
-      <div className="text-[14px] font-semibold">{card.label} key</div>
+    <form onSubmit={(e) => { e.preventDefault(); if (key.trim()) save(); }} className="glass rounded-tile p-3.5 flex flex-col gap-2">
+      <div className="text-ui font-semibold">{card.label} key</div>
       <input type="password" autoComplete="off" value={key} onChange={(e) => setKey(e.target.value)} placeholder="Paste the key here"
-        className="h-11 px-4 rounded-full bg-well border border-line outline-none text-[15px] focus:border-line-2" />
-      <div className="text-[12px] leading-4 text-muted">{card.note} It's checked, then saved on this computer; I never see it.</div>
-      {error && <div className="text-[13px] text-ember-text">{error}</div>}
-      <button type="submit" disabled={!key.trim()} className="self-end h-9 px-4 rounded-full bg-ember text-on-ember text-[13.5px] font-semibold disabled:opacity-50">Check and save</button>
+        className="h-11 px-4 rounded-full bg-well border border-line outline-none text-body focus:border-line-2" />
+      <div className="text-caption leading-4 text-muted">{card.note} It's checked, then saved on this computer; I never see it.</div>
+      {error && <div className="text-small text-ember-text">{error}</div>}
+      <button type="submit" disabled={!key.trim()} className="self-end h-9 px-4 rounded-full bg-ember text-on-ember text-ui font-semibold disabled:opacity-50">Check and save</button>
     </form>
   );
 }
@@ -166,20 +166,20 @@ function AppCardView({ card, onSaved }: { card: AppCard; onSaved: (app: string) 
     setUrl(""); setKey("");
     onSaved(card.app);
   }
-  if (saved) return <div className="text-[13px] text-moss-text">✓ {card.label} connected · {saved}</div>;
-  const field = "h-11 px-4 rounded-full bg-well border border-line outline-none text-[15px] focus:border-line-2";
+  if (saved) return <div className="text-small text-moss-text">✓ {card.label} connected · {saved}</div>;
+  const field = "h-11 px-4 rounded-full bg-well border border-line outline-none text-body focus:border-line-2";
   return (
-    <form onSubmit={(e) => { e.preventDefault(); if (url.trim() && !busy) save(); }} className="glass rounded-[22px] p-3.5 flex flex-col gap-2">
-      <div className="text-[14px] font-semibold">Connect {card.label}</div>
+    <form onSubmit={(e) => { e.preventDefault(); if (url.trim() && !busy) save(); }} className="glass rounded-tile p-3.5 flex flex-col gap-2">
+      <div className="text-ui font-semibold">Connect {card.label}</div>
       {card.steps?.length
-        ? <ol className="list-decimal pl-5 flex flex-col gap-1 text-[13px] leading-[19px] text-ink-2">{card.steps.map((t) => <li key={t}>{t}</li>)}</ol>
-        : <div className="text-[12.5px] leading-[18px] text-muted">{card.where}</div>}
+        ? <ol className="list-decimal pl-5 flex flex-col gap-1 text-small leading-[19px] text-ink-2">{card.steps.map((t) => <li key={t}>{t}</li>)}</ol>
+        : <div className="text-small leading-[18px] text-muted">{card.where}</div>}
       <input type="text" autoComplete="off" autoCapitalize="none" autoCorrect="off" spellCheck={false} value={url} onChange={(e) => setUrl(e.target.value)} placeholder={`Paste the ${card.label} server link`} aria-label={`${card.label} server link`} className={field} />
-      {linkCarriesToken(url) && <div className="text-[12.5px] leading-[18px] text-muted">This link has its code in it, so leave the code box empty.</div>}
+      {linkCarriesToken(url) && <div className="text-small leading-[18px] text-muted">This link has its code in it, so leave the code box empty.</div>}
       <input type="password" autoComplete="off" value={key} onChange={(e) => setKey(e.target.value)} placeholder={card.key_label} aria-label={card.key_label} className={field} />
-      <div className="text-[12px] leading-4 text-muted">It's checked, then saved on this computer; I never see it. Your data then goes through {card.label}.</div>
-      {error && <div className="text-[13px] text-ember-text [overflow-wrap:anywhere]">{error}</div>}
-      <button type="submit" disabled={!url.trim() || busy} className="self-end h-9 px-4 rounded-full bg-ember text-on-ember text-[13.5px] font-semibold disabled:opacity-50">{busy ? "Checking…" : "Check and connect"}</button>
+      <div className="text-caption leading-4 text-muted">It's checked, then saved on this computer; I never see it. Your data then goes through {card.label}.</div>
+      {error && <div className="text-small text-ember-text [overflow-wrap:anywhere]">{error}</div>}
+      <button type="submit" disabled={!url.trim() || busy} className="self-end h-9 px-4 rounded-full bg-ember text-on-ember text-ui font-semibold disabled:opacity-50">{busy ? "Checking…" : "Check and connect"}</button>
     </form>
   );
 }
@@ -195,40 +195,40 @@ export function PhoneBlock({ phone, onCheck }: { phone: Phone; onCheck: () => vo
     catch { setError("I couldn't make a pairing code. Try again, or use Settings → Devices."); }
   }
   if (!phone.tailscale) return (
-    <div className="flex flex-col gap-2 text-[14px] leading-[20px]">
+    <div className="flex flex-col gap-2 text-ui leading-[20px]">
       <div>Tailscale isn't on this computer yet.</div>
       <ol className="list-decimal pl-5 flex flex-col gap-1 text-ink-2">
         <li>Get it at <a href={phone.download} target="_blank" rel="noreferrer" className="text-ember-text font-medium underline">{phone.download.replace("https://", "")}</a> and sign in.</li>
         <li>Come back here and press Check again.</li>
       </ol>
-      <button onClick={onCheck} className="self-start h-9 px-4 rounded-full border border-line-2 text-[13.5px] font-medium">Check again</button>
+      <button onClick={onCheck} className="self-start h-9 px-4 rounded-full border border-line-2 text-ui font-medium">Check again</button>
     </div>
   );
   if (!phone.serving) return (
-    <div className="flex flex-col gap-2 text-[14px] leading-[20px]">
+    <div className="flex flex-col gap-2 text-ui leading-[20px]">
       <div>Tailscale is here, but it doesn't pass your phone to me yet. In Terminal, run:</div>
-      <code className="font-mono text-[13.5px] rounded-[10px] bg-well px-3 py-2 select-all">{phone.serve_command}</code>
-      <div className="text-muted text-[13px]">Then press Check again. If it still doesn't show: run <code className="font-mono">odie restart</code> in Terminal, refresh this page, and press Check again.</div>
-      <button onClick={onCheck} className="self-start h-9 px-4 rounded-full border border-line-2 text-[13.5px] font-medium">Check again</button>
+      <code className="font-mono text-ui rounded-inner bg-well px-3 py-2 select-all">{phone.serve_command}</code>
+      <div className="text-muted text-small">Then press Check again. If it still doesn't show: run <code className="font-mono">odie restart</code> in Terminal, refresh this page, and press Check again.</div>
+      <button onClick={onCheck} className="self-start h-9 px-4 rounded-full border border-line-2 text-ui font-medium">Check again</button>
     </div>
   );
   return (
-    <div className="flex flex-col gap-3 text-[14px] leading-[20px]">
+    <div className="flex flex-col gap-3 text-ui leading-[20px]">
       <div>On your phone, I'm at <a href={phone.address} target="_blank" rel="noreferrer" className="text-ember-text font-medium underline break-all">{phone.address}</a></div>
       <ol className="list-decimal pl-5 flex flex-col gap-1 text-ink-2">{phone.steps.map((t) => <li key={t}>{t}</li>)}</ol>
       {phone.pairing && (made ? (
         <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center">
-          <div className="w-[200px] rounded-[14px] overflow-hidden bg-white p-2 [&_svg]:w-full [&_svg]:h-auto" aria-label="QR code for pairing" dangerouslySetInnerHTML={{ __html: made.svg }} />
+          <div className="w-[200px] rounded-control overflow-hidden bg-white p-2 [&_svg]:w-full [&_svg]:h-auto" aria-label="QR code for pairing" dangerouslySetInnerHTML={{ __html: made.svg }} />
           <div className="flex flex-col gap-1">
-            <div className="font-mono text-[24px] tracking-[0.18em] font-semibold" aria-label="Pairing code">{made.code}</div>
-            <div className="text-[12.5px] text-muted max-w-[300px]">Valid once, for 10 minutes. Scan it with the phone's camera, or open the address on the phone and type the code.</div>
-            <button onClick={code} className="self-start h-9 px-4 rounded-full border border-line-2 text-[13.5px] font-medium">Make a new code</button>
+            <div className="font-mono text-display-sm tracking-[0.18em] font-semibold" aria-label="Pairing code">{made.code}</div>
+            <div className="text-small text-muted max-w-[300px]">Valid once, for 10 minutes. Scan it with the phone's camera, or open the address on the phone and type the code.</div>
+            <button onClick={code} className="self-start h-9 px-4 rounded-full border border-line-2 text-ui font-medium">Make a new code</button>
           </div>
         </div>
       ) : (
         <button onClick={code} className="self-start h-10 px-4 rounded-full glass-solid font-semibold">Show the pairing code</button>
       ))}
-      {error && <div className="text-[13px] text-warn-ink">{error}</div>}
+      {error && <div className="text-small text-warn-ink">{error}</div>}
     </div>
   );
 }
@@ -249,7 +249,7 @@ export function StepPanel({ panel, onChoose, onCheck, busy }: { panel: Panel; on
   const choice = panel.choices.find((c) => c.id === pick);
   const form = formFor(choice);
   async function go(id: string, value?: unknown) { setError(await onChoose(id, value)); }
-  const field = "h-11 px-4 rounded-full bg-well border border-line outline-none text-[15px] focus:border-line-2";
+  const field = "h-11 px-4 rounded-full bg-well border border-line outline-none text-body focus:border-line-2";
   const canContinue = panel.step === "names" ? !!fields.user_name?.trim() : form === "path" ? !!path.trim()
     : form === "server" ? !!server.url.trim() && !!server.model : !!choice && (form === null);
   const kinds = choice?.needs?.type === "server" ? choice.needs.kinds : [];
@@ -266,12 +266,12 @@ export function StepPanel({ panel, onChoose, onCheck, busy }: { panel: Panel; on
     } catch { setError("That didn't go through. Try again."); }
   }
   return (
-    <section aria-label={`${panel.label} step`} className="glass rounded-[26px] p-4 flex flex-col gap-3">
-      {panel.explain && <div className="text-[13.5px] leading-[20px] text-muted">{panel.explain}</div>}
+    <section aria-label={`${panel.label} step`} className="glass rounded-card p-4 flex flex-col gap-3">
+      {panel.explain && <div className="text-ui leading-[20px] text-muted">{panel.explain}</div>}
       {panel.fields.length > 0 && (
         <div className="grid sm:grid-cols-2 gap-2.5">
           {panel.fields.map((f) => (
-            <label key={f.id} className="flex flex-col gap-1 text-[13px] text-muted">{f.label}
+            <label key={f.id} className="flex flex-col gap-1 text-small text-muted">{f.label}
               <input value={fields[f.id] ?? ""} onChange={(e) => setFields({ ...fields, [f.id]: e.target.value })} className={field} />
             </label>
           ))}
@@ -280,9 +280,9 @@ export function StepPanel({ panel, onChoose, onCheck, busy }: { panel: Panel; on
       {panel.phone && <PhoneBlock phone={panel.phone} onCheck={onCheck} />}
       {panel.mac_apps?.mac && (
         <div className="flex flex-col gap-2">
-          <div className="text-[13px] font-bold text-muted px-1.5">This Mac's own apps</div>
-          <div className="rounded-[20px] border border-line overflow-hidden"><MacAppsBlock data={macApps ?? panel.mac_apps} onChange={setMacApps} /></div>
-          <div className="text-[12.5px] text-muted px-1.5">Allow Mail and Calendar and Odie reads them here, no account needed; a connector below adds Gmail.</div>
+          <div className="text-small font-bold text-muted px-1.5">This Mac's own apps</div>
+          <div className="rounded-tile border border-line overflow-hidden"><MacAppsBlock data={macApps ?? panel.mac_apps} onChange={setMacApps} /></div>
+          <div className="text-small text-muted px-1.5">Allow Mail and Calendar and Odie reads them here, no account needed; a connector below adds Gmail.</div>
         </div>
       )}
       {/* The choices as a list: more than one, or a lone one that needs a form first (OpenAI's voice on an Intel Mac,
@@ -291,11 +291,11 @@ export function StepPanel({ panel, onChoose, onCheck, busy }: { panel: Panel; on
         <div role="radiogroup" aria-label={panel.label} className="flex flex-col gap-1.5">
           {panel.choices.map((c) => (
             <div key={c.id} className="flex flex-col gap-2">
-              <label className={`flex items-start gap-3 px-3.5 py-2.5 rounded-[16px] border cursor-pointer ${pick === c.id ? "border-ember bg-well" : "border-line"}`}>
+              <label className={`flex items-start gap-3 px-3.5 py-2.5 rounded-control border cursor-pointer ${pick === c.id ? "border-ember bg-well" : "border-line"}`}>
                 <input type="radio" name={`choice-${panel.step}`} checked={pick === c.id} onChange={() => { setPick(c.id); setError(""); }} className="mt-1 accent-[var(--t-action)]" />
                 <span className="flex flex-col min-w-0">
-                  <span className="text-[15px] font-medium">{c.label}{c.recommended && <span className="ml-2 text-[11.5px] font-semibold text-moss-text">Recommended</span>}</span>
-                  {c.note && <span className="text-[12.5px] leading-[18px] text-muted break-words">{c.note}</span>}
+                  <span className="text-body font-medium">{c.label}{c.recommended && <span className="ml-2 text-caption font-semibold text-moss-text">Recommended</span>}</span>
+                  {c.note && <span className="text-small leading-[18px] text-muted break-words">{c.note}</span>}
                 </span>
               </label>
               {/* What the picked choice needs first, right under it */}
@@ -306,17 +306,17 @@ export function StepPanel({ panel, onChoose, onCheck, busy }: { panel: Panel; on
                 <div className="ml-7 flex flex-col gap-2">
                   <div role="radiogroup" aria-label="What kind of server" className="flex flex-wrap gap-1.5">
                     {kinds.map((k) => (
-                      <label key={k.id} className={`px-3 h-9 inline-flex items-center rounded-full border text-[13px] cursor-pointer ${server.kind === k.id ? "border-ember bg-well" : "border-line"}`}>
+                      <label key={k.id} className={`px-3 h-9 inline-flex items-center rounded-full border text-small cursor-pointer ${server.kind === k.id ? "border-ember bg-well" : "border-line"}`}>
                         <input type="radio" name="server-kind" className="sr-only" checked={server.kind === k.id} onChange={() => { setServer({ ...server, kind: k.id, model: "" }); setServerModels(null); }} />{k.label}
                       </label>
                     ))}
                   </div>
                   <div className="flex gap-2">
                     <input value={server.url} onChange={(e) => { setServer({ ...server, url: e.target.value, model: "" }); setServerModels(null); }} placeholder={example} aria-label="The server's address" className={`${field} flex-1 min-w-0`} />
-                    <button type="button" disabled={busy || !server.url.trim()} onClick={() => void findModels()} className="h-11 px-4 rounded-full border border-line-2 text-[14px] font-medium disabled:opacity-50">Find models</button>
+                    <button type="button" disabled={busy || !server.url.trim()} onClick={() => void findModels()} className="h-11 px-4 rounded-full border border-line-2 text-ui font-medium disabled:opacity-50">Find models</button>
                   </div>
                   {serverModels && serverModels.length > 0 && (
-                    <label className="flex flex-col gap-1 text-[13px] text-muted">Its embedding model
+                    <label className="flex flex-col gap-1 text-small text-muted">Its embedding model
                       <select value={server.model} onChange={(e) => setServer({ ...server, model: e.target.value })} aria-label="The server's embedding model" className={field}>
                         {serverModels.map((m) => <option key={m} value={m}>{m}</option>)}
                       </select>
@@ -328,9 +328,9 @@ export function StepPanel({ panel, onChoose, onCheck, busy }: { panel: Panel; on
           ))}
         </div>
       )}
-      {error && <div role="alert" className="text-[13px] text-ember-text">{error}</div>}
+      {error && <div role="alert" className="text-small text-ember-text">{error}</div>}
       <div className="flex flex-wrap gap-2 justify-end">
-        {panel.skip && <button disabled={busy} onClick={() => void go("skip")} className="h-10 px-4 rounded-full border border-line-2 text-[14px] font-medium disabled:opacity-50">{panel.skip}</button>}
+        {panel.skip && <button disabled={busy} onClick={() => void go("skip")} className="h-10 px-4 rounded-full border border-line-2 text-ui font-medium disabled:opacity-50">{panel.skip}</button>}
         {(form === null || form === "path" || form === "server") && panel.choices.length > 0 && (
           <button disabled={busy || !canContinue} onClick={() => void go(pick, panel.step === "names" ? fields : form === "path" ? path.trim() : form === "server" ? { ...server, url: server.url.trim() } : undefined)}
             className="h-10 px-5 rounded-full bg-ember text-on-ember font-semibold disabled:opacity-50">{panel.choices.length === 1 && panel.step !== "names" ? choice?.label : "Continue"}</button>
@@ -391,24 +391,24 @@ function Conversation({ s, setS }: { s: SetupState; setS: (s: SetupState) => voi
   return (
     <div className="flex flex-col gap-3">
       {visible.map((m, i) => m.role === "user" ? (
-        <div key={i} className="ml-auto max-w-[80%] bubble-me rounded-[24px] rounded-br-[8px] px-4 py-3 text-[15.5px] leading-[1.5] whitespace-pre-wrap break-words">{m.text}</div>
+        <div key={i} className="ml-auto max-w-[80%] bubble-me rounded-card rounded-br-inner px-4 py-3 text-body leading-[1.5] whitespace-pre-wrap break-words">{m.text}</div>
       ) : (
         <div key={i} className="flex gap-2 items-start">
           <Avatar size={32} />
-          <div className="glass rounded-[8px_26px_26px_26px] px-4 py-3 text-[15px] leading-[1.5] whitespace-pre-wrap">{m.text}</div>
+          <div className="glass rounded-[8px_26px_26px_26px] px-4 py-3 text-body leading-[1.5] whitespace-pre-wrap">{m.text}</div>
         </div>
       ))}
       {cards.map((c, i) => c.type === "app"
         ? <AppCardView key={`${c.app}-${i}`} card={c} onSaved={(app) => saved("app_saved", app)} />
         : <KeyCardView key={`${c.provider}-${i}`} card={c} onSaved={(provider) => saved("key_saved", provider)} />)}
-      {busy && <div role="status" className="flex items-center gap-3"><Orb state="thinking" size={26} /><span className="text-[14px] font-semibold shimmer-text">{persona.name} is thinking</span></div>}
-      {error && <div role="alert" className="text-[13px] text-ember-text">{error}</div>}
+      {busy && <div role="status" className="flex items-center gap-3"><Orb state="thinking" size={26} /><span className="text-ui font-semibold shimmer-text">{persona.name} is thinking</span></div>}
+      {error && <div role="alert" className="text-small text-ember-text">{error}</div>}
       {!s.done && panel && <StepPanel panel={panel} onChoose={choose} onCheck={() => void check()} busy={busy} />}
       <div ref={end} className="scroll-mb-28" />
       {!s.done && (
         <div className="flex gap-2 sticky bottom-0 py-3 bg-ground border-t border-line">
           <input value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") send(); }} placeholder="Or type an answer or a question" aria-label="Your answer"
-            className="flex-1 h-12 px-4 rounded-full glass-solid outline-none text-[15.5px]" />
+            className="flex-1 h-12 px-4 rounded-full glass-solid outline-none text-body" />
           <button onClick={send} disabled={busy || !text.trim()} className="h-12 px-5 rounded-full bg-ember text-on-ember font-semibold disabled:opacity-50">Send</button>
         </div>
       )}
@@ -431,16 +431,16 @@ function PasscodeOffer() {
   if (!words && !needsPasscode(status)) return null;
   return (
     <div className="flex flex-col gap-2 w-full">
-      <div className="text-[14px] leading-[20px] text-muted">One last thing: a recovery passcode. Four words that pair a new device if you lose this one.</div>
+      <div className="text-ui leading-[20px] text-muted">One last thing: a recovery passcode. Four words that pair a new device if you lose this one.</div>
       {words ? (
         <>
-          <div className="font-mono text-[18px] font-semibold rounded-[12px] bg-well px-3 py-2.5 select-all">{words}</div>
-          <div className="text-[12.5px] leading-[18px] text-muted">Write it down somewhere safe. It isn't shown again.</div>
+          <div className="font-mono text-title font-semibold rounded-control bg-well px-3 py-2.5 select-all">{words}</div>
+          <div className="text-small leading-[18px] text-muted">Write it down somewhere safe. It isn't shown again.</div>
         </>
       ) : (
         <button onClick={make} className="h-10 px-4 rounded-full glass-solid font-semibold self-start">Make my recovery passcode</button>
       )}
-      {error && <div className="text-[13px] text-warn-ink">{error}</div>}
+      {error && <div className="text-small text-warn-ink">{error}</div>}
     </div>
   );
 }
@@ -454,18 +454,18 @@ export function Setup() {
   return (
     <div className="h-full overflow-y-auto px-[18px] sm:px-8 safe-top flex flex-col gap-5 pb-6">
       <div className="flex items-center gap-3 pt-2">
-        <div className="text-[21px] font-bold tracking-[-0.015em] flex-1">Setting up {persona.name}</div>
+        <div className="text-heading font-bold tracking-[-0.015em] flex-1">Setting up {persona.name}</div>
         {s.can_leave && (
           <button onClick={async () => { await postJSON("/api/setup/leave", {}); location.hash = "#chat"; location.reload(); }}
-            className="h-9 px-4 rounded-full border border-line-2 text-[13.5px] font-medium">Leave setup</button>
+            className="h-9 px-4 rounded-full border border-line-2 text-ui font-medium">Leave setup</button>
         )}
       </div>
-      {s.can_leave && <div className="text-[13px] text-muted -mt-3">Everything that's set stays as it is. Change only what you want, or leave.</div>}
+      {s.can_leave && <div className="text-small text-muted -mt-3">Everything that's set stays as it is. Change only what you want, or leave.</div>}
       <Checklist s={s} />
       {s.steps.brain === "todo" ? <BrainStep onDone={load} /> : <Conversation s={s} setS={setS} />}
       {s.done && (
-        <div className="glass rounded-[26px] p-4 flex flex-col gap-2 items-start">
-          <div className="text-[15px] font-semibold">All set.</div>
+        <div className="glass rounded-card p-4 flex flex-col gap-2 items-start">
+          <div className="text-body font-semibold">All set.</div>
           <PasscodeOffer />
           <button onClick={() => { location.hash = "#chat"; location.reload(); }} className="h-10 px-4 rounded-full bg-ember text-on-ember font-semibold">Start chatting</button>
         </div>

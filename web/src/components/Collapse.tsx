@@ -8,8 +8,8 @@ export function Collapse({ title, summary, defaultOpen = false, children }: { ti
   return (
     <section className="flex flex-col gap-2">
       <button type="button" onClick={() => setOpen(!open)} aria-expanded={open} className="flex items-center gap-2 px-1.5 min-h-10 text-left">
-        <span className="text-[13px] leading-5 font-bold text-muted">{title}</span>
-        <span className="ml-auto flex items-center gap-2 text-[12.5px] text-dim">
+        <span className="text-small leading-5 font-bold text-muted">{title}</span>
+        <span className="ml-auto flex items-center gap-2 text-small text-dim">
           {summary}
           <motion.svg animate={{ rotate: open ? 90 : 0 }} transition={{ duration: 0.2, ease: [0.2, 0.8, 0.2, 1] }}
             width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">

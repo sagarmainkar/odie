@@ -11,7 +11,6 @@ import { PluginsSection } from "../components/PluginsSection";
 import { googleRows, renewBy, type GoogleCheck } from "../google";
 import { ProvidersSection } from "../components/ProvidersSection";
 import { SearchSection } from "../components/SearchSection";
-import { Switch } from "../components/Switch";
 import { DevicesSection } from "../components/DevicesSection";
 import { UpdateSection } from "../components/UpdateSection";
 import { BrowserSection } from "../components/BrowserSection";
@@ -26,8 +25,7 @@ import { has, useCaps } from "../capabilities";
 import { EMBED_EVERY_CHOICES, embedEveryLabel, notesRow, type VaultInfo } from "../vault";
 import { memoryPlace } from "../memoryPlace";
 import { photosRow, type PhotosInfo } from "../photos";
-import { engineLine, previewUrl, voiceGroups, voiceSection, withPhononVoices, type PhononAnswer } from "../voiceSettings";
-import { AnotherVoice } from "../components/AnotherVoice";
+import { voiceRow, type VoiceInfo } from "../voiceSettings";
 import { afterTurnOn, sendPosition, type LocationInfo } from "../location";
 import { LocationRowView } from "../components/LocationRow";
 import { LABEL, type Panel, type Step, type Turn } from "../setup";
@@ -57,11 +55,11 @@ function Row({ ok, title, sub, meta, right, chevron, icon }: { ok?: Dot; title: 
         <span className="relative shrink-0"><Tile icon={icon.icon} color={icon.color} small />{ok !== undefined && <span className="absolute -right-0.5 -bottom-0.5 rounded-full bg-[var(--t-surface-2)] p-[2px] flex"><StatusDot ok={ok} /></span>}</span>
       ) : ok !== undefined && <StatusDot ok={ok} />}
       <div className="flex-1 min-w-0">
-        <div className="text-[15px] leading-5 font-medium">{title}</div>
-        {sub && <div className="text-[13px] leading-[18px] text-muted line-clamp-2">{sub}</div>}
-        {meta && <div className="text-[12px] leading-4 text-dim mt-0.5">{meta}</div>}
+        <div className="text-body leading-5 font-medium">{title}</div>
+        {sub && <div className="text-small leading-[18px] text-muted line-clamp-2">{sub}</div>}
+        {meta && <div className="text-caption leading-4 text-dim mt-0.5">{meta}</div>}
       </div>
-      {right && <div className="text-[13px] text-muted shrink-0">{right}</div>}
+      {right && <div className="text-small text-muted shrink-0">{right}</div>}
       {chevron && <Chevron />}
     </div>
   );
@@ -70,9 +68,19 @@ function Row({ ok, title, sub, meta, right, chevron, icon }: { ok?: Dot; title: 
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
     <section className="flex flex-col gap-2">
-      <div className="text-[13px] leading-5 font-bold text-muted px-1.5">{title}</div>
-      <div className="glass rounded-[26px] overflow-hidden">{children}</div>
+      <div className="text-small leading-5 font-bold text-muted px-1.5">{title}</div>
+      <div className="glass rounded-card overflow-hidden">{children}</div>
     </section>
+  );
+}
+
+/** One of Settings' four parts: a heading a size up from the section labels, then its sections. */
+function Group({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <div className="flex flex-col gap-6 lg:min-w-0">
+      <h2 className="text-title leading-6 font-bold tracking-[-0.01em] px-1.5 -mb-2">{title}</h2>
+      {children}
+    </div>
   );
 }
 
@@ -98,16 +106,16 @@ function GoogleRows({ g, flash, setupAction, reload }: { g: Google | null; flash
       <Row icon={{ icon: "mail", color: "blue" }} ok={g.connected ? dot(rows.gmail) : false} title="Gmail" sub={g.connected ? `${g.email ?? ""} · ${rows.gmail}` : "Not connected"} />
       <Row icon={{ icon: "cal", color: "orange" }} ok={g.connected ? dot(rows.calendar) : false} title="Calendar" sub={rows.calendar} />
       <div className="px-4 pb-3 flex flex-col gap-1.5">
-        {flash && <div className="text-[13px] text-moss-text">{flash}</div>}
+        {flash && <div className="text-small text-moss-text">{flash}</div>}
         {setupAction}
         {g.client_configured && (
           <div className="flex items-center gap-2 flex-wrap">
-            {rows.action && <a href="/api/google/connect" className="h-10 px-4 rounded-[14px] bg-ember text-on-ember font-semibold text-[14px] flex items-center">{rows.action}</a>}
-            {!rows.action && g.connected && <a href="/api/google/connect" className="h-10 flex items-center text-ember-text font-medium text-[14px]">Reconnect</a>}
-            {g.connected && <button disabled={busy} onClick={() => void disconnect()} className="ml-auto h-10 text-[13.5px] font-semibold text-warn-ink">Disconnect</button>}
+            {rows.action && <a href="/api/google/connect" className="h-10 px-4 rounded-control bg-ember text-on-ember font-semibold text-ui flex items-center">{rows.action}</a>}
+            {!rows.action && g.connected && <a href="/api/google/connect" className="h-10 flex items-center text-ember-text font-medium text-ui">Reconnect</a>}
+            {g.connected && <button disabled={busy} onClick={() => void disconnect()} className="ml-auto h-10 text-ui font-semibold text-warn-ink">Disconnect</button>}
           </div>
         )}
-        {g.connected && renewBy(g.connected_at) && <div className="text-[12px] text-dim">{renewBy(g.connected_at)}</div>}
+        {g.connected && renewBy(g.connected_at) && <div className="text-caption text-dim">{renewBy(g.connected_at)}</div>}
       </div>
     </div>
   );
@@ -168,9 +176,9 @@ function AssistantSection() {
   }
   async function removePhoto() { await fetch(avatarUrl(pick), { method: "DELETE" }); personaChanged(); personalitiesChanged(); }
   return (
-    <section className="glass rounded-[26px] px-4 pt-6 pb-4 flex flex-col items-center text-center gap-1">
+    <section className="glass rounded-card px-4 pt-6 pb-4 flex flex-col items-center text-center gap-1">
       {showsWhoLine(pick, personalities.list.length) && (
-        <div className="w-full flex items-center justify-center gap-2 -mt-2 mb-2 text-[13px] text-muted">
+        <div className="w-full flex items-center justify-center gap-2 -mt-2 mb-2 text-small text-muted">
           <span>{whoLine(persona.name)}</span>
           <button onClick={() => setSwitcherOpen(true)} className="font-semibold text-ember-text">Switch</button>
         </div>
@@ -184,29 +192,27 @@ function AssistantSection() {
       <label className="sr-only" htmlFor="persona-name">Name</label>
       <div className="flex items-center gap-2 mt-3 w-full max-w-[280px]">
         <input id="persona-name" value={name} maxLength={24} onChange={(e) => setDraft(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void saveName(); }}
-          className="flex-1 min-w-0 h-11 px-3 rounded-[14px] bg-transparent text-center text-[26px] font-bold tracking-[-0.02em] outline-none focus:bg-well" />
-        {draft !== null && draft !== persona.name && <button onClick={() => void saveName()} className="pill pill-solid h-10 text-[14px] shadow-none">Save</button>}
+          className="flex-1 min-w-0 h-11 px-3 rounded-control bg-transparent text-center text-display font-bold tracking-[-0.02em] outline-none focus:bg-well" />
+        {draft !== null && draft !== persona.name && <button onClick={() => void saveName()} className="pill pill-solid h-10 text-ui shadow-none">Save</button>}
       </div>
-        <div className="text-[14px] text-muted">{pick ? "A personality · its own threads and memory" : `Your assistant · lives on this ${profile?.machine ?? "computer"}`}</div>
+        <div className="text-ui text-muted">{pick ? "A personality · its own threads and memory" : `Your assistant · lives on this ${profile?.machine ?? "computer"}`}</div>
         <div className={`items-center gap-2 mt-3 w-full max-w-[280px] ${pick ? "hidden" : "flex"}`}>
-          <label htmlFor="your-name" className="text-[13px] text-muted shrink-0">Calls you</label>
+          <label htmlFor="your-name" className="text-small text-muted shrink-0">Calls you</label>
           <input id="your-name" value={yourName} maxLength={40} placeholder="Your name" onChange={(e) => setYou(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter") void saveYou(); }}
-            className="flex-1 min-w-0 h-10 px-3 rounded-[14px] bg-well text-[15px] outline-none" />
-          {you !== null && you !== (profile?.user_name ?? "") && <button onClick={() => void saveYou()} className="pill pill-solid h-9 text-[13.5px] shadow-none">Save</button>}
+            className="flex-1 min-w-0 h-10 px-3 rounded-control bg-well text-body outline-none" />
+          {you !== null && you !== (profile?.user_name ?? "") && <button onClick={() => void saveYou()} className="pill pill-solid h-9 text-ui shadow-none">Save</button>}
         </div>
         <div className="flex items-center justify-center gap-2 mt-3 flex-wrap">
-        <button onClick={() => fileRef.current?.click()} className="pill pill-flat h-10 text-[13.5px]">{persona.avatar_url ? "Change photo" : "Use a photo"}</button>
-        {persona.avatar_url && <button onClick={() => void removePhoto()} className="pill pill-flat h-10 text-[13.5px]">Use the orb</button>}
-        {showsDelete(pick) && <button onClick={() => void deleteIt()} disabled={busy} className="pill pill-flat h-10 text-[13.5px] text-ember-text">Delete {persona.name}</button>}
+        <button onClick={() => fileRef.current?.click()} className="pill pill-flat h-10 text-ui">{persona.avatar_url ? "Change photo" : "Use a photo"}</button>
+        {persona.avatar_url && <button onClick={() => void removePhoto()} className="pill pill-flat h-10 text-ui">Use the orb</button>}
+        {showsDelete(pick) && <button onClick={() => void deleteIt()} disabled={busy} className="pill pill-flat h-10 text-ui text-ember-text">Delete {persona.name}</button>}
       </div>
-      {problem && <span role="alert" className="text-[13px] text-ember-text mt-1">{problem}</span>}
-      <AnimatePresence>{note && <motion.span initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="text-[13px] text-good mt-1">{note}</motion.span>}</AnimatePresence>
+      {problem && <span role="alert" className="text-small text-ember-text mt-1">{problem}</span>}
+      <AnimatePresence>{note && <motion.span initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="text-small text-good mt-1">{note}</motion.span>}</AnimatePresence>
     </section>
   );
 }
-
-type VoiceInfo = import("../voiceSettings").VoiceInfo;  // the shape /api/voice answers (voiceSettings.ts)
 
 /** The phone, after setup: the same block as the setup step (is Tailscale here, does it pass the phone to Odie, the
  *  address and the pairing code), so a skipped phone can be set up from here. Check again asks the server to look. */
@@ -218,121 +224,24 @@ function PhoneSection() {
   return (
     <Section title="Phone">
       <div className="p-4 flex flex-col gap-3">
-        {panel.explain && <div className="text-[13px] leading-[18px] text-muted">{panel.explain}</div>}
+        {panel.explain && <div className="text-small leading-[18px] text-muted">{panel.explain}</div>}
         <PhoneBlock phone={panel.phone} onCheck={() => void load()} />
       </div>
     </Section>
   );
 }
 
-function VoiceSection() {
+/** Settings' Voice row: the chosen voice in words; a tap opens the Voice screen (screens/Voice.tsx), where it is picked. */
+function VoiceRowLink() {
   const [v, setV] = useState<VoiceInfo | null>(null);
-  const [playing, setPlaying] = useState<string | null>(null);
-  const audio = useRef<HTMLAudioElement | null>(null);
-  const load = () => getJSON<VoiceInfo>("/api/voice").then(setV).catch(() => {});
-  useEffect(() => { load(); return () => audio.current?.pause(); }, []);
-  function play(engine: string, id: string) {
-    audio.current?.pause();
-    const key = `${engine}/${id}`;
-    if (playing === key) { setPlaying(null); return; }
-    const a = new Audio(previewUrl(engine, id));
-    audio.current = a; setPlaying(key);
-    a.onended = () => setPlaying(null); a.onerror = () => setPlaying(null);
-    void a.play().catch(() => setPlaying(null));
-  }
-  function kept(answer: PhononAnswer) {
-    setV((x) => (x ? withPhononVoices(x, answer) : x));
-    play("phonon", answer.voice);  // the line the check spoke is the new voice's preview
-  }
-  async function forget(voiceId: string) {
-    const r = await fetch(`/api/voice/phonon/voices/${encodeURIComponent(voiceId)}`, { method: "DELETE" });
-    if (r.ok) { const answer = await r.json() as PhononAnswer; setV((x) => (x ? withPhononVoices(x, answer) : x)); }
-  }
-  async function save(body: { engine?: string; voice?: string; reminders_spoken?: boolean }) {
-    const r = await fetch("/api/voice", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-    if (r.ok) { const j = await r.json(); setV((x) => (x ? { ...x, engine: j.engine, voice: j.voice, reminders_spoken: j.reminders_spoken } : x)); }
-  }
-  if (!v) return null;
-  const shown = voiceSection(v);  // no engine at all: one plain line, and nothing below reads an engine that isn't there
-  // Odie's own voice needs Apple Silicon; on an Intel Mac the server offers no local engine and says so here.
-  const noLocal = v.local_voice === false;
-  const about = (
-    <div className="text-[13px] leading-[18px] text-muted px-1">
-      Read-aloud (the speaker under each reply).{" "}
-      {noLocal && <>Odie's own voice (Kokoro) needs Apple Silicon, so it isn't offered on this Mac.{" "}</>}
-      {v.engines.some((e) => e.id === "openai") ? <>With your OpenAI key: its voices, and dictation that writes as you speak.</> : <>Add an OpenAI key in Providers for OpenAI voices and live dictation.</>}
-    </div>
-  );
-  if (!shown.picker) {
-    // No engine at all (the voice worker off, no OpenAI key): the phone's own voice still reads replies.
-    return (
-      <Section title="Voice">
-        <div className="p-3 flex flex-col gap-3">
-          {about}
-          <div className="text-[13px] leading-[18px] text-muted px-1">{shown.note} Until then, replies are read with the browser's own voice.</div>
-        </div>
-      </Section>
-    );
-  }
-  const eng = shown.engine;
-  const line = engineLine(eng);  // on this computer or not, and what to do when it can't speak (Phonon: ollama pull)
+  useEffect(() => { getJSON<VoiceInfo>("/api/voice").then(setV).catch(() => {}); }, []);
+  if (!v) return <Row icon={{ icon: "speaker", color: "yellow" }} ok="loading" title="Voice" sub="…" chevron />;
+  const row = voiceRow(v);
+  const ok: Dot = row.state === "ok" ? true : "warn";
   return (
-    <Section title="Voice">
-      <div className="p-3 flex flex-col gap-3">
-        {about}
-        <div className="bg-well rounded-[14px] p-1 flex gap-1" role="radiogroup" aria-label="Read-aloud engine">
-          {v.engines.map((e) => (
-            <button key={e.id} role="radio" aria-checked={e.id === v.engine} disabled={!e.available} onClick={() => void save({ engine: e.id })}
-              className={`relative flex-1 h-11 rounded-[10px] text-[14px] font-medium disabled:opacity-40 ${e.id === v.engine ? "text-ink" : "text-muted"}`}>
-              {e.id === v.engine && <motion.span layoutId="engine-seg" transition={{ duration: 0.2 }} className="absolute inset-0 rounded-[10px] bg-surface" style={{ boxShadow: "var(--t-shadow-card)" }} />}
-              <span className="relative">{e.label}</span>
-            </button>
-          ))}
-        </div>
-        <div className="text-[13px] leading-[18px] px-1 flex items-start gap-2">
-          {line.pill && <Pill tone={line.pill === "on this computer" ? "moss" : "ember"}>{line.pill}</Pill>}
-          <span className="text-muted">{line.text}</span>
-        </div>
-        {voiceGroups(eng).map((g) => {
-          const list = g.voices;
-          return (
-            <div key={g.key}>
-              {g.title && <div className="px-1 pb-1.5 text-[13px] font-semibold text-muted">{g.title}</div>}
-              <div className="grid grid-cols-2 gap-2">
-                {list.map((x) => {
-                  const on = x.id === v.voice;
-                  const key = `${eng.id}/${x.id}`;
-                  return (
-                    <div key={x.id} className={`flex items-center gap-1 rounded-[14px] border pl-3 pr-1 min-h-12 ${on ? "border-ember-text bg-ember-tint" : "border-line"}`}>
-                      <button onClick={() => { void save({ voice: x.id }); play(eng.id, x.id); }} className="flex-1 text-left py-1.5 min-w-0">
-                        <span className={`block text-[15px] leading-5 ${on ? "font-semibold text-ember-text" : ""}`}>{x.label}</span>
-                        {x.note && <span className="block text-[12px] leading-4 text-dim line-clamp-2">{x.note}</span>}
-                      </button>
-                      <button onClick={() => play(eng.id, x.id)} aria-label={`Hear ${x.label}`} className="w-10 h-10 rounded-full flex items-center justify-center text-muted shrink-0">
-                        {playing === key ? <span className="spinner" /> : <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z" /></svg>}
-                      </button>
-                      {x.kept && <button onClick={() => void forget(x.id)} aria-label={`Remove ${x.label}`} className="w-8 h-10 flex items-center justify-center text-dim shrink-0">×</button>}
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          );
-        })}
-        {eng.id === "phonon" && eng.available && <AnotherVoice onKept={kept} />}
-        {eng.id === "maya1" && <div className="text-[12px] leading-4 text-muted px-1">The first preview loads Maya1 (about half a minute). Replies are read with laughs, sighs and other expressions where they fit.</div>}
-        <div className="flex items-start gap-3 pt-1">
-          <div className="flex-1 min-w-0">
-            <div className="text-[14.5px] font-medium">Speak reminders</div>
-            <div className="text-[12.5px] leading-[18px] text-muted">{eng.available
-              ? "Each reminder also arrives as a voice message in this voice, and plays if Odie is open."
-              : "Needs a voice that's ready: this one isn't available right now."}</div>
-          </div>
-          <Switch label="Speak reminders" on={!!v.reminders_spoken} disabled={!eng.available && !v.reminders_spoken}
-            onChange={(on) => void save({ reminders_spoken: on })} />
-        </div>
-      </div>
-    </Section>
+    <a href="#voice" className="block active:bg-well">
+      <Row icon={{ icon: "speaker", color: "yellow" }} ok={ok} title="Voice" sub={row.sub} chevron />
+    </a>
   );
 }
 
@@ -405,14 +314,14 @@ function NotesRow() {
         ? <Row icon={{ icon: "note", color: "blue" }} ok={row.state === "ok" ? true : row.state === "warn" ? "warn" : "loading"} title="Notes"
             sub={row.sub} meta={<span className="font-mono [overflow-wrap:anywhere]">{row.meta}</span>} right={button("Change")} />
         : v && <Row icon={{ icon: "note", color: "blue" }} ok="warn" title="Notes" sub="Not set up: pick or make an Obsidian vault" right={button("Set up")} />}
-      {panel && <div className="px-3 py-3 border-b border-line"><div className="text-[14px] font-medium px-1 pb-2">{panel.question}</div>
+      {panel && <div className="px-3 py-3 border-b border-line"><div className="text-ui font-medium px-1 pb-2">{panel.question}</div>
         <StepPanel panel={panel} onChoose={choose} onCheck={() => void open(panel.step as "vault" | "embeddings")} busy={busy} /></div>}
       {row && v?.settings.embeddings && (
         // Embedding new notes and pictures loads the embedding model; off keeps it unloaded (searches still use it).
-        <label className="flex items-center gap-3 px-4 py-3 min-h-14 border-b border-line text-[13.5px]">
+        <label className="flex items-center gap-3 px-4 py-3 min-h-14 border-b border-line text-ui">
           <span className="flex-1 text-muted">Update meaning in the background</span>
           <select value={every} disabled={busy} onChange={(e) => void chooseEvery(Number(e.target.value))} aria-label="Update meaning in the background"
-            className="h-9 px-3 rounded-full bg-well border border-line text-[13.5px] disabled:opacity-50">
+            className="h-9 px-3 rounded-full bg-well border border-line text-ui disabled:opacity-50">
             {EMBED_EVERY_CHOICES.map((m) => <option key={m} value={m}>{embedEveryLabel(m)}</option>)}
           </select>
         </label>
@@ -612,13 +521,13 @@ export function Settings() {
 
   const googleAction = !g ? null : !g.client_configured ? (
     <div className="flex flex-col gap-2">
-      <button onClick={() => setShowSetup((v) => !v)} className="self-start h-11 px-4 rounded-[14px] border border-line-2 text-[14px] font-medium">One-time setup on the mini</button>
-      {showSetup && <div className="text-[13px] leading-[18px] text-muted break-words">{g.setup}</div>}
+      <button onClick={() => setShowSetup((v) => !v)} className="self-start h-11 px-4 rounded-control border border-line-2 text-ui font-medium">One-time setup on the mini</button>
+      {showSetup && <div className="text-small leading-[18px] text-muted break-words">{g.setup}</div>}
     </div>
   ) : !g.connected ? (
-    <a href="/api/google/connect" className="self-start h-11 px-4 rounded-[14px] bg-ember text-on-ember font-semibold text-[15px] flex items-center">Connect Google</a>
+    <a href="/api/google/connect" className="self-start h-11 px-4 rounded-control bg-ember text-on-ember font-semibold text-body flex items-center">Connect Google</a>
   ) : g.services && !g.services.calendar ? (
-    <a href="/api/google/connect" className="self-start h-11 px-4 rounded-[14px] bg-ember text-on-ember font-semibold text-[15px] flex items-center">Add Calendar</a>
+    <a href="/api/google/connect" className="self-start h-11 px-4 rounded-control bg-ember text-on-ember font-semibold text-body flex items-center">Add Calendar</a>
   ) : null;
 
   return (
@@ -626,117 +535,128 @@ export function Settings() {
       <div className="flex items-center gap-3">
         {/* A desktop has the rail for going back to Today (hidden! with "!": .pill sets its own display, which would win). */}
         <a href="#today" aria-label="Back to Today" className="pill w-11 px-0 lg:hidden!"><Icon name="back" /></a>
-        <div className="text-[21px] font-bold tracking-[-0.015em]">Settings</div>
+        <div className="text-heading font-bold tracking-[-0.015em]">Settings</div>
       </div>
 
-      {/* A desktop shows two columns: who the assistant is and what it connects to on the left, the rest on the right.
-          On a phone and a tablet the wrappers vanish (display: contents): one column, in the same order as always. */}
-      <div className="contents lg:grid lg:grid-cols-2 lg:gap-6 lg:items-start">
-        <div className="contents lg:flex lg:flex-col lg:gap-6 lg:min-w-0">
-          <AssistantSection />
+      {/* Four parts, each under its own heading: who it is, what it can reach, how it behaves, this device and setup.
+          A desktop shows two columns (the first two parts on the left, the last two on the right); on a phone and a
+          tablet the column wrappers vanish (display: contents) and the parts stack in that order. */}
+      <div className="flex flex-col gap-10 lg:grid lg:grid-cols-2 lg:gap-6 lg:items-start">
+        <div className="contents lg:flex lg:flex-col lg:gap-10 lg:min-w-0">
+          <Group title="Who it is">
+            <AssistantSection />
 
-          {/* How the picked one talks: what the owner edits after a switch, so it sits right under who it is. */}
-          <div className="glass rounded-[26px] overflow-hidden shrink-0 -mt-3">
-            <button onClick={() => setSoulOpen((v) => !v)} className="w-full text-left active:bg-well" aria-expanded={soulOpen}>
-              <Row icon={{ icon: "spark", color: "pink" }} ok={soul ? true : "loading"} title={`How ${picked.name} talks`} sub={soul?.custom ? "Your own words in use" : "The default personality"} chevron />
-            </button>
-            <AnimatePresence initial={false}>
-              {soulOpen && (
-                <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.2 }} className="overflow-hidden">
-                  <div className="px-4 pb-4 pt-1 flex flex-col gap-2.5">
-                    <textarea value={soulDraft} onChange={(e) => setSoulDraft(e.target.value)} rows={7} spellCheck={false}
-                      className="w-full bg-well border border-line rounded-[12px] p-3 text-[14px] leading-[22px] outline-none focus:border-line-2" />
-                    <div className="flex gap-2 items-center">
-                      <button onClick={() => saveSoul(soulDraft)} className="h-11 px-4 rounded-[14px] bg-ember text-on-ember font-semibold text-[15px]">Save</button>
-                      <button onClick={() => saveSoul("")} className="h-11 px-4 rounded-[14px] border border-line-2 text-[15px]">Reset</button>
-                      <AnimatePresence>{soulSaved && <motion.span initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="text-[13px] text-moss-text">{soulSaved}</motion.span>}</AnimatePresence>
+            {/* How the picked one talks: what the owner edits after a switch, so it sits right under who it is. */}
+            <div className="glass rounded-card overflow-hidden shrink-0 -mt-3">
+              <button onClick={() => setSoulOpen((v) => !v)} className="w-full text-left active:bg-well" aria-expanded={soulOpen}>
+                <Row icon={{ icon: "spark", color: "pink" }} ok={soul ? true : "loading"} title={`How ${picked.name} talks`} sub={soul?.custom ? "Your own words in use" : "The default personality"} chevron />
+              </button>
+              <AnimatePresence initial={false}>
+                {soulOpen && (
+                  <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.2 }} className="overflow-hidden">
+                    <div className="px-4 pb-4 pt-1 flex flex-col gap-2.5">
+                      <textarea value={soulDraft} onChange={(e) => setSoulDraft(e.target.value)} rows={7} spellCheck={false}
+                        className="w-full bg-well border border-line rounded-control p-3 text-ui leading-[22px] outline-none focus:border-line-2" />
+                      <div className="flex gap-2 items-center">
+                        <button onClick={() => saveSoul(soulDraft)} className="h-11 px-4 rounded-control bg-ember text-on-ember font-semibold text-body">Save</button>
+                        <button onClick={() => saveSoul("")} className="h-11 px-4 rounded-control border border-line-2 text-body">Reset</button>
+                        <AnimatePresence>{soulSaved && <motion.span initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="text-small text-moss-text">{soulSaved}</motion.span>}</AnimatePresence>
+                      </div>
                     </div>
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
-
-          <Section title="Connections">
-            {has(caps, "google") && <GoogleRows g={g} flash={flash} setupAction={g && !g.client_configured ? googleAction : null} reload={() => getJSON<Google>("/api/google/status").then(setG).catch(() => {})} />}
-            <a href="#brain" className="block active:bg-well">
-              <BrainRow h={h} />
-            </a>
-          </Section>
-
-          <DevicesSection />
-
-          <ProvidersSection />
-
-          <SearchSection />
-        </div>
-        <div className="contents lg:flex lg:flex-col lg:gap-6 lg:min-w-0">
-          {has(caps, "browser") && <BrowserSection />}
-
-          <PluginsSection />
-          <a href="#sample" className="-mt-3 px-1.5 py-2.5 self-start text-[13px] text-ember-text font-medium">See a sample chat →</a>
-
-          {macApps?.mac && (
-            <Section title="Mac apps">
-              <MacAppsBlock data={macApps} onChange={setMacApps} />
-            </Section>
-          )}
-
-          <Section title="Look">
-            <div className="p-1 m-3 mb-2 rounded-full bg-well flex gap-1" role="radiogroup" aria-label="Look">
-              {([["auto", "Auto"], ["light", "Light"], ["dark", "Dark"]] as const).map(([k, l]) => (
-                <button key={k} role="radio" aria-checked={look === k} onClick={() => pickLook(k)}
-                  className={`flex-1 h-9 rounded-full text-[13px] font-semibold transition-colors ${look === k ? "glass-solid text-ink shadow-[0_4px_12px_-6px_rgba(0,0,0,.25)]" : "text-muted"}`}>{l}</button>
-              ))}
-            </div>
-            <div className="px-4 pb-3 text-[12.5px] text-muted">Auto follows your phone: dark in dark mode; in light mode the colour follows the time of day, warm in the morning, sky at noon, rose in the evening.</div>
-          </Section>
-
-          <VoiceSection />
-
-          <Section title="Memory">
-            <NotesRow />
-            <PhotosRow />
-            <LocationRow />
-            <MemoryRow />
-          </Section>
-
-          <ApprovalsSection />
-
-          {has(caps, "update") && <UpdateSection version={h?.version} />}
-
-          <PhoneSection />
-
-          <Section title="Setup">
-            <button onClick={async () => {
-              const what = skipped.length ? `Set up what was skipped (${skippedList(skipped)})?` : "Go through every step again?";
-              if (!confirm(`${what} Everything that's set stays as it is until you change it, and you can leave setup at any time.`)) return;
-              await postJSON("/api/setup/restart", {}); location.hash = "#setup"; location.reload();
-            }} className="block w-full text-left active:bg-well">
-              <Row icon={{ icon: "spark", color: "violet" }} ok={skipped.length ? "warn" : true} title={skipped.length ? "Finish setup" : "Run setup again"}
-                sub={skipped.length ? `Skipped: ${skippedList(skipped)}` : "Names, notes, search, voice, apps and phone, one at a time"} chevron />
-            </button>
-          </Section>
-
-          <Section title="Notifications">
-            {!pushSupported ? (
-              <Row ok="warn" icon={{ icon: "bell", color: "green" }} title="Push to this device" sub={standalone ? "Not available in this browser" : "Add to Home Screen, then open Odie from the icon"} />
-            ) : subscribed ? (
-              <Row ok={true} icon={{ icon: "bell", color: "green" }} title="Push to this device" sub={tested || "Reminders and briefs reach this phone"}
-                right={<button onClick={testPush} className="h-11 px-1 text-ember-text font-medium text-[14px]">Send a test</button>} />
-            ) : (
-              <>
-                <Row ok="warn" icon={{ icon: "bell", color: "green" }} title="Push to this device" sub={pushSub(push, isApple())} />
-                {push !== "denied" && (
-                  <div className="px-4 pb-3"><button onClick={enablePush} className="h-11 px-4 rounded-[14px] bg-ember text-on-ember font-semibold text-[15px]">Enable notifications</button></div>
+                  </motion.div>
                 )}
-              </>
+              </AnimatePresence>
+            </div>
+          </Group>
+
+          <Group title={`What ${picked.name} can reach`}>
+            <Section title="Connections">
+              {has(caps, "google") && <GoogleRows g={g} flash={flash} setupAction={g && !g.client_configured ? googleAction : null} reload={() => getJSON<Google>("/api/google/status").then(setG).catch(() => {})} />}
+              <a href="#brain" className="block active:bg-well">
+                <BrainRow h={h} />
+              </a>
+            </Section>
+
+            <ProvidersSection />
+
+            <SearchSection />
+
+            {has(caps, "browser") && <BrowserSection />}
+
+            <PluginsSection />
+            <a href="#sample" className="-mt-3 px-1.5 py-2.5 self-start text-small text-ember-text font-medium">See a sample chat →</a>
+
+            {macApps?.mac && (
+              <Section title="Mac apps">
+                <MacAppsBlock data={macApps} onChange={setMacApps} />
+              </Section>
             )}
-          </Section>
+
+            <Section title="Memory">
+              <NotesRow />
+              <PhotosRow />
+              <LocationRow />
+              <MemoryRow />
+            </Section>
+          </Group>
+        </div>
+        <div className="contents lg:flex lg:flex-col lg:gap-10 lg:min-w-0">
+          <Group title={`How ${picked.name} behaves`}>
+            <ApprovalsSection />
+
+            <Section title="Voice">
+              <VoiceRowLink />
+            </Section>
+
+            <Section title="Look">
+              <div className="p-1 m-3 mb-2 rounded-full bg-well flex gap-1" role="radiogroup" aria-label="Look">
+                {([["auto", "Auto"], ["light", "Light"], ["dark", "Dark"]] as const).map(([k, l]) => (
+                  <button key={k} role="radio" aria-checked={look === k} onClick={() => pickLook(k)}
+                    className={`flex-1 h-9 rounded-full text-small font-semibold transition-colors ${look === k ? "glass-solid text-ink shadow-[0_4px_12px_-6px_rgba(0,0,0,.25)]" : "text-muted"}`}>{l}</button>
+                ))}
+              </div>
+              <div className="px-4 pb-3 text-small text-muted">Auto follows your phone: dark in dark mode; in light mode the colour follows the time of day, warm in the morning, sky at noon, rose in the evening.</div>
+            </Section>
+
+            <Section title="Notifications">
+              {!pushSupported ? (
+                <Row ok="warn" icon={{ icon: "bell", color: "green" }} title="Push to this device" sub={standalone ? "Not available in this browser" : "Add to Home Screen, then open Odie from the icon"} />
+              ) : subscribed ? (
+                <Row ok={true} icon={{ icon: "bell", color: "green" }} title="Push to this device" sub={tested || "Reminders and briefs reach this phone"}
+                  right={<button onClick={testPush} className="h-11 px-1 text-ember-text font-medium text-ui">Send a test</button>} />
+              ) : (
+                <>
+                  <Row ok="warn" icon={{ icon: "bell", color: "green" }} title="Push to this device" sub={pushSub(push, isApple())} />
+                  {push !== "denied" && (
+                    <div className="px-4 pb-3"><button onClick={enablePush} className="h-11 px-4 rounded-control bg-ember text-on-ember font-semibold text-body">Enable notifications</button></div>
+                  )}
+                </>
+              )}
+            </Section>
+          </Group>
+
+          <Group title="This device and setup">
+            <DevicesSection />
+
+            <PhoneSection />
+
+            {has(caps, "update") && <UpdateSection version={h?.version} />}
+
+            <Section title="Setup">
+              <button onClick={async () => {
+                const what = skipped.length ? `Set up what was skipped (${skippedList(skipped)})?` : "Go through every step again?";
+                if (!confirm(`${what} Everything that's set stays as it is until you change it, and you can leave setup at any time.`)) return;
+                await postJSON("/api/setup/restart", {}); location.hash = "#setup"; location.reload();
+              }} className="block w-full text-left active:bg-well">
+                <Row icon={{ icon: "spark", color: "violet" }} ok={skipped.length ? "warn" : true} title={skipped.length ? "Finish setup" : "Run setup again"}
+                  sub={skipped.length ? `Skipped: ${skippedList(skipped)}` : "Names, notes, search, voice, apps and phone, one at a time"} chevron />
+              </button>
+            </Section>
+          </Group>
         </div>
       </div>
 
-      <div className="text-[12px] text-dim text-center">Odie{h?.version ? ` ${h.version}` : ""} · runs on this computer</div>
+      <div className="text-caption text-dim text-center">Odie{h?.version ? ` ${h.version}` : ""} · runs on this computer</div>
     </div>
   );
 }

@@ -10,7 +10,7 @@ export function SvgBlock({ svg }: { svg: string }) {
   return (
     <figure className="my-2" data-visual="svg">
       <button type="button" onClick={() => setOpen(true)} aria-label="Show the drawing larger"
-        className="glass glass-solid block w-full rounded-[22px] p-3 text-left [&>svg]:block [&>svg]:w-full [&>svg]:h-auto [&>svg]:max-h-[360px]"
+        className="glass glass-solid block w-full rounded-tile p-3 text-left [&>svg]:block [&>svg]:w-full [&>svg]:h-auto [&>svg]:max-h-[360px]"
         dangerouslySetInnerHTML={{ __html: svg }} />
       <ToBody>
         <AnimatePresence>
@@ -18,7 +18,7 @@ export function SvgBlock({ svg }: { svg: string }) {
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setOpen(false)}
               className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4 safe-top safe-bottom" role="dialog" aria-label="Drawing">
               <motion.div initial={{ y: 14, opacity: 0 }} animate={{ y: 0, opacity: 1 }}
-                className="bg-white rounded-[28px] p-4 max-w-full max-h-[85vh] overflow-auto [&>svg]:block [&>svg]:w-[min(92vw,900px)] [&>svg]:h-auto [&>svg]:max-h-[78vh]"
+                className="bg-white rounded-card p-4 max-w-full max-h-[85vh] overflow-auto [&>svg]:block [&>svg]:w-[min(92vw,900px)] [&>svg]:h-auto [&>svg]:max-h-[78vh]"
                 dangerouslySetInnerHTML={{ __html: svg }} />
             </motion.div>
           )}

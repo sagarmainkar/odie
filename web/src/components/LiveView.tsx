@@ -157,27 +157,27 @@ function Live({ tab, site, start, chat, onClose, watch = false, who = "Odie" }: 
       className="fixed inset-0 z-50 bg-[#0d0d10] text-white flex flex-col">
       {watch && !controlling ? (
         <div className="flex items-center gap-2 px-3 pt-[max(10px,env(safe-area-inset-top))] pb-2">
-          <button onClick={() => { send({ t: "close" }); onClose(null); }} className="h-10 px-3 rounded-full text-[14px] font-semibold text-white/85 active:bg-white/15">Close</button>
+          <button onClick={() => { send({ t: "close" }); onClose(null); }} className="h-10 px-3 rounded-full text-ui font-semibold text-white/85 active:bg-white/15">Close</button>
           <div className="flex-1 min-w-0 text-center">
-            <div className="text-[14px] font-semibold truncate">Watching {who}</div>
-            <div className="text-[11.5px] text-white/55 truncate">{`${host || "…"}${page.title ? ` · ${page.title}` : ""}`}</div>
+            <div className="text-ui font-semibold truncate">Watching {who}</div>
+            <div className="text-caption text-white/55 truncate">{`${host || "…"}${page.title ? ` · ${page.title}` : ""}`}</div>
           </div>
-          <button onClick={() => send({ t: "control" })} disabled={phase !== "live"} className="h-10 px-4 rounded-full bg-white text-black text-[14px] font-bold disabled:opacity-40">Take control</button>
+          <button onClick={() => send({ t: "control" })} disabled={phase !== "live"} className="h-10 px-4 rounded-full bg-white text-black text-ui font-bold disabled:opacity-40">Take control</button>
         </div>
       ) : (
       <>
       <div className="flex items-center gap-2 px-3 pt-[max(10px,env(safe-area-inset-top))] pb-2">
         {watch
-          ? <button onClick={() => finish(true)} disabled={finishing} className="h-10 px-3 rounded-full text-[14px] font-semibold text-white/85 active:bg-white/15">I signed in</button>
-          : <button onClick={() => finish(false)} disabled={finishing} className="h-10 px-3 rounded-full text-[14px] font-semibold text-white/85 active:bg-white/15">Cancel</button>}
+          ? <button onClick={() => finish(true)} disabled={finishing} className="h-10 px-3 rounded-full text-ui font-semibold text-white/85 active:bg-white/15">I signed in</button>
+          : <button onClick={() => finish(false)} disabled={finishing} className="h-10 px-3 rounded-full text-ui font-semibold text-white/85 active:bg-white/15">Cancel</button>}
         <div className="flex-1 min-w-0 text-center">
-          <div className="text-[14px] font-semibold truncate flex items-center justify-center gap-1.5">
+          <div className="text-ui font-semibold truncate flex items-center justify-center gap-1.5">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" aria-hidden><rect x="5" y="11" width="14" height="10" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" /></svg>
             {host || site}
           </div>
-          <div className="text-[11.5px] text-white/55 truncate">{page.loading ? "Loading…" : page.title || "Your turn: Odie can't see this"}</div>
+          <div className="text-caption text-white/55 truncate">{page.loading ? "Loading…" : page.title || "Your turn: Odie can't see this"}</div>
         </div>
-        <button onClick={() => finish(!watch)} disabled={finishing || phase !== "live"} className="h-10 px-4 rounded-full bg-white text-black text-[14px] font-bold disabled:opacity-40">
+        <button onClick={() => finish(!watch)} disabled={finishing || phase !== "live"} className="h-10 px-4 rounded-full bg-white text-black text-ui font-bold disabled:opacity-40">
           {finishing ? "…" : watch ? `Hand back to ${who}` : "Done"}
         </button>
       </div>
@@ -194,14 +194,14 @@ function Live({ tab, site, start, chat, onClose, watch = false, who = "Odie" }: 
         {start !== undefined || watch ? (
           <form className="flex-1 min-w-0" onSubmit={(e) => { e.preventDefault(); if (address.trim()) send({ t: "go", url: address.trim() }); }}>
             <input value={address} onChange={(e) => { typing.current = true; setAddress(e.target.value); }} onBlur={() => { typing.current = false; }} inputMode="url" autoCapitalize="off" autoCorrect="off" spellCheck={false}
-              aria-label="Address" placeholder="amazon.in" className="w-full h-10 rounded-full bg-white/12 px-4 text-[14px] outline-none placeholder:text-white/40" />
+              aria-label="Address" placeholder="amazon.in" className="w-full h-10 rounded-full bg-white/12 px-4 text-ui outline-none placeholder:text-white/40" />
           </form>
-        ) : <div className="flex-1 text-[12px] leading-4 text-white/55">You type your password and codes yourself. Odie doesn't see them.</div>}
+        ) : <div className="flex-1 text-caption leading-4 text-white/55">You type your password and codes yourself. Odie doesn't see them.</div>}
         <button aria-label="Keyboard" onClick={() => { const k = keys.current; if (!k) return; if (document.activeElement === k) k.blur(); else k.focus(); }}
           disabled={phase !== "live"} className={bar}>
           <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="2" y="6" width="20" height="12" rx="2" /><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10" /></svg>
         </button>
-        {zoom.s > 1.01 && <button onClick={() => setZoom({ s: 1, x: 0, y: 0 })} className="h-10 px-3 rounded-full bg-white/12 text-[13px] font-semibold">1×</button>}
+        {zoom.s > 1.01 && <button onClick={() => setZoom({ s: 1, x: 0, y: 0 })} className="h-10 px-3 rounded-full bg-white/12 text-small font-semibold">1×</button>}
       </div>
       </>
       )}
@@ -216,32 +216,32 @@ function Live({ tab, site, start, chat, onClose, watch = false, who = "Odie" }: 
         {frame && <img ref={img} src={frame.src} alt="" draggable={false}
           style={{ transform: `translate(${zoom.x}px, ${zoom.y}px) scale(${zoom.s})`, transformOrigin: "center" }}
           className="max-w-full max-h-full object-contain select-none pointer-events-none" />}
-        {phase === "connecting" && <div className="text-[14px] text-white/70 flex items-center gap-2"><span className="spinner" />Opening Odie's browser…</div>}
+        {phase === "connecting" && <div className="text-ui text-white/70 flex items-center gap-2"><span className="spinner" />Opening Odie's browser…</div>}
         {phase === "busy" && (
           <div className="absolute inset-0 grid place-items-center bg-black/70 p-6 text-center">
             <div className="flex flex-col items-center gap-3">
-              <div className="text-[16px] font-semibold">In use on another device</div>
-              <button onClick={() => send({ t: "take" })} className="h-11 px-5 rounded-full bg-white text-black text-[15px] font-bold">Take over here</button>
-              <button onClick={() => onClose(null)} className="text-[14px] text-white/70 h-10">Close</button>
+              <div className="text-body font-semibold">In use on another device</div>
+              <button onClick={() => send({ t: "take" })} className="h-11 px-5 rounded-full bg-white text-black text-body font-bold">Take over here</button>
+              <button onClick={() => onClose(null)} className="text-ui text-white/70 h-10">Close</button>
             </div>
           </div>
         )}
         {phase === "ended" && !finishing && (
           <div className="absolute inset-0 grid place-items-center bg-black/75 p-6 text-center">
             <div className="flex flex-col items-center gap-3 max-w-[300px]">
-              <div className="text-[15px] leading-[22px]">{ENDED[ended] ?? "The sign-in ended."}</div>
-              <button onClick={() => onClose(null)} className="h-11 px-5 rounded-full bg-white text-black text-[15px] font-bold">Close</button>
+              <div className="text-body leading-[22px]">{ENDED[ended] ?? "The sign-in ended."}</div>
+              <button onClick={() => onClose(null)} className="h-11 px-5 rounded-full bg-white text-black text-body font-bold">Close</button>
             </div>
           </div>
         )}
-        {note && <div className="absolute top-3 left-1/2 -translate-x-1/2 rounded-full bg-black/80 px-4 py-2 text-[13px]">{note}</div>}
+        {note && <div className="absolute top-3 left-1/2 -translate-x-1/2 rounded-full bg-black/80 px-4 py-2 text-small">{note}</div>}
       </div>
       {upi && pay && (
         <div className="px-3 pt-2 pb-[max(12px,env(safe-area-inset-bottom))]">
-          <a href={upi} className="flex items-center justify-center gap-2 h-12 rounded-full bg-[#1fa463] text-white text-[16px] font-bold">
+          <a href={upi} className="flex items-center justify-center gap-2 h-12 rounded-full bg-[#1fa463] text-white text-body font-bold">
             Pay {pay.amount ? `₹${pay.amount} ` : ""}in your UPI app
           </a>
-          <div className="text-center text-[12px] text-white/55 mt-1.5">{pay.payee ? `To ${pay.payee}. ` : ""}You approve it there, with your PIN.</div>
+          <div className="text-center text-caption text-white/55 mt-1.5">{pay.payee ? `To ${pay.payee}. ` : ""}You approve it there, with your PIN.</div>
         </div>
       )}
     </motion.div>

@@ -10,11 +10,11 @@ import { formatAmount } from "./parse";
 import type { Tone } from "./parse/callout";
 
 export function Heading({ text }: { text: string }) {
-  return <div className="text-[17px] leading-[23px] font-bold tracking-[-0.01em] mt-3 mb-1"><InlineText text={text} /></div>;
+  return <div className="text-title leading-[23px] font-bold tracking-[-0.01em] mt-3 mb-1"><InlineText text={text} /></div>;
 }
 
 export function Text({ text }: { text: string }) {
-  return <div className="text-[15px] leading-[22px] text-ink-2 my-1.5"><InlineText text={text} /></div>;
+  return <div className="text-body leading-[22px] text-ink-2 my-1.5"><InlineText text={text} /></div>;
 }
 
 export function Badge({ text, tone }: { text: string; tone?: "good" | "warn" }) {
@@ -27,7 +27,7 @@ export function Button({ label, run, url }: { label: string; run?: string; url?:
   if (run) {
     return (
       <div className="my-2">
-        <button type="button" disabled={busy} onClick={() => send(run)} className="pill pill-solid h-10 text-[14px] shadow-none disabled:opacity-40">
+        <button type="button" disabled={busy} onClick={() => send(run)} className="pill pill-solid h-10 text-ui shadow-none disabled:opacity-40">
           <Icon name="spark" size={15} /> {label}
         </button>
       </div>
@@ -35,7 +35,7 @@ export function Button({ label, run, url }: { label: string; run?: string; url?:
   }
   return (
     <div className="my-2">
-      <a href={url} target="_blank" rel="noreferrer" className="pill h-10 text-[14px] block-tap"><Icon name="globe" size={15} /> {label}</a>
+      <a href={url} target="_blank" rel="noreferrer" className="pill h-10 text-ui block-tap"><Icon name="globe" size={15} /> {label}</a>
     </div>
   );
 }
@@ -43,7 +43,7 @@ export function Button({ label, run, url }: { label: string; run?: string; url?:
 export function LinkLine({ text, url }: { text: string; url: string }) {
   return (
     <div className="my-1.5">
-      <a href={url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 text-[14px] font-semibold text-ember-text underline underline-offset-2">
+      <a href={url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 text-ui font-semibold text-ember-text underline underline-offset-2">
         <Icon name="globe" size={14} stroke={2.2} />{text}
       </a>
     </div>
@@ -53,8 +53,8 @@ export function LinkLine({ text, url }: { text: string; url: string }) {
 export function Picture({ url, caption }: { url: string; caption?: string }) {
   return (
     <figure className="my-2">
-      <SafeImage src={url} alt={caption} className="block w-full max-h-[260px] @xl:max-h-[380px] object-cover rounded-[20px] border border-line" />
-      {caption && <figcaption className="text-[12px] leading-4 text-muted mt-1.5 px-1">{caption}</figcaption>}
+      <SafeImage src={url} alt={caption} className="block w-full max-h-[260px] @xl:max-h-[380px] object-cover rounded-tile border border-line" />
+      {caption && <figcaption className="text-caption leading-4 text-muted mt-1.5 px-1">{caption}</figcaption>}
     </figure>
   );
 }
@@ -64,10 +64,10 @@ export function Picture({ url, caption }: { url: string; caption?: string }) {
 export function Bar({ label, value, max, unit }: { label: string; value: number; max: number; unit?: string }) {
   const inCard = useContext(InCard);
   const share = Math.max(0, Math.min(1, value / max));
-  const frame = inCard ? "my-2" : "glass glass-solid rounded-[20px] px-3.5 py-3 my-2";
+  const frame = inCard ? "my-2" : "glass glass-solid rounded-tile px-3.5 py-3 my-2";
   return (
     <div className={frame}>
-      <div className="flex items-baseline gap-2 text-[13px]">
+      <div className="flex items-baseline gap-2 text-small">
         <span className="flex-1 min-w-0 font-semibold text-ink-2">{label}</span>
         <span className="tabular-nums text-muted whitespace-nowrap">{barAmount(value, max, unit)}</span>
       </div>
@@ -103,9 +103,9 @@ const TONE_LOOK: Record<Tone, { box: string; ink: string; icon: IconName }> = {
 export function Callout({ tone, title, text }: { tone: Tone; title?: string; text: string }) {
   const look = TONE_LOOK[tone];
   return (
-    <div className={`${look.box} rounded-[20px] px-3.5 py-3 my-2 flex gap-2.5`}>
+    <div className={`${look.box} rounded-tile px-3.5 py-3 my-2 flex gap-2.5`}>
       <span className={`${look.ink} shrink-0 mt-px`}><Icon name={look.icon} size={18} stroke={2.2} /></span>
-      <div className="min-w-0 text-[14px] leading-[20px]">
+      <div className="min-w-0 text-ui leading-[20px]">
         {title && <div className="font-bold text-ink"><InlineText text={title} /></div>}
         <div className="text-ink-2"><InlineText text={text} /></div>
       </div>

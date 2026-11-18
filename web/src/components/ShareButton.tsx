@@ -39,7 +39,7 @@ export function ShareWords({ text, title, bubbleId, sheet = canShareHere() }: { 
         className="hit w-7 h-7 rounded-full flex items-center justify-center text-muted active:text-ink" onClick={() => void toSheet()}>
         {failed ? <span className="text-ember-text"><Cross /></span> : drawing ? <span className="spinner" /> : <ShareIcon />}
       </button>
-      {note && <span className="text-[12px] text-muted">{note}</span>}
+      {note && <span className="text-caption text-muted">{note}</span>}
     </>
   );
 }

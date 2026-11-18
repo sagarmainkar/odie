@@ -35,16 +35,16 @@ export function UpdateSection({ version }: { version: string | undefined }) {
 
   return (
     <section className="flex flex-col gap-2">
-      <div className="text-[13px] leading-5 font-bold text-muted px-1.5">Odie</div>
-      <div className="glass rounded-[26px] overflow-hidden">
+      <div className="text-small leading-5 font-bold text-muted px-1.5">Odie</div>
+      <div className="glass rounded-card overflow-hidden">
         <div className="flex items-center gap-3 px-4 py-3 min-h-14">
           <span className="relative shrink-0"><Tile icon="spark" color="ink" small /><span className="absolute -right-0.5 -bottom-0.5 rounded-full bg-[var(--t-surface-2)] p-[2px] flex"><span className={`w-2 h-2 rounded-full ring-2 shrink-0 ${dot}`} /></span></span>
           <div className="flex-1 min-w-0">
-            <div className="text-[14.5px] font-medium">Odie{version ? ` · ${version}` : ""}</div>
-            <div className="text-[12.5px] leading-[18px] text-muted">{sub}</div>
+            <div className="text-ui font-medium">Odie{version ? ` · ${version}` : ""}</div>
+            <div className="text-small leading-[18px] text-muted">{sub}</div>
           </div>
           {behind && !running ? (
-            <button type="button" onClick={() => void update()} className="h-10 px-4 rounded-[14px] bg-ember text-on-ember font-semibold text-[14px] shrink-0">Update Odie</button>
+            <button type="button" onClick={() => void update()} className="h-10 px-4 rounded-control bg-ember text-on-ember font-semibold text-ui shrink-0">Update Odie</button>
           ) : (
             <button type="button" onClick={() => void checkForUpdate(true)} disabled={u.checking || running} className="text-ember-text font-medium shrink-0 disabled:opacity-50">
               {u.checking ? "Checking…" : "Check now"}

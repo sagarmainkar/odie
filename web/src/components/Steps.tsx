@@ -106,10 +106,10 @@ function StepRow({ t, spinning, delay }: { t: Tool; spinning: boolean; delay: nu
     <>
       <StepMark t={t} spinning={spinning} />
       <span className={`min-w-0 truncate font-semibold ${t.state === "no" ? "text-muted" : "text-ink"}`}>{toolLabel(t)}</span>
-      {pill && <span className={`ml-auto shrink-0 rounded-full px-[7px] py-[2px] text-[10.5px] font-semibold whitespace-nowrap ${pillTone(t)}`}>{pill}</span>}
+      {pill && <span className={`ml-auto shrink-0 rounded-full px-[7px] py-[2px] text-tiny font-semibold whitespace-nowrap ${pillTone(t)}`}>{pill}</span>}
     </>
   );
-  const headClass = "flex min-h-7 items-center gap-2 text-left text-[13px]";
+  const headClass = "flex min-h-7 items-center gap-2 text-left text-small";
   return (
     <div data-step className="trace-row flex flex-col gap-[3px] py-1" style={{ animationDelay: `${delay}ms` }}>
       {openable
@@ -117,19 +117,19 @@ function StepRow({ t, spinning, delay }: { t: Tool; spinning: boolean; delay: nu
         : <div className={`${headClass} w-full`}>{headline}</div>}
       {arg && (
         <button type="button" data-arg aria-expanded={argWhole} onClick={() => setArgWhole(!argWhole)}
-          className="block w-full rounded-[8px] bg-well px-2 py-[5px] text-left text-[12px] leading-[1.45] text-ink-2">
+          className="block w-full rounded-inner bg-well px-2 py-[5px] text-left text-caption leading-[1.45] text-ink-2">
           {/* the font sits on the span: the app's own rule gives every button the body font */}
           <span className={`block ${mono ? "font-mono" : ""} ${argWhole ? "whitespace-pre-wrap break-all" : "truncate"}`}>{arg}</span>
         </button>
       )}
       {meta && !outOpen && (openable
-        ? <button type="button" onClick={toggleOutput} className="w-fit text-left text-[11.5px] text-muted transition-opacity active:opacity-60">{meta}</button>
-        : <span className="text-[11.5px] text-muted">{meta}</span>)}
+        ? <button type="button" onClick={toggleOutput} className="w-fit text-left text-caption text-muted transition-opacity active:opacity-60">{meta}</button>
+        : <span className="text-caption text-muted">{meta}</span>)}
       {outOpen && (
-        <div className="trace-row rounded-[10px] border border-line bg-surface-2 px-[9px] py-[7px]">
-          <pre className="m-0 overflow-x-auto font-mono text-[11.5px] leading-[1.5] text-ink-2">{shown}</pre>
+        <div className="trace-row rounded-inner border border-line bg-surface-2 px-[9px] py-[7px]">
+          <pre className="m-0 overflow-x-auto font-mono text-caption leading-[1.5] text-ink-2">{shown}</pre>
           {!showAll && rest > 0 && (
-            <button type="button" onClick={() => setShowAll(true)} className="mt-1 block text-[12px] font-semibold text-ember-text">Show all {total} lines</button>
+            <button type="button" onClick={() => setShowAll(true)} className="mt-1 block text-caption font-semibold text-ember-text">Show all {total} lines</button>
           )}
         </div>
       )}
@@ -151,12 +151,12 @@ export function Steps({ tools, running }: { tools: Tool[]; running: boolean }) {
   return (
     <div className="flex flex-col py-0.5">
       <button type="button" onClick={() => setManual(!open)} aria-expanded={open}
-        className="-mx-1.5 flex w-fit max-w-full min-h-9 items-center gap-2 rounded-[10px] px-1.5 py-1 text-left active:bg-well">
+        className="-mx-1.5 flex w-fit max-w-full min-h-9 items-center gap-2 rounded-inner px-1.5 py-1 text-left active:bg-well">
         <svg width="15" height="15" viewBox="0 0 24 24" aria-hidden="true" className="shrink-0" style={{ fill: working ? "var(--t-ink-2)" : "var(--t-dim)" }}>
           <path d="M12 2l2.4 7.2L22 12l-7.6 2.8L12 22l-2.4-7.2L2 12l7.6-2.8z" />
         </svg>
-        {!working && <span className="shrink-0 text-[12px] text-dim">{stepsCount(tools.length)} ·</span>}
-        <span role="status" className={`min-w-0 truncate text-[13.5px] font-semibold ${working ? "shimmer-text" : "text-ink-2 trace-fade"}`}>{title}</span>
+        {!working && <span className="shrink-0 text-caption text-dim">{stepsCount(tools.length)} ·</span>}
+        <span role="status" className={`min-w-0 truncate text-ui font-semibold ${working ? "shimmer-text" : "text-ink-2 trace-fade"}`}>{title}</span>
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--t-dim)" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"
           className="shrink-0 transition-transform duration-300" style={{ transform: open ? "rotate(180deg)" : "none" }} aria-hidden="true">
           <path d="M6 9l6 6 6-6" />

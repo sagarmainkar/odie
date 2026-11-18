@@ -133,7 +133,7 @@ export function Today() {
   return (
     <div className="h-full overflow-y-auto overflow-x-hidden no-scrollbar px-[18px] lg:px-8 safe-top pb-[110px] flex flex-col gap-[18px] [overflow-wrap:anywhere]">
       <div className="flex items-center justify-between rise">
-        <div className="text-[13px] font-semibold text-muted whitespace-nowrap">{date}</div>
+        <div className="text-small font-semibold text-muted whitespace-nowrap">{date}</div>
         <div className="flex items-center gap-2">
           <a href="#settings" aria-label="Settings" className="flex"><Avatar size={44} state={approvals.length ? "approval" : "idle"} /></a>
         </div>
@@ -157,7 +157,7 @@ export function Today() {
           <AnimatePresence initial={false}>
             {approvals.length > 0 && (
               <motion.a href="#chat" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.2, ease: EASE }}
-                className="flex items-center gap-3 px-3.5 py-3 rounded-[22px] bg-warn-tint text-warn-ink font-semibold text-[14.5px] border border-[rgba(255,178,63,.25)]">
+                className="flex items-center gap-3 px-3.5 py-3 rounded-tile bg-warn-tint text-warn-ink font-semibold text-ui border border-[rgba(255,178,63,.25)]">
                 {/* Approvals live in Chat, next to what asked for them; Today only points there. */}
                 <Tile icon="bell" color="yellow" small />
                 <span className="flex-1">{approvals.length === 1 ? "1 thing waits" : `${approvals.length} things wait`} for your tap</span>
@@ -174,14 +174,14 @@ export function Today() {
 
         </div>
         <div className="contents lg:flex lg:flex-col lg:gap-[18px]">
-          <section className="glass rounded-[26px] px-2 pt-3.5 pb-3 grid grid-cols-7 text-center rise" style={delay(0.15)}>
+          <section className="glass rounded-card px-2 pt-3.5 pb-3 grid grid-cols-7 text-center rise" style={delay(0.15)}>
             {weekDays().map((d) => {
               const dot = d.offset >= 0 && busy.has(isoDay(d.offset));
               return (
                 <button key={d.key} onClick={() => ask(d.offset === 0 ? "What's on today?" : `What's on ${d.long}?`)}
-                  className={`flex flex-col items-center gap-1.5 py-2 rounded-[18px] text-[12px] font-semibold ${d.offset === 0 ? "bg-solid text-on-solid shadow-[0_12px_24px_-12px_rgba(0,0,0,.45)]" : "text-muted"}`}>
+                  className={`flex flex-col items-center gap-1.5 py-2 rounded-tile text-caption font-semibold ${d.offset === 0 ? "bg-solid text-on-solid shadow-[0_12px_24px_-12px_rgba(0,0,0,.45)]" : "text-muted"}`}>
                   {d.short}
-                  <b className={`text-[18px] font-semibold ${d.offset === 0 ? "" : d.offset < 0 ? "text-dim" : "text-ink-2"}`}>{d.day}</b>
+                  <b className={`text-title font-semibold ${d.offset === 0 ? "" : d.offset < 0 ? "text-dim" : "text-ink-2"}`}>{d.day}</b>
                   <i className={`w-[5px] h-[5px] rounded-full ${dot ? (d.offset === 0 ? "bg-[#ffd36b]" : "bg-brand") : ""}`} />
                 </button>
               );
@@ -189,12 +189,12 @@ export function Today() {
           </section>
 
           {cal !== undefined && has(caps, "calendar") && (
-            <section className="glass rounded-[28px] p-1.5 rise" style={delay(0.2)}>
-              {cal === null || !bands ? <div className="px-4 py-3.5 text-[14px] text-muted">Calendar not connected</div> : (
+            <section className="glass rounded-card p-1.5 rise" style={delay(0.2)}>
+              {cal === null || !bands ? <div className="px-4 py-3.5 text-ui text-muted">Calendar not connected</div> : (
                 <>
                   {cal.today.length === 0 ? (
-                    <div className="band band-a rounded-[22px] px-3.5 py-3.5 mb-1.5 bg-[linear-gradient(160deg,rgba(186,214,255,.6),rgba(186,214,255,.18))] flex items-center justify-between">
-                      <span><b className="text-[14px] text-ink-2">Today</b><span className="block text-[13px] text-muted">Nothing on the calendar. The day is yours.</span></span>
+                    <div className="band band-a rounded-tile px-3.5 py-3.5 mb-1.5 bg-[linear-gradient(160deg,rgba(186,214,255,.6),rgba(186,214,255,.18))] flex items-center justify-between">
+                      <span><b className="text-ui text-ink-2">Today</b><span className="block text-small text-muted">Nothing on the calendar. The day is yours.</span></span>
                       <span className="opacity-55"><Icon name="sun" size={18} /></span>
                     </div>
                   ) : (
@@ -204,7 +204,7 @@ export function Today() {
                       <Band name="Evening" icon="moon" tone="e" events={bands.evening} nowHM={nowHM} />
                     </>
                   )}
-                  <button onClick={() => ask("What's on my calendar tomorrow?")} className="w-full flex items-center gap-3 px-3 pt-2.5 pb-2 text-[14px] text-left">
+                  <button onClick={() => ask("What's on my calendar tomorrow?")} className="w-full flex items-center gap-3 px-3 pt-2.5 pb-2 text-ui text-left">
                     <span className="text-muted"><Icon name="cal" size={18} /></span>
                     <span className="flex-1 min-w-0 text-ink-2"><b>Tomorrow</b> · {cal.tomorrow.length ? cal.tomorrow.map((e) => `${e.time} ${e.title}`).join(", ") : "Clear"}</span>
                     <span className="text-dim" aria-hidden="true">›</span>
@@ -233,14 +233,14 @@ const BAND_BG = {
 
 function Band({ name, icon, tone, events, nowHM }: { name: string; icon: IconName; tone: keyof typeof BAND_BG; events: Ev[]; nowHM: string }) {
   return (
-    <div className={`band band-${tone} rounded-[22px] px-3.5 pt-3.5 pb-3 mb-1.5 ${BAND_BG[tone]}`}>
-      <h4 className="text-[14px] font-bold flex justify-between items-center text-ink-2">{name}<span className="opacity-55"><Icon name={icon} size={16} /></span></h4>
-      {events.length === 0 ? <div className="mt-2 text-[13px] text-muted">Free.</div> : events.map((e, i) => {
+    <div className={`band band-${tone} rounded-tile px-3.5 pt-3.5 pb-3 mb-1.5 ${BAND_BG[tone]}`}>
+      <h4 className="text-ui font-bold flex justify-between items-center text-ink-2">{name}<span className="opacity-55"><Icon name={icon} size={16} /></span></h4>
+      {events.length === 0 ? <div className="mt-2 text-small text-muted">Free.</div> : events.map((e, i) => {
         const isNow = isNowEvent(e, nowHM);
         return (
           <button key={i} onClick={() => ask(`Tell me about ${e.title}`)} className="mt-2.5 flex gap-3 w-full text-left">
-            <span className="w-11 shrink-0 text-[12.5px] font-semibold text-muted pt-3 tabular-nums">{e.time}</span>
-            <span className={`flex-1 min-w-0 glass-solid rounded-2xl px-3.5 py-3 shadow-[0_8px_18px_-14px_rgba(60,40,20,.35)] text-[15px] font-semibold break-words ${isNow ? "outline-2 outline -outline-offset-2 outline-brand" : ""}`}>{e.title}</span>
+            <span className="w-11 shrink-0 text-small font-semibold text-muted pt-3 tabular-nums">{e.time}</span>
+            <span className={`flex-1 min-w-0 glass-solid rounded-2xl px-3.5 py-3 shadow-[0_8px_18px_-14px_rgba(60,40,20,.35)] text-body font-semibold break-words ${isNow ? "outline-2 outline -outline-offset-2 outline-brand" : ""}`}>{e.title}</span>
           </button>
         );
       })}

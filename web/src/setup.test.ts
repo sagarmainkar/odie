@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { brainDone, canSkip, chipState, firstPick, formFor, keyRoute, type Panel, type SetupState } from "./setup";
+import { BY_HAND, brainDone, canSkip, chipState, firstPick, formFor, keyRoute, type Panel, type SetupState } from "./setup";
 
 const s: SetupState = {
   done: false, current: "vault", thread: [],
@@ -32,6 +32,12 @@ describe("setup", () => {
     expect(canSkip("names")).toBe(false);
     expect(canSkip("vault")).toBe(true);
     expect(canSkip("phone")).toBe(true);
+  });
+
+  it("does a step by hand on its own screen when it has one", () => {
+    expect(BY_HAND.brain).toBe("#brain");
+    expect(BY_HAND.voice).toBe("#voice");
+    expect(BY_HAND.vault).toBe("#settings");
   });
 });
 

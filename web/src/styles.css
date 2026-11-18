@@ -40,6 +40,25 @@
   --ease-out: cubic-bezier(.2,.8,.2,1);
   --font-display: "Plus Jakarta Sans Variable", "Plus Jakarta Sans", system-ui, sans-serif;
   --font-body: "Plus Jakarta Sans Variable", "Plus Jakarta Sans", system-ui, sans-serif;
+
+  /* The type scale: every text size in the app is one of these (scale.test.ts guards it). No line-heights here, so a
+     size never changes a line's height: each place keeps its own leading-* class. text-body is reply text. */
+  --text-tiny: 11px;        /* badges, axis notes, the smallest labels */
+  --text-caption: 12px;     /* meta lines, chips, hints */
+  --text-small: 13px;       /* section labels, descriptions under a row */
+  --text-ui: 14px;          /* buttons, links, compact rows */
+  --text-body: 15.5px;      /* replies, row titles, inputs */
+  --text-title: 17px;       /* a card's or a sheet's title */
+  --text-heading: 20px;     /* a screen's title */
+  --text-display-sm: 23px;  /* short display lines: a pairing code, "All clear." */
+  --text-display: 27px;     /* greetings, the assistant's name */
+  --text-display-lg: 31px;  /* big numbers: a balance, a chart's headline */
+
+  /* The corner scale, plus rounded-full for pills and circles. */
+  --radius-inner: 10px;     /* segments, small tiles, pieces inside a card */
+  --radius-control: 14px;   /* buttons, fields, voice tiles */
+  --radius-tile: 20px;      /* cards inside the chat and on Today */
+  --radius-card: 26px;      /* the glass cards and sheets */
 }
 
 /* One design whose colours follow the time of day (theme.ts sets data-tod). Day tokens are the base. */

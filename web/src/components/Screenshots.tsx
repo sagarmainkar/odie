@@ -7,18 +7,18 @@ import { site } from "../screenshots";
  * knows the browser tab, and signed-in browsing is on): a Watch button that opens the page live (LiveView, watch). */
 export function LiveBrowser({ shot, count, onWatch }: { shot: Media; count: number; onWatch?: () => void }) {
   return (
-    <div className="glass rounded-[22px] overflow-hidden w-full max-w-[460px]" data-media="browser-live">
-      <div className="flex items-center gap-2 px-3.5 py-2.5 text-[12.5px] font-semibold text-muted">
+    <div className="glass rounded-tile overflow-hidden w-full max-w-[460px]" data-media="browser-live">
+      <div className="flex items-center gap-2 px-3.5 py-2.5 text-small font-semibold text-muted">
         <span className="relative flex w-2 h-2"><span className="absolute inline-flex h-full w-full rounded-full bg-ember opacity-60 animate-ping" /><span className="relative inline-flex w-2 h-2 rounded-full bg-ember" /></span>
         <span className="truncate">Browsing {site(shot.url ?? "")}</span>
         {count > 1 && <span className="ml-auto shrink-0 text-dim">{count} pages</span>}
-        {onWatch && <button onClick={onWatch} className={`${count > 1 ? "" : "ml-auto "}shrink-0 px-2.5 h-7 rounded-full bg-ember text-on-ember text-[12px] font-semibold`}>Watch</button>}
+        {onWatch && <button onClick={onWatch} className={`${count > 1 ? "" : "ml-auto "}shrink-0 px-2.5 h-7 rounded-full bg-ember text-on-ember text-caption font-semibold`}>Watch</button>}
       </div>
       <AnimatePresence mode="popLayout" initial={false}>
         <motion.img key={shot.id} src={mediaUrl(shot)} alt={shot.title} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
           transition={{ duration: 0.25 }} className="block w-full aspect-[1280/900] object-cover object-top bg-well" />
       </AnimatePresence>
-      {shot.step && <div className="px-3.5 py-2 text-[13px] text-ink-2 truncate">{shot.step}</div>}
+      {shot.step && <div className="px-3.5 py-2 text-small text-ink-2 truncate">{shot.step}</div>}
     </div>
   );
 }
@@ -29,12 +29,12 @@ export function ScreenshotStrip({ shots, onOpenLive }: { shots: Media[]; onOpenL
   const [open, setOpen] = useState<number | null>(null);
   return (
     <>
-      {onOpenLive && <button onClick={onOpenLive} className="self-start -mb-1 text-[12.5px] font-semibold text-ember-text">Open the page live ›</button>}
+      {onOpenLive && <button onClick={onOpenLive} className="self-start -mb-1 text-small font-semibold text-ember-text">Open the page live ›</button>}
       <div className="flex gap-2 overflow-x-auto no-scrollbar -mx-1 px-1 pb-0.5" data-media="browser-strip">
         {shots.map((s, i) => (
           <button key={s.id} onClick={() => setOpen(i)} aria-label={`Open screenshot: ${s.title}`} className="shrink-0 w-[132px] text-left">
-            <img src={mediaUrl(s)} alt="" loading="lazy" className="w-[132px] h-[92px] rounded-[14px] object-cover object-top bg-well border border-line" />
-            <div className="mt-1 text-[11.5px] leading-[15px] text-muted truncate">{site(s.url ?? "")}</div>
+            <img src={mediaUrl(s)} alt="" loading="lazy" className="w-[132px] h-[92px] rounded-control object-cover object-top bg-well border border-line" />
+            <div className="mt-1 text-caption leading-[15px] text-muted truncate">{site(s.url ?? "")}</div>
           </button>
         ))}
       </div>
@@ -68,18 +68,18 @@ function Viewer({ shots, at, setAt }: { shots: Media[]; at: number; setAt: (i: n
       onTouchEnd={(e) => { if (touch.current !== null) { const dx = e.changedTouches[0].clientX - touch.current; if (Math.abs(dx) > 50) go(dx < 0 ? 1 : -1); } touch.current = null; }}>
       <div className="flex items-start gap-3 px-4 pt-[max(16px,env(safe-area-inset-top))] pb-3 text-white">
         <div className="flex-1 min-w-0" onClick={keep}>
-          <div className="text-[15px] font-semibold truncate">{s.page_title || site(s.url ?? "")}</div>
-          {s.url && <a href={s.url} target="_blank" rel="noreferrer" className="block text-[12.5px] text-white/70 truncate">{s.url}</a>}
+          <div className="text-body font-semibold truncate">{s.page_title || site(s.url ?? "")}</div>
+          {s.url && <a href={s.url} target="_blank" rel="noreferrer" className="block text-small text-white/70 truncate">{s.url}</a>}
         </div>
-        <span className="text-[12.5px] text-white/60 shrink-0 mt-0.5">{at + 1} / {shots.length}</span>
+        <span className="text-small text-white/60 shrink-0 mt-0.5">{at + 1} / {shots.length}</span>
         <button ref={close} onClick={(e) => { keep(e); setAt(null); }} aria-label="Close" className="w-9 h-9 -mt-1 rounded-full bg-white/15 grid place-items-center shrink-0">✕</button>
       </div>
       <div className="flex-1 min-h-0 flex items-center justify-center px-2">
-        <img src={mediaUrl(s)} alt={s.title} onClick={keep} className="max-w-full max-h-full object-contain rounded-[10px]" />
+        <img src={mediaUrl(s)} alt={s.title} onClick={keep} className="max-w-full max-h-full object-contain rounded-inner" />
       </div>
       <div className="flex items-center justify-between px-6 py-4 pb-[max(16px,env(safe-area-inset-bottom))] text-white">
         <button onClick={(e) => { keep(e); go(-1); }} disabled={at === 0} aria-label="Previous screenshot" className="w-11 h-11 rounded-full bg-white/15 disabled:opacity-30">‹</button>
-        <span className="text-[13px] text-white/80 truncate px-3">{s.step}</span>
+        <span className="text-small text-white/80 truncate px-3">{s.step}</span>
         <button onClick={(e) => { keep(e); go(1); }} disabled={at === shots.length - 1} aria-label="Next screenshot" className="w-11 h-11 rounded-full bg-white/15 disabled:opacity-30">›</button>
       </div>
     </motion.div>

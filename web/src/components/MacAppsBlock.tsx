@@ -38,12 +38,12 @@ export function MacAppsBlock({ data, onChange, mac = onAMac() }: { data: MacApps
           <div key={a.id} className="flex items-center gap-3 px-4 py-3 min-h-14 border-b border-line last:border-b-0">
             <Tile icon={icon} color={color} small />
             <span className="flex-1 min-w-0">
-              <b className="block text-[14.5px] font-semibold leading-5">{a.name}</b>
-              <span className="flex items-center gap-1.5 text-[12.5px] text-muted"><Dot status={a.status} />{macAppLine(a.status, mac)}</span>
+              <b className="block text-ui font-semibold leading-5">{a.name}</b>
+              <span className="flex items-center gap-1.5 text-small text-muted"><Dot status={a.status} />{macAppLine(a.status, mac)}</span>
             </span>
             {a.status !== "granted" && mac && (
               <button type="button" onClick={() => void allow(a.id)} disabled={busy !== ""} aria-label={`Allow ${a.name}`}
-                className="h-9 px-4 rounded-full bg-ember text-on-ember text-[13.5px] font-semibold disabled:opacity-60">
+                className="h-9 px-4 rounded-full bg-ember text-on-ember text-ui font-semibold disabled:opacity-60">
                 {busy === a.id ? "Asking…" : "Allow"}
               </button>
             )}
@@ -52,10 +52,10 @@ export function MacAppsBlock({ data, onChange, mac = onAMac() }: { data: MacApps
         );
       })}
       {calendarOk && (
-        <label className="flex items-center gap-3 px-4 py-3 min-h-14 border-t border-line text-[13.5px]">
+        <label className="flex items-center gap-3 px-4 py-3 min-h-14 border-t border-line text-ui">
           <span className="flex-1 text-muted">Events Odie adds go into</span>
           <select value={data.default_calendar} onChange={(e) => void choose(e.target.value)} aria-label="Calendar for events Odie adds"
-            className="h-9 px-3 rounded-full bg-well border border-line text-[13.5px] max-w-[55%]">
+            className="h-9 px-3 rounded-full bg-well border border-line text-ui max-w-[55%]">
             <option value="">First writable calendar</option>
             {(calendars ?? []).filter((c) => c.writable).map((c) => <option key={c.name} value={c.name}>{c.name}</option>)}
           </select>

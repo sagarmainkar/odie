@@ -16,13 +16,13 @@ export function ConnectCard({ since }: { since?: number }) {
     return () => window.removeEventListener("odie:google-connected", on);
   }, []);
   return (
-    <div className="glass rounded-[22px] px-4 py-3.5 flex items-center gap-3">
-      <span className="w-10 h-10 rounded-[13px] grid place-items-center bg-[#e8f0fe] text-[#1a73e8] shrink-0"><Icon name={done ? "check" : "mail"} size={18} stroke={2.2} /></span>
+    <div className="glass rounded-tile px-4 py-3.5 flex items-center gap-3">
+      <span className="w-10 h-10 rounded-control grid place-items-center bg-[#e8f0fe] text-[#1a73e8] shrink-0"><Icon name={done ? "check" : "mail"} size={18} stroke={2.2} /></span>
       <div className="flex-1 min-w-0">
-        <b className="text-[15px] font-semibold block">{done ? "Google connected" : "Connect Google"}</b>
-        <span className="text-[12.5px] text-muted">{done ? "Mail and calendar work again." : "Gmail and Calendar, in one step."}</span>
+        <b className="text-body font-semibold block">{done ? "Google connected" : "Connect Google"}</b>
+        <span className="text-small text-muted">{done ? "Mail and calendar work again." : "Gmail and Calendar, in one step."}</span>
       </div>
-      {!done && <a href="/api/google/connect?from=chat" className="pill pill-solid h-10 text-[14px] shadow-none shrink-0">Connect</a>}
+      {!done && <a href="/api/google/connect?from=chat" className="pill pill-solid h-10 text-ui shadow-none shrink-0">Connect</a>}
     </div>
   );
 }
