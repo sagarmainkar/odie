@@ -52,4 +52,14 @@ describe("Pulse", () => {
   it("is the rail's first tab", () => {
     expect(railItems(null)[0]).toEqual({ tab: "today", label: "Pulse", icon: "sun" });
   });
+
+  it("shows a job going now with its state in words, and Stop rides on it", () => {
+    expect(onItLine({ id: "job-3f9a2c", title: "Tides", state: "working", next: "", stop: "job-3f9a2c" })).toBe("working on it");
+    expect(onItLine({ id: "job-4a", title: "Other", state: "waiting for a slot", next: "" })).toBe("waiting for a slot");
+  });
+
+  it("names the pick on the jobs and recipes calls", () => {
+    expect(followsPick("/api/jobs/job-3f9a2c/allow")).toBe(true);
+    expect(followsPick("/api/recipes/use")).toBe(true);
+  });
 });

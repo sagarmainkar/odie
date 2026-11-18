@@ -5,20 +5,24 @@ import { mediaUrl } from "../media";
 import { Orb } from "./Orb";
 import { Icon, Tile } from "./Tile";
 import { WatchClosed, type WatchClosedItem } from "./WatchClosed";
-import type { LoopDone } from "../pulse";
+import type { JobDone, LoopDone } from "../pulse";
 
 const ask = (q: string) => { location.hash = `#chat?q=${encodeURIComponent(q)}`; };
 
-/** A Pulse's "Needs you": one card per thing to act on, from the watch's last check and the user's own reminders. Each
- * card has the same three buttons: its move, Done and Later. What the watch did fold into one "done today" line: its
- * notes (with any files) and what it closed (with Reopen). open: start unfolded (tests). */
-export function NeedsYou({ items, footer, closed, notes = [], loopsDone = [], onAct, onReopen, onReopenLoop, open = false, empty }: {
-  items: Need[] | null; footer: string; closed: WatchClosedItem[]; notes?: WatchNote[]; loopsDone?: LoopDone[];
+/** A Pulse's "Needs you": one card per thing to act on, from the watch's last check, Odie's loops and jobs, and the
+ * user's own reminders. Each card has its move, Done and (mostly) Later. A tested pull request's card also has "Why?"
+ * (the loop's evidence) and, when tests fail, "Show failures" (the output's tail), both shown in place. What was done
+ * folds into one "done today" line: the watch's notes (with any files), what it closed and Odie's loops closed (with
+ * Reopen), and jobs that finished. open: start unfolded (tests). */
+export function NeedsYou({ items, footer, closed, notes = [], loopsDone = [], jobsDone = [], onAct, onReopen, onReopenLoop, open = false, empty }: {
+  items: Need[] | null; footer: string; closed: WatchClosedItem[]; notes?: WatchNote[]; loopsDone?: LoopDone[]; jobsDone?: JobDone[];
   onAct: (need: Need, act: NeedAction) => void; onReopen: (id: number) => void; onReopenLoop?: (id: number) => void; open?: boolean;
   empty?: string;
 }) {
   const [showClosed, setShowClosed] = useState(open);
-  const doneCount = closed.length + notes.length + loopsDone.length;
+  const [unfolded, setUnfolded] = useState<Record<string, "why" | "output" | undefined>>({});
+  const toggle = (ref: string, what: "why" | "output") => setUnfolded((u) => ({ ...u, [ref]: u[ref] === what ? undefined : what }));
+  const doneCount = closed.length + notes.length + loopsDone.length + jobsDone.length;
   return (
     <section className="flex flex-col gap-2.5" aria-label="Needs you">
       <div className="flex items-baseline gap-2 px-1">
@@ -45,11 +49,23 @@ export function NeedsYou({ items, footer, closed, notes = [], loopsDone = [], on
                 {n.badge && <span className={`chip ${badgeTone(n.badge) === "warn" ? "chip-warn" : "chip-soft"} mt-1.5 inline-flex`}>{n.badge}</span>}
               </span>
             </button>
+            {!!n.evidence?.length && (
+              <button type="button" onClick={() => toggle(n.ref, "why")} aria-expanded={unfolded[n.ref] === "why"}
+                className="self-start min-[430px]:ml-12 text-small font-semibold text-ember-text underline underline-offset-2">Why?</button>
+            )}
+            {unfolded[n.ref] === "why" && (
+              <ul className="min-[430px]:ml-12 flex flex-col gap-1 text-small leading-[18px] text-muted" aria-label="Why">
+                {(n.evidence ?? []).map((e, i) => <li key={i} className="break-words"><span className="tabular-nums">{e.at.slice(11, 16)}</span> {e.fact}</li>)}
+              </ul>
+            )}
+            {unfolded[n.ref] === "output" && n.output && (
+              <pre className="min-[430px]:ml-12 max-h-[240px] overflow-auto rounded-tile bg-well px-3 py-2 text-caption leading-4 font-mono whitespace-pre-wrap break-words" aria-label="Failures">{n.output}</pre>
+            )}
             {/* The move first and solid, then Done and Later, always on one row: a long move ends in "…" (its whole
                 label is its title), Done and Later keep their size. Under the tile only on a wide phone or larger (430px up). */}
             <div className="flex gap-2 min-[430px]:pl-12" data-buttons="one-row">
               {buttonsOf(n).map((a, i) => (
-                <button key={a.action + i} type="button" onClick={() => onAct(n, a)} title={a.label}
+                <button key={a.action + i} type="button" onClick={() => (a.action === "show_output" ? toggle(n.ref, "output") : onAct(n, a))} title={a.label}
                   className={i === 0 ? "pill pill-solid h-9 px-4 text-ui shadow-none min-w-0 shrink max-w-[60%]" : "pill h-9 px-3 text-ui shrink-0"}><span className="truncate">{a.label}</span></button>
               ))}
             </div>
@@ -78,6 +94,7 @@ export function NeedsYou({ items, footer, closed, notes = [], loopsDone = [], on
           ))}
           {showClosed && <WatchClosed items={closed} onReopen={onReopen} />}
           {showClosed && <WatchClosed items={loopsDone} onReopen={(id) => onReopenLoop?.(id)} />}
+          {showClosed && <WatchClosed items={jobsDone} />}
         </div>
       )}
     </section>

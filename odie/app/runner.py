@@ -670,6 +670,8 @@ class OdieRunner:
         about.hooks.update(runner=self)
         from odie.making import jobs as making_jobs
         making_jobs.hooks.update(runner=self, store=store)
+        from odie.workers import router as workers_router
+        workers_router.setup(store, self)  # background Workers (odie.workers): post their reports through this runner
         self._plugin_toolsets: list = []  # MCP connections owned by the current plugin set
         self._plugins_lock = asyncio.Lock()  # one reload at a time, each reading the latest config
         self.close_grace = 120.0  # seconds old connections stay open after a reload, for a turn still using them
@@ -772,6 +774,17 @@ class OdieRunner:
         except brains.BrainGone:
             return None
         return await self._window_of(selection)
+
+    def _job_nudge(self, session_id: str, text: str) -> str:
+        """The firm line that hands a long job to a Worker (odie.workers.nudge), with a line break before it, when this
+        message looks like a job; "" otherwise.
+          "Write a script that sorts my photos and run it" -> a line break, then "[This is a job for a Worker: …]"
+          "How is the market today?"                       -> """""
+        from odie.workers import nudge
+        if not nudge.looks_like_a_job(text):
+            return ""
+        self.store.audit("agent", "job_nudge", result_summary=text[:200], session_id=session_id)
+        return "\n" + nudge.NUDGE
 
     async def _visual_nudge(self, session_id: str, text: str) -> str:
         """The line that reminds the model to draw (odie.agent.visual_nudge), with a line break before it, when this
@@ -1097,6 +1110,7 @@ class OdieRunner:
             from odie.blocks.answers import without_form_answers
             words = without_form_answers(text)  # a form's answer: lookups use its line, not the fence the model reads
             trailer = self._prepare_prompt(session_id, words) + await self._visual_nudge(session_id, text)
+            trailer += self._job_nudge(session_id, text)
             # Think harder on a local server: words at the very end, after everything its cache holds (the effort stays).
             # They stay in the history as sent, so later turns replay the same text.
             trailer += think_harder_words(selection, thinking)

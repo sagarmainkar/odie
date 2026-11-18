@@ -57,4 +57,25 @@ describe("Needs you on Pulse", () => {
     expect(html).toContain("Merged 18 Nov 09:00");
     expect(html).toContain(">Reopen</button>");
   });
+
+  it("draws a tested pull request's card with Merge, Done, Later and a Why? of its evidence", () => {
+    const tested: Need = {
+      ref: "loop:3", title: "example/app #49 · Threads newest first", why: "Tested: 412 pass · CI green · 3 files, +41 −9",
+      icon: "terminal", badge: "", ask: "Tell me about loop #3", main: { label: "Merge", action: "merge", value: 3 },
+      other: { label: "Done", action: "loop_done", value: 3 }, later: { label: "Later", action: "later", value: "loop:3" },
+      evidence: [{ at: "2026-11-18T21:00:00+05:30", source: "test", fact: "Tested abc1234: exit 0, 412 passed" }],
+    };
+    const html = renderToStaticMarkup(<NeedsYou items={[tested]} footer="" closed={[]} onAct={() => {}} onReopen={() => {}} />);
+    expect(html).toContain("Tested: 412 pass · CI green · 3 files, +41 −9");
+    expect(html).toContain(">Merge</span>");
+    expect(html).toContain(">Why?</button>");
+  });
+
+  it("lists jobs that finished today without a Reopen", () => {
+    const html = renderToStaticMarkup(<NeedsYou items={[]} footer="" closed={[]} open onAct={() => {}} onReopen={() => {}}
+      jobsDone={[{ id: "job-3f9a2c", title: "Primes script", why: "done 10:42", closed: "" }]} />);
+    expect(html).toContain("Primes script");
+    expect(html).toContain("Done 10:42");
+    expect(html).not.toContain(">Reopen</button>");
+  });
 });

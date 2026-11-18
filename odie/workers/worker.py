@@ -1,0 +1,372 @@
+"""One Worker run: an agent of its own on one job, from the brief to the report, and the message the chat gets.
+
+The Worker sees only its instruction, its tools and report, in a fresh in-memory session: no Odie prompt, no memory,
+no chat history. Its tools: the shell (starting in its folder), write_file and read_file in its folder, web search and
+fetch, and the connected apps of the personality that started it (the session belongs to that personality while the
+run lasts, so only its apps list and run). It thinks with that personality's brain (odie.brains).
+
+Three callbacks keep the record and the fences:
+- the guard (before each tool): the Smart rules decide; a step they would put on a card is refused with a line, noted
+  as a need (odie.workers.allow) and recorded, unless the user's tap allowed it for this run;
+- after each tool: the call and the size of its answer are recorded;
+- on a tool error: the error is recorded and handed to the model as the tool's answer.
+The run ends when the Worker calls report, or when it stops without one (one nudge, then the job fails), runs past its
+budget (45 minutes) or its 80 model calls, or raises."""
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+from dataclasses import dataclass, field
+from datetime import datetime
+from pathlib import Path
+from zoneinfo import ZoneInfo
+
+from google.adk.agents import LlmAgent
+from google.adk.agents.run_config import RunConfig
+from google.adk.apps import App
+from google.adk.models.llm_response import LlmResponse
+from google.adk.runners import Runner
+from google.adk.sessions import InMemorySessionService
+from google.adk.tools import FunctionTool
+from google.adk.tools.base_toolset import BaseToolset
+from google.genai import types
+
+from odie import config, persona
+from odie.agent.model import model_for
+from odie.push.send import send_to_all
+from odie.store.db import Store
+from odie.workers import allow
+from odie.workers import store as jobs
+from odie.workers.store import OUTCOMES, Job
+
+log = logging.getLogger("odie.workers")
+
+BUDGET_SECONDS = 45 * 60
+MAX_CALLS = 80
+NUDGE = "You stopped without calling report. Call report now with what you did and what you found."
+REFUSED = "__refused__"  # set on a call's args by the guard, so the after-callback knows the tool never ran
+REPORT_LIMIT = 4000  # characters of a report kept and posted
+
+INSTRUCTION = """You are a Worker: one background job for the user, unattended. Nobody reads along and nobody \
+answers questions, so decide for yourself and keep going.
+
+- Work in your own folder, {folder}; run_shell starts there. Write every file with write_file and read with \
+read_file; the shell is for running things. Leave the rest of the computer as you found it unless the job says otherwise.
+- Nobody can approve anything while you work. A step the rules refuse (deleting or stopping things, installing, \
+secrets, sending data out, changing Odie) is not run, and the answer says why. Don't try it in another form: find \
+another way, or finish and say in your report exactly what you needed. The user can allow it and run the job again.
+- Verify before you say something works: run it, read the output.
+- Finish by calling report, once, with what you did and what you found. Keep it short, in plain words: a result the \
+user can use, or a clear question they must answer. Never stop without calling report."""
+
+
+@dataclass
+class Report:
+    """What the Worker said in report, once it has: outcome, text and the files it points at."""
+    outcome: str = ""
+    text: str = ""
+    files: list[str] = field(default_factory=list)
+
+    def given(self) -> bool:
+        return bool(self.outcome)
+
+
+def make_report_tool(got: Report) -> FunctionTool:
+    def report(outcome: str, text: str, files: list[str] | None = None) -> dict:
+        """Finish the job. Call it once, at the end. outcome: "ready" (the result is here, or the work is done), "blocked" (you can't finish without the user: say what you need), or "dropped" (there was nothing to do: say why). text: the report, short and plain. files: paths of files in your folder the user should get."""
+        outcome_given = outcome
+        if outcome_given not in OUTCOMES:
+            outcome_given = "ready"
+        got.outcome = outcome_given
+        got.text = (text or "").strip()[:REPORT_LIMIT]
+        got.files = [str(f) for f in (files or []) if f]
+        return {"ok": True}
+    return FunctionTool(report)
+
+
+class UnlockedToolset(BaseToolset):
+    """A connected app's toolset with every tool's own tap switched off: in a Worker the guard decides (Smart rules),
+    and a tool that would ask is refused there, never left waiting for a tap nobody can give."""
+
+    def __init__(self, inner: BaseToolset):
+        super().__init__()
+        self.inner = inner
+
+    async def get_tools(self, readonly_context=None):
+        from odie.agent.free import unlocked
+        tools = await self.inner.get_tools(readonly_context)
+        return [unlocked(t) for t in tools]
+
+    async def close(self) -> None:
+        pass  # the inner toolset is the app's; it closes with the app
+
+
+def tools_for(store: Store, job: Job, runner) -> list:
+    """A Worker's tools: the shell without its own tap (the guard applies the Smart rules instead), write_file and
+    read_file in the job's folder, web search and fetch, and the connected apps (each listed only where the job's
+    personality has it switched on). No mail-sending chat tools, no browser, no memory, no Workers of its own."""
+    from odie.agent.free import unlocked
+    from odie.agent.tools.shell import make_shell_tool
+    from odie.agent.tools.web import make_web_tools
+    from odie.workers.files import make_job_file_tools
+    shell = unlocked(make_shell_tool(store=store))
+    apps = [UnlockedToolset(t) for t in getattr(runner, "_plugin_toolsets", [])]
+    return [shell, *make_job_file_tools(job.folder), *make_web_tools(store=store, browser_for=None, ask_first=False), *apps]
+
+
+def shell_reasons(store: Store, job: Job, command: str, cwd: str | None) -> list[str]:
+    """Why the Smart rules would put this command on a card, read as in Smart mode whatever the user's mode, with the
+    job's folder as safe as the workspace: `echo hi > notes.txt` in the folder -> []; `rm old.txt` -> ["deletes or
+    stops something"]; `npm install x` -> ["installs software (runs its install scripts)"]."""
+    from odie.agent import shell_grant
+    folder = str(job.folder)
+    return shell_grant.reasons_to_ask(command, safe_dirs=(*shell_grant.safe_places(store), folder), cwd=cwd,
+                                      scratch_dirs=(*shell_grant.scratch_places(), folder), smart=True,
+                                      own_port=shell_grant._own_port(), odie_dirs=shell_grant.odie_places())
+
+
+def app_would_ask(tool) -> bool:
+    """Whether a connected app's tool would ask in Smart: its name says it sends, pays, publishes, removes or runs
+    anything (odie.approvals_mode.asks_by_name), or its server marks it destructive.
+      GMAIL_SEND_EMAIL -> True;  GMAIL_FETCH_EMAILS -> False;  delete_note -> True;  list_items -> False"""
+    from odie.approvals_mode import asks_by_name
+    from odie.plugins.mcp import is_destructive
+    return asks_by_name(tool.name) or is_destructive(tool)
+
+
+def refusal_words(why: str) -> str:
+    return (f"Not run: it {why}. Workers never ask, so this needs the user. Find another way, or finish and say in "
+            "your report what you needed; they can allow it and run the job again.")
+
+
+def guard_for(store: Store, job: Job, runner):
+    """before_tool_callback: decides whether a Worker's call runs.
+      run_shell with no cwd                        -> cwd becomes the job's folder, then the rules below
+      run_shell the Smart rules would card (`rm old.txt`, `cat ~/.env`, `npm install x`), not allowed by his tap
+                                                   -> refused with the rule's words, noted as a need, recorded
+      the same, allowed by his tap for this run    -> runs
+      an app tool switched off for the job's owner -> refused (the app's own words)
+      an app tool that would ask in Smart (GMAIL_SEND_EMAIL), not allowed -> refused, noted, recorded
+      anything else (web_search, write_file, an app's read)               -> runs"""
+    allowed = job.allowed or []
+
+    def refuse(tool_name: str, args: dict, need: dict) -> dict:
+        jobs.record_action(store, job.id, tool_name, args, refused=need["why"])
+        jobs.note_needed(store, job.id, need)
+        args[REFUSED] = need["why"]
+        return {"error": refusal_words(need["why"])}
+
+    def guard(tool, args, tool_context) -> dict | None:
+        if args is None:
+            args = {}
+        if tool.name == "run_shell":
+            if not args.get("cwd"):
+                args["cwd"] = str(job.folder)
+            command = str(args.get("command") or "")
+            reasons = shell_reasons(store, job, command, args.get("cwd"))
+            if allow.covers(allowed, "run_shell", args, reasons):
+                return None
+            return refuse(tool.name, args, allow.need_for_shell(command, reasons[0]))
+        if getattr(tool, "_odie_server", None) is None:
+            return None
+        switched_off = runner._apps_stop(tool, args, tool_context)
+        if switched_off is not None:
+            return switched_off
+        if not app_would_ask(tool):
+            return None
+        plain_args = {k: v for k, v in args.items() if k != REFUSED}
+        if allow.covers(allowed, tool.name, plain_args, [allow.APP_WHY]):
+            return None
+        return refuse(tool.name, args, allow.need_for_app(tool.name, plain_args))
+    return guard
+
+
+def after_for(store: Store, job: Job):
+    """after_tool_callback: every call that ran goes on the record with the size of its answer. A call the guard
+    refused is already on the record (ADK still calls this with the refusal as the answer): nothing more."""
+    def after(tool, args, tool_context, tool_response):
+        if isinstance(args, dict) and args.pop(REFUSED, None):
+            return
+        jobs.record_action(store, job.id, tool.name, args, result_chars=len(json.dumps(tool_response, default=str)))
+    return after
+
+
+def on_error_for(store: Store, job: Job):
+    """on_tool_error_callback: a tool that raised is recorded, and the model sees the error as the tool's answer."""
+    from odie.app.runner import tool_error_as_result
+
+    def on_error(tool, args, tool_context, error: Exception) -> dict:
+        shown = tool_error_as_result(tool, args, tool_context, error)
+        jobs.record_action(store, job.id, tool.name, args, error=shown["error"])
+        return shown
+    return on_error
+
+
+def stop_after_report(got: Report):
+    """before_model_callback: once the Worker has called report, no model call follows; the run ends there."""
+    def before(callback_context, llm_request):
+        if not got.given():
+            return None
+        return LlmResponse(content=types.Content(role="model", parts=[types.Part(text="Reported.")]))
+    return before
+
+
+def budget_words(seconds: int) -> str:
+    """A budget in words: 2700 -> "45 minutes"; 90 -> "90 seconds"; 60 -> "1 minute"."""
+    if seconds % 60 == 0 and seconds >= 60:
+        minutes = seconds // 60
+        if minutes == 1:
+            return "1 minute"
+        return f"{minutes} minutes"
+    return f"{seconds} seconds"
+
+
+def media_for(job: Job, files: list[str]) -> list[dict]:
+    """The report's files as cards under the message: only files that exist under the job's folder or the workspace
+    are handed over; anything else is left out."""
+    from odie.agent.tools.files import hand_over, workspace
+    ws = workspace().resolve()
+    folder = job.folder.resolve()
+    out = []
+    for name in files:
+        f = Path(name)
+        if not f.is_absolute():
+            f = job.folder / f
+        f = f.resolve()
+        inside = ws in f.parents or folder in f.parents
+        if f.is_file() and inside:
+            out.append(hand_over(f, f.name)["media"])
+    return out
+
+
+def needed_words(needed: list[dict]) -> str:
+    """The line a report ends with when a step was refused, or "" when none was:
+      [`rm old.txt` deletes] -> "I needed to: `rm old.txt` (deletes or stops something). To let it, tap Allow it and
+      run again on Pulse." """
+    if not needed:
+        return ""
+    lines = "; ".join(allow.line(n) for n in needed)
+    return f"I needed to: {lines}. To let it, tap Allow it and run again on Pulse."
+
+
+def message_for(job: Job, status: str, got: Report, error: str, needed: list[dict]) -> str:
+    """The one message the chat gets when a run ends:
+      done/ready   -> "✅ Done: Tides (job-3f9a2c)\n\n<report>"
+      done/blocked -> "⛔ Tides is stuck (job-3f9a2c)\n\n<report>"
+      failed       -> "❌ Tides didn't finish (job-3f9a2c): ran past its budget of 45 minutes. Say "retry …" …"
+    and, when a step was refused, the needed_words line at the end."""
+    if status == "failed":
+        text = f"❌ {job.title} didn't finish ({job.id}): {error}. Say \"retry {job.id}\", or tap Retry on Pulse."
+    elif got.outcome == "blocked":
+        text = f"⛔ {job.title} is stuck ({job.id})\n\n{got.text}"
+    elif got.outcome == "dropped":
+        text = f"➖ {job.title}: nothing to do ({job.id})\n\n{got.text}"
+    else:
+        text = f"✅ Done: {job.title} ({job.id})\n\n{got.text}"
+    more = needed_words(needed)
+    if more:
+        text = f"{text}\n\n{more}"
+    return text
+
+
+async def tell(store: Store, runner, job: Job, text: str, media: list[dict]) -> None:
+    """Post the message into the job's chat and push it. A personality's push is quiet (who, never the words); a
+    thread whose personality was deleted hears nothing. A failed push never loses the post."""
+    from odie import personalities
+    owner_id, record = personalities.whose_thread(store, job.session_id)
+    if owner_id and record is None:
+        return  # its personality is gone: nobody to tell
+    await runner.post_message(text, job.session_id, media=media or None, kind="job")
+    title = persona.get(store)["name"]
+    body = text[:160]
+    if record is not None:
+        title, body = personalities.quiet_push(record.name, "replied")
+    try:
+        send_to_all(store, title, body, url="/#chat", tag=job.id)
+    except Exception:  # noqa: BLE001
+        log.warning("push failed for %s", job.id, exc_info=True)
+
+
+def _model_for_job(store: Store, job: Job):
+    """The model a job's Worker thinks with: the brain of the personality that started it (odie.brains), which never
+    falls back to another one (BrainGone)."""
+    from odie import brains
+    return model_for(brains.for_personality(store, job.personality), False)
+
+
+model_for_job = _model_for_job  # tests put a scripted model here
+
+
+async def run(job: Job, store: Store, runner, model=None) -> str:
+    """Run the Worker on the job to its end and tell the chat. Returns the job's final status ("done" or "failed").
+    model: a test's stand-in BaseLlm; otherwise the job's personality's brain."""
+    from odie.brains import BrainGone
+    jobs.started(store, job)
+    got = Report()
+    error = ""
+    try:
+        if model is None:
+            model = model_for_job(store, job)
+    except BrainGone as e:
+        error = str(e)
+    if not error:
+        error = await _work(job, store, runner, model, got)
+    if not error and not got.given():
+        error = "stopped without a report"
+    status = "done"
+    if error:
+        status = "failed"
+    jobs.ended(store, job.id, status, outcome=got.outcome or None, report=got.text or None, error=error or None)
+    needed = jobs.needed(jobs.get(store, job.id) or {})
+    media = []
+    if status == "done":
+        media = media_for(job, got.files)
+    await tell(store, runner, job, message_for(job, status, got, error, needed), media)
+    return status
+
+
+async def _work(job: Job, store: Store, runner, model, got: Report) -> str:
+    """The agent's part of a run; returns what went wrong in words, or "" when it ran to its end."""
+    from google.adk.agents.invocation_context import LlmCallsLimitExceededError
+
+    from odie import personalities
+    s = config.settings
+    now = datetime.now(ZoneInfo(s.timezone)).strftime("%A %d %B %Y, %H:%M")
+    instruction = INSTRUCTION.format(folder=job.folder)
+
+    def as_written(_context) -> str:
+        return instruction  # a function, so ADK passes the text on untouched (a brace in a path is not state)
+
+    agent = LlmAgent(name="odie_worker", model=model, tools=[*tools_for(store, job, runner), make_report_tool(got)],
+                     instruction=as_written, before_tool_callback=guard_for(store, job, runner),
+                     after_tool_callback=after_for(store, job), on_tool_error_callback=on_error_for(store, job),
+                     before_model_callback=stop_after_report(got))
+    sessions = InMemorySessionService()
+    sess = await sessions.create_session(app_name="odie_worker", user_id=s.user_id, session_id=job.id)
+    adk = Runner(app=App(name="odie_worker", root_agent=agent), session_service=sessions)
+    capped = RunConfig(max_llm_calls=MAX_CALLS)
+
+    async def send(text: str) -> None:
+        message = types.Content(role="user", parts=[types.Part(text=text)])
+        async for _ in adk.run_async(user_id=s.user_id, session_id=sess.id, new_message=message, run_config=capped):
+            pass
+
+    async def go() -> None:
+        await send(f"It is {now} ({s.timezone}). Your job, '{job.title}':\n\n{job.brief}")
+        if not got.given():
+            await send(NUDGE)
+
+    personalities.running_for(job.id, job.personality)  # its apps and refusals are its personality's while it runs
+    try:
+        await asyncio.wait_for(go(), job.budget_seconds)
+    except TimeoutError:
+        return f"ran past its budget of {budget_words(job.budget_seconds)}"
+    except LlmCallsLimitExceededError:
+        return "went round in circles (too many model calls)"
+    except Exception as e:  # noqa: BLE001 (whatever went wrong is said in the chat, never lost)
+        log.warning("worker %s failed", job.id, exc_info=True)
+        return f"{type(e).__name__}: {e}"[:200]
+    finally:
+        personalities.done_running(job.id)
+    return ""

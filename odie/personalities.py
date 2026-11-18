@@ -389,7 +389,7 @@ async def delete(store: Store, runner, pid: str) -> dict:
     cards, their copies in the workspace, its making jobs' folders) and the pictures uploaded into them; its SOUL and
     memories; its picture; the record itself; and the debug copies of the last few model requests (all of them: they
     carry no thread id, so the ones from its threads can't be told apart), the brain picked for it, its
-    connected apps' switches and its own mail watch (odie.watch.owner).
+    connected apps' switches, its own mail watch (odie.watch.owner) and its Workers' jobs (stopped first).
     Not erased, because Odie can't reach them from here: log lines, and anything already sent to a tracing service.
     The record goes first, so no new turn can start in its threads while they are erased (the runner then refuses
     them: SessionGone)."""
@@ -401,6 +401,10 @@ async def delete(store: Store, runner, pid: str) -> dict:
     its_threads = sessions_of(store, pid)
     store.execute("delete from personalities where id=?", (pid,))
     await runner.forget_personality(pid)
+    from odie.workers import router as workers_router
+    from odie.workers import store as workers_store
+    if workers_router.hooks:
+        workers_router.stop_for(pid)  # its Workers stop before their threads go
     for session_id in its_threads:
         made, uploads = await runner.erase_thread(session_id)  # waits for a turn still running there
         for mid in made:
@@ -429,6 +433,7 @@ async def delete(store: Store, runner, pid: str) -> dict:
     watch_owner.forget(store, pid)  # its own watch: card, place in the mail, sources, Proactive switch
     from odie.loops import ledger
     ledger.forget_personality(store, pid)  # its open loops and their evidence
+    workers_store.forget_personality(store, pid)  # its jobs and their records
     await runner.forget_personality(pid)  # again: a turn that was finishing may have noted itself meanwhile
     shutil.rmtree(folder(pid), ignore_errors=True)
     (config.settings.data_dir / f"memory-{pid}.lock").unlink(missing_ok=True)

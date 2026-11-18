@@ -2408,8 +2408,11 @@ async def needs_you_get(request: Request) -> dict[str, Any]:
     if not card and not pid:
         watch = {"off": "The first check runs a minute after Odie starts."}
     items = needs.cards(store, now, pid)
+    from odie.workers import cards as job_cards
+    on_it = [*job_cards.on_it(store, pid), *loop_cards.on_it(store, pid)]  # running jobs (with Stop), then loops
     out = {"items": items, "counts": needs.counts(items), "watch": watch, "notes": needs.recent_notes(store, now, pid),
-           "on_it": loop_cards.on_it(store, pid), "loops_done": loop_cards.done_today(store, pid, now)}
+           "on_it": on_it, "loops_done": loop_cards.done_today(store, pid, now),
+           "jobs_done": job_cards.done_today(store, pid, now)}
     if pid:
         out["proactive"] = _proactive_out(store, pid)
         return out
@@ -2451,6 +2454,98 @@ async def loop_reopen(loop_id: int, request: Request) -> dict[str, Any]:
         raise HTTPException(404, "Nothing to reopen.")
     ledger.reopen(store, loop_id, datetime.now(ZoneInfo(config.settings.timezone)))
     store.audit("user", "loop_reopen", result_summary=loop["title"])
+    return {"ok": True}
+
+
+# --- Workers (odie.workers): the picked one's own jobs. Every move here is a tap in the app: the terminal's key can't
+# reach these routes (odie.devices.terminal_may), and the model has no tool for "allow".
+
+def _own_job(request: Request, job_id: str) -> dict:
+    """The job when it is the picked one's own; anyone else's (or none) is "no such job"."""
+    from odie.workers import store as jobs_store
+    row = jobs_store.get(request.app.state.store, job_id)
+    if row is None or (row["personality"] or "") != _personality(request):
+        raise HTTPException(404, "no such job")
+    return row
+
+
+def _job_view(j: dict) -> dict:
+    """A job row for the app: the columns Pulse shows, the report cut short."""
+    from odie.workers import allow as job_allow
+    from odie.workers import store as jobs_store
+    keys = ("id", "kind", "title", "status", "runs", "outcome", "error", "started_by", "created_at", "started_at",
+            "ended_at")
+    out = {k: j.get(k) for k in keys}
+    out["report"] = (j.get("report") or "")[:300]
+    out["needed"] = [job_allow.line(n) for n in jobs_store.needed(j)]
+    return out
+
+
+@router.get("/jobs")
+async def jobs_list(request: Request) -> dict[str, Any]:
+    """The picked one's jobs: going now (queued, running) and the last few that ended."""
+    from odie.workers import store as jobs_store
+    mine = jobs_store.of_owner(request.app.state.store, _personality(request), 20)
+    running = [_job_view(j) for j in mine if j["status"] in jobs_store.GOING]
+    recent = [_job_view(j) for j in mine if j["status"] not in jobs_store.GOING][:8]
+    return {"running": running, "recent": recent}
+
+
+@router.get("/jobs/{job_id}")
+async def job_get(job_id: str, request: Request) -> dict[str, Any]:
+    """One job with its log: every call its Worker made, with what, and how it went."""
+    from odie.workers import store as jobs_store
+    row = _own_job(request, job_id)
+    acts = [{"ts": a["ts"], "tool": a["tool"], "args": (a.get("args_json") or "")[:200],
+             "result_chars": a.get("result_chars"), "refused": a.get("refused"), "error": a.get("error")}
+            for a in jobs_store.actions(request.app.state.store, job_id)]
+    return {**_job_view(row), "report": row.get("report") or "", "brief": row.get("brief") or "", "actions": acts}
+
+
+@router.post("/jobs/{job_id}/stop")
+async def job_stop(job_id: str, request: Request) -> dict[str, Any]:
+    from odie.workers import router as workers_router
+    _own_job(request, job_id)
+    if not workers_router.stop(job_id):
+        raise HTTPException(409, "It isn't running.")
+    request.app.state.store.audit("user", "job_stopped", result_summary=job_id)
+    return {"ok": True}
+
+
+@router.post("/jobs/{job_id}/retry")
+async def job_retry(job_id: str, request: Request) -> dict[str, Any]:
+    """Pulse's Retry: the job again, with nothing extra allowed."""
+    from odie.workers import router as workers_router
+    _own_job(request, job_id)
+    if workers_router.retry(job_id) is None:
+        raise HTTPException(409, "It's still going.")
+    request.app.state.store.audit("user", "job_retried", result_summary=job_id)
+    return {"ok": True}
+
+
+@router.post("/jobs/{job_id}/allow")
+async def job_allow_and_retry(job_id: str, request: Request) -> dict[str, Any]:
+    """Pulse's "Allow it and run again": the job again, and exactly the steps it was refused (as its card showed them)
+    may run on that run only (odie.workers.allow). What is allowed comes from the job's own record, never the request."""
+    from odie.workers import router as workers_router
+    from odie.workers import store as jobs_store
+    row = _own_job(request, job_id)
+    needed = jobs_store.needed(row)
+    if row["status"] in jobs_store.GOING:
+        raise HTTPException(409, "It's still going.")
+    if not needed:
+        raise HTTPException(409, "It didn't need anything.")
+    workers_router.retry(job_id, allowed=needed)
+    request.app.state.store.audit("user", "job_allowed", args={"allowed": needed}, result_summary=job_id)
+    return {"ok": True}
+
+
+@router.post("/jobs/{job_id}/clear")
+async def job_clear(job_id: str, request: Request) -> dict[str, Any]:
+    """A job card's Done: off Pulse."""
+    from odie.workers import store as jobs_store
+    _own_job(request, job_id)
+    jobs_store.clear(request.app.state.store, job_id)
     return {"ok": True}
 
 

@@ -4,11 +4,13 @@ import type { Media } from "./media";
 /** What a card's button does, decided by the server (odie/watch/needs.py, odie/loops/cards.py). "later": put the card
  *  off until 09:00 tomorrow (POST /api/needs_you/later with its ref); "open": open the page the server built (a pull
  *  request); "loop_done": a loop's Done (POST /api/loops/<id>/done). */
-export type NeedAction = { label: string; action: "chat" | "dismiss" | "done_task" | "snooze_task" | "later" | "open" | "loop_done"; value: string | number };
+export type NeedAction = { label: string; action: "chat" | "dismiss" | "done_task" | "snooze_task" | "later" | "open" | "loop_done"
+  | "job_retry" | "job_allow" | "job_clear" | "merge" | "recipe_use" | "recipe_no" | "show_output"; value: string | number };
 
 /** One card in a Pulse's "Needs you": a watch item from mail, or one of the user's own reminders. Every card has the
  *  same three buttons: its one move (main), Done (other) and Later (later; an older server sends no Later). */
-export type Need = { ref: string; title: string; why: string; brief?: string; icon: IconName; badge: string; ask: string; main: NeedAction; other: NeedAction; later?: NeedAction };
+export type Need = { ref: string; title: string; why: string; brief?: string; icon: IconName; badge: string; ask: string; main: NeedAction; other: NeedAction; later?: NeedAction;
+  evidence?: { at: string; source: string; fact: string }[]; output?: string };  // a tested PR's card: Why? and the failures
 
 /** Whether an "open" button's address may be opened: only an https page on GitHub (the server builds it from a checked
  *  name). "https://github.com/example/app/pull/49" -> true; "javascript:alert(1)" -> false; "http://github.com/x" -> false. */

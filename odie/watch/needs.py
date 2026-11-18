@@ -39,6 +39,8 @@ def cards(store, now: datetime, owner: str = ODIE) -> list[dict]:
     watch_items = [i for i in on_the_card if not hidden(i, now)]
     from odie.loops import cards as loop_cards
     out = loop_cards.cards(store, owner, now)  # one card per ready loop (a pull request with its facts), first
+    from odie.workers import cards as job_cards
+    out += job_cards.cards(store, owner, now)  # a job that failed, got stuck or needed his OK
     out += [watch_card(i) for i in watch_items]
     tasks = [t for t in owners_tasks(store, now, owner) if shows_as_task(t, shown)]
     tasks.sort(key=lambda t: t["due_at"] or "9999")

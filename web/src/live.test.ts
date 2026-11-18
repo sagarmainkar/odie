@@ -87,3 +87,12 @@ describe("shareLive.reopen", () => {
   });
 });
 
+
+describe("liveLabel", () => {
+  it("names what a message Odie posted on its own is", async () => {
+    const { liveLabel } = await import("./live");
+    expect(liveLabel("job")).toBe("job");
+    expect(liveLabel("tracker")).toBe("tracker");
+    expect(liveLabel(undefined)).toBe("reminder");
+  });
+});

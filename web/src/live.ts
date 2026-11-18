@@ -68,3 +68,10 @@ export function useLive(onEvent: (e: LiveEvent) => void, onReconnect?: () => voi
     return () => { stop(); document.removeEventListener("visibilitychange", onVisible); };
   }, [onEvent, onReconnect]);
 }
+
+/** The word after Odie's name on a message that didn't answer a question: what kind of message it is.
+ *    "job" -> "job"; "tracker" -> "tracker"; "talk" -> "call"; anything else -> "reminder" */
+export function liveLabel(kind: string | undefined): string {
+  const words: Record<string, string> = { job: "job", tracker: "tracker", talk: "call" };
+  return words[kind ?? ""] ?? "reminder";
+}

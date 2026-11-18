@@ -3,14 +3,17 @@
 // Odie's shows the others only as a count ("Mira: 2 waiting"). The server builds the cards (odie/watch/needs.py,
 // odie/loops/cards.py); these are the words around them.
 
-/** A loop Odie is still working on, under "Odie is on it". */
-export type OnIt = { id: number; title: string; state: string; next: string };
+/** A loop Odie is still working on, or a job going now, under "Odie is on it". A job carries `stop`: its id, for Stop. */
+export type OnIt = { id: number | string; title: string; state: string; next: string; stop?: string };
+/** A job that finished cleanly today, under "Done today". */
+export type JobDone = { id: string; title: string; why: string; closed: string };
 /** A loop Odie closed today, with why, under "Done today" (each with Reopen). */
 export type LoopDone = { id: number; title: string; why: string; closed: string };
 /** Another personality with cards waiting, as Odie's Pulse counts them. */
 export type Other = { id: string; name: string; waiting: number };
 
-const STATE_WORDS: Record<string, string> = { new: "starting", working: "working on it", waiting: "waiting" };
+const STATE_WORDS: Record<string, string> = { new: "starting", working: "working on it", waiting: "waiting",
+  "waiting for a slot": "waiting for a slot" };
 
 /** One "Odie is on it" row's second line: the state in words, then what it waits for.
  *    {state: "waiting", next: "CI still running"} -> "waiting · CI still running"

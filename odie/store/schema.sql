@@ -116,3 +116,43 @@ create table if not exists loop_events (
   fact text not null
 );
 create index if not exists loop_events_loop on loop_events(loop_id);
+
+-- Workers (odie.workers, Workers design 18 Nov 2026): one row per background job, and one per tool call it made.
+-- kind: task (a Worker the user started from chat) or pr_test (code runs a pull request's tests for a loop).
+-- personality NULL = everyday Odie's. needed_json: what the Worker was refused (would need a tap); allowed_json: what
+-- the user's tap in the app allowed for the job's next run only.
+create table if not exists jobs (
+  id text primary key,
+  kind text not null,
+  title text not null,
+  brief text not null,
+  personality text,
+  started_by text not null default 'you' check (started_by in ('you','odie')),
+  loop_id integer,
+  status text not null check (status in ('queued','running','done','failed','stopped')),
+  session_id text,
+  folder text not null,
+  budget_seconds integer not null,
+  runs integer not null default 0,
+  outcome text,
+  report text,
+  error text,
+  needed_json text not null default '[]',
+  allowed_json text not null default '[]',
+  cleared integer not null default 0,
+  created_at text not null,
+  started_at text,
+  ended_at text
+);
+create index if not exists jobs_status on jobs(status);
+create table if not exists job_actions (
+  id integer primary key autoincrement,
+  job_id text not null,
+  ts text not null,
+  tool text not null,
+  args_json text,
+  result_chars integer,
+  refused text,
+  error text
+);
+create index if not exists job_actions_job on job_actions(job_id, id);

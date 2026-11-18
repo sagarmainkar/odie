@@ -1,9 +1,9 @@
 import { onItLine, type OnIt as OnItItem } from "../pulse";
 import { Icon } from "./Tile";
 
-/** Pulse's "Odie is on it": the loops Odie is still working on (waiting for CI, a draft, someone else), one line each.
- *  Nothing on -> nothing drawn. `who` is whose Pulse it is ("Odie", "Mira"). */
-export function OnIt({ items, who }: { items: OnItItem[]; who: string }) {
+/** Pulse's "Odie is on it": the jobs going now (each with Stop) and the loops Odie is still working on (waiting for CI,
+ *  a draft, someone else), one line each. Nothing on -> nothing drawn. `who` is whose Pulse it is ("Odie", "Mira"). */
+export function OnIt({ items, who, onStop }: { items: OnItItem[]; who: string; onStop?: (jobId: string) => void }) {
   if (!items.length) return null;
   return (
     <section className="flex flex-col gap-2.5" aria-label={`${who} is on it`}>
@@ -16,6 +16,9 @@ export function OnIt({ items, who }: { items: OnItItem[]; who: string }) {
               <div className="text-body leading-[1.35] font-semibold break-words text-ink-2">{it.title}</div>
               <div className="text-small leading-[17px] text-muted mt-0.5">{onItLine(it)}</div>
             </div>
+            {it.stop && onStop && (
+              <button type="button" onClick={() => onStop(it.stop as string)} className="pill h-8 px-3 text-small shrink-0">Stop</button>
+            )}
           </div>
         ))}
       </div>

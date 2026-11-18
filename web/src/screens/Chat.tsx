@@ -2,7 +2,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { badge } from "../watch";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { useLive } from "../live";
+import { liveLabel, useLive } from "../live";
 import { loadThinking, saveThinking, thinkingAfter, type ChatThinking } from "../thinking";
 import { ThinkChip, ThinkSwitch } from "../components/ThinkHarder";
 import { has, useCaps, userCountry } from "../capabilities";
@@ -75,7 +75,7 @@ import { shrinkPhoto } from "../shrinkPhoto";
 
 // key and sid: the name the server gave a reply (its ADK event id) and the session it is in; its saved ticks hang off them.
 // inv: the turn it belongs to; what Odie does after a tap joins the message of its turn (turns.ts).
-type Msg = { id: number; key?: string; sid?: string; inv?: string; role: "user" | "odie" | "approval"; text: string; tools: Tool[]; error?: string; awaiting?: boolean; ts?: number; live?: boolean; approval?: Approval; images?: string[]; asked?: string; media?: Media[]; autoplay?: string; private?: boolean; usage?: ReplyUsage; via?: "terminal" };  // private: its chat read a signed-in page; usage: the reply's own token counts
+type Msg = { id: number; key?: string; sid?: string; inv?: string; role: "user" | "odie" | "approval"; text: string; tools: Tool[]; error?: string; awaiting?: boolean; ts?: number; live?: boolean; label?: string; approval?: Approval; images?: string[]; asked?: string; media?: Media[]; autoplay?: string; private?: boolean; usage?: ReplyUsage; via?: "terminal" };  // private: its chat read a signed-in page; usage: the reply's own token counts
 type Pending = { id: string; url: string; w: number; h: number };
 let nextId = 1;
 const EASE = [0.2, 0.8, 0.2, 1] as const;
@@ -447,7 +447,7 @@ export function Chat({ orb, setOrb, showing }: { orb: OrbState; setOrb: (s: OrbS
         const shown = e.kind === "reply" ? m.filter((x) => !x.awaiting) : m;
         const joined = withTurnEvent(shown, e);
         if (joined) return joined;
-        return [...shown, { id: nextId++, role: "odie", text: e.text, tools: [], ts: e.ts, live: e.kind !== "reply", media: e.media, autoplay, private: !!e.private }];
+        return [...shown, { id: nextId++, role: "odie", text: e.text, tools: [], ts: e.ts, live: e.kind !== "reply", label: liveLabel(e.kind), media: e.media, autoplay, private: !!e.private }];
       });
       setUnseen(true);
     }
@@ -797,7 +797,7 @@ export function Chat({ orb, setOrb, showing }: { orb: OrbState; setOrb: (s: OrbS
                     ) : (
                       <motion.div {...enter} className="flex flex-col gap-2.5">
                         <div className="flex items-center gap-2 text-small text-muted font-semibold">
-                          <Avatar size={36} who={picked} light={lightOf(pick)} /><span className="text-ui"><b className="text-ink-2 font-bold">{name}</b>{m.live ? " · reminder" : ""}{m.ts ? ` · ${fmtTime(m.ts)}` : ""}</span>
+                          <Avatar size={36} who={picked} light={lightOf(pick)} /><span className="text-ui"><b className="text-ink-2 font-bold">{name}</b>{m.live ? ` · ${m.label ?? "reminder"}` : ""}{m.ts ? ` · ${fmtTime(m.ts)}` : ""}</span>
                         </div>
                         <Steps tools={m.tools} running={streaming} />
                         {m.awaiting && (

@@ -2,7 +2,7 @@ import { getPick, setPick, usePick } from "../pick";
 import { usePickedPersona } from "../persona";
 import { lightOf } from "../light";
 import { OnIt } from "../components/OnIt";
-import { asksToTurnOn, otherLine, pulseKicker, stillPicked, type LoopDone, type OnIt as OnItItem, type Other } from "../pulse";
+import { asksToTurnOn, otherLine, pulseKicker, stillPicked, type JobDone, type LoopDone, type OnIt as OnItItem, type Other } from "../pulse";
 import type { Proactive } from "../proactive";
 import { AnimatePresence, motion } from "framer-motion";
 import { NeedsYou } from "../components/NeedsYou";
@@ -76,7 +76,7 @@ function weekDays() {
   });
 }
 
-type PulseGot = { items: Need[]; watch: Partial<WatchCardData>; notes?: WatchNote[]; on_it?: OnItItem[]; loops_done?: LoopDone[];
+type PulseGot = { items: Need[]; watch: Partial<WatchCardData>; notes?: WatchNote[]; on_it?: OnItItem[]; loops_done?: LoopDone[]; jobs_done?: JobDone[];
   others?: Other[]; proactive?: Proactive };
 
 /** Pulse (it replaced Today): the picked one's own. Everyday Odie's keeps everything Today had, with what Odie is on
@@ -88,6 +88,8 @@ export function Today() {
   const picked = usePickedPersona();
   const [onIt, setOnIt] = useState<OnItItem[]>([]);
   const [loopsDone, setLoopsDone] = useState<LoopDone[]>([]);
+  const [jobsDone, setJobsDone] = useState<JobDone[]>([]);
+  const [failed, setFailed] = useState("");  // a tap the server refused (Merge after new commits): its own words
   const [others, setOthers] = useState<Other[]>([]);
   const [proactive, setProactive] = useState<Proactive | null>(null);
   const [itsEvents, setItsEvents] = useState<{ id: string; title: string; start: string }[]>([]);
@@ -106,6 +108,7 @@ export function Today() {
       setNotes(g.notes ?? []);
       setOnIt(g.on_it ?? []);
       setLoopsDone(g.loops_done ?? []);
+      setJobsDone(g.jobs_done ?? []);
       setOthers(g.others ?? []);
       setProactive(g.proactive ?? null);
       const w = g.watch;
@@ -115,7 +118,7 @@ export function Today() {
     void postJSON("/api/watch/seen", {}).catch(() => {});
   }, []);
   // Another pick: its own Pulse, never the last one's cards while it loads.
-  useEffect(() => { setNeeds(null); setOnIt([]); setLoopsDone([]); setOthers([]); setProactive(null); setItsEvents([]); setWatchClosed([]); setApprovals([]); }, [pick]);
+  useEffect(() => { setNeeds(null); setOnIt([]); setLoopsDone([]); setJobsDone([]); setFailed(""); setOthers([]); setProactive(null); setItsEvents([]); setWatchClosed([]); setApprovals([]); }, [pick]);
   // The picked one's cards waiting for a tap (a personality's Pulse shows its own, as its avatar does).
   const loadApprovals = useCallback(() => {
     const askedFor = getPick();
@@ -130,7 +133,7 @@ export function Today() {
     getJSON<{ items: UpItem[]; sources: Record<string, boolean> }>("/api/upcoming").then(setUp).catch(() => {}).finally(() => setUpLoading(false));
   }, []);
   useEffect(() => { loadTasks(); loadApprovals(); loadUp(); }, [loadTasks, loadApprovals, loadUp, pick]);
-  useLive(useCallback((e: any) => { if (e.type === "task") loadTasks(); if (e.type === "approval" || e.type === "approval_done") loadApprovals(); }, [loadTasks, loadApprovals]),
+  useLive(useCallback((e: any) => { if (e.type === "task" || e.type === "message" || e.type === "pulse") loadTasks(); if (e.type === "approval" || e.type === "approval_done") loadApprovals(); }, [loadTasks, loadApprovals]),
     useCallback(() => { loadTasks(); loadApprovals(); loadUp(); }, [loadTasks, loadApprovals, loadUp]));
 
   async function reopen(id: number) {
@@ -149,13 +152,24 @@ export function Today() {
       return;
     }
     setNeeds((items) => (items ?? []).filter((x) => x.ref !== need.ref));
+    setFailed("");
     try {
       if (a.action === "dismiss") await postJSON("/api/watch/done", { ref: a.value });
       if (a.action === "done_task") await postJSON(`/api/tasks/${a.value}/done`, {});
       if (a.action === "snooze_task") await postJSON(`/api/tasks/${a.value}/snooze`, { until: `${isoDay(1)}T09:00` });
       if (a.action === "later") await postJSON("/api/needs_you/later", { ref: a.value });
       if (a.action === "loop_done") await postJSON(`/api/loops/${a.value}/done`, {});
-    } finally { loadTasks(); }
+      if (a.action === "job_retry") await postJSON(`/api/jobs/${a.value}/retry`, {});
+      if (a.action === "job_allow") await postJSON(`/api/jobs/${a.value}/allow`, {});
+      if (a.action === "job_clear") await postJSON(`/api/jobs/${a.value}/clear`, {});
+      if (a.action === "merge") await postJSON(`/api/loops/${a.value}/merge`, {});
+      if (a.action === "recipe_use") await postJSON("/api/recipes/use", { repo: a.value });
+      if (a.action === "recipe_no") await postJSON("/api/recipes/no", { repo: a.value });
+    } catch (e) { setFailed(e instanceof Error ? e.message : String(e)); } finally { loadTasks(); }
+  }
+  async function stopJob(id: string) {
+    setOnIt((items) => items.filter((x) => x.stop !== id));
+    try { await postJSON(`/api/jobs/${id}/stop`, {}); } catch { /* it had ended */ } finally { loadTasks(); }
   }
 
   // The day bands and week dots read the same merged list as Up next (calendar, SMS, mail, tasks).
@@ -170,9 +184,12 @@ export function Today() {
   const delay = (s: number) => ({ animationDelay: `${s}s` });
 
   const needsYou = (
-    <NeedsYou items={needs} footer={checked} closed={watchClosed} notes={notes} loopsDone={loopsDone}
+    <>
+    {failed && <div role="alert" className="glass rounded-tile px-3.5 py-3 mb-2.5 text-ui text-warn-ink bg-warn-tint">{failed}</div>}
+    <NeedsYou items={needs} footer={checked} closed={watchClosed} notes={notes} loopsDone={loopsDone} jobsDone={jobsDone}
       onAct={(n, a) => void act(n, a)} onReopen={(id) => void reopen(id)} onReopenLoop={(id) => void reopenLoop(id)}
       empty={pick && !proactive?.on ? "Nothing waiting. Its own reminders and cards show here." : undefined} />
+    </>
   );
   if (pick) {
     return (
@@ -200,7 +217,7 @@ export function Today() {
             <div className="rise" style={delay(0.08)}>{needsYou}</div>
           </div>
           <div className="contents lg:flex lg:flex-col lg:gap-[18px]">
-            <div className="rise" style={delay(0.1)}><OnIt items={onIt} who={picked.name} /></div>
+            <div className="rise" style={delay(0.1)}><OnIt items={onIt} who={picked.name} onStop={(id) => void stopJob(id)} /></div>
             {itsEvents.length > 0 && (
               <section className="glass rounded-card px-4 py-3 rise" style={delay(0.12)} aria-label="Coming up">
                 <div className="text-ui font-bold text-ink-2 mb-1">Coming up</div>
@@ -257,7 +274,7 @@ export function Today() {
 
           <div className="rise" style={delay(0.08)}>{needsYou}</div>
 
-          <div className="rise" style={delay(0.09)}><OnIt items={onIt} who={picked.name} /></div>
+          <div className="rise" style={delay(0.09)}><OnIt items={onIt} who={picked.name} onStop={(id) => void stopJob(id)} /></div>
 
           <div className="rise" style={delay(0.1)}><UpNext items={up?.items ?? null} loading={upLoading} /></div>
 
