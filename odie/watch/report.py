@@ -136,8 +136,12 @@ def _mail_fields(ref: str, mails: list[Mail], statuses: dict | None = None) -> d
     if mail is None:
         return {}
     holds_the_id = badge_of(mail.source, statuses or {})["app"]
-    return {"from": sender_name(mail.frm), "subject": mail.subject[:120], "when": mail.at, "gist": (mail.snippet or "")[:160],
-            "badges": badges_of(mail.sources or [mail.source], statuses or {}), "app": holds_the_id}
+    fields = {"from": sender_name(mail.frm), "subject": mail.subject[:120], "when": mail.at,
+              "gist": (mail.snippet or "")[:160], "badges": badges_of(mail.sources or [mail.source], statuses or {}),
+              "app": holds_the_id}
+    if mail.thread:  # the user's own reply in this thread closes the item (odie.watch.sent)
+        fields["thread"] = mail.thread
+    return fields
 
 
 CARD_EVENTS = 20  # Today's two weeks: Up next shows a big card and up to 14 small ones

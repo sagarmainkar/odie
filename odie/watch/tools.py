@@ -38,6 +38,7 @@ class Check:
         self.fetcher = fetcher
         self.mails: list[Mail] = []
         self.events: list[Event] = []
+        self.sent: list[Mail] = []  # the user's sent mail that closed nothing in code (odie.watch.sent)
         self.report: dict | None = None
         self.read = False
 
@@ -45,6 +46,15 @@ class Check:
         b = m.brief()
         for k in ("from", "subject", "snippet"):
             if b[k]:  # an empty field stays as it is
+                b[k] = wrap_untrusted(str(b[k]))
+        return b
+
+    def fenced_sent(self, m: Mail) -> dict:
+        """One of the user's sent mails as the check reads it: to, subject, time, first lines, fenced (a reply quotes
+        other people's words)."""
+        b = {"id": m.id, "to": m.to, "subject": m.subject, "at": m.at, "snippet": m.snippet}
+        for k in ("to", "subject", "snippet"):
+            if b[k]:
                 b[k] = wrap_untrusted(str(b[k]))
         return b
 
@@ -64,6 +74,13 @@ def watch_tools(check: Check) -> list[FunctionTool]:
         check.events = await check.fetcher.upcoming_events(max(1, min(int(hours), 72)))
         check.read = True
         return {"result": json.dumps([e.brief() for e in check.events], ensure_ascii=False)}
+
+    def what_you_sent(tool_context=None) -> dict:
+        """What the user sent since the last check (to, subject, time, first lines); a reply in the same thread as an
+        open item already closed it. Close an open thread with track "done" when one of these answers it: to the same
+        person, about the same thing; why in the user's words ("you replied 18 Nov 14:20")."""
+        mark_read(tool_context)
+        return {"result": json.dumps([check.fenced_sent(m) for m in check.sent], ensure_ascii=False)}
 
     async def read_mail(mail_id: str, tool_context=None) -> dict:
         """One message from this check in full (trimmed), by its id: the whole mail, not new_mail's first lines. Read
@@ -179,5 +196,6 @@ def watch_tools(check: Check) -> list[FunctionTool]:
         check.report = {"needs_you": needs_you or [], "line": line or "", "done": done or []}
         return {"result": "Reported. The check is over."}
 
-    return [FunctionTool(f) for f in (open_threads, new_mail, upcoming_events, read_mail, read_thread, search_mail, sent_to,
-                                       save_attachment, bills_and_orders, track, close_reminder, report)]
+    return [FunctionTool(f) for f in (open_threads, what_you_sent, new_mail, upcoming_events, read_mail, read_thread,
+                                       search_mail, sent_to, save_attachment, bills_and_orders, track, close_reminder,
+                                       report)]

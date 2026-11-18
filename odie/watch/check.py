@@ -9,7 +9,7 @@ import re
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from odie.watch import bills, sources
+from odie.watch import bills, sent, sources
 from odie.watch import report as rep
 from odie.watch.fetch import STATE, Fetcher
 from odie.watch.tools import Check, watch_tools
@@ -162,6 +162,10 @@ async def run_check(store, now: datetime, turn, push, memory=None, memory_index:
                                      "done": kept})
         return "off"
     check = Check(Fetcher(store, now))
+    # The user's own mail since the last check: a reply in an open item's thread closes it now, in code; the rest is
+    # the check's "What you sent" (odie.watch.sent). Read here, not by the model, so it never depends on the model.
+    sent_by_the_user = await check.fetcher.sent_mail()
+    check.sent = sent.close_answered(store, now, sent_by_the_user)
     tools = watch_tools(check)
     watch = watch_for(memory) if memory is not None else ""
     WATCH_FOR_ADDRESSES.clear()

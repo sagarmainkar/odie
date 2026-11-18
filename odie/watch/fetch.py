@@ -81,6 +81,7 @@ class Mail:
     sources: list[str] = field(default_factory=list)  # every source that showed this mail (Gmail and Apple Mail)
     thread: str = ""  # the app's thread id, when its listing gives one
     opened: bool = False  # body is the whole message (open_mail), not the listing's preview
+    to: str = ""  # who it went to, when the listing says (the user's sent mail: odie.watch.sent)
 
     def brief(self) -> dict:
         return {"id": self.id, "from": self.frm, "subject": self.subject, "at": self.at, "snippet": self.snippet,
@@ -153,8 +154,9 @@ def parse_mail(text: str, source: str) -> list[Mail]:
         subject = str(_first(r, "subject", "title"))
         at = str(_first(r, "date", "messageTimestamp", "internalDate", "received_at", "at"))
         thread = str(_first(r, "threadId", "thread_id"))
+        to = _who(_first(r, "to", "recipient", "to_email"))
         out.append(Mail(id=mid, frm=sender, subject=subject, at=at, snippet=body[:SNIPPET], attachments=atts,
-                        source=source, body=body[:BODY], sources=[source], thread=thread))
+                        source=source, body=body[:BODY], sources=[source], thread=thread, to=to))
     return out
 
 
@@ -216,7 +218,19 @@ def fold_mail(mails: list[Mail]) -> list[Mail]:
 ADDRESS = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
 NOT_FOR_APPLE_MAIL = "not available for Apple Mail"
 SEARCH_LIMIT = 10
+MAX_SENT = 25  # a check reads at most this many of the user's own sent mails
 READ_SECONDS = 30  # one read (open, thread, search) may take this long: the whole check has 280 s
+
+
+def reads_sent_mail(src: Source) -> bool:
+    """Whether a check asks this mail app for the user's sent mail (`in:sent after:<time>`): only a Gmail-style app,
+    whose search knows "in:sent". An app that didn't would answer with inbox mail, and someone else's mail in a thread
+    must never close a reply the user owes. Gmail and Calendar (gmail_search) -> True; Apple Mail (its tools read only
+    the inbox) -> False; an Outlook app's search_emails -> False."""
+    if src.kind != "mail" or src.style == "native" or not src.query_param:
+        return False
+    words = f"{src.server} {src.app} {src.tool}".lower()
+    return "gmail" in words or "google" in words
 
 
 def address_of(frm: str) -> str:
@@ -520,6 +534,32 @@ class Fetcher:
                 continue
             got += parse_mail(res.text, src.id)
         return got
+
+    async def sent_mail(self) -> list[Mail]:
+        """What the user sent since the last check, newest first, at most MAX_SENT: each Gmail-style app asked for
+        `in:sent after:<its last good read>` (reads_sent_mail; Apple Mail is skipped). Nothing is marked seen and no
+        status is recorded; an app that fails is skipped and logged, so the check goes on without it."""
+        got: list[Mail] = []
+        for src in saved(self.store):
+            if not reads_sent_mail(src):
+                continue
+            since_dt = self._since(src)
+            query = f"in:sent after:{int(since_dt.timestamp())}"
+            args = dict(src.fixed)
+            if src.style == "zapier":
+                args["params"] = {**(args.get("params") or {}), src.query_param: query}
+            else:
+                args[src.query_param] = query
+            try:
+                res = await self._call(src, src.tool, args, timeout=READ_SECONDS)
+            except CallError as e:
+                log.info("watch: %s couldn't read the sent mail: %s", src.app, e)
+                continue
+            if res.is_error:
+                log.info("watch: %s couldn't read the sent mail: %s", src.app, res.text[:200])
+                continue
+            got += parse_mail(res.text, src.id)
+        return newest_first(got)[:MAX_SENT]
 
     async def catch_up_mail(self, days: int = bills.CATCH_UP_DAYS) -> list[Mail]:
         """The last `days` of mail whose subject looks like a bill, a payment or an order, seen or not, newest first,
