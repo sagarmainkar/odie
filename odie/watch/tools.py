@@ -63,6 +63,44 @@ class Check:
         return b
 
 
+def items_of(value) -> list[dict]:
+    """A list of items as the model sent it, read as the list of dicts it means. A model sometimes sends a list as
+    its JSON text, or one item without its list; anything that isn't an item is dropped, so one slip never loses the
+    whole report (19 Nov 2026: needs_you came as one long string and the check's card was lost).
+    [{"ref": "mail:m1"}] -> as it is; '[{"ref": "mail:m1"}]' -> [{"ref": "mail:m1"}]; {"ref": "mail:m1"} -> [it];
+    [{"ref": "mail:m1"}, "mail:m2"] -> [{"ref": "mail:m1"}]; "not json", None, 42 -> []."""
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except ValueError:
+            return []
+    if isinstance(value, dict):
+        return [value]
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, dict)]
+
+
+def texts_of(value) -> list[str]:
+    """A list of texts (a loop's refs) as the model sent it. ["example/app#49"] -> as it is; '["example/app#49"]'
+    (the list as its JSON text) -> ["example/app#49"]; "example/app#49" (one text, no list) -> ["example/app#49"];
+    what isn't a text, or is empty, is dropped; None, 42 -> []."""
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return []
+        try:
+            read = json.loads(text)
+        except ValueError:
+            return [text]
+        if not isinstance(read, list):
+            return [text]
+        value = read
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, str) and item]
+
+
 def watch_tools(check: Check) -> list[FunctionTool]:
     async def new_mail(tool_context=None) -> dict:
         """The user's new mail since the last check (the first check looks back a day), newest first, at most 25:
@@ -200,7 +238,7 @@ def watch_tools(check: Check) -> list[FunctionTool]:
         for a Watch for entry: [{message, files: [paths in the workspace], tell}]. tell: true only when the user
         should hear it now (a reminder you added, something new he'd act on); leave it out for "nothing new",
         "already covered" or "couldn't": those stay on the card, never in the chat."""
-        check.report = {"needs_you": needs_you or [], "line": line or "", "done": done or []}
+        check.report = {"needs_you": items_of(needs_you), "line": str(line or ""), "done": items_of(done)}
         return {"result": "Reported. The check is over."}
 
     def open_loops() -> dict:
@@ -221,7 +259,7 @@ def watch_tools(check: Check) -> list[FunctionTool]:
         (the evidence: "merged 18 Nov"). A loop that already holds the same ref gets the mail added, not a second loop.
         priority: high only when the user is asked for something soon (a review requested)."""
         from odie.loops import writes
-        said = writes.from_watch(check, title=title, kind=kind, owner=owner, refs=refs or [], mail_id=mail_id,
+        said = writes.from_watch(check, title=title, kind=kind, owner=owner, refs=texts_of(refs), mail_id=mail_id,
                                  next_step=next_step, loop_id=loop_id, close_why=close_why, priority=priority)
         return {"result": said}
 

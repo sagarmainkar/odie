@@ -389,3 +389,48 @@ def test_the_watchs_tools_never_shadow_odies_own(store):
     assert "track_thread" in watch_names
     text = check.SKILL.read_text()
     assert "`track_thread`" in text and "`track`" not in text
+
+
+async def test_a_report_whose_lists_came_as_text_still_lands_on_the_card(store, tmp_path):
+    """A model sometimes sends a list as its JSON text (19 Nov 2026: needs_you came as one long string, the save
+    failed on its first character and the check's card was lost). The text is read as the list it spells."""
+    from odie.plugins import mcp
+    mcp.write_config({"mymail": spec_for("plain", tmp_path, mail=ZAP_MAIL, events=EVENTS)})
+    posts, pushes, post, push = recorder()
+
+    async def turn(prompt, tools, instruction):
+        await call(tools, "new_mail")
+        needs_as_text = json.dumps([{"ref": "mail:m1", "title": "Reply to Asha", "why": "asks for a call this week"}])
+        done_as_text = json.dumps([{"message": "nothing new for the standing check", "files": []}])
+        await call(tools, "report", needs_you=needs_as_text, line="1 new email", done=done_as_text)
+        return "done"
+    store.set_setting("watch.state", {"last_check": None, "seen": [], "events": {}, "sources": {"mail:mymail": {"fails": 0}, "calendar:mymail": {"fails": 0}}})
+    assert await check.run_check(store, DAY, turn, push) == "ok"
+    card = store.get_setting(report.CARD)
+    assert [i["ref"] for i in card["needs_you"]] == ["mail:m1"]
+    assert card["needs_you"][0]["title"] == "Reply to Asha"
+
+
+@pytest.mark.parametrize("given, kept", [
+    ([{"ref": "mail:m1"}], [{"ref": "mail:m1"}]),                       # a proper list: as it is
+    ('[{"ref": "mail:m1"}]', [{"ref": "mail:m1"}]),                     # the list as its JSON text
+    ('{"ref": "mail:m1"}', [{"ref": "mail:m1"}]),                       # one item's JSON text
+    ({"ref": "mail:m1"}, [{"ref": "mail:m1"}]),                         # one item, not in a list
+    ([{"ref": "mail:m1"}, "mail:m2", 7, None], [{"ref": "mail:m1"}]),   # what isn't an item is dropped
+    ("not json at all", []), ("", []), (None, []), (42, []),
+])
+def test_items_of_reads_a_list_however_the_model_sent_it(given, kept):
+    from odie.watch.tools import items_of
+    assert items_of(given) == kept
+
+
+@pytest.mark.parametrize("given, kept", [
+    (["example/app#49"], ["example/app#49"]),            # a proper list
+    ('["example/app#49"]', ["example/app#49"]),          # the list as its JSON text
+    ("example/app#49", ["example/app#49"]),              # one text, not in a list
+    (["example/app#49", 7, None, ""], ["example/app#49"]),
+    (None, []), ("", []), (42, []),
+])
+def test_texts_of_reads_a_list_of_texts_however_the_model_sent_it(given, kept):
+    from odie.watch.tools import texts_of
+    assert texts_of(given) == kept
