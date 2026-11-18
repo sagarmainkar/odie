@@ -306,7 +306,7 @@ export function Chat({ orb, setOrb, showing }: { orb: OrbState; setOrb: (s: OrbS
   const mainRef = useRef<HTMLElement>(null);
   type H = { items: HistoryItem[]; total: number; start: number };
   // One turn, one message: a turn's lines fold into one first (turns.ts), however many taps it took.
-  const toMsgs = (items: H["items"]): Msg[] => foldTurns(items).filter((m) => m.text || m.tools.length || m.images?.length || m.approval || m.media?.length).map((m) => ({ id: nextId++, key: m.key, sid: m.sid, inv: m.inv, role: m.role, text: m.text, ts: m.ts, images: m.images, approval: m.approval, media: m.media, private: m.private, usage: m.usage, via: m.via, tools: fromHistory(m) }));
+  const toMsgs = (items: H["items"]): Msg[] => foldTurns(items).filter((m) => m.text || m.tools.length || m.images?.length || m.approval || m.media?.length).map((m) => ({ id: nextId++, key: m.key, sid: m.sid, inv: m.inv, role: m.role, text: m.text, ts: m.ts, images: m.images, approval: m.approval, media: m.media, private: m.private, usage: m.usage, via: m.via, live: !!m.kind, label: m.kind ? liveLabel(m.kind) : undefined, tools: fromHistory(m) }));
   const [pending, setPending] = useState<Pending[]>([]);
   const [uploading, setUploading] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);

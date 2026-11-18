@@ -21,7 +21,7 @@ REF_RE = re.compile(r"^([A-Za-z0-9][A-Za-z0-9-]{0,38})/([A-Za-z0-9._-]{1,100})#(
 NOTIFICATION_RE = re.compile(r"\[([A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9._-]{1,100})\].*\((?:PR |Issue )?#([1-9][0-9]{0,6})\)")
 GITHUB_SENDERS = ("notifications@github.com", "noreply@github.com")
 PR_FIELDS = ("number,title,state,isDraft,mergedAt,closedAt,author,headRefName,headRefOid,baseRefName,additions,deletions,"
-             "changedFiles,files,isCrossRepository,reviewDecision,reviewRequests,url,statusCheckRollup")
+             "changedFiles,files,commits,isCrossRepository,reviewDecision,reviewRequests,url,statusCheckRollup")
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 PATHS_KEPT = 300  # file paths kept from a pull request's facts (the rail reads them; a huge one is cut)
 DIFF_MOST = 12000  # characters of a diff the brief reads
@@ -106,19 +106,34 @@ async def run_gh(args: list[str], seconds: float | None = None) -> str:
     if gh is None or not os.path.exists(gh):
         raise GitHubError("The GitHub CLI (gh) isn't installed here.")
     proc = await asyncio.create_subprocess_exec(gh, *args, stdout=asyncio.subprocess.PIPE,
-                                                stderr=asyncio.subprocess.PIPE)
+                                                stderr=asyncio.subprocess.PIPE, start_new_session=True)
     try:
         out, err = await asyncio.wait_for(proc.communicate(), seconds)
     except TimeoutError:
-        proc.kill()
+        _stop_group(proc)
         await proc.wait()  # reaped, so no stopped gh is left behind
         raise GitHubError(f"gh took longer than {int(seconds)} seconds.")
     except asyncio.CancelledError:
-        proc.kill()  # its job was stopped: gh (a clone) stops with it
+        _stop_group(proc)  # its job was stopped: gh, and the git and ssh a clone started, stop with it
         raise
     if proc.returncode != 0:
         raise GitHubError((err.decode(errors="replace").strip() or "gh failed")[:300])
     return out.decode(errors="replace")
+
+
+def _stop_group(proc) -> None:
+    """Stops gh and everything it started (it runs in its own process group); one already gone is fine."""
+    import signal
+    pid = getattr(proc, "pid", None)
+    try:
+        if pid is None:
+            raise ProcessLookupError
+        os.killpg(pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        try:
+            proc.kill()
+        except ProcessLookupError:
+            pass
 
 
 def checks_of(rollup: list | None) -> str:
@@ -154,6 +169,7 @@ async def pr_facts(ref: Ref) -> dict:
     author = _login(raw.get("author"))
     asked = [_login(r) for r in raw.get("reviewRequests") or []]  # a team's request has no login
     paths = [str(f.get("path") or "") for f in raw.get("files") or [] if isinstance(f, dict)][:PATHS_KEPT]
+    commit_authors = [first_author(c) for c in raw.get("commits") or [] if isinstance(c, dict)]
     head_sha = str(raw.get("headRefOid") or "")
     if not SHA_RE.match(head_sha):
         head_sha = ""
@@ -165,7 +181,16 @@ async def pr_facts(ref: Ref) -> dict:
             "deletions": int(raw.get("deletions") or 0), "files": int(raw.get("changedFiles") or 0),
             "from_fork": bool(raw.get("isCrossRepository")), "review": str(raw.get("reviewDecision") or ""),
             "checks": checks_of(raw.get("statusCheckRollup")), "url": link(ref, "pull request"),
-            "head_sha": head_sha, "paths": paths, "on_your_repo": is_own_repo(ref, you)}
+            "head_sha": head_sha, "paths": paths, "on_your_repo": is_own_repo(ref, you), "commit_authors": commit_authors}
+
+
+def first_author(commit: dict) -> str:
+    """A commit's author's GitHub login (its first author: co-authors named in its message come after), or "" when
+    GitHub knows no account for them: {"authors": [{"login": "asha-dev"}, {"login": ""}]} -> "asha-dev"; none -> ""."""
+    authors = commit.get("authors") or []
+    if not authors or not isinstance(authors[0], dict):
+        return ""
+    return str(authors[0].get("login") or "")
 
 
 def is_own_repo(ref: Ref, you: str) -> bool:

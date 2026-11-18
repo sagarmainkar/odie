@@ -9,16 +9,18 @@ import re
 
 NUDGE = "[This is a job for a Worker: call start_job now with a full brief and say it started. Don't use run_shell here for it.]"
 
-# Messages that read like a job: code or a script to write, something to build, run, test, fix, debug or install, a
-# check on the machine, or an explicit ask for the background.
+# Messages that read like a real long job (security review, 18 Nov: the old pattern fired on "test my knowledge of
+# capitals" or "fix my resume wording"; a missed job costs little, as start_job's own description still invites it):
+#   code to write AND run ("write a script … and run it"), tests to run or fix ("run the tests in ~/work/app",
+#   "test the parser and fix what breaks"), a check of this computer ("check this Mac's disk"), or an explicit
+#   "in the background" / "take your time" / "background job".
 _JOB_ASK = re.compile(
-    r"\b(write|build|create|make|fix|debug|test|run|install|set up|setup|refactor|implement|port|migrate|benchmark|profile|"
-    r"compile|scaffold)\b.{0,60}\b(script|code|program|function|class|module|package|test|tests|app|cli|tool|repo|"
-    r"project|bug|pipeline|service|server|library|library)\b|"
-    r"\b(script|program|unit tests?|test suite)\b.{0,40}\b(write|build|make|run|fix)\b|"
-    r"\b(test|fix|debug)\s+(the|my|this|our|what|it)\b|"
-    r"\bin the background\b|\bbackground (job|task|worker)\b|"
-    r"\b(check|measure|report on)\b.{0,40}\b(disk|memory|ram|cpu|uptime|battery|load|logs?|processes|ports?|network)\b",
+    r"\b(write|build|create|make|code)\b.{0,60}\b(script|program|cli|tool)\b.{0,60}\b(and|then)\s+(run|test|execute)\b|"
+    r"\b(run|fix)\b.{0,20}\b(the|my|its|all)\s+(unit\s+)?tests?\b|"
+    r"\btest\b.{0,40}\band\s+fix\b|"
+    r"\b(check|measure|report on)\b.{0,30}\b(this|my|the)\s+(mac|computer|machine|system|laptop)('s)?\b.{0,30}"
+    r"\b(disk|memory|ram|cpu|battery|processes|ports?|logs?|storage)\b|"
+    r"\bin the background\b|\bbackground (job|task|worker)\b|\btake your time\b",
     re.IGNORECASE,
 )
 # What is not a job however it is worded: a question to answer, a file the chat makes itself, a reminder, something to
@@ -33,10 +35,14 @@ _NOT_A_JOB = re.compile(
 
 def looks_like_a_job(text: str) -> bool:
     """Decides whether this message gets the nudge to hand the work to a Worker. Worked examples:
-      "Write a Python script that prints the first 20 primes and run it"  -> True  (write … script)
-      "Can you test the new parser and fix what breaks?"                  -> True  (test …, fix …)
-      "Check this Mac's disk and memory and tell me"                      -> True  (check … disk)
-      "Do this in the background: …"                                      -> True  (in the background)
+      "Write a Python script that prints the first 20 primes and run it"  -> True  (write … script … and run)
+      "Can you test the new parser and fix what breaks?"                  -> True  (test … and fix)
+      "Run the tests in ~/work/app and fix what fails"                    -> True  (run … the tests)
+      "Check this Mac's disk and memory and tell me"                      -> True  (check this Mac's … disk)
+      "Do this in the background: …", "Take your time: …"                 -> True  (said so)
+      "test my knowledge of capitals", "check my memory of last week"     -> False (questions, not jobs)
+      "Fix my resume wording", "Create a simple app idea list"            -> False (small asks the chat answers)
+      "Can you write a python function that reverses a string?"           -> False (code to show, not to run)
       "How is the market today?"                                          -> False (a question)
       "What does this script do?"                                         -> False (a question, even naming a script)
       "Remind me to run the tests at 5"                                   -> False (a reminder)

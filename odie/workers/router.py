@@ -23,9 +23,14 @@ log = logging.getLogger("odie.workers")
 MAX_AT_ONCE = 3
 ODIE_AT_ONCE = 2  # Odie's own jobs: one of the three slots is always the user's
 ODIE_DAILY = 8
+MAX_WAITING = 6  # an owner's jobs waiting for a slot; one more is refused (TooMany)
 hooks: dict = {}  # store and runner (which posts the messages); set by setup()
 _tasks: dict[str, asyncio.Task] = {}
 _slots: dict[str, asyncio.Semaphore] = {}
+
+
+class TooMany(Exception):
+    """An owner already has MAX_WAITING jobs waiting for a slot: said in words for the chat."""
 
 
 def setup(store: Store, runner) -> None:
@@ -60,18 +65,27 @@ def odie_left_today(store: Store) -> int:
     return max(0, ODIE_DAILY - jobs.started_today_by_odie(store, now_local()))
 
 
+def waiting_for(store: Store, personality: str) -> int:
+    """How many of this owner's own jobs (not Odie's) are queued, waiting for a slot."""
+    rows = jobs.of_owner(store, personality, 50)
+    return len([r for r in rows if r["status"] == "queued" and r["started_by"] == "you"])
+
+
 def start(title: str, brief: str, session_id: str | None, personality: str = "", kind: str = "task",
-          started_by: str = "you", loop_id: int | None = None) -> Job | None:
+          started_by: str = "you", loop_id: int | None = None, taint: str = "") -> Job | None:
     """Start a job: the row, the folder, and a task that runs it when a slot is free. Returns the job, or None when it
-    is Odie's own and today's ODIE_DAILY are used. Needs the running loop."""
+    is Odie's own and today's ODIE_DAILY are used. A user's job with MAX_WAITING of theirs already waiting raises
+    TooMany. taint: the outside text the starting chat had read (no web, no apps for its Worker). Needs the running loop."""
     store = hooks["store"]
     if started_by == "odie" and odie_left_today(store) <= 0:
         log.info("workers: Odie's own jobs for today are used (%d)", ODIE_DAILY)
         return None
+    if started_by == "you" and waiting_for(store, personality) >= MAX_WAITING:
+        raise TooMany(f"{MAX_WAITING} jobs are already waiting for a slot; stop one, or start this when one ends.")
     job_id = jobs.new_id()
     folder = folder_for(title, job_id)
     job = jobs.create(store, kind, title, brief, session_id, folder, worker.BUDGET_SECONDS, personality=personality,
-                      started_by=started_by, loop_id=loop_id, job_id=job_id)
+                      started_by=started_by, loop_id=loop_id, job_id=job_id, taint=taint)
     launch(job)
     return job
 
@@ -119,10 +133,12 @@ async def _run(job: Job) -> str:
 def stop(job_id: str) -> bool:
     """Stop a queued or running job: its task is cancelled (a shell command in flight dies with it) and the row says
     stopped. A job that is not going -> False."""
+    from odie.workers.shell import kill_job
     task = _tasks.get(job_id)
     if task is None or task.done():
         return False
     task.cancel()
+    kill_job(job_id)  # its commands' processes, background children too
     jobs.ended(hooks["store"], job_id, "stopped", error="stopped by you")
     return True
 
@@ -152,10 +168,12 @@ async def tell_cut_off(row: dict, why: str) -> None:
 
 async def fail(job_id: str, why: str) -> None:
     """The watchdog's verdict: cancel the job's task, mark the row failed with why, and tell (tell_cut_off)."""
+    from odie.workers.shell import kill_job
     store = hooks["store"]
     task = _tasks.get(job_id)
     if task is not None and not task.done():
         task.cancel()
+    kill_job(job_id)
     row = jobs.get(store, job_id)
     if row is None:
         return
@@ -163,12 +181,20 @@ async def fail(job_id: str, why: str) -> None:
     await tell_cut_off(row, why)
 
 
+def may_retry(row: dict | None) -> bool:
+    """Whether a job may be started again: a user's task that ended. Still going -> False; a pull request's test
+    (Odie's own: it goes through the rail and the daily count again, never a plain retry) -> False; unknown -> False."""
+    if row is None or row["status"] in jobs.GOING:
+        return False
+    return row["kind"] == "task" and row["started_by"] == "you"
+
+
 def retry(job_id: str, allowed: list | None = None) -> Job | None:
     """Start a job that ended again: same row, same folder, same brief. allowed: what the user's tap in the app lets
-    through on this run (odie.workers.allow); the chat's retry_job passes none. A job still going, or unknown -> None."""
+    through on this run (odie.workers.allow); the chat's retry_job passes none. One that may_retry refuses -> None."""
     store = hooks["store"]
     row = jobs.get(store, job_id)
-    if row is None or row["status"] in jobs.GOING:
+    if not may_retry(row):
         return None
     jobs.queued_again(store, job_id, list(allowed or []))
     job = jobs.from_row(jobs.get(store, job_id))
@@ -193,7 +219,9 @@ async def recover() -> list[str]:
 async def stop_all() -> None:
     """Odie is shutting down: cancel every job's task and leave the rows as they are, so recover() at the next start
     tells the cut-off jobs."""
-    tasks = list(_tasks.values())
-    for task in tasks:
+    from odie.workers.shell import kill_job
+    tasks = list(_tasks.items())
+    for job_id, task in tasks:
         task.cancel()
-    await asyncio.gather(*tasks, return_exceptions=True)
+        kill_job(job_id)
+    await asyncio.gather(*(t for _, t in tasks), return_exceptions=True)

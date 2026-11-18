@@ -10,7 +10,11 @@ export type NeedAction = { label: string; action: "chat" | "dismiss" | "done_tas
 /** One card in a Pulse's "Needs you": a watch item from mail, or one of the user's own reminders. Every card has the
  *  same three buttons: its one move (main), Done (other) and Later (later; an older server sends no Later). */
 export type Need = { ref: string; title: string; why: string; brief?: string; icon: IconName; badge: string; ask: string; main: NeedAction; other: NeedAction; later?: NeedAction;
-  evidence?: { at: string; source: string; fact: string }[]; output?: string };  // a tested PR's card: Why? and the failures
+  evidence?: { at: string; source: string; fact: string }[]; output?: string;  // a tested PR's card: Why? and the failures
+  steps?: JobStep[] };  // a job's card: every step it needed, plain words first
+
+/** A step a background job was refused: what it is in plain words, the exact command, and whether a tap may allow it. */
+export type JobStep = { words: string; raw: string; allowed: boolean };
 
 /** Whether an "open" button's address may be opened: only an https page on GitHub (the server builds it from a checked
  *  name). "https://github.com/example/app/pull/49" -> true; "javascript:alert(1)" -> false; "http://github.com/x" -> false. */

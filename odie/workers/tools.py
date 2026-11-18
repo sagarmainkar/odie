@@ -11,6 +11,10 @@ from odie.workers import router
 from odie.workers import store as jobs
 
 ONLY_IN_CHAT = "Jobs start only from a chat with the user."
+BRIEF_MOST = 8000
+PRIVATE = ("Not started: this chat read your signed-in {sites}, and a background job can't keep that private. Start "
+           "it in a new chat, without the signed-in pages.")
+WEB_TOOLS = frozenset({"web_fetch", "web_search"})
 
 
 def job_line(j: dict) -> str:
@@ -37,6 +41,53 @@ def owner_of(store: Store, tool_context) -> str:
     return personalities.of_session(store, session_id_of(tool_context))
 
 
+def private_sites(store: Store, session_id: str) -> set:
+    """The signed-in sites this chat (or this turn) has read: a job started from it could carry their words out."""
+    from odie.agent import turn
+    from odie.signin import guard as signin_guard
+    sites = signin_guard.private_of(store, session_id) | turn.private_sites()
+    if not sites or not signin_guard._on(store):
+        return set()
+    return sites
+
+
+def calls_this_turn(tool_context) -> list[str]:
+    """The tools the model called in this turn before this one (read from the turn's own events)."""
+    from odie.agent.context import parts_of
+    session = getattr(tool_context, "session", None)
+    invocation = getattr(tool_context, "invocation_id", None)
+    names = []
+    for event in getattr(session, "events", None) or []:
+        if invocation is None or getattr(event, "invocation_id", None) != invocation:
+            continue
+        for part in parts_of(event):
+            call = getattr(part, "function_call", None)
+            if call is not None and call.name:
+                names.append(call.name)
+    return names
+
+
+def taint_of(store: Store, tool_context) -> str:
+    """What outside text this turn had read when it starts a job, or "" when none: the job is then tainted (no web,
+    no apps, no network for its commands).
+      the turn read mail or messages (other people's words)         -> "mail"
+      the turn fetched or searched the web, or used the browser      -> "web pages"
+      the turn called a connected app's tool                         -> "an app"
+      the turn read only notes or memory, or nothing                 -> "" """
+    from odie.agent import turn
+    from odie.plugins import access
+    read = turn.read_sources()
+    if "your mail" in read or "your messages" in read:
+        return "mail"
+    called = calls_this_turn(tool_context)
+    if any(name in WEB_TOOLS or name.startswith("browser_") for name in called):
+        return "web pages"
+    app_tools = {name for names in access.known_tools(store).values() for name in names}
+    if any(name in app_tools for name in called):
+        return "an app"
+    return ""
+
+
 def own_job(store: Store, job_id: str, owner: str) -> dict | None:
     """The job when it belongs to this owner; another's (or none) -> None."""
     row = jobs.get(store, job_id)
@@ -51,11 +102,25 @@ def make_worker_tools(store: Store) -> list[FunctionTool]:
         session_id = chat_of(tool_context)
         if session_id is None:
             return {"error": ONLY_IN_CHAT}
+        if len(brief) > BRIEF_MOST:
+            return {"error": f"Not started: a brief may be at most {BRIEF_MOST:,} characters. Say it shorter, or put "
+                             "the long part in a file the Worker reads."}
+        sites = private_sites(store, session_id)
+        if sites:
+            return {"error": PRIVATE.format(sites=", ".join(sorted(sites)))}
         clean_title = title.strip()[:80]
         if not clean_title:
             clean_title = "Job"
-        job = router.start(clean_title, brief.strip(), session_id, personality=owner_of(store, tool_context))
-        return {"job_id": job.id, "status": "started", "folder": str(job.folder)}
+        taint = taint_of(store, tool_context)
+        try:
+            job = router.start(clean_title, brief.strip(), session_id, personality=owner_of(store, tool_context),
+                               taint=taint)
+        except router.TooMany as e:
+            return {"error": f"Not started: {e}"}
+        out = {"job_id": job.id, "status": "started", "folder": str(job.folder)}
+        if taint:
+            out["note"] = f"This chat read {taint} this turn, so the job runs without web, apps or network."
+        return out
 
     async def jobs_status(tool_context: ToolContext = None) -> dict:
         """The background jobs: what is running or waiting for a slot, and the last few that ended, with their reports."""
@@ -72,7 +137,9 @@ def make_worker_tools(store: Store) -> list[FunctionTool]:
 
     async def stop_job(job_id: str, tool_context: ToolContext = None) -> dict:
         """Stop a background job by its id (job-…): the user asked, or the job is no longer wanted."""
-        if own_job(store, job_id, owner_of(store, tool_context)) is None or not router.stop(job_id):
+        if chat_of(tool_context) is None or own_job(store, job_id, owner_of(store, tool_context)) is None:
+            return {"error": f"{job_id} can't be stopped here."}
+        if not router.stop(job_id):
             return {"error": f"{job_id} isn't running."}
         return {"stopped": job_id}
 
@@ -82,12 +149,12 @@ def make_worker_tools(store: Store) -> list[FunctionTool]:
             return {"error": f"{job_id} can't be retried here."}
         job = router.retry(job_id)
         if job is None:
-            return {"error": f"{job_id} can't be retried: it is still going."}
+            return {"error": f"{job_id} can't be retried: it is still going, or it is Odie's own test of a pull request."}
         return {"job_id": job.id, "status": "started again"}
 
     async def forget_job(job_id: str, tool_context: ToolContext = None) -> dict:
         """Take a failed or stuck job's card off Pulse, when the user dismisses it or says to forget the job."""
-        if own_job(store, job_id, owner_of(store, tool_context)) is None:
+        if chat_of(tool_context) is None or own_job(store, job_id, owner_of(store, tool_context)) is None:
             return {"error": f"There's no job {job_id} here."}
         jobs.clear(store, job_id)
         return {"forgotten": job_id}

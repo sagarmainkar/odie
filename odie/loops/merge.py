@@ -30,6 +30,15 @@ async def merge(store, loop_id: int, now: datetime) -> str:
         raise MergeRefused("It has no GitHub name I can merge.")
     sha = tested["sha"]
     try:
+        now_facts = await github.pr_facts(ref)  # read again: the head and CI as they are at his tap
+    except github.GitHubError as e:
+        raise MergeRefused(f"GitHub didn't answer: {e}") from e
+    if await moved_on(store, loop, ref, sha, now, now_facts):
+        raise MergeRefused(f"There are new commits since the test of {sha[:7]}: not merged. I'll test them first.")
+    if now_facts.get("checks") not in ("green", "none"):
+        ledger.update(store, loop_id, now, has_news=1)
+        raise MergeRefused(f"GitHub's CI is {github.ci_words(now_facts).lower()} now: not merged.")
+    try:
         await github.merge(ref, sha)
     except (github.GitHubError, ValueError) as e:
         if await moved_on(store, loop, ref, sha, now):
@@ -51,13 +60,15 @@ async def merge(store, loop_id: int, now: datetime) -> str:
     return evidence
 
 
-async def moved_on(store, loop: dict, ref: github.Ref, sha: str, now: datetime) -> bool:
-    """After a refused merge, whether the head moved on from the tested commit; when it did, the card loses its Merge
-    and the loop is due now, to test the new head. Head abc… still -> False; head def… now -> True; can't read -> False."""
-    try:
-        facts = await github.pr_facts(ref)
-    except github.GitHubError:
-        return False
+async def moved_on(store, loop: dict, ref: github.Ref, sha: str, now: datetime, facts: dict | None = None) -> bool:
+    """Whether the head moved on from the tested commit (facts given, or read now); when it did, the card loses its
+    Merge and the loop is due now, to test the new head. Head abc… still -> False; head def… now -> True; can't read
+    -> False."""
+    if facts is None:
+        try:
+            facts = await github.pr_facts(ref)
+        except github.GitHubError:
+            return False
     if facts.get("head_sha") == sha:
         return False
     pr_test.uncard(store, loop["id"])

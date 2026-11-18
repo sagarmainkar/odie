@@ -78,7 +78,8 @@ def test_a_failed_job_is_a_card_with_retry_and_done(store, tmp_path):
 def test_a_job_that_needed_a_step_offers_allow_it_and_run_again(store, tmp_path):
     jid = ended_job(store, tmp_path, outcome="blocked", needed=[CHMOD])
     card = next(c for c in needs.cards(store, now()) if c["ref"] == f"job:{jid}")
-    assert card["why"] == "I needed to: `chmod u+r notes.txt` (deletes or stops something)"
+    assert card["why"] == "It needs your OK for 1 step"
+    assert card["steps"] == [{"words": "Delete or stop something", "raw": "chmod u+r notes.txt", "allowed": True}]
     assert card["main"] == {"label": "Allow it and run again", "action": "job_allow", "value": jid}
 
 
@@ -147,10 +148,9 @@ def test_the_terminals_key_can_never_allow_retry_stop_or_clear():
     assert devices.terminal_may("GET", "/api/jobs") is False
 
 
-def test_a_long_command_and_more_needs_read_short_on_the_card(store, tmp_path):
-    long_one = {"tool": "run_shell", "command": "D=/a/very/long/folder/name/that/goes/on; ls -l \"$D\"; cat \"$D/notes.txt\"; echo done",
-                "why": "writes a file outside /tmp"}
-    jid = ended_job(store, tmp_path, outcome="blocked", needed=[long_one, CHMOD])
+def test_a_job_that_only_needed_what_a_tap_cant_allow_offers_retry(store, tmp_path):
+    secret = {"tool": "run_shell", "command": "cat ~/.env", "cwd": "", "why": "reads secrets"}
+    jid = ended_job(store, tmp_path, outcome="blocked", needed=[secret])
     card = next(c for c in needs.cards(store, now()) if c["ref"] == f"job:{jid}")
-    assert card["why"].endswith("…` (writes a file outside /tmp) and 1 more")
-    assert len(card["why"]) < 140
+    assert card["why"] == "It needed 1 step it can't do as a job"
+    assert card["main"]["action"] == "job_retry" and card["steps"][0]["allowed"] is False

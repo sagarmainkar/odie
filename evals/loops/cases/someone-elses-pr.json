@@ -50,12 +50,22 @@
           "conclusion": "SUCCESS"
         }
       ],
-      "headRefOid": "2222222222222222222222222222222222222222"
+      "headRefOid": "2222222222222222222222222222222222222222",
+      "commits": [
+        {
+          "oid": "2222222222222222222222222222222222222222",
+          "authors": [
+            {
+              "login": "asha-codes"
+            }
+          ]
+        }
+      ]
     },
     "user": "you-dev"
   },
   "recipes": {
-    "you-dev/app": "sh test.sh"
+    "you-dev/app": "make test"
   },
   "expect": {
     "loops": 1,

@@ -39,6 +39,13 @@ class Store:
     PUSH_COLUMNS = {"device_id": "INTEGER"}  # the paired device that subscribed (none before pairing)
     THREAD_COLUMNS = {"personality": "TEXT"}  # whose thread it is (odie.personalities); NULL = everyday Odie
     TRACKER_COLUMNS = {"page_url": "TEXT", "signin_allowed": "INTEGER NOT NULL DEFAULT 0"}  # a signed-in tracker's page and the user's Allow
+    # Workers (odie.workers): an install that tried the old bots experiment already has a jobs table of another shape
+    # (create table if not exists leaves it as it was). Its missing columns are added; its rows keep version 0, which
+    # this code never reads (odie.workers.store.CURRENT).
+    JOB_COLUMNS = {"personality": "TEXT", "started_by": "TEXT NOT NULL DEFAULT 'you'", "loop_id": "INTEGER",
+                   "needed_json": "TEXT NOT NULL DEFAULT '[]'", "allowed_json": "TEXT NOT NULL DEFAULT '[]'",
+                   "cleared": "INTEGER NOT NULL DEFAULT 0", "taint": "TEXT NOT NULL DEFAULT ''",
+                   "version": "INTEGER NOT NULL DEFAULT 0"}
 
     def init_schema(self) -> None:
         with self._lock:
@@ -68,6 +75,10 @@ class Store:
             for col, typ in self.TRACKER_COLUMNS.items():
                 if col not in have:
                     self._conn.execute(f"alter table trackers add column {col} {typ}")
+            have = {r["name"] for r in self._conn.execute("pragma table_info(jobs)")}
+            for col, typ in self.JOB_COLUMNS.items():
+                if col not in have:
+                    self._conn.execute(f"alter table jobs add column {col} {typ}")
 
     def close(self) -> None:
         with self._lock:

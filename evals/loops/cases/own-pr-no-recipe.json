@@ -46,7 +46,17 @@
           "conclusion": "SUCCESS"
         }
       ],
-      "headRefOid": "3333333333333333333333333333333333333333"
+      "headRefOid": "3333333333333333333333333333333333333333",
+      "commits": [
+        {
+          "oid": "3333333333333333333333333333333333333333",
+          "authors": [
+            {
+              "login": "you-dev"
+            }
+          ]
+        }
+      ]
     },
     "contents:you-dev/notes": [
       "README.md",

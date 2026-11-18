@@ -14,6 +14,8 @@ from odie.store.db import Store, now_iso
 STATUSES = ("queued", "running", "done", "failed", "stopped")
 OUTCOMES = ("ready", "blocked", "dropped")  # what a Worker may say in report
 GOING = ("queued", "running")
+CURRENT = 2  # the version of the rows this code writes; older rows (an upgraded old table) are never read
+MINE = "version >= 2"  # the SQL condition every read uses
 
 
 @dataclass
@@ -31,6 +33,7 @@ class Job:
     status: str = "queued"
     runs: int = 0
     allowed: list = None  # what the user's tap allowed for this run (odie.workers.allow)
+    taint: str = ""  # outside text the chat had read when it started ("mail", "web pages"): no web, no apps
 
     @property
     def odies_own(self) -> bool:
@@ -45,16 +48,16 @@ def new_id() -> str:
 
 def create(store: Store, kind: str, title: str, brief: str, session_id: str | None, folder: Path,
            budget_seconds: int, personality: str = "", started_by: str = "you", loop_id: int | None = None,
-           job_id: str = "") -> Job:
+           job_id: str = "", taint: str = "") -> Job:
     """A new row, queued. job_id: one made beforehand (the router names the folder after it); else a new one."""
     if not job_id:
         job_id = new_id()
     job = Job(job_id, kind, title, brief, session_id, folder, budget_seconds, personality, started_by, loop_id,
-              allowed=[])
+              allowed=[], taint=taint)
     store.execute("insert into jobs(id,kind,title,brief,personality,started_by,loop_id,status,session_id,folder,"
-                  "budget_seconds,created_at) values(?,?,?,?,?,?,?,?,?,?,?,?)",
+                  "budget_seconds,taint,version,created_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                   (job.id, kind, title, brief, personality or None, started_by, loop_id, "queued", session_id,
-                   str(folder), budget_seconds, now_iso()))
+                   str(folder), budget_seconds, taint, CURRENT, now_iso()))
     return job
 
 
@@ -62,7 +65,7 @@ def from_row(row: dict) -> Job:
     """A Job from its row (retry, recovery after a restart, the watchdog)."""
     return Job(row["id"], row["kind"], row["title"], row["brief"], row["session_id"], Path(row["folder"]),
                row["budget_seconds"], row["personality"] or "", row["started_by"], row["loop_id"], row["status"],
-               row["runs"], loads(row["allowed_json"]))
+               row["runs"], loads(row["allowed_json"]), row["taint"] or "")
 
 
 def loads(text: str | None) -> list:
@@ -134,7 +137,7 @@ def clear(store: Store, job_id: str) -> None:
 
 
 def get(store: Store, job_id: str) -> dict | None:
-    row = store.one("select * from jobs where id=?", (job_id,))
+    row = store.one(f"select * from jobs where id=? and {MINE}", (job_id,))
     if row is None:
         return None
     return dict(row)
@@ -142,7 +145,7 @@ def get(store: Store, job_id: str) -> dict | None:
 
 def running(store: Store) -> list[dict]:
     """Jobs still going (queued or running), oldest first."""
-    rows = store.query("select * from jobs where status in ('queued','running') order by created_at")
+    rows = store.query(f"select * from jobs where status in ('queued','running') and {MINE} order by created_at")
     return [dict(r) for r in rows]
 
 
@@ -155,14 +158,14 @@ def _whose(pid: str) -> tuple[str, tuple]:
 def of_owner(store: Store, pid: str, n: int = 20) -> list[dict]:
     """One owner's last n jobs of any status, newest first: everyday Odie's ("") or a personality's."""
     mine, values = _whose(pid)
-    rows = store.query(f"select * from jobs where {mine} order by created_at desc limit ?", (*values, n))
+    rows = store.query(f"select * from jobs where {mine} and {MINE} order by created_at desc limit ?", (*values, n))
     return [dict(r) for r in rows]
 
 
 def started_today_by_odie(store: Store, now: datetime) -> int:
     """How many jobs Odie started itself today (its own budget, 8 a day), on the user's clock."""
     since = datetime.combine(now.date(), datetime.min.time(), now.tzinfo)
-    rows = store.query("select created_at from jobs where started_by='odie'")
+    rows = store.query(f"select created_at from jobs where started_by='odie' and {MINE}")
     count = 0
     for row in rows:
         at = datetime.fromisoformat(row["created_at"].replace("Z", "+00:00"))

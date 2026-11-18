@@ -1,8 +1,9 @@
 """Workers on Pulse (Workers design): each personality's own jobs, in the same shapes as the loops'.
   - "on it": a job queued or running, one line each, with Stop;
-  - a card in Needs you: a job the user started that failed, got stuck, or needed a step the rules refuse. Its move,
-    written here, is "Allow it and run again" when a step was refused (odie.workers.allow), else "Retry"; Done takes
-    the card off. No Later: a stuck job is either run again or cleared;
+  - a card in Needs you: a job the user started that failed, got stuck, or needed a step the rules refuse. It lists
+    every step it needed, in full: plain words first, the exact command after, and whether a tap may allow it. Its
+    move, written here, is "Allow it and run again" when some step may be allowed (exactly those calls, on the next
+    run: odie.workers.allow), else "Retry"; Done takes the card off. No Later: a stuck job is run again or cleared;
   - Done today: a job that finished today with nothing needed.
 Odie's own jobs (a pull request's test) are on "on it" while they run; their result is the loop's card."""
 from __future__ import annotations
@@ -49,14 +50,45 @@ def needs_a_card(row: dict, now: datetime) -> bool:
     return went_wrong or bool(jobs.needed(row))
 
 
+def allowable(row: dict) -> list[dict]:
+    """The needs his tap may allow for the next run: every recorded need a job card may offer (allow.offerable)."""
+    return [n for n in jobs.needed(row) if allow.offerable(n)]
+
+
+def steps_of(row: dict) -> list[dict]:
+    """Every step the job needed, for the card: {"words": "Delete or stop something", "raw": "rm build.log",
+    "allowed": True}; a step a job may never do: {"words": "Read secrets (only you can, in chat)", …, "allowed": False}."""
+    out = []
+    for need in jobs.needed(row):
+        offered = allow.offerable(need)
+        words = allow.plain(need)
+        if not offered:
+            words += " (only you can, in chat)"
+        out.append({"words": words, "raw": allow.raw(need), "allowed": offered})
+    return out
+
+
+def _count(n: int, one: str, many: str) -> str:
+    if n == 1:
+        return f"1 {one}"
+    return f"{n} {many}"
+
+
 def why_of(row: dict) -> str:
-    """The card's line: what was needed, the first need with a long command cut ("I needed to: `x` (why) and 1 more"),
-    else why it failed, else the report's first line."""
+    """The card's line: how many steps need his OK and how many it can't do as a job ("It needs your OK for 2 steps";
+    "It needs your OK for 1 step; 1 it can't do as a job"), else why it failed, else the report's first line."""
     needed = jobs.needed(row)
     if needed:
-        words = "I needed to: " + allow.line(needed[0], short=True)
-        if len(needed) > 1:
-            words += f" and {len(needed) - 1} more"
+        may = len(allowable(row))
+        never = len(needed) - may
+        parts = []
+        if may:
+            parts.append(f"It needs your OK for {_count(may, 'step', 'steps')}")
+        if never:
+            parts.append(f"{never} it can't do as a job")
+        words = "; ".join(parts)
+        if not may:
+            words = f"It needed {_count(never, 'step', 'steps')} it can't do as a job"
         return words
     if row["status"] == "failed":
         return f"Didn't finish: {row['error'] or 'it stopped'}"
@@ -71,15 +103,18 @@ def why_of(row: dict) -> str:
 def card(row: dict) -> dict:
     """A job as a Pulse card, in the shape odie.watch.needs gives every card; its buttons are written here."""
     main = {"label": "Retry", "action": "job_retry", "value": row["id"]}
-    if jobs.needed(row):
+    if allowable(row):
         main = {"label": "Allow it and run again", "action": "job_allow", "value": row["id"]}
     brief = ""
     if row["report"]:
         brief = row["report"][:BRIEF_MOST]
+    badge = ""
+    if row.get("taint"):
+        badge = f"Started from {row['taint']}: no web"
     return {"ref": f"job:{row['id']}", "title": row["title"], "why": why_of(row), "brief": brief, "icon": "terminal",
-            "badge": "", "ask": f"What happened with job {row['id']} ({row['title']})?", "main": main,
+            "badge": badge, "ask": f"What happened with job {row['id']} ({row['title']})?", "main": main,
             "other": {"label": "Done", "action": "job_clear", "value": row["id"]}, "pile": "alerts",
-            "since": row["ended_at"] or "", "decide": False}
+            "since": row["ended_at"] or "", "decide": False, "steps": steps_of(row)}
 
 
 def cards(store, pid: str, now: datetime) -> list[dict]:

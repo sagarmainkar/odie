@@ -8,8 +8,9 @@ cards. Each case is its mails, what GitHub says (a fake gh answers from it) and 
   {"untested": [...]}             no test ran for those (someone else's, a lockfile, no approved command)
   {"recipe_cards": ["you-dev/app"]}  a "Use this" card asks for that repo's test command
 A case may start with loops already there ("open_loops": [{title, kind, refs, done}]), with test commands he approved
-("recipes": {"you-dev/app": "sh test.sh"}), and with a throwaway repo standing in for GitHub's ("origin": {"repo":
-"you-dev/app", "pulls": {"70": "echo '12 passed'"}}: each pull request's head is a commit whose test.sh runs that).
+("recipes": {"you-dev/app": "make test"}), and with a throwaway repo standing in for GitHub's ("origin": {"repo":
+"you-dev/app", "pulls": {"70": "echo '12 passed'"}}: each pull request's head is a commit whose test.sh, run by
+`make test`, runs that).
 
 run_case takes the turn and the model call as arguments: tests pass scripted ones (deterministic, so the code's part
 is held to the score), and odie/loops_eval.py passes the real model (scripts/loops_eval.sh)."""
@@ -67,6 +68,7 @@ def build_origin(case: dict, folder: Path) -> None:
     repo.mkdir(parents=True, exist_ok=True)
     _git(repo, "init", "-q")
     (repo / "README.md").write_text("A made-up app.\n")
+    (repo / "Makefile").write_text("test:\n\tsh test.sh\n")  # the approved command is `make test`
     _git(repo, "add", ".")
     _git(repo, "commit", "-q", "-m", "first")
     gh = case.setdefault("gh", {})
@@ -79,6 +81,8 @@ def build_origin(case: dict, folder: Path) -> None:
         sha = _git(repo, "rev-parse", "HEAD")
         _git(repo, "update-ref", f"refs/pull/{number}/head", sha)
         gh[f"pr:{origin['repo']}#{number}"]["headRefOid"] = sha
+        for commit in gh[f"pr:{origin['repo']}#{number}"].get("commits") or []:
+            commit["oid"] = sha
     _git(repo, "checkout", "-q", "main")
     gh[f"clone:{origin['repo']}"] = str(repo)
 

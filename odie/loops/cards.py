@@ -42,12 +42,12 @@ EVIDENCE_SHOWN = 8
 
 def may_merge(tested: dict | None) -> bool:
     """Whether a tested card offers [Merge]: its card is up for this test (the head it tested is still the head), the
-    tests passed, and GitHub's CI isn't failing.
-      passed, CI green -> True;  passed, no CI -> True;  passed, CI failing -> False;  failed -> False;
-      new commits since (no longer carded) -> False;  never tested -> False"""
+    tests passed, and GitHub's CI is green or absent.
+      passed, CI green -> True;  passed, no CI -> True;  passed, CI failing -> False;  passed, CI still running ->
+      False;  failed -> False;  new commits since (no longer carded) -> False;  never tested -> False"""
     if not tested or not tested.get("carded"):
         return False
-    return bool(tested.get("ok")) and tested.get("checks") != "red"
+    return bool(tested.get("ok")) and tested.get("checks") in ("green", "none")
 
 
 def tested_move(loop: dict, tested: dict | None) -> tuple[dict | None, str]:

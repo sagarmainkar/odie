@@ -49,6 +49,16 @@ export function NeedsYou({ items, footer, closed, notes = [], loopsDone = [], jo
                 {n.badge && <span className={`chip ${badgeTone(n.badge) === "warn" ? "chip-warn" : "chip-soft"} mt-1.5 inline-flex`}>{n.badge}</span>}
               </span>
             </button>
+            {!!n.steps?.length && (
+              <ul className="min-[430px]:ml-12 flex flex-col gap-2" aria-label="Steps it needed">
+                {n.steps.map((st, i) => (
+                  <li key={i} className="min-w-0">
+                    <div className={`text-small leading-[18px] font-semibold ${st.allowed ? "text-ink-2" : "text-warn-ink"}`}>{st.words}</div>
+                    <code className="block mt-0.5 rounded-tile bg-well px-2.5 py-1.5 text-caption leading-4 font-mono text-muted break-all line-clamp-3">{st.raw}</code>
+                  </li>
+                ))}
+              </ul>
+            )}
             {!!n.evidence?.length && (
               <button type="button" onClick={() => toggle(n.ref, "why")} aria-expanded={unfolded[n.ref] === "why"}
                 className="self-start min-[430px]:ml-12 text-small font-semibold text-ember-text underline underline-offset-2">Why?</button>

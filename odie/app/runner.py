@@ -227,7 +227,12 @@ def events_to_history(events: list[Any]) -> list[dict[str, Any]]:
             usage = usage_of(ev)
             if usage:
                 out[-1]["usage"] = usage
-            posted = [m for x in ((getattr(ev, "custom_metadata", None) or {}).get("media") or []) if (m := media_of({"media": x}))]
+            meta = getattr(ev, "custom_metadata", None) or {}
+            if meta.get("shown"):  # a posted message shown as written, while the model reads it fenced (a job's report)
+                out[-1]["text"] = meta["shown"]
+            if meta.get("kind"):
+                out[-1]["kind"] = meta["kind"]
+            posted = [m for x in (meta.get("media") or []) if (m := media_of({"media": x}))]
             if posted:  # a posted message's memo (a spoken reminder)
                 out[-1].setdefault("media", []).extend(posted)
         asks_for_tap = any(p.function_call and p.function_call.name == CONFIRM for p in ev.content.parts)
@@ -1612,25 +1617,35 @@ class OdieRunner:
         await self.bus.publish({"type": "reminder", "id": task_id, "text": text, "ts": time.time(), **({"media": media} if media else {})})
 
     async def post_message(self, text: str, session_id: str | None = None, media: list[dict] | None = None,
-                           kind: str = "system") -> Event:
+                           kind: str = "system", shown: str | None = None) -> Event:
         """A message from Odie that did not come from a user turn (reminder, 'done as you asked', summary). `media`
         (a spoken reminder's memo) rides in the event's metadata: shown in the chat, never seen by the model. `kind`
         rides on the bus event and says what the message is, for an app that shows them differently (the Mac's
         banners): reply (a reply that came late, after an approval), reminder (the repost after Act), tracker, job (a
         made thing is ready), talk (a call's transcript), or system (housekeeping: "Stopped.", the new-chat marker, a
-        lapsed approval), which gets no banner."""
+        lapsed approval), which gets no banner. shown: what the app shows when it differs from what the model reads (a
+        job's report: the model reads it fenced as untrusted, the user sees it as written); kept in the event's
+        metadata with the kind, so the history shows it the same way after a reload."""
         s = config.settings
         today = datetime.now(self.tz).strftime("%Y-%m-%d")
         sid = session_id or self.current_session_id(today)
         async with self.lock_for(sid):
             sid = await self._ensure_session(sid)
             sess = await self.session_service.get_session(app_name=s.app_name, user_id=s.user_id, session_id=sid)
+            meta: dict[str, Any] = {}
+            if media:
+                meta["media"] = media
+            if shown is not None:
+                meta.update(shown=shown, kind=kind)
             ev = Event(author="odie", invocation_id=f"odie-{uuid.uuid4().hex[:8]}",
                        content=types.Content(role="model", parts=[types.Part(text=text)]), timestamp=time.time(),
-                       custom_metadata={"media": media} if media else None)
+                       custom_metadata=meta or None)
             await self.session_service.append_event(session=sess, event=ev)
-        self.store.audit("agent", "message", result_summary=text, session_id=sid)
-        await self.bus.publish({"type": "message", "kind": kind, "text": text, "ts": ev.timestamp, "session_id": sid,
+        on_screen = text
+        if shown is not None:
+            on_screen = shown
+        self.store.audit("agent", "message", result_summary=on_screen, session_id=sid)
+        await self.bus.publish({"type": "message", "kind": kind, "text": on_screen, "ts": ev.timestamp, "session_id": sid,
                                 **({"media": media} if media else {})})
         return ev
 

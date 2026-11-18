@@ -78,4 +78,17 @@ describe("Needs you on Pulse", () => {
     expect(html).toContain("Done 10:42");
     expect(html).not.toContain(">Reopen</button>");
   });
+
+  it("lists every step a job needed, plain words first and the exact command after", () => {
+    const job: Need = {
+      ref: "job:job-1", title: "Tidy", why: "It needs your OK for 1 step; 1 it can't do as a job", icon: "terminal", badge: "",
+      ask: "x", main: { label: "Allow it and run again", action: "job_allow", value: "job-1" }, other: { label: "Done", action: "job_clear", value: "job-1" },
+      steps: [{ words: "Delete or stop something", raw: "rm build.log", allowed: true },
+        { words: "Read secrets (only you can, in chat)", raw: "cat ~/.env", allowed: false }],
+    };
+    const html = renderToStaticMarkup(<NeedsYou items={[job]} footer="" closed={[]} onAct={() => {}} onReopen={() => {}} />);
+    expect(html.indexOf("Delete or stop something")).toBeLessThan(html.indexOf("rm build.log"));
+    expect(html).toContain("cat ~/.env");
+    expect(html).toContain("Read secrets (only you can, in chat)");
+  });
 });

@@ -26,14 +26,23 @@ def suggest(root_names: list[str]) -> str | None:
     return None
 
 
+def runnable(command: str | None) -> bool:
+    """Whether a command may run as a test at all: only one of TABLE's, as written. "uv run pytest -q" -> True;
+    "sh test.sh" or anything stored by other means -> False (a recipe is never a free string)."""
+    return command in {c for _, c in TABLE}
+
+
 def _all(store) -> dict:
     return store.get_setting(KEY) or {}
 
 
 def approved(store, repo: str) -> str | None:
-    """The command he approved for this repo, or None (never asked, or he said No)."""
+    """The command he approved for this repo, or None (never asked, he said No, or what is kept isn't runnable)."""
     kept = _all(store).get(repo) or {}
-    return kept.get("command") or None
+    command = kept.get("command")
+    if not runnable(command):
+        return None
+    return command
 
 
 def declined(store, repo: str) -> bool:
@@ -41,6 +50,9 @@ def declined(store, repo: str) -> bool:
 
 
 def approve(store, repo: str, command: str, now: datetime) -> None:
+    """Keeps the command for the repo; one that isn't runnable raises ValueError."""
+    if not runnable(command):
+        raise ValueError(f"not a test command Odie runs: {command!r}")
     kept = _all(store)
     kept[repo] = {"command": command, "at": now.isoformat(timespec="seconds")}
     store.set_setting(KEY, kept)
@@ -98,7 +110,8 @@ def decline(store, repo: str, now: datetime) -> int | None:
 def card(repo: str, found: dict) -> dict:
     """An offer as a Pulse card, its buttons written here: Use this, No."""
     return {"ref": f"recipe:{repo}", "title": f"Test {repo}?", "why": f"I'd test {repo} with `{found['command']}`.",
-            "brief": "Only your own pull requests on your own repos, with dependency files untouched, in a fresh copy.",
+            "brief": ("Only your own pull requests on your own repos, every commit yours, dependency files untouched; in a "
+                      "fresh copy, in a sandbox that can't read your keys or Odie and writes only to its own folder."),
             "icon": "terminal", "badge": "", "ask": f"How would you test {repo}?",
             "main": {"label": "Use this", "action": "recipe_use", "value": repo},
             "other": {"label": "No", "action": "recipe_no", "value": repo}, "pile": "alerts",

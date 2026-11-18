@@ -3,8 +3,11 @@
 
   1. clone the repo into the job's own folder through gh (signed in as the user);
   2. fetch the pull request's head and check out exactly the commit the rail looked at (refused if it differs);
-  3. run the approved command (odie.loops.recipes) as he'd type it, in the clone, with a cleaned environment: only
-     KEPT_ENV and a fixed PATH pass, so no token or key of Odie's reaches the tests; within TEST_SECONDS;
+  3. run the approved command (one of odie.loops.recipes.TABLE's, checked again here) in the clone, inside the sandbox
+     (odie.workers.sandbox): it can't read Odie's home, ~/.ssh, ~/.config/gh, ~/.aws, the Keychains or iCloud Drive,
+     it writes only to the job's folder and the package caches, HOME is a throwaway folder inside the job, and its
+     environment carries no token, key or SSH agent. The network is open (packages install). Within TEST_SECONDS;
+     whatever it leaves running is stopped when it ends;
   4. record the exit code, the counts read from the output and the output's tail on the loop: evidence, so "tests
      pass" is a fact, not a claim. The loop gets news and stage 4 looks at it again (the brief, then the card).
 The clone is removed afterwards; the whole output stays in the job's folder as output.log."""
@@ -42,8 +45,8 @@ class PrTestError(Exception):
 
 
 def clean_env() -> dict[str, str]:
-    """The test's whole environment: the user's home, name, language and temp folder, a fixed PATH, CI=1, and nothing
-    else. GH_TOKEN, ANTHROPIC_API_KEY, any *_KEY or *_TOKEN Odie runs with -> left out."""
+    """The environment of the git commands that set the test up (code's own, never the pull request's): the user's
+    home (git's own settings and sign-in), name, language and temp folder, a fixed PATH, CI=1, and nothing else."""
     from odie.agent.tools.shell import SHELL_PATH
     env = {name: os.environ[name] for name in KEPT_ENV if name in os.environ}
     env["PATH"] = SHELL_PATH
@@ -80,10 +83,13 @@ def _kill(proc) -> None:
             pass
 
 
-async def run_command(argv: list[str], cwd: Path, seconds: float) -> tuple[int | None, str]:
-    """Runs argv in cwd with the cleaned environment; returns (exit code, output). Over `seconds` -> the process
-    group is stopped and the exit code is None."""
-    proc = await asyncio.create_subprocess_exec(*argv, cwd=str(cwd), env=clean_env(), stdin=asyncio.subprocess.DEVNULL,
+async def run_command(argv: list[str], cwd: Path, seconds: float, env: dict | None = None) -> tuple[int | None, str]:
+    """Runs argv in cwd (in its own process group) with this environment (clean_env when none); returns (exit code,
+    output). Over `seconds` -> the group is stopped and the exit code is None. Whatever it left running is stopped
+    when it ends, and when its job is stopped."""
+    if env is None:
+        env = clean_env()
+    proc = await asyncio.create_subprocess_exec(*argv, cwd=str(cwd), env=env, stdin=asyncio.subprocess.DEVNULL,
                                                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
                                                 start_new_session=True)
     chunks: list[bytes] = []
@@ -110,7 +116,18 @@ async def run_command(argv: list[str], cwd: Path, seconds: float) -> tuple[int |
     except asyncio.CancelledError:
         _kill(proc)  # the job was stopped: the tests stop with it, process group and all
         raise
+    finally:
+        _kill(proc)  # a server or watcher the tests started in the background stops too
     return proc.returncode, b"".join(chunks).decode(errors="replace")
+
+
+async def run_test(command: str, repo: Path, folder: Path) -> tuple[int | None, str]:
+    """The approved command in the clone, inside the job's sandbox, with HOME a throwaway folder in the job."""
+    from odie.workers import sandbox
+    home = folder / "home"
+    home.mkdir(parents=True, exist_ok=True)
+    argv = sandbox.command(["/bin/sh", "-c", command], folder)
+    return await run_command(argv, repo, TEST_SECONDS, env=sandbox.env(folder, home=home))
 
 
 async def git(cwd: Path, *args: str) -> str:
@@ -195,8 +212,8 @@ def uncard(store, loop_id: int) -> None:
 
 def running_for(store, loop_id: int) -> bool:
     """Whether a test of this loop is queued or running now."""
-    row = store.one("select 1 from jobs where loop_id=? and kind='pr_test' and status in ('queued','running')",
-                    (loop_id,))
+    row = store.one("select 1 from jobs where loop_id=? and kind='pr_test' and status in ('queued','running') "
+                    "and version >= 2", (loop_id,))
     return row is not None
 
 
@@ -229,10 +246,14 @@ async def run_job(job, store) -> str:
     result = {"sha": sha, "command": command, "exit": None, "passed": None, "failed": 0, "ok": False, "tail": "",
               "at": now_local().isoformat(timespec="seconds"), "job_id": job.id, "error": ""}
     try:
-        if ref is None or not github.SHA_RE.match(sha) or not command:
+        from odie.loops import recipes
+        from odie.workers import sandbox
+        if ref is None or not github.SHA_RE.match(sha) or not recipes.runnable(command):
             raise PrTestError("the test's spec is broken")
+        if not sandbox.available():
+            raise PrTestError("this computer has no sandbox to run tests in")
         repo = await checkout(ref, sha, job.folder)
-        code, output = await run_command(["/bin/sh", "-c", command], repo, TEST_SECONDS)
+        code, output = await run_test(command, repo, job.folder)
         (job.folder / "output.log").write_text(output)
         found = counts(output)
         result.update(exit=code, tail=output[-TAIL:], ok=code == 0)

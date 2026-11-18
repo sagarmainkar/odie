@@ -24,8 +24,11 @@ class Chat:
         self.posts = []
         self._plugin_toolsets = []
 
-    async def post_message(self, text, session_id=None, media=None, kind="system"):
-        self.posts.append({"text": text, "session_id": session_id, "media": media, "kind": kind})
+    async def post_message(self, text, session_id=None, media=None, kind="system", shown=None):
+        post = {"text": text, "session_id": session_id, "media": media, "kind": kind}
+        if shown is not None:
+            post["shown"] = shown
+        self.posts.append(post)
 
     def _apps_stop(self, tool, args, tool_context):
         return None
@@ -114,27 +117,26 @@ def test_a_jobs_needs_are_kept_once_each(world, tmp_path):
 
 # ── what a tap allows ────────────────────────────────────────────────────────
 
-def test_an_allow_covers_a_passable_kind_and_otherwise_only_the_exact_call():
-    deletes = {"tool": "run_shell", "command": "rm ~/Documents/old.txt", "why": "deletes or stops something"}
-    install = {"tool": "run_shell", "command": "npm install left-pad", "why": "installs software (runs its install scripts)"}
+def test_an_allow_covers_only_the_exact_call():
+    folder = "/w/jobs/a"
+    install = {"tool": "run_shell", "command": "npm install left-pad", "cwd": folder,
+               "why": "installs software (runs its install scripts)"}
     send = {"tool": "GMAIL_SEND_EMAIL", "args": {"to": "asha@example.com"}, "why": allow.APP_WHY}
-    assert allow.covers([deletes], "run_shell", {"command": "rm -f build.log"}, ["deletes or stops something"])
-    assert not allow.covers([deletes], "run_shell", {"command": "cat ~/.env"}, ["reads secrets"])
-    assert allow.covers([install], "run_shell", {"command": "npm install left-pad"}, [install["why"]])
-    assert not allow.covers([install], "run_shell", {"command": "npm install evil"}, [install["why"]])
+    assert allow.covers([install], "run_shell", {"command": "npm install left-pad", "cwd": folder}, [install["why"]])
+    assert not allow.covers([install], "run_shell", {"command": "npm install evil", "cwd": folder}, [install["why"]])
     assert allow.covers([send], "GMAIL_SEND_EMAIL", {"to": "asha@example.com"}, [allow.APP_WHY])
     assert not allow.covers([send], "GMAIL_SEND_EMAIL", {"to": "someone@example.com"}, [allow.APP_WHY])
-    assert not allow.covers([], "run_shell", {"command": "rm a"}, ["deletes or stops something"])
+    assert not allow.covers([], "run_shell", {"command": "rm a", "cwd": folder}, ["deletes or stops something"])
+    deletes = {"tool": "run_shell", "command": "rm a && npm install x", "cwd": folder, "why": "deletes or stops something"}
     both = ["deletes or stops something", "installs software (runs its install scripts)"]
-    assert not allow.covers([deletes], "run_shell", {"command": "rm a && npm install x"}, both)  # every reason needs cover
-    assert allow.uncovered([deletes], "run_shell", {"command": "rm a && npm install x"}, both) == [both[1]]
+    assert allow.uncovered([deletes], "run_shell", {"command": "rm a && npm install x", "cwd": folder}, both) == [both[1]]
 
 
 def test_what_was_needed_reads_as_a_line():
     assert allow.line({"tool": "run_shell", "command": "rm ~/Documents/old.txt", "why": "deletes or stops something"}) == \
-        "`rm ~/Documents/old.txt` (deletes or stops something)"
+        "Delete or stop something: `rm ~/Documents/old.txt`"
     assert allow.line({"tool": "GMAIL_SEND_EMAIL", "args": {"to": "a"}, "why": allow.APP_WHY}) == \
-        f"GMAIL_SEND_EMAIL ({allow.APP_WHY})"
+        'Send something from an app (GMAIL_SEND_EMAIL): `GMAIL_SEND_EMAIL {"to": "a"}`'
 
 
 # ── the guard ────────────────────────────────────────────────────────────────
@@ -148,6 +150,7 @@ class Tool:
 
 def test_the_guard_follows_smart_rules_and_refuses_what_would_ask(world, tmp_path):
     store, chat, _ = world
+    store.set_setting("approvals.mode", "smart")
     job = a_job(store, tmp_path)
     guard = worker.guard_for(store, job, chat)
     args = {"command": "echo hi"}
@@ -167,18 +170,24 @@ def test_the_guard_follows_smart_rules_and_refuses_what_would_ask(world, tmp_pat
     assert [(a["tool"], a["refused"]) for a in recorded] == [
         ("run_shell", "deletes or stops something"), ("GMAIL_SEND_EMAIL", allow.APP_WHY), ("web_search", None)]
     needed = jobs.needed(jobs.get(store, job.id))
-    assert needed[0] == {"tool": "run_shell", "command": "rm ~/Documents/old.txt", "why": "deletes or stops something"}
+    assert needed[0] == {"tool": "run_shell", "command": "rm ~/Documents/old.txt", "cwd": str(job.folder),
+                         "why": "deletes or stops something"}
 
 
 def test_an_allowed_retry_lets_exactly_that_through(world, tmp_path):
     store, chat, _ = world
     job = a_job(store, tmp_path)
-    jobs.set_allowed(store, job.id, [{"tool": "run_shell", "command": "rm ~/Documents/old.txt", "why": "deletes or stops something"}])
+    jobs.set_allowed(store, job.id, [{"tool": "run_shell", "command": "rm ~/Documents/old.txt", "cwd": str(job.folder),
+                                      "why": "deletes or stops something"}])
     job = jobs.from_row(jobs.get(store, job.id))
     guard = worker.guard_for(store, job, chat)
     assert guard(Tool("run_shell"), {"command": "rm ~/Documents/old.txt", "cwd": str(job.folder)}, None) is None
     assert guard(Tool("run_shell"), {"command": "cat ~/.env", "cwd": str(job.folder)}, None) is not None
-    refused = guard(Tool("run_shell"), {"command": "rm ~/Documents/old.txt && npm install left-pad", "cwd": str(job.folder)}, None)
+    both = "rm ~/Documents/old.txt && npm install left-pad"
+    jobs.set_allowed(store, job.id, [{"tool": "run_shell", "command": both, "cwd": str(job.folder),
+                                      "why": "deletes or stops something"}])
+    guard = worker.guard_for(store, jobs.from_row(jobs.get(store, job.id)), chat)
+    refused = guard(Tool("run_shell"), {"command": both, "cwd": str(job.folder)}, None)
     assert refused["error"].startswith("Not run: it installs software")  # the reason his tap didn't cover
 
 
@@ -196,8 +205,8 @@ async def test_a_worker_runs_the_shell_in_its_folder_reports_and_the_chat_hears_
     assert (row["status"], row["outcome"], row["report"], row["runs"]) == ("done", "ready", "The shell says hello.", 1)
     acted = jobs.actions(store, job.id)
     assert [a["tool"] for a in acted] == ["run_shell", "report"]
-    assert chat.posts == [{"text": f"✅ Done: Tides ({job.id})\n\nThe shell says hello.", "session_id": "chat-2026-11-18",
-                           "media": None, "kind": "job"}]
+    assert chat.posts[0]["shown"] == f"✅ Done: Tides ({job.id})\n\nThe shell says hello."
+    assert (chat.posts[0]["session_id"], chat.posts[0]["kind"], len(chat.posts)) == ("chat-2026-11-18", "job", 1)
     assert pushes[0][2] == job.id
     first = Scripted.seen[0]
     names = sorted(f.name for t in first.config.tools for f in t.function_declarations)
@@ -215,9 +224,9 @@ async def test_a_refused_step_is_reported_as_needed_with_the_way_to_allow_it(wor
     Scripted.script = [("run_shell", {"command": "chmod u+r notes.txt"}),
                        ("report", {"outcome": "blocked", "text": "I couldn't change notes.txt."})]
     await worker.run(job, store, chat)
-    text = chat.posts[0]["text"]
+    text = chat.posts[0]["shown"]
     assert text.startswith(f"⛔ Tides is stuck ({job.id})\n\nI couldn't change notes.txt.")
-    assert "I needed to: `chmod u+r notes.txt` (deletes or stops something)." in text
+    assert "I needed to:\n- Delete or stop something: `chmod u+r notes.txt`" in text
     assert "Allow it and run again" in text and "Pulse" in text
 
 
@@ -239,7 +248,7 @@ async def test_a_worker_that_stops_without_a_report_is_nudged_once_then_fails(wo
     assert len(Scripted.seen) == 2
     assert "Call report now" in Scripted.seen[1].contents[-1].parts[0].text
     assert jobs.get(store, job.id)["error"] == "stopped without a report"
-    assert chat.posts[0]["text"].startswith(f"❌ Tides didn't finish ({job.id}): stopped without a report")
+    assert chat.posts[0]["shown"].startswith(f"❌ Tides didn't finish ({job.id}): stopped without a report")
 
 
 async def test_a_worker_past_its_budget_is_stopped_and_the_job_fails(world, tmp_path):

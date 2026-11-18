@@ -120,7 +120,10 @@ create index if not exists loop_events_loop on loop_events(loop_id);
 -- Workers (odie.workers, Workers design 18 Nov 2026): one row per background job, and one per tool call it made.
 -- kind: task (a Worker the user started from chat) or pr_test (code runs a pull request's tests for a loop).
 -- personality NULL = everyday Odie's. needed_json: what the Worker was refused (would need a tap); allowed_json: what
--- the user's tap in the app allowed for the job's next run only.
+-- the user's tap in the app allowed for the job's next run only. taint: the outside text the chat had read when it
+-- started the job ("mail", "web pages"): such a Worker gets no web and no apps. version: rows this code wrote are 2;
+-- an older install's rows (the bots experiment's jobs table, upgraded by Store.init_schema) stay 0 and are never shown,
+-- told, recovered or retried.
 create table if not exists jobs (
   id text primary key,
   kind text not null,
@@ -140,6 +143,8 @@ create table if not exists jobs (
   needed_json text not null default '[]',
   allowed_json text not null default '[]',
   cleared integer not null default 0,
+  taint text not null default '',
+  version integer not null default 0,
   created_at text not null,
   started_at text,
   ended_at text

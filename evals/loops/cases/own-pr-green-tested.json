@@ -50,13 +50,23 @@
           "status": "COMPLETED",
           "conclusion": "SUCCESS"
         }
+      ],
+      "commits": [
+        {
+          "oid": "",
+          "authors": [
+            {
+              "login": "you-dev"
+            }
+          ]
+        }
       ]
     },
     "user": "you-dev",
     "diff:you-dev/app#70": "diff --git a/app/threads.py b/app/threads.py\n-    rows.sort()\n+    rows.sort(reverse=True)\n"
   },
   "recipes": {
-    "you-dev/app": "sh test.sh"
+    "you-dev/app": "make test"
   },
   "origin": {
     "repo": "you-dev/app",
