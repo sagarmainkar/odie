@@ -1,5 +1,6 @@
 import { everyday, setPick, usePick } from "../pick";
 import { usePickedPersona } from "../persona";
+import { lightOf } from "../light";
 import { OnIt } from "../components/OnIt";
 import { asksToTurnOn, otherLine, pulseKicker, type LoopDone, type OnIt as OnItItem, type Other } from "../pulse";
 import type { Proactive } from "../proactive";
@@ -171,7 +172,7 @@ export function Today() {
       <div className="h-full overflow-y-auto overflow-x-hidden no-scrollbar px-[18px] lg:px-8 safe-top pb-[110px] flex flex-col gap-[18px] [overflow-wrap:anywhere]">
         <div className="flex items-center justify-between rise">
           <div className="text-small font-semibold text-muted truncate">{pulseKicker(pick, date, picked.name)}</div>
-          <a href="#settings" aria-label="Settings" className="flex"><Avatar size={44} state={approvals.length ? "approval" : "idle"} who={picked} /></a>
+          <a href="#settings" aria-label="Settings" className="flex"><Avatar size={44} state={approvals.length ? "approval" : "idle"} who={picked} light={lightOf(pick)} /></a>
         </div>
         <div className="rise" style={delay(0.05)}>
           <h1 className="text-[34px] leading-[1.12] font-bold tracking-[-0.025em]">{picked.name}'s <span className="serif text-[40px] text-ink-2">Pulse</span></h1>
