@@ -169,12 +169,13 @@ def watch_tools(check: Check) -> list[FunctionTool]:
 
     def report(needs_you: list[dict], line: str, done: list[dict] | None = None) -> dict:
         """Finish the check. needs_you: [{ref: "mail:<id>" or "event:<id>", title, why (≤120 chars: what is asked, by
-        when), pile (alerts, bills, events, personal or orders), suggestion {label, run}, escape {label, run}, due
-        (2026-10-24), amount {value, currency}, draft {to, subject, body} when a reply is owed, push}] (push only for
-        what needs the user soon; a run is the chat request a tap sends, naming "watch item <ref>"). line: one sentence for Today. done: what you did for a Watch for entry: [{message,
-        files: [paths in the workspace], tell}]. tell: true only when the user should hear it now (a reminder you
-        added, something new he'd act on); leave it out for "nothing new", "already covered" or "couldn't": those stay
-        on the card, never in the chat."""
+        when), pile (alerts, bills, events, personal or orders), suggestion {label} (the one move Odie can make,
+        "Show the draft", "Open PR #31"; leave it out when there is none: the card offers "Tell me more"; Done and
+        Later are on every card), due (2026-10-24), amount {value, currency}, draft {to, subject, body} when a reply
+        is owed, push}] (push only for what needs the user soon). line: one sentence for Today. done: what you did
+        for a Watch for entry: [{message, files: [paths in the workspace], tell}]. tell: true only when the user
+        should hear it now (a reminder you added, something new he'd act on); leave it out for "nothing new",
+        "already covered" or "couldn't": those stay on the card, never in the chat."""
         check.report = {"needs_you": needs_you or [], "line": line or "", "done": done or []}
         return {"result": "Reported. The check is over."}
 

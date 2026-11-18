@@ -1,6 +1,6 @@
 import { AnimatePresence, motion } from "framer-motion";
 import { useState } from "react";
-import { badgeTone, tileColour, type Need, type NeedAction, type WatchNote } from "../needs";
+import { badgeTone, buttonsOf, tileColour, type Need, type NeedAction, type WatchNote } from "../needs";
 import { mediaUrl } from "../media";
 import { Orb } from "./Orb";
 import { Icon, Tile } from "./Tile";
@@ -8,9 +8,9 @@ import { WatchClosed, type WatchClosedItem } from "./WatchClosed";
 
 const ask = (q: string) => { location.hash = `#chat?q=${encodeURIComponent(q)}`; };
 
-/** Today's "Needs you": one card per thing to act on, from the watch's last check and the user's own reminders. Each
- * card has its two buttons. What the watch did fold into one "done while you were away" line: its notes (with any
- * files) and the reminders it closed (with Reopen). open: start unfolded (tests). */
+/** A Pulse's "Needs you": one card per thing to act on, from the watch's last check and the user's own reminders. Each
+ * card has the same three buttons: its move, Done and Later. What the watch did fold into one "done today" line: its
+ * notes (with any files) and what it closed (with Reopen). open: start unfolded (tests). */
 export function NeedsYou({ items, footer, closed, notes = [], onAct, onReopen, open = false }: {
   items: Need[] | null; footer: string; closed: WatchClosedItem[]; notes?: WatchNote[];
   onAct: (need: Need, act: NeedAction) => void; onReopen: (id: number) => void; open?: boolean;
@@ -42,9 +42,12 @@ export function NeedsYou({ items, footer, closed, notes = [], onAct, onReopen, o
                 {n.badge && <span className={`chip ${badgeTone(n.badge) === "warn" ? "chip-warn" : "chip-soft"} mt-1.5 inline-flex`}>{n.badge}</span>}
               </span>
             </button>
-            <div className="flex gap-2 pl-12">
-              <button type="button" onClick={() => onAct(n, n.main)} className="pill pill-solid h-9 px-4 text-ui shadow-none">{n.main.label}</button>
-              <button type="button" onClick={() => onAct(n, n.other)} className="pill h-9 px-4 text-ui">{n.other.label}</button>
+            {/* The move first and solid, then Done and Later; on a phone a long move takes its own line. */}
+            <div className="flex flex-wrap gap-2 pl-12">
+              {buttonsOf(n).map((a, i) => (
+                <button key={a.action + i} type="button" onClick={() => onAct(n, a)}
+                  className={i === 0 ? "pill pill-solid h-9 px-4 text-ui shadow-none max-w-full truncate" : "pill h-9 px-3.5 text-ui"}>{a.label}</button>
+              ))}
             </div>
           </motion.div>
         ))}
@@ -53,7 +56,7 @@ export function NeedsYou({ items, footer, closed, notes = [], onAct, onReopen, o
         <div className="glass rounded-tile px-3 py-1">
           <button type="button" onClick={() => setShowClosed(!showClosed)} aria-expanded={showClosed}
             className="w-full flex items-center gap-2 py-2 text-left text-ui text-good font-semibold">
-            <span className="flex-1">✓ {doneCount} done while you were away</span>
+            <span className="flex-1">✓ {doneCount} done today</span>
             <span className="text-dim" aria-hidden="true">{showClosed ? "‹" : "›"}</span>
           </button>
           {showClosed && notes.map((n) => (

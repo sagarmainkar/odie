@@ -1,11 +1,20 @@
 import type { IconName, TileColor } from "./components/Tile";
 import type { Media } from "./media";
 
-/** What a card's button does, decided by the server (odie/watch/needs.py). */
-export type NeedAction = { label: string; action: "chat" | "dismiss" | "done_task" | "snooze_task"; value: string | number };
+/** What a card's button does, decided by the server (odie/watch/needs.py). "later": put the card off until 09:00
+ *  tomorrow (POST /api/needs_you/later with its ref). */
+export type NeedAction = { label: string; action: "chat" | "dismiss" | "done_task" | "snooze_task" | "later"; value: string | number };
 
-/** One card in Today's "Needs you": a watch item from mail, or one of the user's own reminders. */
-export type Need = { ref: string; title: string; why: string; icon: IconName; badge: string; ask: string; main: NeedAction; other: NeedAction };
+/** One card in a Pulse's "Needs you": a watch item from mail, or one of the user's own reminders. Every card has the
+ *  same three buttons: its one move (main), Done (other) and Later (later; an older server sends no Later). */
+export type Need = { ref: string; title: string; why: string; icon: IconName; badge: string; ask: string; main: NeedAction; other: NeedAction; later?: NeedAction };
+
+/** A card's buttons in the order they show: the move, Done, then Later when the server sends it.
+ *  {main: "Show the draft", other: "Done", later: "Later"} -> those three; no later (an older server) -> the first two. */
+export function buttonsOf(need: Need): NeedAction[] {
+  if (!need.later) return [need.main, need.other];
+  return [need.main, need.other, need.later];
+}
 
 const ICON_COLOUR: Partial<Record<IconName, TileColor>> = {
   alert: "orange", rupee: "green", cal: "orange", heart: "pink", ticket: "violet", mail: "blue", bell: "yellow",

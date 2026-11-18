@@ -76,3 +76,22 @@ async def test_needs_you_serves_the_cards_and_the_checks_footer(isolated_setting
     assert got["watch"]["line"] == "1 new email" and "checked_at" in got["watch"]
     assert set(got) == {"items", "counts", "watch", "notes"}
     assert sum(got["counts"].values()) == len(got["items"]) and set(got["counts"]) == set(report.PILES)
+
+
+async def test_later_hides_a_card_till_the_next_morning_and_done_takes_it_off(isolated_settings, store):
+    # The three buttons on every card: Later hides it (a watch item or a task) until 09:00 tomorrow; Done takes it off.
+    from odie.app.main import create_app
+    from tests.test_api import FakeRunner
+    tid = store.add_task("Renew passport", "todo")
+    app = create_app(runner=FakeRunner(), store=store)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+        async with app.router.lifespan_context(app):
+            [mail_card, task_card] = (await c.get("/api/needs_you")).json()["items"]
+            assert mail_card["later"] == {"label": "Later", "action": "later", "value": "mail:m1"}
+            assert task_card["later"] == {"label": "Later", "action": "later", "value": f"task:{tid}"}
+            for ref in ("mail:m1", f"task:{tid}"):
+                got = await c.post("/api/needs_you/later", json={"ref": ref})
+                assert got.status_code == 200 and got.json()["until"].endswith("T09:00:00+05:30")
+            assert (await c.get("/api/needs_you")).json()["items"] == []
+            assert (await c.get("/api/watch")).json()["unseen"] == 0  # a hidden item isn't counted as new
+            assert (await c.post("/api/needs_you/later", json={"ref": "mail:gone"})).status_code == 404

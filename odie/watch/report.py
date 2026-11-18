@@ -55,7 +55,7 @@ def badges_of(source_ids: list[str], statuses: dict) -> list[dict]:
 
 
 def _label(value) -> str:
-    """A button's words from the model's suggestion or escape: {"label": "Reply with your fee"} -> that, trimmed to
+    """A button's words from the model's suggestion: {"label": "Reply with your fee"} -> that, trimmed to
     fit; no label, or not an object -> "". The model writes only the words, never what the tap sends."""
     if not isinstance(value, dict):
         return ""
@@ -98,9 +98,9 @@ def _day(value) -> str | None:
 def labelled(n: dict) -> dict:
     """The labels of one item the model reported, each kept only when it is usable; a bad one is left out, never the
     item. {"pile": "alerts", "suggestion": {"label": "Reply", "run": "…"}, "due": "2026-10-24"} -> those three;
-    {"pile": "urgent", "suggestion": {}, "due": "next week"} -> {}. A suggestion's or escape's tap always sends Odie's
-    own request naming the item ("Show the draft for watch item mail:m1", "Close watch item mail:m1: Not interested"),
-    whatever run the model wrote."""
+    {"pile": "urgent", "suggestion": {}, "due": "next week"} -> {}. A suggestion's tap always sends Odie's own request
+    naming the item ("Show the draft for watch item mail:m1"), whatever run the model wrote. An older report's
+    "escape" (a way out, "Not now") is accepted and left out: every card has the same Done and Later (odie.watch.needs)."""
     out: dict = {}
     ref = str(n.get("ref") or "")
     pile = str(n.get("pile") or "").strip().lower()
@@ -113,9 +113,6 @@ def labelled(n: dict) -> dict:
         if draft:
             run = f"Show the draft for watch item {ref}"
         out["suggestion"] = {"label": suggestion, "run": run}
-    escape = _label(n.get("escape"))
-    if escape:
-        out["escape"] = {"label": escape, "run": f"Close watch item {ref}: {escape}"}
     due = _day(n.get("due"))
     if due:
         out["due"] = due

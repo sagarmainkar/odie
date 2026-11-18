@@ -1162,7 +1162,7 @@
     }
   },
   {
-    "description": "A watch card's item on Today by its ref (\"mail:<id>\"): what it is, its suggestion and escape, and its\ndrafted reply when it has one. Use it when the user taps a card or asks about a watch item. To send a draft,\nshow it, then use the mail app's draft and send tools: the user approves the send.",
+    "description": "A watch card's item on Today by its ref (\"mail:<id>\"): what it is, its suggested move, and its\ndrafted reply when it has one. Use it when the user taps a card or asks about a watch item. To send a draft,\nshow it, then use the mail app's draft and send tools: the user approves the send.",
     "name": "watch_item",
     "parameters_json_schema": {
       "properties": {

@@ -1,4 +1,5 @@
-"""Today's "Needs you": one list of cards, the watch's items and the user's own open reminders, each with two buttons."""
+"""Today's "Needs you": one list of cards, the watch's items and the user's own open reminders, each with three buttons:
+the one move (the watch's label, else "Tell me more"), Done and Later."""
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -29,23 +30,66 @@ REPLY = {"ref": "mail:r1", "title": "Reply to Asha", "why": "Asks if Saturday 4p
          "escape": {"label": "Not needed", "run": "Close watch item mail:r1: Not needed"}}
 
 
-def test_a_watch_item_becomes_a_card_with_its_two_buttons(store):
+DONE_R1 = {"label": "Done", "action": "dismiss", "value": "mail:r1"}
+LATER_R1 = {"label": "Later", "action": "later", "value": "mail:r1"}
+
+
+def test_a_watch_item_becomes_a_card_with_its_three_buttons(store):
     card_with(store, REPLY)
     [c] = needs.cards(store, NOW)
     assert c["title"] == "Reply to Asha" and c["why"] == "Asks if Saturday 4pm works" and c["icon"] == "heart"
     assert c["main"] == {"label": "Show the draft", "action": "chat", "value": "Show the draft for watch item mail:r1"}
-    assert c["other"] == {"label": "Not needed", "action": "dismiss", "value": "mail:r1"}
+    assert c["other"] == DONE_R1  # the model's own way out ("Not needed") is no longer a button: Done is fixed
+    assert c["later"] == LATER_R1
     assert "SECRET-DRAFT-BODY" not in str(c)  # a drafted reply never goes on a card: chat shows it when asked
 
 
-def test_a_watch_item_without_buttons_asks_about_itself_and_can_be_dismissed(store):
+def test_a_watch_item_without_a_move_asks_about_itself_with_done_and_later(store):
     card_with(store, {"ref": "mail:s1", "title": "New sign-in", "why": "From a new laptop", "pile": "alerts"})
     [c] = needs.cards(store, NOW)
-    assert c["main"]["action"] == "chat" and "mail:s1" in c["main"]["value"]
-    assert c["other"] == {"label": "Dismiss", "action": "dismiss", "value": "mail:s1"}
+    assert c["main"] == {"label": "Tell me more", "action": "chat", "value": "Tell me about watch item mail:s1"}
+    assert c["other"] == {"label": "Done", "action": "dismiss", "value": "mail:s1"}
+    assert c["later"] == {"label": "Later", "action": "later", "value": "mail:s1"}
 
 
-def test_the_users_reminders_follow_with_done_and_tomorrow(store):
+def test_an_item_put_off_till_later_stays_hidden_until_9_the_next_morning(store):
+    card_with(store, REPLY, {"ref": "mail:s1", "title": "New sign-in", "pile": "alerts"})
+    assert needs.later(store, "mail:r1", NOW) == "2026-10-24T09:00:00+05:30"
+    assert [c["ref"] for c in needs.cards(store, NOW)] == ["mail:s1"]
+    the_next_morning = datetime(2026, 10, 24, 9, 0, tzinfo=IST)
+    assert [c["ref"] for c in needs.cards(store, the_next_morning)] == ["mail:r1", "mail:s1"]
+
+
+def test_later_is_always_the_next_days_9am(store):
+    assert needs.later_until(datetime(2026, 10, 23, 23, 50, tzinfo=IST)) == "2026-10-24T09:00:00+05:30"
+    assert needs.later_until(datetime(2026, 10, 31, 8, 0, tzinfo=IST)) == "2026-11-01T09:00:00+05:30"
+
+
+def test_a_hidden_item_survives_the_next_check_refreshing_the_card(store):
+    from odie.watch.fetch import Mail
+    card_with(store, REPLY)
+    needs.later(store, "mail:r1", NOW)
+    mails = [Mail("r1", "Asha <asha@example.com>", "Saturday", "t", "s", [], "mail:z")]
+    report.apply(store, NOW, [{"ref": "mail:r1", "title": "Reply to Asha again"}], "line", mails, [], {}, first=False)
+    [item] = store.get_setting(report.CARD)["needs_you"]
+    assert item["hidden_until"] == "2026-10-24T09:00:00+05:30"
+    assert needs.cards(store, NOW) == []
+
+
+def test_later_on_a_task_snoozes_it_till_9_the_next_morning(store):
+    tid = store.add_task("Call the plumber", "todo")
+    assert needs.later(store, f"task:{tid}", NOW) == "2026-10-24T09:00:00+05:30"
+    assert needs.cards(store, NOW) == []
+    assert store.one("select snoozed_until from tasks where id=?", (tid,))["snoozed_until"] == "2026-10-24T09:00:00+05:30"
+
+
+def test_later_on_something_not_there_says_so(store):
+    card_with(store, REPLY)
+    assert needs.later(store, "mail:gone", NOW) is None
+    assert needs.later(store, "task:999", NOW) is None
+
+
+def test_the_users_reminders_follow_with_tell_me_more_done_and_later(store):
     card_with(store, REPLY)
     later = store.add_task("Renew passport", "reminder", due_at="2026-10-30T09:00:00+05:30")
     overdue = store.add_task("Pay electricity bill ₹2,480", "reminder", due_at="2026-10-20T09:00:00+05:30")
@@ -54,8 +98,9 @@ def test_the_users_reminders_follow_with_done_and_tomorrow(store):
     assert [c["ref"] for c in got] == ["mail:r1", f"task:{overdue}", f"task:{later}", f"task:{undated}"]
     bill = got[1]
     assert bill["icon"] == "rupee" and bill["badge"] == "Overdue"
-    assert bill["main"] == {"label": "Done", "action": "done_task", "value": overdue}
-    assert bill["other"] == {"label": "Tomorrow", "action": "snooze_task", "value": overdue}
+    assert bill["main"] == {"label": "Tell me more", "action": "chat", "value": f"Tell me about task #{overdue}: Pay electricity bill ₹2,480"}
+    assert bill["other"] == {"label": "Done", "action": "done_task", "value": overdue}
+    assert bill["later"] == {"label": "Later", "action": "later", "value": f"task:{overdue}"}
     assert got[2]["badge"] == "30 Oct, 09:00" and got[3]["badge"] == ""
 
 
@@ -80,6 +125,8 @@ def test_a_reply_task_from_mail_opens_the_email(store):
     assert c["main"] == {"label": "Open it", "action": "chat",
                          "value": "Open the email from Priya Nair about Can we move our 1:1?"}
     assert c["other"] == {"label": "Done", "action": "done_task", "value": tid}
+    assert c["later"] == {"label": "Later", "action": "later", "value": f"task:{tid}"}
+    assert c["decide"] is False  # Odie has a move: opening the mail
 
 
 def test_notes_the_watch_told_in_the_last_day_go_under_needs_you(store):
@@ -113,10 +160,10 @@ def test_a_watch_card_says_its_pile_since_and_whether_it_needs_a_choice(store):
     assert (unlabelled["pile"], unlabelled["since"], unlabelled["decide"]) == ("alerts", "", True)
 
 
-def test_the_users_tasks_get_a_pile_from_their_icon_and_never_decide(store):
+def test_the_users_tasks_get_a_pile_from_their_icon_and_decide_unless_odie_can_open_the_mail(store):
     bill = store.add_task("Pay electricity bill ₹2,480", "reminder", due_at="2026-10-20T09:00:00+05:30")
-    order = store.add_task("Order: desk lamp", "todo")
-    plain = store.add_task("Call the plumber", "todo")
+    store.add_task("Order: desk lamp", "todo")
+    store.add_task("Call the plumber", "todo")
     store.update_task(bill, created_at="2026-10-21T03:30:00.000Z")
     store.upsert_source_task("mail", "m7", "Reply to Sam Lee: Lunch on Friday?", "followup")
     got = {c["title"]: c for c in needs.cards(store, NOW)}
@@ -124,18 +171,19 @@ def test_the_users_tasks_get_a_pile_from_their_icon_and_never_decide(store):
     assert got["Pay electricity bill ₹2,480"]["since"] == "2026-10-21T09:00:00+05:30"
     assert got["Order: desk lamp"]["pile"] == "orders" and got["Call the plumber"]["pile"] == "alerts"
     assert got["Reply to Sam Lee: Lunch on Friday?"]["pile"] == "alerts"
-    assert not any(c["decide"] for c in got.values())
+    assert got["Reply to Sam Lee: Lunch on Friday?"]["decide"] is False  # "Open it" is Odie's move
+    assert got["Call the plumber"]["decide"] is True  # only "Tell me more": the choice is the user's
 
 
 def test_the_old_fields_are_untouched(store):
     card_with(store, REPLY)
     [c] = needs.cards(store, NOW)
-    assert set(c) == OLD_KEYS | {"pile", "since", "decide"}
+    assert set(c) == OLD_KEYS | {"pile", "since", "decide", "later"}
     assert {k: c[k] for k in OLD_KEYS} == {
         "ref": "mail:r1", "title": "Reply to Asha", "why": "Asks if Saturday 4pm works", "icon": "heart", "badge": "",
         "ask": "Tell me about watch item mail:r1",
         "main": {"label": "Show the draft", "action": "chat", "value": "Show the draft for watch item mail:r1"},
-        "other": {"label": "Not needed", "action": "dismiss", "value": "mail:r1"}}
+        "other": {"label": "Done", "action": "dismiss", "value": "mail:r1"}}
 
 
 def test_a_task_with_an_unreadable_created_at_has_no_since(store):

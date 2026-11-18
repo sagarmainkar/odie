@@ -116,6 +116,7 @@ export function Today() {
       if (a.action === "dismiss") await postJSON("/api/watch/done", { ref: a.value });
       if (a.action === "done_task") await postJSON(`/api/tasks/${a.value}/done`, {});
       if (a.action === "snooze_task") await postJSON(`/api/tasks/${a.value}/snooze`, { until: `${isoDay(1)}T09:00` });
+      if (a.action === "later") await postJSON("/api/needs_you/later", { ref: a.value });
     } finally { loadTasks(); }
   }
 

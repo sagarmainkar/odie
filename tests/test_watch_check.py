@@ -274,7 +274,7 @@ def test_the_watch_reads_like_an_assistant():
     assert "Always finish with `report`" in text and "refused" in text
     assert "open_threads" in text and "`track`" in text and "draft" in text
     assert all(pile in text for pile in ("alerts", "bills", "events", "personal", "orders"))
-    assert "suggestion" in text and "escape" in text
+    assert "suggestion" in text and "escape" not in text  # Done and Later are fixed: the model writes only the move
     assert len(text.split()) <= 1000  # it also reviews its threads now; it still runs every 30 minutes
 
 

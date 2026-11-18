@@ -2334,13 +2334,18 @@ class WatchDoneIn(BaseModel):
 @router.get("/watch")
 async def watch_get(request: Request) -> dict[str, Any]:
     """The watch's card for Today: the last check's line, the needs-you items, the next events, each source's status,
-    and how many needs-you items are new since Today was last opened."""
-    from odie.watch import report
+    and how many needs-you items are new since Today was last opened (one put off with Later isn't counted)."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from odie.watch import needs, report
     store = request.app.state.store
     card = store.get_setting(report.CARD)
     if not card:
         return {"off": "The first check runs a minute after Odie starts.", "needs_you": [], "events": [], "unseen": 0}
-    return {**card, "unseen": sum(1 for i in card.get("needs_you", []) if not i.get("done") and not i.get("seen"))}
+    now = datetime.now(ZoneInfo(config.settings.timezone))
+    new_ones = [i for i in card.get("needs_you", []) if not i.get("done") and not i.get("seen") and not needs.hidden(i, now)]
+    return {**card, "unseen": len(new_ones)}
 
 
 @router.get("/needs_you")
@@ -2371,6 +2376,28 @@ async def watch_done(body: WatchDoneIn, request: Request) -> dict[str, Any]:
     from odie.watch import threads
     threads.close(store, body.ref, "dismissed on Today", by_user=True)  # the watch stops following it too
     return {"ok": True}
+
+
+class LaterIn(BaseModel):
+    ref: str
+
+
+@router.post("/needs_you/later")
+async def needs_you_later(body: LaterIn, request: Request) -> dict[str, Any]:
+    """A card's Later: hidden until 09:00 tomorrow, then back (odie.watch.needs.later). A watch item ("mail:m1") or a
+    task ("task:12"); a card that isn't there -> 404."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from odie.watch import needs
+    store = request.app.state.store
+    now = datetime.now(ZoneInfo(config.settings.timezone))
+    until = needs.later(store, body.ref, now)
+    if until is None:
+        raise HTTPException(404, "That card isn't there any more.")
+    if body.ref.startswith("task:"):
+        await _publish(request, {"type": "task", "id": int(body.ref[len("task:"):])})
+    return {"ok": True, "until": until}
 
 
 @router.post("/watch/seen")

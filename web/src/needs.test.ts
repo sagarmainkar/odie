@@ -1,7 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { badgeTone, chatRunHash, tileColour } from "./needs";
+import { badgeTone, buttonsOf, chatRunHash, tileColour, type Need } from "./needs";
 
 describe("needs", () => {
+  it("lists a card's buttons as the move, Done and Later, or two from an older server", () => {
+    const need: Need = { ref: "mail:r1", title: "Reply", why: "", icon: "mail", badge: "", ask: "",
+      main: { label: "Show the draft", action: "chat", value: "x" }, other: { label: "Done", action: "dismiss", value: "mail:r1" },
+      later: { label: "Later", action: "later", value: "mail:r1" } };
+    expect(buttonsOf(need).map((b) => b.label)).toEqual(["Show the draft", "Done", "Later"]);
+    expect(buttonsOf({ ...need, later: undefined }).map((b) => b.label)).toEqual(["Show the draft", "Done"]);
+  });
   it("colours a card's tile by its icon", () => {
     expect(tileColour("rupee")).toBe("green");
     expect(tileColour("alert")).toBe("orange");

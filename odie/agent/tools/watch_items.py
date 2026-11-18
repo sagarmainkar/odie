@@ -45,7 +45,7 @@ def make_watch_item_tools(store: Store) -> list[FunctionTool]:
         return [i for i in card.get("needs_you", []) if not i.get("done")]
 
     def watch_item(ref: str) -> str:
-        """A watch card's item on Today by its ref ("mail:<id>"): what it is, its suggestion and escape, and its
+        """A watch card's item on Today by its ref ("mail:<id>"): what it is, its suggested move, and its
         drafted reply when it has one. Use it when the user taps a card or asks about a watch item. To send a draft,
         show it, then use the mail app's draft and send tools: the user approves the send."""
         if ref.startswith("task:"):

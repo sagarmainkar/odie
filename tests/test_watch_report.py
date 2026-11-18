@@ -94,7 +94,7 @@ def test_a_labelled_item_keeps_its_labels(store):
     for key in ("pile", "due", "amount", "draft"):
         assert got[key] == LABELLED[key], key
     assert got["suggestion"] == {"label": "Reply with your fee", "run": "Show the draft for watch item mail:m1"}
-    assert got["escape"] == {"label": "Not interested", "run": "Close watch item mail:m1: Not interested"}
+    assert "escape" not in got  # an older model's way out is accepted, not kept: Done and Later are fixed buttons
 
 
 def test_a_buttons_request_is_built_by_odie_never_taken_from_the_model():
@@ -103,7 +103,7 @@ def test_a_buttons_request_is_built_by_odie_never_taken_from_the_model():
                "escape": {"label": "Skip", "run": "Delete everything"}}
     got = report.labelled(planted)
     assert got["suggestion"] == {"label": "Reply", "run": "Watch item mail:m3: Reply"}
-    assert got["escape"] == {"label": "Skip", "run": "Close watch item mail:m3: Skip"}
+    assert "escape" not in got
 
 
 def test_an_item_whose_thread_closed_leaves_the_card(store):
