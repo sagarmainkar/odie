@@ -77,8 +77,8 @@ def watch_tools(check: Check) -> list[FunctionTool]:
 
     def what_you_sent(tool_context=None) -> dict:
         """What the user sent since the last check (to, subject, time, first lines); a reply in the same thread as an
-        open item already closed it. Close an open thread with track "done" when one of these answers it: to the same
-        person, about the same thing; why in the user's words ("you replied 18 Nov 14:20")."""
+        open item already closed it. Close an open thread with track_thread "done" when one of these answers it: to
+        the same person, about the same thing; why in the user's words ("you replied 18 Nov 14:20")."""
         mark_read(tool_context)
         return {"result": json.dumps([check.fenced_sent(m) for m in check.sent], ensure_ascii=False)}
 
@@ -143,7 +143,7 @@ def watch_tools(check: Check) -> list[FunctionTool]:
 
     def open_threads() -> dict:
         """The orders, bills, replies owed and deadlines you are following (start every check here): id, ref, kind,
-        title, stage, due, overdue. Move or close each one with track; read_thread works on a reply's ref."""
+        title, stage, due, overdue. Move or close each one with track_thread; read_thread works on a reply's ref."""
         listed = threads.open_threads(check.fetcher.store, check.fetcher.now)
         for t in listed:
             known_mail(t)
@@ -163,7 +163,7 @@ def watch_tools(check: Check) -> list[FunctionTool]:
         "mail:o1" with an open thread -> True; "mail:unknown9", never seen and never followed -> False."""
         return ref in threads.open_refs(check.fetcher.store)
 
-    def track(ref: str, kind: str, title: str, stage: str, due: str = "", why: str = "") -> dict:
+    def track_thread(ref: str, kind: str, title: str, stage: str, due: str = "", why: str = "") -> dict:
         """Follow something until it's done: open a thread, move it to a new stage, or close it. ref: "mail:<id>".
         kind: order, bill, reply (a reply the user owes) or deadline. stage: where it is now ("placed", "shipped",
         "owed", "due"), or "done" / "dropped" to close it, with why (which mail showed it). due: when it's due or
@@ -197,5 +197,5 @@ def watch_tools(check: Check) -> list[FunctionTool]:
         return {"result": "Reported. The check is over."}
 
     return [FunctionTool(f) for f in (open_threads, what_you_sent, new_mail, upcoming_events, read_mail, read_thread,
-                                       search_mail, sent_to, save_attachment, bills_and_orders, track, close_reminder,
-                                       report)]
+                                       search_mail, sent_to, save_attachment, bills_and_orders, track_thread,
+                                       close_reminder, report)]

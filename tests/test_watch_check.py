@@ -272,7 +272,7 @@ def test_the_watch_reads_like_an_assistant():
     assert "a reply owed" in text and "unsubscribe footer" in text and "opportunity for the user" in text
     assert "read_thread" in text and "sent_to" in text and "search_mail" in text
     assert "Always finish with `report`" in text and "refused" in text
-    assert "open_threads" in text and "`track`" in text and "draft" in text
+    assert "open_threads" in text and "`track_thread`" in text and "draft" in text
     assert all(pile in text for pile in ("alerts", "bills", "events", "personal", "orders"))
     assert "suggestion" in text and "escape" not in text  # Done and Later are fixed: the model writes only the move
     assert "what_you_sent" in text and "answers it" in text  # the user's own mail closes what it answers (18 Nov)
@@ -309,7 +309,7 @@ async def test_tracking_a_thread_is_not_telling_the_user(store, tmp_path):
 
     async def turn(prompt, tools, instruction):
         await call(tools, "new_mail")
-        await call(tools, "track", ref="mail:m1", kind="order", title="Order: desk lamp", stage="placed")
+        await call(tools, "track_thread", ref="mail:m1", kind="order", title="Order: desk lamp", stage="placed")
         await call(tools, "report", needs_you=[], line="quiet", done=[{"message": "Nothing new, already covered"}])
     await check.run_check(store, DAY, turn, push)
     assert all("Nothing new" not in text for text, _media in posts)
@@ -343,7 +343,7 @@ async def test_the_watch_cant_open_a_thread_for_a_mail_it_hasnt_seen(store, tmp_
 
     async def turn(prompt, tools, instruction):
         await call(tools, "new_mail")
-        said.append(await call(tools, "track", ref="mail:unknown9", kind="order", title="Order: kettle", stage="placed"))
+        said.append(await call(tools, "track_thread", ref="mail:unknown9", kind="order", title="Order: kettle", stage="placed"))
         await call(tools, "report", needs_you=[], line="quiet")
     await check.run_check(store, DAY, turn, push)
     assert "search_mail" in str(said[0])
@@ -372,3 +372,18 @@ def test_after_reading_mail_the_watch_stays_off_the_web_except_watch_for_address
     assert older.state[READ_MAIL] is True
     assert check.guard(SimpleNamespace(name="web_search", _require_confirmation=False), {"query": "x"}, older) is not None
     check.WATCH_FOR_ADDRESSES.clear()
+
+
+def test_the_watchs_tools_never_shadow_odies_own(store):
+    # The watch's turn has Odie's own tools too (the trackers skill's "track" among them): a tool of the same name was
+    # shadowed ("Duplicate tool name 'track'"), so the watch's thread tool is named for what it does.
+    from odie.skills.trackers.tools import TOOLS as TRACKER_TOOLS
+    from odie.agent.tools.watch_items import make_watch_item_tools
+    from odie.watch.fetch import Fetcher
+    from odie.watch.tools import Check, watch_tools
+    watch_names = {t.name for t in watch_tools(Check(Fetcher(store, DAY)))}
+    chat_names = {t.name for t in [*TRACKER_TOOLS, *make_watch_item_tools(store)]}
+    assert watch_names.isdisjoint(chat_names)
+    assert "track_thread" in watch_names
+    text = check.SKILL.read_text()
+    assert "`track_thread`" in text and "`track`" not in text

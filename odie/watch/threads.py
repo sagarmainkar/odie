@@ -1,7 +1,7 @@
 """The watch's own threads (22 Oct 2026): the orders, bills, replies owed and deadlines it follows until they close.
 
 Each thread is a row in the tasks table that the watch made (source_kind "watch", source_ref the mail's ref), so it
-shows on Today like any other open thread and the user can tick it. The watch moves its threads with `track` (a new
+shows on Today like any other open thread and the user can tick it. The watch moves its threads with `track_thread` (a new
 stage, a new due date) and closes them with a reason when the mail shows they're done (a delivery, a payment, the
 user's own reply). It never touches a task the user made: only rows with source_kind "watch" are its own. Every check
 starts by reviewing them (`open_threads`), so a thread moves even when no new mail about it arrives."""
