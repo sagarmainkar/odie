@@ -4,18 +4,25 @@ cards. Each case is its mails, what GitHub says (a fake gh answers from it) and 
   {"loops": 1}                    one loop for the whole case (fourteen mails about one pull request)
   {"closed": ["example/app#50"]}  that loop closed, with a reason
   {"cards": [...]}, {"no_card": [...]}  which loops end as a card on Pulse, and which never do
-A case may start with loops already there ("open_loops": [{title, kind, refs, done}]).
+  {"tested_cards": [...]}         those end as a tested card with [Merge] (Odie ran their tests)
+  {"untested": [...]}             no test ran for those (someone else's, a lockfile, no approved command)
+  {"recipe_cards": ["you-dev/app"]}  a "Use this" card asks for that repo's test command
+A case may start with loops already there ("open_loops": [{title, kind, refs, done}]), with test commands he approved
+("recipes": {"you-dev/app": "sh test.sh"}), and with a throwaway repo standing in for GitHub's ("origin": {"repo":
+"you-dev/app", "pulls": {"70": "echo '12 passed'"}}: each pull request's head is a commit whose test.sh runs that).
 
 run_case takes the turn and the model call as arguments: tests pass scripted ones (deterministic, so the code's part
 is held to the score), and odie/loops_eval.py passes the real model (scripts/loops_eval.sh)."""
 from __future__ import annotations
 
+import asyncio
 import json
 import os
+import subprocess
 from datetime import datetime
 from pathlib import Path
 
-from odie.loops import clock, ledger, shortcut
+from odie.loops import cards, clock, ledger, pr_test, recipes, shortcut
 
 REPO = Path(__file__).resolve().parent.parent.parent
 EVAL_DIR = REPO / "evals" / "loops"
@@ -38,6 +45,50 @@ def use_fake_gh(case: dict, folder: Path) -> None:
     os.environ["ODIE_GH"] = str(script)
     os.environ["FAKE_GH_DATA"] = str(data)
     os.environ["FAKE_GH_LOG"] = str(log)
+
+
+GIT = ["git", "-c", "user.name=Eval", "-c", "user.email=eval@example.com", "-c", "commit.gpgsign=false",
+       "-c", "init.defaultBranch=main"]
+TEST_WAIT = 120  # seconds a case waits for Odie's tests to finish
+
+
+def _git(cwd: Path, *args: str) -> str:
+    return subprocess.run([*GIT, *args], cwd=cwd, check=True, capture_output=True, text=True).stdout.strip()
+
+
+def build_origin(case: dict, folder: Path) -> None:
+    """A throwaway local repo for the case's "origin" (never a clone from the network): main, and each pull request's
+    head commit at refs/pull/<n>/head with a test.sh that runs its line. The case's gh data learns each head's sha
+    and where to clone from."""
+    origin = case.get("origin")
+    if not origin:
+        return
+    repo = folder / "origin"
+    repo.mkdir(parents=True, exist_ok=True)
+    _git(repo, "init", "-q")
+    (repo / "README.md").write_text("A made-up app.\n")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-q", "-m", "first")
+    gh = case.setdefault("gh", {})
+    for number, line in origin["pulls"].items():
+        _git(repo, "checkout", "-q", "-B", f"pr-{number}", "main")
+        (repo / "test.sh").write_text(f"#!/bin/sh\n{line}\n")
+        (repo / f"change_{number}.py").write_text("print(1)\n")
+        _git(repo, "add", ".")
+        _git(repo, "commit", "-q", "-m", f"pull request {number}")
+        sha = _git(repo, "rev-parse", "HEAD")
+        _git(repo, "update-ref", f"refs/pull/{number}/head", sha)
+        gh[f"pr:{origin['repo']}#{number}"]["headRefOid"] = sha
+    _git(repo, "checkout", "-q", "main")
+    gh[f"clone:{origin['repo']}"] = str(repo)
+
+
+async def tests_done(store) -> None:
+    """Waits (up to TEST_WAIT) until no test Odie started is queued or running."""
+    for _ in range(TEST_WAIT * 10):
+        if store.one("select 1 from jobs where kind='pr_test' and status in ('queued','running')") is None:
+            return
+        await asyncio.sleep(0.1)
 
 
 def loop_of_ref(store, ref: str) -> dict | None:
@@ -75,6 +126,23 @@ def score(case: dict, store) -> dict:
         loop = loop_of_ref(store, ref)
         if loop is not None and loop["state"] == "ready":
             wrong.append(f"{ref} has a card it shouldn't")
+    for ref in expect.get("tested_cards", []):
+        checks += 1
+        loop = loop_of_ref(store, ref)
+        tested = None
+        if loop is not None:
+            tested = pr_test.result_for(store, loop["id"])
+        if loop is None or loop["state"] != "ready" or cards.card(loop, tested)["main"]["action"] != "merge":
+            wrong.append(f"{ref} has no tested card with Merge")
+    for ref in expect.get("untested", []):
+        checks += 1
+        loop = loop_of_ref(store, ref)
+        if loop is not None and store.one("select 1 from jobs where kind='pr_test' and loop_id=?", (loop["id"],)):
+            wrong.append(f"{ref} was tested and shouldn't be")
+    for repo in expect.get("recipe_cards", []):
+        checks += 1
+        if recipes.offered(store, repo) is None:
+            wrong.append(f"no Use this card for {repo}")
     return {"right": checks - len(wrong), "of": checks, "wrong": wrong, "loops": count}
 
 
@@ -94,9 +162,18 @@ async def run_case(store, case: dict, now: datetime, turn, think, folder: Path) 
     from odie.watch import check as watch_check
     from odie.watch.eval import EvalFetcher
     from odie.watch.tools import Check, watch_tools
+    from odie.workers import router
+    case = json.loads(json.dumps(case))  # its gh data gains the origin's commits: this run's copy only
+    build_origin(case, folder)
     use_fake_gh(case, folder)
     store.execute("delete from loop_events")
     store.execute("delete from loops")
+    store.execute("delete from jobs")
+    store.execute("delete from settings where key like 'loops.%'")
+    for repo, command in (case.get("recipes") or {}).items():
+        recipes.approve(store, repo, command, now)
+    if router.hooks.get("store") is not store:
+        router.setup(store, router.hooks.get("runner"))
     seed_loops(store, case, now)
     check = Check(EvalFetcher(store, now, case))
     check.mails = await check.fetcher.new_mail()
@@ -108,6 +185,9 @@ async def run_case(store, case: dict, now: datetime, turn, think, folder: Path) 
     except Exception as e:  # noqa: BLE001 (a failed case is recorded; the rest still run)
         error = f"{type(e).__name__}: {e}"[:200]
     ran = await clock.run(store, now, lambda pid: think, None, most=50)
+    if any(got == "test" for _, got in ran):  # Odie is testing: wait for the tests, then stage 4 reads them
+        await tests_done(store)
+        ran += await clock.run(store, now, lambda pid: think, None, most=50)
     return {"id": case["id"], "error": error, "ran": ran, "score": score(case, store)}
 
 

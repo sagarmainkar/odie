@@ -1,11 +1,11 @@
 {
   "date": "2026-11-18",
-  "odie_commit": "ab65146",
+  "odie_commit": "4a6d2aa",
   "provider": "ollama",
   "model": "deepseek-v4.1-flash:1017-cloud",
   "totals": {
-    "right": 17,
-    "of": 17,
+    "right": 27,
+    "of": 27,
     "wrong": []
   },
   "results": [
@@ -123,15 +123,83 @@
       }
     },
     {
-      "id": "two-prs-alike",
+      "id": "own-pr-green-tested",
       "error": "",
       "ran": [
         [
           8,
+          "test"
+        ],
+        [
+          8,
+          "ready"
+        ]
+      ],
+      "score": {
+        "right": 2,
+        "of": 2,
+        "wrong": [],
+        "loops": 1
+      }
+    },
+    {
+      "id": "own-pr-lockfile",
+      "error": "",
+      "ran": [
+        [
+          9,
+          "ready"
+        ]
+      ],
+      "score": {
+        "right": 2,
+        "of": 2,
+        "wrong": [],
+        "loops": 1
+      }
+    },
+    {
+      "id": "own-pr-no-recipe",
+      "error": "",
+      "ran": [
+        [
+          10,
+          "ask"
+        ]
+      ],
+      "score": {
+        "right": 3,
+        "of": 3,
+        "wrong": [],
+        "loops": 1
+      }
+    },
+    {
+      "id": "someone-elses-pr",
+      "error": "",
+      "ran": [
+        [
+          11,
+          "ready"
+        ]
+      ],
+      "score": {
+        "right": 3,
+        "of": 3,
+        "wrong": [],
+        "loops": 1
+      }
+    },
+    {
+      "id": "two-prs-alike",
+      "error": "",
+      "ran": [
+        [
+          12,
           "wait"
         ],
         [
-          9,
+          13,
           "wait"
         ]
       ],

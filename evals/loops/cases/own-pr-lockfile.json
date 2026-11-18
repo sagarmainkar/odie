@@ -1,0 +1,67 @@
+{
+  "id": "own-pr-lockfile",
+  "about": "The user's own pull request bumps a dependency (uv.lock changed): never run here; briefed from CI.",
+  "mails": [
+    {
+      "id": "ol1",
+      "from": "you-dev <notifications@github.com>",
+      "subject": "[you-dev/app] Bump httpx to 0.29 (PR #71)",
+      "at": "2026-11-18T03:40:00Z",
+      "snippet": "All checks have passed.",
+      "body": "All checks have passed.",
+      "thread": "gh-thread-71"
+    }
+  ],
+  "gh": {
+    "pr:you-dev/app#71": {
+      "number": 71,
+      "title": "Bump httpx to 0.29",
+      "state": "OPEN",
+      "isDraft": false,
+      "mergedAt": null,
+      "closedAt": null,
+      "author": {
+        "login": "you-dev"
+      },
+      "headRefName": "branch-71",
+      "baseRefName": "main",
+      "additions": 41,
+      "deletions": 9,
+      "changedFiles": 2,
+      "files": [
+        {
+          "path": "pyproject.toml",
+          "additions": 20,
+          "deletions": 4
+        },
+        {
+          "path": "uv.lock",
+          "additions": 20,
+          "deletions": 4
+        }
+      ],
+      "isCrossRepository": false,
+      "reviewDecision": "",
+      "reviewRequests": [],
+      "url": "https://github.com/you-dev/app/pull/71",
+      "statusCheckRollup": [
+        {
+          "name": "tests",
+          "status": "COMPLETED",
+          "conclusion": "SUCCESS"
+        }
+      ],
+      "headRefOid": "1111111111111111111111111111111111111111"
+    },
+    "user": "you-dev"
+  },
+  "recipes": {
+    "you-dev/app": "sh test.sh"
+  },
+  "expect": {
+    "loops": 1,
+    "untested": [
+      "you-dev/app#71"
+    ]
+  }
+}

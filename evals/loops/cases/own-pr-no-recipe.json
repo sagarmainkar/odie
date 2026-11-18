@@ -1,0 +1,68 @@
+{
+  "id": "own-pr-no-recipe",
+  "about": "The user's own green pull request on a repo with no approved test command: the Use this card comes first.",
+  "mails": [
+    {
+      "id": "nr1",
+      "from": "you-dev <notifications@github.com>",
+      "subject": "[you-dev/notes] Search by tag (PR #8)",
+      "at": "2026-11-18T03:40:00Z",
+      "snippet": "All checks have passed.",
+      "body": "All checks have passed.",
+      "thread": "gh-thread-n8"
+    }
+  ],
+  "gh": {
+    "pr:you-dev/notes#8": {
+      "number": 8,
+      "title": "Search by tag",
+      "state": "OPEN",
+      "isDraft": false,
+      "mergedAt": null,
+      "closedAt": null,
+      "author": {
+        "login": "you-dev"
+      },
+      "headRefName": "branch-8",
+      "baseRefName": "main",
+      "additions": 41,
+      "deletions": 9,
+      "changedFiles": 1,
+      "files": [
+        {
+          "path": "notes/search.py",
+          "additions": 20,
+          "deletions": 4
+        }
+      ],
+      "isCrossRepository": false,
+      "reviewDecision": "",
+      "reviewRequests": [],
+      "url": "https://github.com/you-dev/notes/pull/8",
+      "statusCheckRollup": [
+        {
+          "name": "tests",
+          "status": "COMPLETED",
+          "conclusion": "SUCCESS"
+        }
+      ],
+      "headRefOid": "3333333333333333333333333333333333333333"
+    },
+    "contents:you-dev/notes": [
+      "README.md",
+      "pyproject.toml",
+      "uv.lock",
+      "notes"
+    ],
+    "user": "you-dev"
+  },
+  "expect": {
+    "loops": 1,
+    "untested": [
+      "you-dev/notes#8"
+    ],
+    "recipe_cards": [
+      "you-dev/notes"
+    ]
+  }
+}

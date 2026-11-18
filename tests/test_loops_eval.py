@@ -24,7 +24,12 @@ def store(isolated_settings, tmp_path, monkeypatch):
         monkeypatch.setenv(name, "")
     s = Store(tmp_path / "a.db")
     s.init_schema()
-    return s
+    from odie.workers import router
+    from tests.test_workers import Chat
+    router.setup(s, Chat())
+    yield s
+    for task in list(router._tasks.values()):
+        task.cancel()
 
 
 async def call(tools, name, **args):
@@ -47,7 +52,9 @@ async def naive_turn(prompt, tools, instruction):
 async def sensible_think(prompt, instruction):
     """Picks as the playbook says, from the fenced facts."""
     fenced = prompt.split("Facts from GitHub just now:\n")[1]
-    facts = json.loads(fenced[fenced.index("{"):fenced.rindex("}") + 1])
+    facts = json.loads(fenced.split("\n")[1])  # the line inside the fence
+    if "Odie tested the head commit" in prompt:
+        return json.dumps({"choice": "ready", "why": "tested", "brief": "Tests pass.", "review": "Small; fine."})
     if facts["state"] in ("merged", "closed"):
         return json.dumps({"choice": "drop", "why": facts["state"]})
     if facts["kind"] == "issue":
@@ -56,6 +63,8 @@ async def sensible_think(prompt, instruction):
         return json.dumps({"choice": "drop", "why": "not assigned to you"})
     if facts.get("draft") or facts["checks"] == "running":
         return json.dumps({"choice": "wait", "why": "draft", "hours": 4})
+    if facts["yours"] and facts["checks"] == "green":
+        return json.dumps({"choice": "test", "why": "your PR, green", "brief": "Your change; CI green."})
     if facts["review_asked_of_you"] or (facts["yours"] and facts["checks"] == "red"):
         return json.dumps({"choice": "ready", "why": "for you", "brief": "Needs you."})
     return json.dumps({"choice": "wait", "why": "nothing asked of you", "hours": 6})
@@ -65,7 +74,8 @@ async def test_every_case_scores_right_with_a_naive_model(store, tmp_path):
     cases = loops_eval.load_cases()
     assert {c["id"] for c in cases} >= {"fourteen-mails-one-pr", "merged-pr-closes", "issue-not-yours", "two-prs-alike",
                                         "lone-merged-mail", "own-pr-ci-failing", "a-draft-waits", "issue-assigned-to-you",
-                                        "done-pr-gets-mail"}
+                                        "done-pr-gets-mail", "own-pr-green-tested", "own-pr-lockfile",
+                                        "someone-elses-pr", "own-pr-no-recipe"}
     results = []
     for case in cases:
         folder = tmp_path / case["id"]
