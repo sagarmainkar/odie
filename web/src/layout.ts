@@ -32,11 +32,11 @@ export function showsRail(tab: Tab): boolean {
 export type RailItem = { tab: Tab; label: string; icon: IconName };
 
 /** The desktop rail's tabs, for what this install has. Money needs the money ledger.
- *  Worked examples: caps {mail, money} -> Today, Chat, Money, Brain, Settings; caps {mail} -> Today, Chat, Brain, Settings;
+ *  Worked examples: caps {mail, money} -> Pulse, Chat, Money, Brain, Settings; caps {mail} -> Pulse, Chat, Brain, Settings;
  *  caps unknown (null) -> all five, as the app shows everything when the server doesn't say. */
 export function railItems(caps: Caps): RailItem[] {
   const items: RailItem[] = [
-    { tab: "today", label: "Today", icon: "sun" },
+    { tab: "today", label: "Pulse", icon: "sun" },
     { tab: "chat", label: "Chat", icon: "chat" },
     { tab: "money", label: "Money", icon: "rupee" },
     { tab: "brain", label: "Brain", icon: "brain" },

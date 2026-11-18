@@ -39,4 +39,20 @@ describe("Needs you on Pulse", () => {
     expect(html).toContain("Made the deck from the PDF");
     expect(html).toContain('href="/api/media/abc"');
   });
+  it("draws a loop's card with its facts, its brief and the move the server built", () => {
+    const pr: Need = {
+      ref: "loop:3", title: "app #49 Threads newest first", why: "Open · CI green · 3 files, +41 −9", brief: "Sorts threads newest first.",
+      icon: "terminal", badge: "", ask: "Tell me about loop #3",
+      main: { label: "Open PR #49", action: "open", value: "https://github.com/example/app/pull/49" },
+      other: { label: "Done", action: "loop_done", value: 3 }, later: { label: "Later", action: "later", value: "loop:3" },
+    };
+    const done = [{ id: 4, title: "app #50 Fix login redirect", why: "merged 18 Nov 09:00", closed: "2026-11-18T09:00:00+05:30" }];
+    const html = renderToStaticMarkup(<NeedsYou items={[pr]} footer="" closed={[]} loopsDone={done} onAct={() => {}} onReopen={() => {}} open />);
+    expect(html).toContain("Open · CI green · 3 files, +41 −9");
+    expect(html).toContain("Sorts threads newest first.");
+    expect([...html.matchAll(/>(Open PR #49|Done|Later)<\/button>/g)].map((m) => m[1])).toEqual(["Open PR #49", "Done", "Later"]);
+    expect(html).toContain("1 done today");
+    expect(html).toContain("Merged 18 Nov 09:00");
+    expect(html).toContain(">Reopen</button>");
+  });
 });

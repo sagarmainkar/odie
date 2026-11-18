@@ -4,7 +4,7 @@ import { railItems, railTabFor } from "../layout";
 import { Orb, type OrbState } from "./Orb";
 import { Icon } from "./Tile";
 
-/** The desktop's tabs: a slim rail down the left edge (hidden below 1024px, where Today is home and its links lead on).
+/** The desktop's tabs: a slim rail down the left edge (hidden below 1024px, where Pulse is home and its links lead on).
  *  Tapping the tab already open tells that screen (Chat jumps to the latest message). */
 export function Rail({ tab, caps, pending, orb, updateReady = false }: { tab: Tab; caps: Caps; pending: number; orb: OrbState; updateReady?: boolean }) {
   const current = railTabFor(tab);
@@ -13,7 +13,7 @@ export function Rail({ tab, caps, pending, orb, updateReady = false }: { tab: Ta
   }
   return (
     <nav aria-label="Tabs" className="hidden lg:flex shrink-0 w-[84px] h-full flex-col items-center gap-1.5 safe-top pb-5 border-r border-line bg-overlay backdrop-blur-xl">
-      <a href="#today" aria-label="Today" className="mb-4 flex"><Orb size={38} state={orb} /></a>
+      <a href="#today" aria-label="Pulse" className="mb-4 flex"><Orb size={38} state={orb} /></a>
       {railItems(caps).map((item) => {
         const on = item.tab === current;
         const waiting = item.tab === "chat" && pending > 0;

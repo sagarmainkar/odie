@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { badgeTone, buttonsOf, chatRunHash, tileColour, type Need } from "./needs";
+import { badgeTone, buttonsOf, chatRunHash, opensSafely, tileColour, type Need } from "./needs";
 
 describe("needs", () => {
   it("lists a card's buttons as the move, Done and Later, or two from an older server", () => {
@@ -20,5 +20,15 @@ describe("needs", () => {
   });
   it("sends a chat button's request through the hash", () => {
     expect(chatRunHash("Show the draft for watch item mail:r1")).toBe("#chat?run=Show%20the%20draft%20for%20watch%20item%20mail%3Ar1");
+  });
+});
+
+describe("a card's open button", () => {
+  it("opens only a GitHub page the server built", () => {
+    expect(opensSafely("https://github.com/example/app/pull/49")).toBe(true);
+    expect(opensSafely("https://github.com/example/app/issues/7")).toBe(true);
+    expect(opensSafely("javascript:alert(1)")).toBe(false);
+    expect(opensSafely("http://github.com/example/app/pull/49")).toBe(false);
+    expect(opensSafely("https://github.com.evil.example/a/b/pull/1")).toBe(false);
   });
 });

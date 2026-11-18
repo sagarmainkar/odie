@@ -74,6 +74,13 @@ function ThreadsPanel({ threads, current, pickThread, onOpen, actions }: { threa
         </div>
       </div>
       <div className="flex-1 overflow-y-auto no-scrollbar px-2 pb-8">
+        {/* The picked one's Pulse, above its chats: what needs you, what it's on, what it closed today. */}
+        {!q && (
+          <a href="#today" className="w-full flex items-center gap-3 px-3 py-3 rounded-control text-left hover:bg-well">
+            <span className="w-9 h-9 rounded-control grid place-items-center bg-well text-ink-2"><Icon name="sun" size={16} /></span>
+            <span className="flex-1"><b className="text-body font-semibold block">Pulse</b><span className="text-small text-muted">What needs you, and what it's on</span></span>
+          </a>
+        )}
         {!q && (
           <button onClick={() => onOpen(null)} className={`w-full flex items-center gap-3 px-3 py-3 rounded-control text-left ${current === null ? "bg-well" : ""}`}>
             <span className="w-9 h-9 rounded-control grid place-items-center bg-ember-tint text-ember-text"><Icon name="chat" size={16} /></span>

@@ -1,8 +1,12 @@
-import { everyday } from "../pick";
+import { everyday, setPick, usePick } from "../pick";
+import { usePickedPersona } from "../persona";
+import { OnIt } from "../components/OnIt";
+import { asksToTurnOn, otherLine, pulseKicker, type LoopDone, type OnIt as OnItItem, type Other } from "../pulse";
+import type { Proactive } from "../proactive";
 import { AnimatePresence, motion } from "framer-motion";
 import { NeedsYou } from "../components/NeedsYou";
 import { footer, type WatchCardData } from "../watch";
-import { chatRunHash, type Need, type NeedAction, type WatchNote } from "../needs";
+import { chatRunHash, opensSafely, type Need, type NeedAction, type WatchNote } from "../needs";
 import { useCallback, useEffect, useState } from "react";
 import { useLive } from "../live";
 import { getJSON, postJSON, todayISO } from "../api";
@@ -71,9 +75,21 @@ function weekDays() {
   });
 }
 
+type PulseGot = { items: Need[]; watch: Partial<WatchCardData>; notes?: WatchNote[]; on_it?: OnItItem[]; loops_done?: LoopDone[];
+  others?: Other[]; proactive?: Proactive };
+
+/** Pulse (it replaced Today): the picked one's own. Everyday Odie's keeps everything Today had, with what Odie is on
+ *  and the others as a count; a personality's shows its own cards, what it's on and what it closed today. */
 export function Today() {
   const you = useProfile()?.user_name ?? "";
   const caps = useCaps();
+  const pick = usePick();
+  const picked = usePickedPersona();
+  const [onIt, setOnIt] = useState<OnItItem[]>([]);
+  const [loopsDone, setLoopsDone] = useState<LoopDone[]>([]);
+  const [others, setOthers] = useState<Other[]>([]);
+  const [proactive, setProactive] = useState<Proactive | null>(null);
+  const [itsEvents, setItsEvents] = useState<{ id: string; title: string; start: string }[]>([]);
   const [up, setUp] = useState<{ items: UpItem[]; sources: Record<string, boolean> } | null>(null);
   const [upLoading, setUpLoading] = useState(true);
   const [approvals, setApprovals] = useState<Approval[]>([]);
@@ -82,16 +98,21 @@ export function Today() {
   const [checked, setChecked] = useState("");  // under "Needs you": when the watch last checked, or what isn't working
   const [notes, setNotes] = useState<WatchNote[]>([]);  // what the watch told the user in the last day
   const loadNeeds = useCallback(() => {
-    type Got = { items: Need[]; watch: Partial<WatchCardData>; notes?: WatchNote[] };
-    getJSON<Got>("/api/needs_you").then((g) => {
+    getJSON<PulseGot>("/api/needs_you").then((g) => {
       setNeeds(g.items);
       setNotes(g.notes ?? []);
+      setOnIt(g.on_it ?? []);
+      setLoopsDone(g.loops_done ?? []);
+      setOthers(g.others ?? []);
+      setProactive(g.proactive ?? null);
       const w = g.watch;
+      setItsEvents((w.events ?? []) as { id: string; title: string; start: string }[]);
       setChecked(w.off || (w.checked_at ? footer({ needs_you: [], events: [], unseen: 0, line: "", sources: {}, ...w } as WatchCardData, new Date()) : ""));
     }).catch(() => {});
     void postJSON("/api/watch/seen", {}).catch(() => {});
   }, []);
-  useEffect(loadNeeds, [loadNeeds]);
+  // Another pick: its own Pulse, never the last one's cards while it loads.
+  useEffect(() => { setNeeds(null); setOnIt([]); setLoopsDone([]); setOthers([]); setProactive(null); setItsEvents([]); setWatchClosed([]); }, [pick]);
   const loadApprovals = useCallback(() => { getJSON<Approval[]>(everyday("/api/approvals")).then(setApprovals).catch(() => {}); }, []);
   const loadTasks = useCallback(() => {
     loadNeeds();
@@ -100,7 +121,7 @@ export function Today() {
   const loadUp = useCallback(() => {
     getJSON<{ items: UpItem[]; sources: Record<string, boolean> }>("/api/upcoming").then(setUp).catch(() => {}).finally(() => setUpLoading(false));
   }, []);
-  useEffect(() => { loadTasks(); loadApprovals(); loadUp(); }, [loadTasks, loadApprovals, loadUp]);
+  useEffect(() => { loadTasks(); loadApprovals(); loadUp(); }, [loadTasks, loadApprovals, loadUp, pick]);
   useLive(useCallback((e: any) => { if (e.type === "task") loadTasks(); if (e.type === "approval" || e.type === "approval_done") loadApprovals(); }, [loadTasks, loadApprovals]),
     useCallback(() => { loadTasks(); loadApprovals(); loadUp(); }, [loadTasks, loadApprovals, loadUp]));
 
@@ -108,15 +129,24 @@ export function Today() {
     setWatchClosed((items) => items.filter((x) => x.id !== id));
     try { await postJSON(`/api/tasks/${id}/reopen`, {}); } finally { loadTasks(); }
   }
+  async function reopenLoop(id: number) {
+    setLoopsDone((items) => items.filter((x) => x.id !== id));
+    try { await postJSON(`/api/loops/${id}/reopen`, {}); } finally { loadTasks(); }
+  }
   // A card's button: chat sends its request; the others act at once and the card goes.
   async function act(need: Need, a: NeedAction) {
     if (a.action === "chat") { location.hash = chatRunHash(String(a.value)); return; }
+    if (a.action === "open") {
+      if (opensSafely(String(a.value))) window.open(String(a.value), "_blank", "noopener");
+      return;
+    }
     setNeeds((items) => (items ?? []).filter((x) => x.ref !== need.ref));
     try {
       if (a.action === "dismiss") await postJSON("/api/watch/done", { ref: a.value });
       if (a.action === "done_task") await postJSON(`/api/tasks/${a.value}/done`, {});
       if (a.action === "snooze_task") await postJSON(`/api/tasks/${a.value}/snooze`, { until: `${isoDay(1)}T09:00` });
       if (a.action === "later") await postJSON("/api/needs_you/later", { ref: a.value });
+      if (a.action === "loop_done") await postJSON(`/api/loops/${a.value}/done`, {});
     } finally { loadTasks(); }
   }
 
@@ -130,6 +160,52 @@ export function Today() {
   const bands = cal ? bandsFor(cal.today) : null;
   const nowHM = new Date().toTimeString().slice(0, 5);
   const delay = (s: number) => ({ animationDelay: `${s}s` });
+
+  const needsYou = (
+    <NeedsYou items={needs} footer={checked} closed={watchClosed} notes={notes} loopsDone={loopsDone}
+      onAct={(n, a) => void act(n, a)} onReopen={(id) => void reopen(id)} onReopenLoop={(id) => void reopenLoop(id)}
+      empty={pick && !proactive?.on ? "Nothing waiting. Its own reminders and cards show here." : undefined} />
+  );
+  if (pick) {
+    return (
+      <div className="h-full overflow-y-auto overflow-x-hidden no-scrollbar px-[18px] lg:px-8 safe-top pb-[110px] flex flex-col gap-[18px] [overflow-wrap:anywhere]">
+        <div className="flex items-center justify-between rise">
+          <div className="text-small font-semibold text-muted truncate">{pulseKicker(pick, date, picked.name)}</div>
+          <a href="#settings" aria-label="Settings" className="flex"><Avatar size={44} state={approvals.length ? "approval" : "idle"} who={picked} /></a>
+        </div>
+        <div className="rise" style={delay(0.05)}>
+          <h1 className="text-[34px] leading-[1.12] font-bold tracking-[-0.025em]">{picked.name}'s <span className="serif text-[40px] text-ink-2">Pulse</span></h1>
+          <div className="mt-2.5 flex gap-2 flex-wrap">
+            {(needs?.length ?? 0) > 0 && <span className="chip chip-warn">{needs?.length} need you</span>}
+            {onIt.length > 0 && <span className="chip chip-soft">{picked.name} is on {onIt.length}</span>}
+          </div>
+        </div>
+        {asksToTurnOn(proactive) && (
+          <a href="#settings" className="glass rounded-tile px-3.5 py-3 flex items-center gap-3 text-ui rise" style={delay(0.06)}>
+            <Tile icon="spark" color="violet" small />
+            <span className="flex-1 min-w-0">Turn on <b>Proactive intelligence</b> in Settings and {picked.name} checks {proactive?.apps.join(", ")} every 30 minutes.</span>
+            <span className="text-dim" aria-hidden="true">›</span>
+          </a>
+        )}
+        <div className="contents lg:grid lg:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)] lg:gap-6 lg:items-start">
+          <div className="contents lg:flex lg:flex-col lg:gap-[18px]">
+            <div className="rise" style={delay(0.08)}>{needsYou}</div>
+          </div>
+          <div className="contents lg:flex lg:flex-col lg:gap-[18px]">
+            <div className="rise" style={delay(0.1)}><OnIt items={onIt} who={picked.name} /></div>
+            {itsEvents.length > 0 && (
+              <section className="glass rounded-card px-4 py-3 rise" style={delay(0.12)} aria-label="Coming up">
+                <div className="text-ui font-bold text-ink-2 mb-1">Coming up</div>
+                {itsEvents.slice(0, 6).map((e) => (
+                  <div key={e.id} className="flex gap-3 py-1.5 text-ui"><span className="w-24 shrink-0 text-muted tabular-nums">{e.start.slice(5, 16).replace("T", " ")}</span><span className="flex-1 min-w-0 text-ink-2">{e.title}</span></div>
+                ))}
+              </section>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="h-full overflow-y-auto overflow-x-hidden no-scrollbar px-[18px] lg:px-8 safe-top pb-[110px] flex flex-col gap-[18px] [overflow-wrap:anywhere]">
@@ -145,6 +221,10 @@ export function Today() {
         <div className="mt-2.5 flex gap-2 flex-wrap">
           {comingUp > 0 && <span className="chip chip-soft">{comingUp} coming up this week</span>}
           {(needs?.length ?? 0) > 0 && <span className="chip chip-warn">{needs?.length} need you</span>}
+          {/* The other personalities, as a count only; a tap opens that one's Pulse. */}
+          {others.map((o) => (
+            <button key={o.id} type="button" onClick={() => setPick(o.id)} className="chip chip-soft">{otherLine(o)}</button>
+          ))}
         </div>
       </div>
 
@@ -167,9 +247,9 @@ export function Today() {
             )}
           </AnimatePresence>
 
-          <div className="rise" style={delay(0.08)}>
-            <NeedsYou items={needs} footer={checked} closed={watchClosed} notes={notes} onAct={(n, a) => void act(n, a)} onReopen={(id) => void reopen(id)} />
-          </div>
+          <div className="rise" style={delay(0.08)}>{needsYou}</div>
+
+          <div className="rise" style={delay(0.09)}><OnIt items={onIt} who={picked.name} /></div>
 
           <div className="rise" style={delay(0.1)}><UpNext items={up?.items ?? null} loading={upLoading} /></div>
 

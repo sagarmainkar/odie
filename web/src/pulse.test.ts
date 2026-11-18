@@ -1,0 +1,42 @@
+import { describe, expect, it } from "vitest";
+import { asksToTurnOn, onItLine, otherLine, pulseKicker } from "./pulse";
+import { followsPick } from "./pick";
+import { railItems } from "./layout";
+
+describe("Pulse", () => {
+  it("says what Odie is on in a few words", () => {
+    expect(onItLine({ id: 1, title: "app #51", state: "waiting", next: "CI still running" })).toBe("waiting · CI still running");
+    expect(onItLine({ id: 2, title: "app #52", state: "new", next: "" })).toBe("starting");
+  });
+
+  it("shows the other personalities on Odie's Pulse as a count only", () => {
+    expect(otherLine({ id: "abc", name: "Mira", waiting: 2 })).toBe("Mira: 2 waiting");
+  });
+
+  it("says whose Pulse it is", () => {
+    expect(pulseKicker("", "Wednesday 18 November", "Odie")).toBe("Wednesday 18 November");
+    expect(pulseKicker("abc", "Wednesday 18 November", "Mira")).toBe("Mira's Pulse · Wednesday 18 November");
+  });
+
+  it("asks to turn Proactive intelligence on only when it has an inbox and is off", () => {
+    expect(asksToTurnOn({ offered: true, on: false })).toBe(true);
+    expect(asksToTurnOn({ offered: true, on: true })).toBe(false);
+    expect(asksToTurnOn({ offered: false, on: false })).toBe(false);
+    expect(asksToTurnOn(null)).toBe(false);
+  });
+
+  it("follows the picked personality", () => {
+    expect(followsPick("/api/needs_you")).toBe(true);
+    expect(followsPick("/api/needs_you/later")).toBe(true);
+    expect(followsPick("/api/loops/3/done")).toBe(true);
+    expect(followsPick("/api/watch/seen")).toBe(true);
+    expect(followsPick("/api/watch/done")).toBe(true);
+    expect(followsPick("/api/tasks/closed_by_watch")).toBe(true);
+    expect(followsPick("/api/tasks")).toBe(false);
+    expect(followsPick("/api/watch")).toBe(false);  // the chat's count stays Odie's
+  });
+
+  it("is the rail's first tab", () => {
+    expect(railItems(null)[0]).toEqual({ tab: "today", label: "Pulse", icon: "sun" });
+  });
+});

@@ -562,7 +562,7 @@ export function Settings() {
     <div className="h-full overflow-y-auto no-scrollbar px-[18px] lg:px-8 safe-top flex flex-col gap-6 pb-6">
       <div className="flex items-center gap-3">
         {/* A desktop has the rail for going back to Today (hidden! with "!": .pill sets its own display, which would win). */}
-        <a href="#today" aria-label="Back to Today" className="pill w-11 px-0 lg:hidden!"><Icon name="back" /></a>
+        <a href="#today" aria-label="Back to Pulse" className="pill w-11 px-0 lg:hidden!"><Icon name="back" /></a>
         <div className="text-heading font-bold tracking-[-0.015em]">Settings</div>
       </div>
 

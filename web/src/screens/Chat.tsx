@@ -690,7 +690,7 @@ export function Chat({ orb, setOrb, showing }: { orb: OrbState; setOrb: (s: OrbS
         <header className="chat-col sticky top-0 z-10 grid grid-cols-[auto_1fr_auto] items-center gap-2.5 px-[18px] pb-4 safe-top bg-overlay backdrop-blur-xl backdrop-saturate-150 [mask-image:linear-gradient(180deg,#000_82%,transparent)]">
           {/* On a desktop the rail has Today; an empty span holds the back button's place in the header grid. */}
           {wide ? <span /> : (
-            <a href="#today" aria-label={`Back to Today${needYou ? `, ${needYou} need you` : ""}`} className="pill w-11 px-0 relative">
+            <a href="#today" aria-label={`Back to Pulse${needYou ? `, ${needYou} need you` : ""}`} className="pill w-11 px-0 relative">
               <Glyph name="back" />
               {badge(needYou) && <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-ember text-on-ember text-tiny font-bold grid place-items-center">{badge(needYou)}</span>}
             </a>

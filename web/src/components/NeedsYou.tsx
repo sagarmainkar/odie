@@ -5,18 +5,20 @@ import { mediaUrl } from "../media";
 import { Orb } from "./Orb";
 import { Icon, Tile } from "./Tile";
 import { WatchClosed, type WatchClosedItem } from "./WatchClosed";
+import type { LoopDone } from "../pulse";
 
 const ask = (q: string) => { location.hash = `#chat?q=${encodeURIComponent(q)}`; };
 
 /** A Pulse's "Needs you": one card per thing to act on, from the watch's last check and the user's own reminders. Each
  * card has the same three buttons: its move, Done and Later. What the watch did fold into one "done today" line: its
  * notes (with any files) and what it closed (with Reopen). open: start unfolded (tests). */
-export function NeedsYou({ items, footer, closed, notes = [], onAct, onReopen, open = false }: {
-  items: Need[] | null; footer: string; closed: WatchClosedItem[]; notes?: WatchNote[];
-  onAct: (need: Need, act: NeedAction) => void; onReopen: (id: number) => void; open?: boolean;
+export function NeedsYou({ items, footer, closed, notes = [], loopsDone = [], onAct, onReopen, onReopenLoop, open = false, empty }: {
+  items: Need[] | null; footer: string; closed: WatchClosedItem[]; notes?: WatchNote[]; loopsDone?: LoopDone[];
+  onAct: (need: Need, act: NeedAction) => void; onReopen: (id: number) => void; onReopenLoop?: (id: number) => void; open?: boolean;
+  empty?: string;
 }) {
   const [showClosed, setShowClosed] = useState(open);
-  const doneCount = closed.length + notes.length;
+  const doneCount = closed.length + notes.length + loopsDone.length;
   return (
     <section className="flex flex-col gap-2.5" aria-label="Needs you">
       <div className="flex items-baseline gap-2 px-1">
@@ -27,7 +29,7 @@ export function NeedsYou({ items, footer, closed, notes = [], onAct, onReopen, o
         <div className="glass rounded-card flex flex-col items-center text-center pt-6 pb-5">
           <Orb size={56} halo />
           <span className="serif text-display-sm mt-2">All clear.</span>
-          <div className="text-ui text-muted">I check your mail every 30 minutes and tell you when something needs you.</div>
+          <div className="text-ui text-muted">{empty ?? "I check your mail every 30 minutes and tell you when something needs you."}</div>
         </div>
       )}
       <AnimatePresence initial={false}>
@@ -39,6 +41,7 @@ export function NeedsYou({ items, footer, closed, notes = [], onAct, onReopen, o
               <span className="flex-1 min-w-0">
                 <span className="block text-body leading-[21px] font-semibold break-words">{n.title}</span>
                 {n.why && <span className="block text-small leading-[18px] text-muted mt-0.5 line-clamp-2">{n.why}</span>}
+                {n.brief && <span className="block text-small leading-[18px] text-ink-2 mt-1 line-clamp-3">{n.brief}</span>}
                 {n.badge && <span className={`chip ${badgeTone(n.badge) === "warn" ? "chip-warn" : "chip-soft"} mt-1.5 inline-flex`}>{n.badge}</span>}
               </span>
             </button>
@@ -73,6 +76,7 @@ export function NeedsYou({ items, footer, closed, notes = [], onAct, onReopen, o
             </div>
           ))}
           {showClosed && <WatchClosed items={closed} onReopen={onReopen} />}
+          {showClosed && <WatchClosed items={loopsDone} onReopen={(id) => onReopenLoop?.(id)} />}
         </div>
       )}
     </section>
