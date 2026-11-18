@@ -19,6 +19,7 @@ from datetime import datetime, time, timedelta
 
 from odie.watch import bills, report, threads
 from odie.watch import cards as card_text
+from odie.watch.owner import ODIE, key
 
 NOTES_HOURS = 24  # what the watch told the user stays under Needs you for a day
 MAIL_TITLE = re.compile(r"^Reply to (.+?): (.*)$")  # the title an inbox add-on gives its "reply to" tasks
@@ -27,18 +28,29 @@ LATER_AT = time(9, 0)  # Later brings a card back at this hour of the next day (
 TELL_ME_MORE = "Tell me more"
 
 
-def cards(store, now: datetime) -> list[dict]:
+def cards(store, now: datetime, owner: str = ODIE) -> list[dict]:
     """Everything that needs the user, as cards: the watch's open items, then their own open tasks (the watch's
-    threads only when the card doesn't show them and they have a date that fires: a bill, a deadline)."""
-    card = store.get_setting(report.CARD) or {}
+    threads only when the card doesn't show them and they have a date that fires: a bill, a deadline). Everyday Odie's
+    Pulse (owner "") as it always was; a personality's: its own watch's card and its own tasks, never the everyday
+    ones (they are on Odie's)."""
+    card = store.get_setting(key(report.CARD, owner)) or {}
     on_the_card = [i for i in card.get("needs_you", []) if not i.get("done")]
     shown = {i["ref"] for i in on_the_card}  # a hidden item's thread stays off the list too
     watch_items = [i for i in on_the_card if not hidden(i, now)]
     out = [watch_card(i) for i in watch_items]
-    tasks = [t for t in store.open_tasks(now.isoformat()) if shows_as_task(t, shown)]
+    tasks = [t for t in owners_tasks(store, now, owner) if shows_as_task(t, shown)]
     tasks.sort(key=lambda t: t["due_at"] or "9999")
     out += [task_card(t, now) for t in tasks]
     return out
+
+
+def owners_tasks(store, now: datetime, owner: str) -> list:
+    """The open tasks on this owner's Pulse: everyday Odie's (no personality) for Odie; a personality's own alone for
+    it ("Pay rent", set in Mira's chat -> on Mira's Pulse only; "Call the plumber", everyday -> on Odie's only)."""
+    if owner == ODIE:
+        return store.open_tasks(now.isoformat())
+    every_one_it_sees = store.open_tasks(now.isoformat(), owner)
+    return [t for t in every_one_it_sees if t["personality"] == owner]
 
 
 def hidden(item: dict, now: datetime) -> bool:
@@ -64,7 +76,7 @@ def later_until(now: datetime) -> str:
     return datetime.combine(tomorrow, LATER_AT, now.tzinfo).isoformat(timespec="seconds")
 
 
-def later(store, ref: str, now: datetime) -> str | None:
+def later(store, ref: str, now: datetime, owner: str = ODIE) -> str | None:
     """Puts a card off until later_until(now) and says until when, or None when there is no such card. A task
     ("task:12") is snoozed as the old Tomorrow button did, so it also rings then; a watch item gets a "hidden_until"
     on the card, which the next checks keep (report.apply never rewrites an item it has)."""
@@ -75,13 +87,14 @@ def later(store, ref: str, now: datetime) -> str | None:
             return None
         store.snooze_task(int(task_id), until)
         return until
-    card = store.get_setting(report.CARD) or {}
+    card_key = key(report.CARD, owner)
+    card = store.get_setting(card_key) or {}
     items = card.get("needs_you", [])
     found = next((i for i in items if i.get("ref") == ref), None)
     if found is None:
         return None
     found["hidden_until"] = until
-    store.set_setting(report.CARD, card)
+    store.set_setting(card_key, card)
     return until
 
 
@@ -211,11 +224,11 @@ def due_badge(due_at: str | None, now: datetime) -> str:
     return card_text.day(due_at)
 
 
-def recent_notes(store, now: datetime) -> list[dict]:
+def recent_notes(store, now: datetime, owner: str = ODIE) -> list[dict]:
     """What the watch did for a Watch for entry and said was worth telling, in the last NOTES_HOURS, newest first, for
     Today's "done while you were away": "Added a heads-up for the recital" (told, an hour ago) -> listed with any files;
     "HN: still no reply" (not told), or a told note from two days ago -> left out."""
-    card = store.get_setting(report.CARD) or {}
+    card = store.get_setting(key(report.CARD, owner)) or {}
     since = now - timedelta(hours=NOTES_HOURS)
     out = []
     for note in card.get("done", []):

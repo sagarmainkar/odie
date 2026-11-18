@@ -173,12 +173,31 @@ def joined_index(own: str, shared: str) -> str:
 
 # ── who a thread belongs to ──
 
+# Background turns run for a personality (its own mail watch, odie.watch.owner): their throwaway session belongs to
+# it for as long as the turn runs, so its brain, its apps and its tasks are the ones used. session id -> personality.
+_RUNNING_FOR: dict[str, str] = {}
+
+
+def running_for(session_id: str, pid: str) -> None:
+    """A background turn's session belongs to this personality until done_running(session_id)."""
+    _RUNNING_FOR[session_id] = pid
+
+
+def done_running(session_id: str) -> None:
+    _RUNNING_FOR.pop(session_id, None)
+
+
 def of_session(store: Store, session_id: str | None) -> str:
     """The personality a chat thread belongs to; ODIE for an everyday thread, for a thread nobody claimed, and when
-    there is no thread at all (a background turn).
-      a thread Mira started -> Mira's id;  "chat-2026-11-17" -> "";  None -> "" """
+    there is no thread at all (a background turn). A background turn run for a personality (running_for) is that
+    personality's while it runs.
+      a thread Mira started -> Mira's id;  "chat-2026-11-17" -> "";  None -> "";
+      Mira's watch turn's session, while it runs -> Mira's id; after -> "" """
     if not session_id:
         return ODIE
+    background_owner = _RUNNING_FOR.get(session_id)
+    if background_owner is not None:
+        return background_owner
     row = store.one("select personality from threads where session_id=?", (session_id,))
     if row is None:
         return ODIE
@@ -369,8 +388,8 @@ async def delete(store: Store, runner, pid: str) -> dict:
     log, saved ticks, Think harder); its reminders; its passages in recall; the files made in its threads (their
     cards, their copies in the workspace, its making jobs' folders) and the pictures uploaded into them; its SOUL and
     memories; its picture; the record itself; and the debug copies of the last few model requests (all of them: they
-    carry no thread id, so the ones from its threads can't be told apart), the brain picked for it and its
-    connected apps' switches.
+    carry no thread id, so the ones from its threads can't be told apart), the brain picked for it, its
+    connected apps' switches and its own mail watch (odie.watch.owner).
     Not erased, because Odie can't reach them from here: log lines, and anything already sent to a tracing service.
     The record goes first, so no new turn can start in its threads while they are erased (the runner then refuses
     them: SessionGone)."""
@@ -406,6 +425,8 @@ async def delete(store: Store, runner, pid: str) -> dict:
     for server in access.give_back_to_odie(store, pid):  # an app that was its alone: everyday Odie's again
         store.audit("agent", "app_access", result_summary=f"{server} on for everyday Odie: no one else could use it")
     access.forget_personality(store, pid)  # its connected apps' switches
+    from odie.watch import owner as watch_owner
+    watch_owner.forget(store, pid)  # its own watch: card, place in the mail, sources, Proactive switch
     await runner.forget_personality(pid)  # again: a turn that was finishing may have noted itself meanwhile
     shutil.rmtree(folder(pid), ignore_errors=True)
     (config.settings.data_dir / f"memory-{pid}.lock").unlink(missing_ok=True)

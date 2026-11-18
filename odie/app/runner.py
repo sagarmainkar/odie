@@ -1457,19 +1457,26 @@ class OdieRunner:
 
     async def background_turn(self, prompt: str, timeout: float = 300, tools: list | None = None,
                               instruction: str | None = None, guard=None, bare: bool = False,
-                              free: frozenset[str] = frozenset(), skills: tuple[str, ...] | list[str] = ()) -> str:
+                              free: frozenset[str] = frozenset(), skills: tuple[str, ...] | list[str] = (),
+                              owner: str = "") -> str:
         """One agent turn nobody watches (a tracker check, a watch check): the model, Odie's current tools (plus
         `tools`), a fresh in-memory session, and a guard that refuses anything needing the user's tap. Returns the reply.
         bare: no tools at all (a signed-in tracker's check reads text only). free: tool names that run without the
         tap in this turn (odie.agent.free; the watch's calendar_create_event). skills: skills already loaded when the
-        turn starts, so their apps' tools are there at once (the watch's calendar app: it never calls load_skill)."""
+        turn starts, so their apps' tools are there at once (the watch's calendar app: it never calls load_skill).
+        owner: a personality the turn runs for (its own mail watch): its brain thinks (odie.brains; BrainGone when it
+        can't), and the turn's session is its own while it runs, so only its apps are listed and may run. "" is
+        everyday Odie, as always."""
         from google.adk.agents import LlmAgent
         from google.adk.sessions import InMemorySessionService
 
+        from odie import personalities
         from odie.trackers import guard as trackers_guard
         from odie.agent.callbacks import background_after_tool
         s = config.settings
         sel = resolve_selection(self.store, "chat")
+        if owner:
+            sel = brains.for_personality(self.store, owner)
         now = datetime.now(self.tz).strftime("%A %d %B %Y, %H:%M")
         from odie.agent.free import free_tools
         chat_only = [t for t in self.agent.tools if not getattr(t, "_odie_signin", False)]  # signing in is the user's, in chat
@@ -1489,6 +1496,8 @@ class OdieRunner:
         from odie.skills import loaded_skills_state
         state = loaded_skills_state(agent.name, skills)
         sess = await sessions.create_session(app_name="odie_tracker", user_id=s.user_id, state=state)
+        if owner:
+            personalities.running_for(sess.id, owner)
         from odie.agent.usage import CACHE
         runner = Runner(app=App(name="odie_tracker", root_agent=agent, context_cache_config=CACHE), session_service=sessions)
         out: list[str] = []
@@ -1501,6 +1510,7 @@ class OdieRunner:
         try:
             await asyncio.wait_for(go(), timeout)
         finally:
+            personalities.done_running(sess.id)
             import odie.browser as ob
             if ob._shared is not None:  # browser_open's tab is the session id: close its cookie-free context
                 try:
@@ -1776,8 +1786,9 @@ class OdieRunner:
             return self.plugins
 
     def _apps_stop(self, tool, args, tool_context) -> dict | None:
-        """A background turn's first check before a tool runs: a connected app switched off for everyday Odie, whose
-        background work it is, never runs (odie.plugins.access.refusal); anything else goes on to the turn's guard.
+        """A background turn's first check before a tool runs: a connected app switched off for whoever the turn runs
+        for (everyday Odie, or the personality whose watch it is) never runs (odie.plugins.access.refusal); anything
+        else goes on to the turn's guard.
           echo, its server on for Mira alone -> {"error": "tester is switched off for Odie, …"}
           now, or an app on for Odie         -> None"""
         from odie.plugins import access

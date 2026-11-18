@@ -163,9 +163,9 @@ async def test_the_first_check_catches_up_once(store, tmp_path):
         prompts.append(prompt)
         await call(tools, "report", needs_you=[], line="Caught up.")
     await check.run_check(store, NOW, turn, _push)
-    await check.run_check(store, NOW + timedelta(minutes=30), turn, _push)
+    assert await check.run_check(store, NOW + timedelta(minutes=30), turn, _push) == "quiet"  # nothing new: no call
     assert "catch-up" in prompts[0] and "Wireless Earbuds" in prompts[0] and "Lunch tomorrow" not in prompts[0]
-    assert "catch-up" not in prompts[1]
+    assert len(prompts) == 1  # the catch-up ran once
 
 
 async def _post(text, media=None):

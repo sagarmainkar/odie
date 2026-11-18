@@ -260,7 +260,7 @@ async def test_apple_mail_opens_with_its_own_read(store, monkeypatch):
         return {"id": mail_id, "body": "the whole message"}
     monkeypatch.setattr(mac_mail, "read", fake_read)
     apple_mail = sources.Source("mail", "mac", "Apple Mail", "native", "mac_mail_new", {})
-    monkeypatch.setattr(fetch, "saved", lambda _store: [apple_mail])
+    monkeypatch.setattr(fetch, "saved", lambda _store, _who="": [apple_mail])
     m = await f.open_mail("mac:5")
     assert asked["id"] == "mac:5" and m.body == "the whole message" and m.opened
 
@@ -305,7 +305,7 @@ def test_address_of():
 
 async def test_apple_mail_says_these_reads_arent_available(store, monkeypatch):
     apple_mail = sources.Source("mail", "mac", "Apple Mail", "native", "mac_mail_new", {})
-    monkeypatch.setattr(fetch, "saved", lambda _store: [apple_mail])
+    monkeypatch.setattr(fetch, "saved", lambda _store, _who="": [apple_mail])
     f = fetch.Fetcher(store, NOW)
     f._mail["mac:5"] = fetch.Mail("mac:5", "B <b@example.com>", "Hi", "2026-10-08T08:00:00Z", "x", [], "mail:mac",
                                   sources=["mail:mac"])
@@ -374,7 +374,7 @@ async def test_a_broken_apple_mail_reply_keeps_the_preview(store, monkeypatch):
         raise ValueError("Expecting value: line 1 column 1")
     monkeypatch.setattr(mac_mail, "read", garbled)
     apple_mail = sources.Source("mail", "mac", "Apple Mail", "native", "mac_mail_new", {})
-    monkeypatch.setattr(fetch, "saved", lambda _store: [apple_mail])
+    monkeypatch.setattr(fetch, "saved", lambda _store, _who="": [apple_mail])
     m = await f.open_mail("mac:5")
     assert m.body == "short" and not m.opened
 
@@ -448,7 +448,7 @@ async def test_recent_mail_asks_apple_mail_for_a_day_and_the_most(store, monkeyp
         asked.append((tool, args))
         return Result("[]", False)
     apple_mail = sources.Source("mail", "mac", "Apple Mail", "native", "mac_mail_new", {})
-    monkeypatch.setattr(fetch, "saved", lambda _store: [apple_mail])
+    monkeypatch.setattr(fetch, "saved", lambda _store, _who="": [apple_mail])
     monkeypatch.setattr(native, "call", fake_call)
     await fetch.Fetcher(store, NOW).recent_mail(hours=12, most=7)
     [(tool, args)] = asked

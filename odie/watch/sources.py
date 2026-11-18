@@ -234,24 +234,22 @@ async def detect(servers: dict[str, dict]) -> list[Source]:
     return out
 
 
-def _config_hash(store) -> str:
-    """A short fingerprint of the connected apps the watch may use: mcp.json, and which of its servers are switched
-    off for everyday Odie (odie.plugins.access), so a flipped switch finds the sources again."""
+def _config_hash(store, who: str = "") -> str:
+    """A short fingerprint of the connected apps one watch may use: mcp.json, and which of its servers are switched
+    off for everyday Odie (odie.plugins.access), so a flipped switch finds the sources again. A personality's watch
+    (odie.watch.owner) also fingerprints which apps are its own to check, so a switch it or another one flips finds
+    them again."""
     from odie.plugins import access
     from odie.plugins.mcp import read_config
+    from odie.watch import owner
     servers, _ = read_config()
     off = sorted(access.off_for(store, access.ODIE))
     fingerprinted: object = servers
     if off:  # with nothing off for Odie the fingerprint is the one it always was: no needless search after an update
         fingerprinted = [servers, off]
+    if who:
+        fingerprinted = [servers, off, who, sorted(owner.watch_servers(store, servers, who))]
     return hashlib.sha256(json.dumps(fingerprinted, sort_keys=True).encode()).hexdigest()[:16]
-
-
-def odies_servers(store, servers: dict[str, dict]) -> dict[str, dict]:
-    """The servers the watch may read: the watch is everyday Odie's background work, so only those on for Odie.
-    {"home-mail": …, "work-mail": … (Mira's alone)} -> {"home-mail": …}"""
-    from odie.plugins import access
-    return {name: spec for name, spec in servers.items() if access.allowed(store, name, access.ODIE)}
 
 
 def native_sources(available=None, status=None) -> list[Source]:
@@ -273,32 +271,44 @@ find_native_sources = native_sources  # the function itself, for tests (the name
 
 
 def forget(store) -> None:
-    """Drops the saved sources, so the next check finds them again (a Mac app was just allowed or refused)."""
+    """Drops everyday Odie's saved sources, so the next check finds them again (a Mac app was just allowed or
+    refused; the Mac's apps are Odie's alone)."""
     store.set_setting(KEY, None)
 
 
-async def detect_and_save(store) -> list[Source]:
+def key_of(who: str) -> str:
+    """Where one watch keeps its sources: everyday Odie "watch.sources", a personality "watch.sources:<id>"."""
+    from odie.watch import owner
+    return owner.key(KEY, who)
+
+
+async def detect_and_save(store, who: str = "") -> list[Source]:
+    """Finds and saves the sources of one watch. Everyday Odie's: its apps, add-ons and the Mac's own apps, as always.
+    A personality's: only the apps that are its own to check (odie.watch.owner.watch_servers), never the Mac's."""
     from odie import addons
     from odie.plugins.mcp import read_config
+    from odie.watch import owner
     servers, _ = read_config()
-    found = await detect(odies_servers(store, servers))
-    for got in addons.call("watch_sources", store):
-        found += list(got or [])
-    found += native_sources()
-    store.set_setting(KEY, {"at": datetime.now(UTC).isoformat(timespec="seconds"), "config": _config_hash(store), "v": VERSION,
-                            "sources": [s.as_dict() for s in found]})
+    found = await detect(owner.watch_servers(store, servers, who))
+    if not who:
+        for got in addons.call("watch_sources", store):
+            found += list(got or [])
+        found += native_sources()
+    store.set_setting(key_of(who), {"at": datetime.now(UTC).isoformat(timespec="seconds"),
+                                    "config": _config_hash(store, who), "v": VERSION,
+                                    "sources": [s.as_dict() for s in found]})
     return found
 
 
-def saved(store) -> list[Source]:
-    return [Source.from_dict(d) for d in (store.get_setting(KEY) or {}).get("sources", [])]
+def saved(store, who: str = "") -> list[Source]:
+    return [Source.from_dict(d) for d in (store.get_setting(key_of(who)) or {}).get("sources", [])]
 
 
-def stale(store, now: datetime) -> bool:
-    """Should the sources be found again? Yes when none are saved (or the save is unreadable), when detection has
-    learned something since (VERSION), when the connected apps changed, or when the save is over a day old.
+def stale(store, now: datetime, who: str = "") -> bool:
+    """Should one watch's sources be found again? Yes when none are saved (or the save is unreadable), when detection
+    has learned something since (VERSION), when the connected apps changed, or when the save is over a day old.
     Example: found at 09:00 -> False at 15:00 the same day; True at 09:01 the next day; True as soon as an app is added."""
-    got = store.get_setting(KEY)
+    got = store.get_setting(key_of(who))
     if not got:
         return True
     try:
@@ -307,6 +317,6 @@ def stale(store, now: datetime) -> bool:
         return True
     if got.get("v") != VERSION:
         return True  # detection has learned something since
-    if got.get("config") != _config_hash(store):
-        return True  # the connected apps changed, or which of them Odie may use
+    if got.get("config") != _config_hash(store, who):
+        return True  # the connected apps changed, or which of them this watch may use
     return now - at > timedelta(hours=24)

@@ -49,21 +49,32 @@ def is_bill_or_order(title: str) -> bool:
     return looks_like_bill_or_order(title) or bool(AMOUNT.search(title or ""))
 
 
-def open_bills_and_orders(store) -> list[dict]:
+def whose_tasks(owner: str) -> tuple[str, tuple]:
+    """The SQL condition for the tasks one watch may look at and close: everyday Odie's watch, the everyday ones (never
+    a personality's reminder); a personality's own watch, that personality's alone (never the everyday ones).
+    "" -> ("personality is null", ()); "ab12…" -> ("personality = ?", ("ab12…",))."""
+    if not owner:
+        return "personality is null", ()
+    return "personality = ?", (owner,)
+
+
+def open_bills_and_orders(store, owner: str = "") -> list[dict]:
     """The open reminders that are bills or orders: id, title, due; the dated ones first, soonest due first."""
-    rows = store.query("select id, title, due_at from tasks where status in ('open', 'waiting') and personality is null "
-                       "order by due_at is null, due_at, created_at")  # everyday ones: never a personality's reminder
+    mine, values = whose_tasks(owner)
+    rows = store.query(f"select id, title, due_at from tasks where status in ('open', 'waiting') and {mine} "
+                       "order by due_at is null, due_at, created_at", values)
     return [{"id": r["id"], "title": r["title"], "due": r["due_at"]} for r in rows if is_bill_or_order(r["title"])]
 
 
-def close(store, task_id: int, why: str) -> str:
+def close(store, task_id: int, why: str, owner: str = "") -> str:
     """Closes an open reminder because a mail showed it's done, and keeps why in its notes. The only way the watch
-    changes a task. (#27, "paid: confirmation mail 21 Oct") -> "Closed reminder #27."; a closed one, an unknown one or
-    no reason -> says so and changes nothing."""
+    changes a task. (#27, "paid: confirmation mail 21 Oct") -> "Closed reminder #27."; a closed one, an unknown one,
+    another's (a personality's watch asked for an everyday reminder) or no reason -> says so and changes nothing."""
     reason = (why or "").strip()
     if not reason:
         return "Say why it's done (which mail showed it)."
-    row = store.one("select id, status from tasks where id=?", (int(task_id),))
+    mine, values = whose_tasks(owner)
+    row = store.one(f"select id, status from tasks where id=? and {mine}", (int(task_id), *values))
     if row is None:
         return f"No reminder #{task_id}."
     if row["status"] not in ("open", "waiting"):
@@ -72,11 +83,13 @@ def close(store, task_id: int, why: str) -> str:
     return f"Closed reminder #{task_id}."
 
 
-def closed_by_watch(store, since: datetime) -> list[dict]:
-    """Reminders the watch closed since then, newest first: id, title, why, closed (when)."""
+def closed_by_watch(store, since: datetime, owner: str = "") -> list[dict]:
+    """Reminders one watch closed since then, newest first: id, title, why, closed (when)."""
     since_utc = since.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S")
-    rows = store.query("select id, title, notes, completed_at from tasks where status = 'done' and notes like ? "
-                       "and completed_at >= ? order by completed_at desc", (CLOSED_NOTE + "%", since_utc))
+    mine, values = whose_tasks(owner)
+    rows = store.query(f"select id, title, notes, completed_at from tasks where status = 'done' and notes like ? "
+                       f"and completed_at >= ? and {mine} order by completed_at desc",
+                       (CLOSED_NOTE + "%", since_utc, *values))
     return [{"id": r["id"], "title": r["title"], "why": why_closed(r["notes"]), "closed": r["completed_at"]}
             for r in rows]
 

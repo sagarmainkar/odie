@@ -32,6 +32,8 @@ import { LABEL, type Panel, type Step, type Turn } from "../setup";
 import { PhoneBlock, StepPanel } from "./Setup";
 import { MacAppsBlock } from "../components/MacAppsBlock";
 import { ApprovalsSection } from "../components/ApprovalsSection";
+import { Switch } from "../components/Switch";
+import { PREVIEWS_LINE, proactiveSub, proactiveUrl, showsProactive, type Proactive } from "../proactive";
 import type { MacApps } from "../mac";
 
 type Health = { status: string; version?: string; model: string; provider?: string; leaves_mini?: boolean; lm_studio: boolean; connections: { gmail: boolean; vault: boolean }; brain_chosen?: boolean; brain_reachable?: boolean };
@@ -227,6 +229,32 @@ function PhoneSection() {
         {panel.explain && <div className="text-small leading-[18px] text-muted">{panel.explain}</div>}
         <PhoneBlock phone={panel.phone} onCheck={() => void load()} />
       </div>
+    </Section>
+  );
+}
+
+/** A personality's "Proactive intelligence" switch (proactive.ts): shown only when it has a mail or calendar app of
+ *  its own; off until turned on. */
+function ProactiveSection() {
+  const pick = usePick();
+  const [state, setState] = useState<Proactive | null>(null);
+  const [problem, setProblem] = useState("");
+  useEffect(() => {
+    setState(null);
+    setProblem("");
+    if (!pick) return;
+    getJSON<Proactive>(proactiveUrl(pick)).then(setState).catch(() => {});
+  }, [pick]);
+  if (!showsProactive(pick, state) || state === null) return null;
+  async function flip(on: boolean) {
+    setProblem("");
+    try { setState(await putJSON<Proactive>(proactiveUrl(pick), { on })); }
+    catch (e) { setProblem(e instanceof Error ? e.message : "Couldn't change it."); }
+  }
+  return (
+    <Section title="Proactive intelligence">
+      <Row icon={{ icon: "spark", color: "violet" }} ok={state.on} title="Check its mail and calendar" sub={problem || proactiveSub(state)}
+        right={<Switch on={state.on} onChange={(on) => void flip(on)} label="Proactive intelligence" />} />
     </Section>
   );
 }
@@ -602,6 +630,8 @@ export function Settings() {
         </div>
         <div className="contents lg:flex lg:flex-col lg:gap-10 lg:min-w-0">
           <Group title={`How ${picked.name} behaves`}>
+            <ProactiveSection />
+
             <ApprovalsSection />
 
             <Section title="Voice">
@@ -632,6 +662,7 @@ export function Settings() {
                   )}
                 </>
               )}
+              <div className="px-4 pb-3 text-small text-muted">{PREVIEWS_LINE}</div>
             </Section>
           </Group>
 

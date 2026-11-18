@@ -203,6 +203,7 @@ def background_for(store: Store, runner):
     from zoneinfo import ZoneInfo
 
     from odie.watch import check as watch
+    from odie.watch import owner as watch_owner
 
     def now():
         return datetime.now(ZoneInfo(config.settings.timezone))
@@ -224,7 +225,35 @@ def background_for(store: Store, runner):
     # Each wake-up: the mail and calendar watch when it's due (every 30 minutes), then trackers (then, in 9c, parked tasks).
     # Detection (a minute or two), the turn (280 s), and reads when the model didn't: 10 minutes at most.
     bg.parts.insert(0, Part("watch", watch_part, due=lambda _now: watch.due(store, now()), limit=600))
+
+    async def personality_watch_part() -> None:
+        await personality_watch(store, runner, now())
+    # A personality with Proactive intelligence on checks its own mail the same way, one personality per wake-up.
+    bg.add(Part("watch:personalities", personality_watch_part,
+                due=lambda _now: watch_owner.next_due(store, now()) is not None, limit=600))
     return bg
+
+
+async def personality_watch(store: Store, runner, now) -> str | None:
+    """One personality's own mail and calendar check (odie.watch.owner), the one waiting longest: on its own brain,
+    with its own apps, its own memory and Watch for, its card and threads kept apart. Returns whose check ran, or
+    None when none is due or there is no runner to think with."""
+    from odie.watch import check as watch
+    from odie.watch import owner as watch_owner
+    pid = watch_owner.next_due(store, now)
+    if pid is None or runner is None or not hasattr(runner, "background_turn"):
+        return None
+
+    async def turn(prompt, tools, instruction):
+        return await runner.background_turn(prompt, timeout=280, tools=tools, instruction=instruction, guard=watch.guard,
+                                            free=watch.MAY_WRITE, skills=watch.calendar_skills(store, pid), owner=pid)
+
+    def push(title, body):
+        watch_pushed(store, runner, title, body)
+    memory = runner.memory_of(pid)
+    index = runner.memory_index(pid)
+    await watch.run_check(store, now, turn, push, memory=memory, memory_index=index, owner=pid)
+    return pid
 
 
 def start_scheduler(store: Store, runner=None, background=None):

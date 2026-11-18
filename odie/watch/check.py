@@ -97,12 +97,12 @@ def guard(tool, args, tool_context) -> dict | None:
     return None
 
 
-def calendar_skills(store) -> list[str]:
+def calendar_skills(store, owner: str = "") -> list[str]:
     """The connected apps' skills a watch check starts with loaded, so it can write to their calendars: one per
     calendar source that is an app (MCP); the Mac's own calendar tools are always there. Gmail and Calendar plus the
     Mac's Calendar -> ["mcp-gmail-calendar"]; only a mail app -> []."""
     names: list[str] = []
-    for src in sources.saved(store):
+    for src in sources.saved(store, owner):
         is_calendar_app = src.kind == "calendar" and src.style != "native"
         name = f"mcp-{src.server}"
         if is_calendar_app and name not in names:
@@ -152,43 +152,73 @@ def nudge_text(check) -> str:
             f"Events: {json.dumps([e.brief() for e in check.events], ensure_ascii=False)}")
 
 
-async def run_check(store, now: datetime, turn, push, memory=None, memory_index: str = "") -> str:
-    if sources.stale(store, now):
-        await sources.detect_and_save(store)
-    if not sources.saved(store):
-        kept = (store.get_setting(rep.CARD) or {}).get("done", [])
-        store.set_setting(rep.CARD, {"checked_at": now.isoformat(timespec="seconds"), "line": "", "needs_you": [], "events": [],
+def has_news(check, open_threads: list[dict], last_check, catching_up: bool) -> bool:
+    """Whether a check has anything new for the model to read; without, no model call (proactive design §4, for every
+    owner). New: a mail, a mail the user sent that code didn't already match, an event that is new, moved or cancelled,
+    the one-time catch-up, or a thread whose due date passed since the last check.
+      nothing in the inbox, the calendar as it was, threads due tomorrow -> False (no call)
+      one new mail -> True;  the 15:00 standup moved to 16:00 -> True;  a reply owed due 10:00, checked 09:45 and
+      10:15 -> True at 10:15, False at 10:45 (already said)"""
+    if check.mails or check.sent or catching_up:
+        return True
+    if any(e.change for e in check.events):
+        return True
+    from odie.watch.threads import became_overdue
+    return any(became_overdue(t["due"], last_check, check.fetcher.now) for t in open_threads)
+
+
+async def run_check(store, now: datetime, turn, push, memory=None, memory_index: str = "", owner: str = "") -> str:
+    """One check of one watch: everyday Odie's (owner "") or a personality's own (odie.watch.owner: its apps, its
+    card, its threads). Returns "off" (nothing to read), "quiet" (nothing new: no model call), "ok" or "fallback"."""
+    from odie.watch import pushes
+    from odie.watch.owner import key
+    from odie.watch.threads import open_threads
+    if sources.stale(store, now, owner):
+        await sources.detect_and_save(store, owner)
+    if not sources.saved(store, owner):
+        card_key = key(rep.CARD, owner)
+        kept = (store.get_setting(card_key) or {}).get("done", [])
+        store.set_setting(card_key, {"checked_at": now.isoformat(timespec="seconds"), "line": "", "needs_you": [], "events": [],
                                      "sources": {}, "off": "Connect Gmail and Calendar (Zapier, Composio or another app) to see them here.",
                                      "done": kept})
         return "off"
-    check = Check(Fetcher(store, now))
+    fetcher = Fetcher(store, now, owner)
+    check = Check(fetcher)
+    last_check = None
+    if fetcher.state.get("last_check"):
+        last_check = datetime.fromisoformat(fetcher.state["last_check"])
     # The user's own mail since the last check: a reply in an open item's thread closes it now, in code; the rest is
     # the check's "What you sent" (odie.watch.sent). Read here, not by the model, so it never depends on the model.
-    sent_by_the_user = await check.fetcher.sent_mail()
-    check.sent = sent.close_answered(store, now, sent_by_the_user)
+    sent_by_the_user = await fetcher.sent_mail()
+    check.sent = sent.close_answered(store, now, sent_by_the_user, owner)
+    # Read first, so a check with nothing new makes no model call; the turn's new_mail gives the same list.
+    check.mails = await fetcher.new_mail()
+    check.mail_read = True
+    check.events = await fetcher.upcoming_events()
+    catching_up = needs_catch_up(fetcher)
+    if not has_news(check, open_threads(store, now, owner), last_check, catching_up):
+        card_events = await fetcher.events_ahead(CARD_DAYS)
+        rep.nothing_new(store, now, card_events, fetcher.statuses, owner)
+        fetcher.commit()
+        return "quiet"
     tools = watch_tools(check)
     watch = watch_for(memory) if memory is not None else ""
     WATCH_FOR_ADDRESSES.clear()
     WATCH_FOR_ADDRESSES.update(addresses_in(watch))
     instruction = _instruction(memory_index, watch)
     prompt = "Run the watch check."  # the background turn puts the time before it (odie.app.runner.background_turn)
-    catching_up = needs_catch_up(check.fetcher)
     if catching_up:
-        older = await check.fetcher.catch_up_mail()
+        older = await fetcher.catch_up_mail()
         if older:
             prompt = catch_up_prompt(prompt, [check.fenced(m) for m in older])
     reason = ""
-    last_task_before = _last_task_id(store)
+    last_task_before = _last_task_id(store, owner)
     try:
         await turn(prompt, tools, instruction)
     except Exception as e:  # noqa: BLE001 (a failed turn still leaves a card)
         reason = f"{type(e).__name__}: {e}"[:160]
         log.warning("watch turn failed", exc_info=True)
-    fetcher = check.fetcher
-    if not check.read:  # the model never looked: read once, for the nudge and for the card's counts
-        check.mails = await fetcher.new_mail()
-        check.events = await fetcher.upcoming_events()
-        check.read = True
+    check.read = True  # read before the turn, for the nudge and for the card's counts
     if check.report is None:  # small models often stop short of report: one nudge, with what the check read
         try:
             await turn(nudge_text(check), tools, instruction)
@@ -198,16 +228,18 @@ async def run_check(store, now: datetime, turn, push, memory=None, memory_index:
     if catching_up:
         finish_catch_up(fetcher, reported=check.report is not None)
     card_events = await fetcher.events_ahead(CARD_DAYS)
-    added_task = _last_task_id(store) > last_task_before  # task_add ran during the check: a reminder for the user
+    added_task = _last_task_id(store, owner) > last_task_before  # task_add ran during the check: a reminder for the user
     first = bool(fetcher.first)
-    failing = rep.failing_now(store, fetcher.statuses)  # read against the last check, so before commit()
+    failing = rep.failing_now(store, fetcher.statuses, owner)  # read against the last check, so before commit()
     r = check.report
     to_push: list[dict] = []
     try:
         if r is None:
-            rep.fallback(store, now, check.mails, card_events, fetcher.statuses, reason or "no report from the model")
+            rep.fallback(store, now, check.mails, card_events, fetcher.statuses, reason or "no report from the model",
+                         owner)
         else:
-            to_push = rep.apply(store, now, r["needs_you"], r["line"], check.mails, card_events, fetcher.statuses, first)
+            to_push = rep.apply(store, now, r["needs_you"], r["line"], check.mails, card_events, fetcher.statuses,
+                                first, owner)
     finally:
         # the check's place is saved first: a post that fails never makes it run again every 5 minutes. A turn that
         # raised (a timeout) and left no report leaves its mail for the next check (fetch.Fetcher.commit)
@@ -219,11 +251,11 @@ async def run_check(store, now: datetime, turn, push, memory=None, memory_index:
         except Exception:  # noqa: BLE001
             log.warning("watch: a push failed", exc_info=True)
     for app in failing:  # Today's Needs you says it too, until the app works again
-        ping(f"{app} stopped working", "Fix it in Settings → Connected apps.")
+        ping(pushes.title_for(store, owner, f"{app} stopped working"), "Fix it in Settings → Connected apps.")
     if r is None:
         return "fallback"
-    for it in to_push:  # what needs the user soon: a push each; the card is on Today's Needs you
-        ping(it["title"], it["why"])
+    for it in to_push:  # what needs the user soon: a push each, within the day's shared budget; the card is on Pulse
+        pushes.started_by_odie(store, now, owner, it["title"], it["why"], ping)
     from odie.agent.tools.files import hand_over, workspace
     ws = workspace().resolve()
     for d in r["done"]:
@@ -239,18 +271,23 @@ async def run_check(store, now: datetime, turn, push, memory=None, memory_index:
                     media.append(got["media"])
         message = str(d.get("message") or "Done.")[:500]
         told = worth_telling(d, media, added_task)
-        rep.keep_done(store, now, message, told, media)  # a told note shows on Today, under Needs you
+        rep.keep_done(store, now, message, told, media, owner=owner)  # a told note shows on Pulse, under Needs you
         if not told:
             log.info("watch: done, not told: %s", message)
             continue
-        ping("Odie: done", message[:160])
+        done_title = "Odie: done"
+        if owner:
+            done_title = pushes.title_for(store, owner, "Done")
+        ping(done_title, message[:160])
     return "ok"
 
 
-def _last_task_id(store) -> int:
-    """The newest task's id (0 with none), the watch's own threads left out: compared before and after the check, it
-    says whether the check added a reminder for the user (opening a thread to follow is not one)."""
-    row = store.one("select max(id) n from tasks where (source_kind is null or source_kind != 'watch') and personality is null")
+def _last_task_id(store, owner: str = "") -> int:
+    """The newest task's id (0 with none) of this watch's owner, the watch's own threads left out: compared before and
+    after the check, it says whether the check added a reminder for the user (opening a thread to follow is not one)."""
+    mine, values = bills.whose_tasks(owner)
+    row = store.one(f"select max(id) n from tasks where (source_kind is null or source_kind != 'watch') and {mine}",
+                    values)
     if row is None or row["n"] is None:
         return 0
     return int(row["n"])

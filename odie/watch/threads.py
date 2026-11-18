@@ -1,7 +1,8 @@
 """The watch's own threads (22 Oct 2026): the orders, bills, replies owed and deadlines it follows until they close.
 
 Each thread is a row in the tasks table that the watch made (source_kind "watch", source_ref the mail's ref), so it
-shows on Today like any other open thread and the user can tick it. The watch moves its threads with `track_thread` (a new
+shows on Today like any other open thread and the user can tick it. Everyday Odie's watch keeps its threads with no
+personality; a personality's own watch (odie.watch.owner) keeps its threads under its id, apart from Odie's. The watch moves its threads with `track_thread` (a new
 stage, a new due date) and closes them with a reason when the mail shows they're done (a delivery, a payment, the
 user's own reply). It never touches a task the user made: only rows with source_kind "watch" are its own. Every check
 starts by reviewing them (`open_threads`), so a thread moves even when no new mail about it arrives."""
@@ -12,7 +13,8 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from odie.watch import report
-from odie.watch.bills import CLOSED_NOTE, closed_note
+from odie.watch.bills import CLOSED_NOTE, closed_note, whose_tasks
+from odie.watch.owner import ODIE
 
 KINDS = {"order": "waiting", "bill": "reminder", "reply": "followup", "deadline": "reminder"}  # thread kind -> task kind
 FIRES = frozenset({"bill", "deadline"})  # kinds whose due date fires a reminder (pay it, do it); orders and replies don't
@@ -21,11 +23,13 @@ CLOSING = ("done", "dropped")
 SOURCE_KIND = "watch"
 
 
-def _own_open(store, ref: str):
+def _own_open(store, ref: str, owner: str = ODIE):
     """The watch's open thread for this mail ref, or None (a task the user made never counts): "mail:o1" with the
-    watch's open order thread -> that row; "mail:o1" only on the user's own task, or a closed thread -> None."""
+    watch's open order thread -> that row; "mail:o1" only on the user's own task, a closed thread, or another watch's
+    (a personality's, asked as Odie) -> None."""
+    mine, values = whose_tasks(owner)
     return store.one("select * from tasks where source_kind = ? and source_ref = ? and status in ('open', 'waiting') "
-                     "order by id desc limit 1", (SOURCE_KIND, ref))
+                     f"and {mine} order by id desc limit 1", (SOURCE_KIND, ref, *values))
 
 
 def _due(value: str | None) -> str | None:
@@ -36,7 +40,7 @@ def _due(value: str | None) -> str | None:
 
 
 def track(store, ref: str, kind: str, title: str, stage: str, due: str | None = None, why: str = "",
-          mail_thread: str = "", mail_source: str = "") -> str:
+          mail_thread: str = "", mail_source: str = "", owner: str = ODIE) -> str:
     """Opens, moves or closes one of the watch's threads, and says what it did. Decides by the stage and whether the
     watch already follows this ref:
       ("mail:o1", "order", "Order: desk lamp", "placed", due "2026-10-24"), none open -> opens a waiting thread
@@ -47,7 +51,7 @@ def track(store, ref: str, kind: str, title: str, stage: str, due: str | None = 
       a ref only a user's own task has -> "No open thread …" (the user's task is never touched)."""
     if kind not in KINDS:
         return f"Unknown kind {kind!r}: a thread is an order, a bill, a reply or a deadline."
-    row = _own_open(store, ref)
+    row = _own_open(store, ref, owner)
     stage_now = (stage or "").strip().lower()
     if stage_now in CLOSING:
         if row is None:
@@ -56,7 +60,7 @@ def track(store, ref: str, kind: str, title: str, stage: str, due: str | None = 
         if not reason:
             return "Say why it's closed: which mail showed it, or what the user did."
         store.update_task(row["id"], status=stage_now, notes=closed_note(CLOSED_NOTE, reason, _facts(row["notes"])))
-        report.drop_item(store, ref)
+        report.drop_item(store, ref, owner)
         return f"Closed thread #{row['id']}."
     due_at = _due(due)
     if due and due_at is None:
@@ -66,7 +70,7 @@ def track(store, ref: str, kind: str, title: str, stage: str, due: str | None = 
         notes = json.dumps({"thread": mail_thread, "source": mail_source, "kind": kind, "due": due_at})
         reminder_at = due_at if fires else None
         tid = store.add_task(title.strip(), KINDS[kind], due_at=reminder_at, source_kind=SOURCE_KIND, source_ref=ref,
-                             origin="agent", notes=notes)
+                             origin="agent", notes=notes, personality=owner or None)
         store.update_task(tid, detail=stage_now)
         return f"Tracking #{tid} {title.strip()} ({stage_now})."
     new_title = title.strip()
@@ -84,20 +88,20 @@ def track(store, ref: str, kind: str, title: str, stage: str, due: str | None = 
     return f"Moved #{row['id']}: {stage_now}."
 
 
-def close(store, ref: str, why: str, by_user: bool = False) -> str:
+def close(store, ref: str, why: str, by_user: bool = False, owner: str = ODIE) -> str:
     """Closes the watch's open thread for this ref, whatever its kind, and takes its card item off. by_user: the user
     dismissed it (on Today, or in chat): noted as theirs, so it isn't listed as something the watch got done.
     ("mail:o1", "delivered") with an open thread -> "Closed thread #12."; no open thread -> "No open thread …"."""
-    row = _own_open(store, ref)
+    row = _own_open(store, ref, owner)
     if row is None:
         return f"No open thread for {ref}."
     if by_user:
         reason = why or "dismissed"
         store.update_task(row["id"], status="done", notes=closed_note(USER_CLOSED_NOTE, reason, _facts(row["notes"])))
-        report.drop_item(store, ref)
+        report.drop_item(store, ref, owner)
         return f"Closed thread #{row['id']}."
     kind = _facts(row["notes"]).get("kind") or "reply"
-    return track(store, ref, kind, row["title"], "done", why=why)
+    return track(store, ref, kind, row["title"], "done", why=why, owner=owner)
 
 
 def _facts(notes: str | None) -> dict:
@@ -121,11 +125,23 @@ def _overdue(due_at: str | None, now: datetime) -> bool:
         return False
 
 
-def open_threads(store, now: datetime) -> list[dict]:
-    """The watch's open threads, soonest due first: id, ref, kind, title, stage, due, overdue, thread, source,
+def became_overdue(due_at: str | None, since: datetime | None, now: datetime) -> bool:
+    """Whether a thread's due date passed between the last check and now: the moment it needs saying again. Due 10:00,
+    last check 09:45, now 10:15 -> True; still overdue at the next check (since 10:15) -> False; due tomorrow ->
+    False; never checked before and overdue -> True."""
+    if not _overdue(due_at, now):
+        return False
+    if since is None:
+        return True
+    return not _overdue(due_at, since)
+
+
+def open_threads(store, now: datetime, owner: str = ODIE) -> list[dict]:
+    """One watch's open threads, soonest due first: id, ref, kind, title, stage, due, overdue, thread, source,
     opened_at."""
-    rows = store.query("select * from tasks where source_kind = ? and status in ('open', 'waiting') order by id",
-                       (SOURCE_KIND,))
+    mine, values = whose_tasks(owner)
+    rows = store.query(f"select * from tasks where source_kind = ? and status in ('open', 'waiting') and {mine} "
+                       "order by id", (SOURCE_KIND, *values))
     out = []
     for r in rows:
         facts = _facts(r["notes"])
@@ -137,15 +153,17 @@ def open_threads(store, now: datetime) -> list[dict]:
     return out
 
 
-def open_refs(store) -> set[str]:
-    """The refs of the watch's open threads, which a later check may report on again."""
-    rows = store.query("select source_ref from tasks where source_kind = ? and status in ('open', 'waiting')",
-                       (SOURCE_KIND,))
+def open_refs(store, owner: str = ODIE) -> set[str]:
+    """The refs of one watch's open threads, which a later check may report on again."""
+    mine, values = whose_tasks(owner)
+    rows = store.query(f"select source_ref from tasks where source_kind = ? and status in ('open', 'waiting') and {mine}",
+                       (SOURCE_KIND, *values))
     return {r["source_ref"] for r in rows}
 
 
-def closed_refs(store) -> set[str]:
-    """The refs whose watch thread is closed and none is open again: their card items go."""
-    rows = store.query("select source_ref from tasks where source_kind = ? and status in ('done', 'dropped')",
-                       (SOURCE_KIND,))
-    return {r["source_ref"] for r in rows} - open_refs(store)
+def closed_refs(store, owner: str = ODIE) -> set[str]:
+    """The refs whose thread (in this watch) is closed and none is open again: their card items go."""
+    mine, values = whose_tasks(owner)
+    rows = store.query(f"select source_ref from tasks where source_kind = ? and status in ('done', 'dropped') and {mine}",
+                       (SOURCE_KIND, *values))
+    return {r["source_ref"] for r in rows} - open_refs(store, owner)

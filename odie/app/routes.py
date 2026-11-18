@@ -2234,6 +2234,44 @@ async def personalities_delete(pid: str, request: Request):
     return {"ok": True, **erased}
 
 
+class ProactiveIn(BaseModel):
+    on: bool
+
+
+def _proactive_out(store, pid: str) -> dict:
+    """The picked personality's Proactive intelligence switch: offered only with a mail or calendar app of its own
+    (odie.watch.owner.own_inbox_apps), and whether it is on. Everyday Odie: never offered (its watch keeps its own
+    setting)."""
+    from odie.plugins.mcp import read_config
+    from odie.watch import owner
+    servers, _ = read_config()
+    apps = owner.own_inbox_apps(store, servers, pid)
+    return {"offered": bool(apps), "on": owner.is_proactive(store, pid), "apps": apps}
+
+
+@router.get("/proactive")
+async def proactive_get(request: Request):
+    return _proactive_out(request.app.state.store, _personality(request))
+
+
+@router.put("/proactive")
+async def proactive_put(body: ProactiveIn, request: Request):
+    """Switches the picked personality's own background mail and calendar check on or off. 409 when it has no mail or
+    calendar app of its own to check (and for everyday Odie, which has no such switch)."""
+    from odie.watch import owner
+    store = request.app.state.store
+    pid = _personality(request)
+    if body.on and not _proactive_out(store, pid)["offered"]:
+        raise HTTPException(409, "It has no mail or calendar app of its own to check.")
+    if pid:
+        owner.set_proactive(store, pid, body.on)
+        said = "off"
+        if body.on:
+            said = "on"
+        store.audit("user", "proactive", result_summary=said)
+    return _proactive_out(store, pid)
+
+
 @router.get("/persona/avatar/{aid}")
 async def persona_avatar_file(aid: str):
     from fastapi.responses import FileResponse
