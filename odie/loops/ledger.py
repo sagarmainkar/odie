@@ -173,13 +173,18 @@ def closed_since(store, pid: str, since: datetime) -> list[dict]:
 
 
 def forget_personality(store, pid: str) -> None:
-    """A personality was deleted: its loops and their evidence go."""
+    """A personality was deleted: its loops, their evidence, their PR tests' records and its "Use this" cards go."""
     if not pid:
         return
     ids = [r["id"] for r in store.query("select id from loops where personality=?", (pid,))]
     for lid in ids:
         store.execute("delete from loop_events where loop_id=?", (lid,))
     store.execute("delete from loops where personality=?", (pid,))
+    for lid in ids:
+        store.execute("delete from settings where key=?", (f"loops.test:{lid}",))  # its PR tests' records
+    offers = store.get_setting("loops.recipe_offers") or {}
+    kept = {repo: o for repo, o in offers.items() if (o.get("owner") or "") != pid}  # its "Use this" cards
+    store.set_setting("loops.recipe_offers", kept)
 
 
 def line(loop: dict, evidence: list[dict]) -> str:

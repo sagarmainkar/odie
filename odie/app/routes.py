@@ -2457,6 +2457,63 @@ async def loop_reopen(loop_id: int, request: Request) -> dict[str, Any]:
     return {"ok": True}
 
 
+@router.post("/loops/{loop_id}/merge")
+async def loop_merge(loop_id: int, request: Request) -> dict[str, Any]:
+    """A tested card's [Merge]: his tap is the approval (proactive design §16). The command is code's, pinned to the
+    tested commit (odie.loops.merge); the terminal's key can't reach this route, and no model has a tool for it."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from odie.loops import ledger, merge
+    store = request.app.state.store
+    loop = ledger.get(store, loop_id)
+    if loop is None or loop["personality"] != _personality(request):
+        raise HTTPException(404, "That card isn't there any more.")
+    try:
+        why = await merge.merge(store, loop_id, datetime.now(ZoneInfo(config.settings.timezone)))
+    except merge.MergeRefused as e:
+        raise HTTPException(409, str(e)) from e
+    return {"ok": True, "closed": why}
+
+
+class RecipeIn(BaseModel):
+    repo: str
+
+
+def _offer_of(request: Request, repo: str) -> None:
+    """A "Use this" card waiting on the picked one's Pulse for this repo; anything else is "no such card"."""
+    from odie.loops import recipes
+    found = recipes.offered(request.app.state.store, repo)
+    if found is None or (found.get("owner") or "") != _personality(request):
+        raise HTTPException(404, "That card isn't there any more.")
+
+
+@router.post("/recipes/use")
+async def recipe_use(body: RecipeIn, request: Request) -> dict[str, Any]:
+    """"Use this": the test command Odie proposed for a repo (kept with the offer, never sent by the app) is approved,
+    once, for that repo; its pull request is looked at again at once."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from odie.loops import recipes
+    _offer_of(request, body.repo)
+    recipes.use(request.app.state.store, body.repo, datetime.now(ZoneInfo(config.settings.timezone)))
+    return {"ok": True}
+
+
+@router.post("/recipes/no")
+async def recipe_no(body: RecipeIn, request: Request) -> dict[str, Any]:
+    """No: Odie won't test this repo nor ask again; its pull requests are briefed from GitHub's CI."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from odie.loops import recipes
+    _offer_of(request, body.repo)
+    recipes.decline(request.app.state.store, body.repo, datetime.now(ZoneInfo(config.settings.timezone)))
+    request.app.state.store.audit("user", "test_recipe_declined", result_summary=body.repo)
+    return {"ok": True}
+
+
 # --- Workers (odie.workers): the picked one's own jobs. Every move here is a tap in the app: the terminal's key can't
 # reach these routes (odie.devices.terminal_may), and the model has no tool for "allow".
 

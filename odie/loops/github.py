@@ -20,8 +20,12 @@ GH_SECONDS = 30
 REF_RE = re.compile(r"^([A-Za-z0-9][A-Za-z0-9-]{0,38})/([A-Za-z0-9._-]{1,100})#([1-9][0-9]{0,6})$")
 NOTIFICATION_RE = re.compile(r"\[([A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9._-]{1,100})\].*\((?:PR |Issue )?#([1-9][0-9]{0,6})\)")
 GITHUB_SENDERS = ("notifications@github.com", "noreply@github.com")
-PR_FIELDS = ("number,title,state,isDraft,mergedAt,closedAt,author,headRefName,baseRefName,additions,deletions,"
-             "changedFiles,isCrossRepository,reviewDecision,reviewRequests,url,statusCheckRollup")
+PR_FIELDS = ("number,title,state,isDraft,mergedAt,closedAt,author,headRefName,headRefOid,baseRefName,additions,deletions,"
+             "changedFiles,files,isCrossRepository,reviewDecision,reviewRequests,url,statusCheckRollup")
+SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+PATHS_KEPT = 300  # file paths kept from a pull request's facts (the rail reads them; a huge one is cut)
+DIFF_MOST = 12000  # characters of a diff the brief reads
+CLONE_SECONDS = 300
 ISSUE_FIELDS = "number,title,state,closedAt,author,assignees,labels,url"
 
 
@@ -93,20 +97,22 @@ def gh_path() -> str | None:
     return shutil.which("gh")
 
 
-async def run_gh(args: list[str]) -> str:
+async def run_gh(args: list[str], seconds: float | None = None) -> str:
     """Runs gh with these arguments (built by code: never text from the model or a mail) and returns what it printed.
-    Not installed, a failure or over GH_SECONDS -> GitHubError."""
+    Not installed, a failure or over `seconds` (GH_SECONDS unless a clone) -> GitHubError."""
+    if seconds is None:
+        seconds = GH_SECONDS
     gh = gh_path()
     if gh is None or not os.path.exists(gh):
         raise GitHubError("The GitHub CLI (gh) isn't installed here.")
     proc = await asyncio.create_subprocess_exec(gh, *args, stdout=asyncio.subprocess.PIPE,
                                                 stderr=asyncio.subprocess.PIPE)
     try:
-        out, err = await asyncio.wait_for(proc.communicate(), GH_SECONDS)
+        out, err = await asyncio.wait_for(proc.communicate(), seconds)
     except TimeoutError:
         proc.kill()
         await proc.wait()  # reaped, so no stopped gh is left behind
-        raise GitHubError(f"gh took longer than {GH_SECONDS} seconds.")
+        raise GitHubError(f"gh took longer than {int(seconds)} seconds.")
     if proc.returncode != 0:
         raise GitHubError((err.decode(errors="replace").strip() or "gh failed")[:300])
     return out.decode(errors="replace")
@@ -144,6 +150,10 @@ async def pr_facts(ref: Ref) -> dict:
     you = await whoami()
     author = _login(raw.get("author"))
     asked = [_login(r) for r in raw.get("reviewRequests") or []]  # a team's request has no login
+    paths = [str(f.get("path") or "") for f in raw.get("files") or [] if isinstance(f, dict)][:PATHS_KEPT]
+    head_sha = str(raw.get("headRefOid") or "")
+    if not SHA_RE.match(head_sha):
+        head_sha = ""
     return {"ref": str(ref), "kind": "pull request", "title": str(raw.get("title") or "")[:200], "state": state,
             "you": you, "yours": bool(you) and author == you, "review_asked_of_you": bool(you) and you in asked,
             "draft": bool(raw.get("isDraft")), "merged_at": raw.get("mergedAt"), "closed_at": raw.get("closedAt"),
@@ -151,7 +161,43 @@ async def pr_facts(ref: Ref) -> dict:
             "base": str(raw.get("baseRefName") or ""), "additions": int(raw.get("additions") or 0),
             "deletions": int(raw.get("deletions") or 0), "files": int(raw.get("changedFiles") or 0),
             "from_fork": bool(raw.get("isCrossRepository")), "review": str(raw.get("reviewDecision") or ""),
-            "checks": checks_of(raw.get("statusCheckRollup")), "url": link(ref, "pull request")}
+            "checks": checks_of(raw.get("statusCheckRollup")), "url": link(ref, "pull request"),
+            "head_sha": head_sha, "paths": paths, "on_your_repo": is_own_repo(ref, you)}
+
+
+def is_own_repo(ref: Ref, you: str) -> bool:
+    """Whether the repo belongs to the signed-in login (its owner is them, as GitHub compares names: any case):
+    asha-dev/app with you "asha-dev" -> True; "Asha-Dev" -> True; example/app -> False; nobody signed in -> False."""
+    return bool(you) and ref.owner.lower() == you.lower()
+
+
+async def pr_diff(ref: Ref) -> str:
+    """Step brief's read (tier 0): `gh pr diff <n> --repo <owner/repo>`, cut at DIFF_MOST characters."""
+    text = await run_gh(["pr", "diff", str(ref.number), "--repo", ref.repo_path])
+    if len(text) > DIFF_MOST:
+        return text[:DIFF_MOST] + "\n[the rest of the diff is cut]"
+    return text
+
+
+async def root_files(ref: Ref) -> list[str]:
+    """The names at the top of the repo (tier 0), for proposing a test command: `gh api repos/<owner/repo>/contents
+    --jq .[].name`."""
+    text = await run_gh(["api", f"repos/{ref.repo_path}/contents", "--jq", ".[].name"])
+    return [line.strip() for line in text.splitlines() if line.strip()]
+
+
+async def clone(ref: Ref, folder: str) -> None:
+    """A copy of the repo in folder (inside a test job's own folder), through gh, signed in as the user."""
+    await run_gh(["repo", "clone", ref.repo_path, folder, "--", "--quiet"], seconds=CLONE_SECONDS)
+
+
+async def merge(ref: Ref, sha: str) -> None:
+    """Step merge (tier 2, his tap only): `gh pr merge <n> --repo <owner/repo> --squash --match-head-commit <sha>`.
+    GitHub refuses when the head is no longer that commit, so only what was tested can merge. A sha that isn't one
+    raises ValueError before anything runs."""
+    if not SHA_RE.match(sha or ""):
+        raise ValueError("not a commit")
+    await run_gh(["pr", "merge", str(ref.number), "--repo", ref.repo_path, "--squash", "--match-head-commit", sha])
 
 
 async def whoami() -> str:
@@ -209,8 +255,21 @@ def headline(facts: dict) -> str:
     status = "Open"
     if facts.get("draft"):
         status = "Draft"
-    size = f"{facts.get('files', 0)} files, +{facts.get('additions', 0)} −{facts.get('deletions', 0)}"
-    return f"{status} · {CHECK_WORDS.get(facts.get('checks', 'none'), 'no CI')} · {size}"
+    size = size_words(facts.get("files", 0), facts.get("additions", 0), facts.get("deletions", 0))
+    return f"{status} · {ci_words(facts)} · {size}"
+
+
+def ci_words(facts: dict) -> str:
+    """CI in two words for the card: green -> "CI green"; red -> "CI failing"; none -> "no CI"."""
+    return CHECK_WORDS.get(facts.get("checks", "none"), "no CI")
+
+
+def size_words(files: int, additions: int, deletions: int) -> str:
+    """A pull request's size: (1, 180, 0) -> "1 file, +180 −0"; (3, 41, 9) -> "3 files, +41 −9"."""
+    noun = "files"
+    if files == 1:
+        noun = "file"
+    return f"{files} {noun}, +{additions} −{deletions}"
 
 
 def evidence(facts: dict) -> str:

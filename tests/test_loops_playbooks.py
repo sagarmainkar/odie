@@ -7,7 +7,7 @@ from odie.loops import playbooks
 def test_github_pr_is_installed_and_read_only():
     book = playbooks.get("github-pr")
     assert book is not None and book.takes == ("pull request", "issue")
-    assert book.steps == {"pr_facts": 0, "issue_facts": 0, "brief": 0}
+    assert book.steps == {"pr_facts": 0, "issue_facts": 0, "brief": 0, "test_pr": 1, "merge": 2}
     assert "Answer with JSON only" in book.text and "---" not in book.text
     assert playbooks.for_kind("Pull Request").name == "github-pr"
     assert playbooks.for_kind("bill") is None
