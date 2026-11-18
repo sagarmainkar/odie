@@ -1,6 +1,6 @@
 {
   "date": "2026-11-18",
-  "odie_commit": "4a6d2aa",
+  "odie_commit": "3a71557",
   "provider": "ollama",
   "model": "deepseek-v4.1-flash:1017-cloud",
   "totals": {
