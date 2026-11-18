@@ -21,6 +21,7 @@ export function NeedsYou({ items, footer, closed, notes = [], loopsDone = [], jo
 }) {
   const [showClosed, setShowClosed] = useState(open);
   const [unfolded, setUnfolded] = useState<Record<string, "why" | "output" | undefined>>({});
+  const [wholeStep, setWholeStep] = useState<Record<string, boolean>>({});  // "<ref>:<i>" -> the step's command shown whole
   const toggle = (ref: string, what: "why" | "output") => setUnfolded((u) => ({ ...u, [ref]: u[ref] === what ? undefined : what }));
   const doneCount = closed.length + notes.length + loopsDone.length + jobsDone.length;
   return (
@@ -49,12 +50,19 @@ export function NeedsYou({ items, footer, closed, notes = [], loopsDone = [], jo
                 {n.badge && <span className={`chip ${badgeTone(n.badge) === "warn" ? "chip-warn" : "chip-soft"} mt-1.5 inline-flex`}>{n.badge}</span>}
               </span>
             </button>
+            {!!n.may_read?.length && (
+              <div className="min-[430px]:ml-12 text-small leading-[18px] text-muted break-all">May read: {n.may_read.join(", ")}</div>
+            )}
             {!!n.steps?.length && (
               <ul className="min-[430px]:ml-12 flex flex-col gap-2" aria-label="Steps it needed">
                 {n.steps.map((st, i) => (
                   <li key={i} className="min-w-0">
                     <div className={`text-small leading-[18px] font-semibold ${st.allowed ? "text-ink-2" : "text-warn-ink"}`}>{st.words}</div>
-                    <code className="block mt-0.5 rounded-tile bg-well px-2.5 py-1.5 text-caption leading-4 font-mono text-muted break-all line-clamp-3">{st.raw}</code>
+                    <code className={`block mt-0.5 rounded-tile bg-well px-2.5 py-1.5 text-caption leading-4 font-mono text-muted break-all ${wholeStep[`${n.ref}:${i}`] ? "whitespace-pre-wrap" : "line-clamp-3"}`}>{st.raw}</code>
+                    {st.raw.length > 120 && (
+                      <button type="button" onClick={() => setWholeStep((w) => ({ ...w, [`${n.ref}:${i}`]: !w[`${n.ref}:${i}`] }))}
+                        className="mt-0.5 text-small font-semibold text-ember-text underline underline-offset-2">{wholeStep[`${n.ref}:${i}`] ? "Show less" : "Show all"}</button>
+                    )}
                   </li>
                 ))}
               </ul>

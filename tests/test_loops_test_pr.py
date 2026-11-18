@@ -85,6 +85,7 @@ def own_pr(fake_gh, sha, files=("app.py",), **over):
     fake_gh.data["pr:asha-dev/app#49"] = pr
     fake_gh.data["diff:asha-dev/app#49"] = "diff --git a/app.py b/app.py\n+print(1)\n"
     fake_gh.data["contents:asha-dev/app"] = ["README.md", "pyproject.toml", "uv.lock"]
+    fake_gh.data.setdefault("collaborators:asha-dev/app", ["asha-dev"])
     fake_gh.save()
     return pr
 
@@ -139,7 +140,7 @@ async def test_pr_facts_say_the_head_commit_the_files_and_whose_repo(store, fake
 def facts_of(**over):
     base = {"state": "open", "yours": True, "on_your_repo": True, "from_fork": False, "paths": ["app.py"], "files": 1,
             "head_sha": "a" * 40, "author": "asha-dev", "you": "asha-dev", "ref": "asha-dev/app#49",
-            "commit_authors": ["asha-dev"]}
+            "commit_authors": ["asha-dev"], "pushers": ["asha-dev"]}
     return {**base, **over}
 
 
@@ -153,6 +154,24 @@ def test_the_rail_lets_only_his_own_pr_on_his_own_repo_be_tested():
     assert rail.why_not(facts_of(state="merged"), "x") == "it isn't open"
     assert rail.why_not(facts_of(head_sha="main"), "x") == "GitHub gave no head commit"
     assert rail.why_not(facts_of(), None) == rail.NO_RECIPE
+
+
+def test_the_rail_wants_him_alone_able_to_push():
+    assert rail.why_not(facts_of(pushers=["asha-dev", "bob"]), "make test") == "others can push to the repo (bob)"
+    assert rail.why_not(facts_of(pushers=None), "make test") == "GitHub didn't say who can push to the repo"
+    assert rail.why_not(facts_of(commit_authors=["asha-dev"] * 100), "make test") == \
+        "it has 100 commits or more, too many to check"
+
+
+async def test_a_repo_others_can_push_to_is_briefed_only(store, fake_gh, origin):
+    own_pr(fake_gh, origin())
+    fake_gh.data["collaborators:asha-dev/app"] = ["asha-dev", "bob"]
+    fake_gh.save()
+    recipes.approve(store, "asha-dev/app", "make test", NOW)
+    lid = a_loop(store)
+    assert await choose.choose(store, ledger.get(store, lid), NOW, model_says(TEST)) == "ready"
+    assert "Not tested: others can push to the repo (bob)" in [e["fact"] for e in ledger.events(store, lid)]
+    assert jobs.running(store) == []
 
 
 def test_the_rail_wants_every_commit_his_and_every_file_seen():
@@ -231,25 +250,47 @@ def test_the_environment_is_cleaned_of_tokens_and_keys(monkeypatch, tmp_path):
     monkeypatch.setenv("GH_TOKEN", "ghx")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "k")
     monkeypatch.setenv("SSH_AUTH_SOCK", "/tmp/agent.sock")
-    env = sandbox.env(tmp_path, home=tmp_path / "home")
+    env = sandbox.env(tmp_path)
     assert "GH_TOKEN" not in env and "ANTHROPIC_API_KEY" not in env and "SSH_AUTH_SOCK" not in env
-    assert env["CI"] == "1" and env["HOME"] == str(tmp_path / "home")
+    assert env["CI"] == "1" and env["HOME"] == str(tmp_path / ".home")
+    for name in ("TMPDIR", "UV_CACHE_DIR", "PIP_CACHE_DIR", "npm_config_cache", "XDG_CACHE_HOME", "UV_PYTHON_INSTALL_DIR"):
+        assert env[name].startswith(str(tmp_path)), name  # every cache inside the job: nothing shared under the home
 
 
 @pytest.mark.skipif(not __import__("odie.workers.sandbox", fromlist=["x"]).available(), reason="no sandbox-exec")
-async def test_the_test_runs_in_the_sandbox_with_a_throwaway_home(store, tmp_path, monkeypatch):
-    from odie.workers import sandbox
+async def test_the_test_runs_in_the_sandbox_with_its_home_inside_the_job(store, tmp_path):
     stand_in = tmp_path / "stand-in-secrets"
     stand_in.mkdir()
     (stand_in / ".env").write_text("FAKE=1\n")
-    monkeypatch.setattr(sandbox, "secret_places", lambda home=None: [str(stand_in)])
     folder = tmp_path / "job"
     repo = folder / "repo"
     repo.mkdir(parents=True)
     outside = tmp_path / "outside.txt"
     code, out = await pr_test.run_test(f"cat {stand_in}/.env; echo x > {outside}; echo home=$HOME", repo, folder)
     assert "FAKE=1" not in out and not outside.exists()
-    assert f"home={folder}/home" in out
+    assert f"home={folder.resolve()}/.home" in out or f"home={folder}/.home" in out
+
+
+async def test_a_test_cant_make_odie_write_through_a_link(store, fake_gh, tmp_path, monkeypatch):
+    target = tmp_path / "LaunchAgents" / "evil.plist"
+    target.parent.mkdir()
+    folder = tmp_path / "jobs" / "prt"
+    folder.mkdir(parents=True)
+
+    async def planted_checkout(ref, sha, folder):
+        repo = folder / "repo"
+        repo.mkdir(exist_ok=True)
+        (repo / "Makefile").write_text(f"test:\n\tln -sf {target} ../output.log; ln -sf {target} ../../.prt.odie/output-1.log; "
+                                       "echo '<plist>planted</plist>'\n")
+        return repo
+    monkeypatch.setattr(pr_test, "checkout", planted_checkout)
+    lid = a_loop(store)
+    job = jobs.create(store, "pr_test", "t", json.dumps({"ref": "asha-dev/app#49", "sha": "a" * 40, "command": "make test"}),
+                      None, folder, 2700, started_by="odie", loop_id=lid)
+    await pr_test.run_job(job, store)
+    assert not target.exists()
+    from odie.workers.shell import records_of
+    assert "planted" in (records_of(folder) / "output-1.log").read_text()
 
 
 def test_only_a_command_from_the_table_runs():

@@ -110,8 +110,10 @@ def decline(store, repo: str, now: datetime) -> int | None:
 def card(repo: str, found: dict) -> dict:
     """An offer as a Pulse card, its buttons written here: Use this, No."""
     return {"ref": f"recipe:{repo}", "title": f"Test {repo}?", "why": f"I'd test {repo} with `{found['command']}`.",
-            "brief": ("Only your own pull requests on your own repos, every commit yours, dependency files untouched; in a "
-                      "fresh copy, in a sandbox that can't read your keys or Odie and writes only to its own folder."),
+            "brief": ("Only your own pull requests, on a repo only you can push to, every commit yours, dependency files "
+                      "untouched. In a fresh copy, in a sandbox: it reads only the system, its tools and that copy (none "
+                      "of your files, keys or Odie), writes only to the copy, and reaches the internet for packages but "
+                      "nothing on this computer."),
             "icon": "terminal", "badge": "", "ask": f"How would you test {repo}?",
             "main": {"label": "Use this", "action": "recipe_use", "value": repo},
             "other": {"label": "No", "action": "recipe_no", "value": repo}, "pile": "alerts",

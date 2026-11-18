@@ -52,8 +52,9 @@ INSTRUCTION = """You are a Worker: one background job for the user, unattended. 
 answers questions, so decide for yourself and keep going.
 
 - Work in your own folder, {folder}; run_shell starts there. Write every file with write_file and read with \
-read_file; the shell is for running things. Your commands run in a sandbox: they may read the user's ordinary files but \
-write only inside your folder; for anything else, say in your report what the user should do.
+read_file; the shell is for running things. Your commands run in a sandbox: they read the system, the toolchains, your \
+folder{read_dirs}, and write only inside your folder; the shell has no network (use web_search and web_fetch when you \
+have them). For anything else, say in your report what the user should do.
 - Nobody can approve anything while you work. A step the rules refuse (deleting or stopping things, installing, \
 secrets, sending data out, changing Odie) is not run, and the answer says why. Don't try it in another form: find \
 another way, or finish and say in your report exactly what you needed. The user can allow it and run the job again.
@@ -103,6 +104,13 @@ class UnlockedToolset(BaseToolset):
         pass  # the inner toolset is the app's; it closes with the app
 
 
+def no_web(job: Job) -> bool:
+    """Whether a Worker gets no web tools and no apps: its chat had read outside text (taint), or it may read folders
+    of the user's (a job reads his folders or the web, never both: what it read could leave through a web fetch).
+      started after reading mail -> True;  may read ~/work/app -> True;  neither -> False"""
+    return bool(job.taint) or bool(job.read_dirs)
+
+
 def tools_for(store: Store, job: Job, runner) -> list:
     """A Worker's tools: its own sandboxed shell (odie.workers.shell; the guard applies the Smart rules on top),
     write_file and read_file in the job's folder, web search and fetch, and the connected apps (each listed only where
@@ -112,7 +120,7 @@ def tools_for(store: Store, job: Job, runner) -> list:
     from odie.workers.files import make_job_file_tools
     from odie.workers.shell import make_worker_shell
     own = [make_worker_shell(store, job), *make_job_file_tools(job.folder)]
-    if job.taint:
+    if no_web(job):
         return own
     apps = [UnlockedToolset(t) for t in getattr(runner, "_plugin_toolsets", [])]
     return [*own, *make_web_tools(store=store, browser_for=None, ask_first=False), *apps]
@@ -179,7 +187,7 @@ def guard_for(store: Store, job: Job, runner):
                 args["cwd"] = str(job.folder)
             command = str(args.get("command") or "")
             reasons = shell_reasons(store, job, command, args.get("cwd"))
-            missing = allow.uncovered(allowed, "run_shell", args, reasons)
+            missing = allow.uncovered(allowed, "run_shell", args, reasons, job.folder)
             if not missing:
                 return None
             return refuse(tool.name, args, allow.need_for_shell(command, missing[0], args.get("cwd")))
@@ -363,7 +371,10 @@ async def _work(job: Job, store: Store, runner, model, got: Report) -> str:
     from odie import personalities
     s = config.settings
     now = datetime.now(ZoneInfo(s.timezone)).strftime("%A %d %B %Y, %H:%M")
-    instruction = INSTRUCTION.format(folder=job.folder)
+    named = ""
+    if job.read_dirs:
+        named = " and, read-only, " + ", ".join(job.read_dirs)
+    instruction = INSTRUCTION.format(folder=job.folder, read_dirs=named)
 
     def as_written(_context) -> str:
         return instruction  # a function, so ADK passes the text on untouched (a brace in a path is not state)
@@ -400,5 +411,5 @@ async def _work(job: Job, store: Store, runner, model, got: Report) -> str:
         return f"{type(e).__name__}: {e}"[:200]
     finally:
         personalities.done_running(job.id)
-        kill_job(job.id)  # budget out, stopped, failed: nothing its commands started keeps running
+        kill_job(job.id, job.folder)  # budget out, stopped, failed: nothing its commands started keeps running
     return ""

@@ -144,6 +144,7 @@ create table if not exists jobs (
   allowed_json text not null default '[]',
   cleared integer not null default 0,
   taint text not null default '',
+  read_dirs_json text not null default '[]',
   version integer not null default 0,
   created_at text not null,
   started_at text,

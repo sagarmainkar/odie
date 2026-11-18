@@ -2536,6 +2536,7 @@ def _job_view(j: dict) -> dict:
     out["report"] = (j.get("report") or "")[:300]
     out["needed"] = [job_allow.line(n) for n in jobs_store.needed(j)]
     out["taint"] = j.get("taint") or ""
+    out["may_read"] = jobs_store.loads(j.get("read_dirs_json"))
     return out
 
 
@@ -2581,19 +2582,32 @@ async def job_retry(job_id: str, request: Request) -> dict[str, Any]:
     return {"ok": True}
 
 
+class AllowIn(BaseModel):
+    hash: str = ""
+
+
 @router.post("/jobs/{job_id}/allow")
-async def job_allow_and_retry(job_id: str, request: Request) -> dict[str, Any]:
+async def job_allow_and_retry(job_id: str, request: Request, body: AllowIn | None = None) -> dict[str, Any]:
     """Pulse's "Allow it and run again": the job again, and exactly the steps it was refused (as its card showed them)
     may run on that run only (odie.workers.allow). What is allowed comes from the job's own record, never the request."""
     from odie.workers import cards as job_cards
     from odie.workers import router as workers_router
     from odie.workers import store as jobs_store
     row = _own_job(request, job_id)
+    from pathlib import Path
+
+    from odie.workers import allow as job_allow
     allowed = job_cards.allowable(row)  # exactly the steps the card offered, never one only he may do in chat
     if row["status"] in jobs_store.GOING:
         raise HTTPException(409, "It's still going.")
     if not allowed:
         raise HTTPException(409, "There's nothing a tap here can allow.")
+    shown = ""
+    if body is not None:
+        shown = body.hash
+    if shown != job_allow.needs_hash(allowed):
+        raise HTTPException(409, "Its steps changed since this card was shown: look at them again.")
+    allowed = job_allow.bind_files(allowed, Path(row["folder"]))  # the files they run, as they are now
     if workers_router.retry(job_id, allowed=allowed) is None:
         raise HTTPException(409, "This one can't run again from here.")
     request.app.state.store.audit("user", "job_allowed", args={"allowed": allowed}, result_summary=job_id)

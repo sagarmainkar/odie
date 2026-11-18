@@ -160,7 +160,7 @@ export function Today() {
       if (a.action === "later") await postJSON("/api/needs_you/later", { ref: a.value });
       if (a.action === "loop_done") await postJSON(`/api/loops/${a.value}/done`, {});
       if (a.action === "job_retry") await postJSON(`/api/jobs/${a.value}/retry`, {});
-      if (a.action === "job_allow") await postJSON(`/api/jobs/${a.value}/allow`, {});
+      if (a.action === "job_allow") await postJSON(`/api/jobs/${a.value}/allow`, { hash: need.allow_hash ?? "" });
       if (a.action === "job_clear") await postJSON(`/api/jobs/${a.value}/clear`, {});
       if (a.action === "merge") await postJSON(`/api/loops/${a.value}/merge`, {});
       if (a.action === "recipe_use") await postJSON("/api/recipes/use", { repo: a.value });

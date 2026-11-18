@@ -6,6 +6,7 @@ FAKE_GH_DATA and appends each call's arguments to FAKE_GH_LOG, one JSON list per
   "diff:example/app#49": "diff --git …"       gh pr diff 49 --repo example/app
   "contents:example/app": ["pyproject.toml"]  gh api repos/example/app/contents --jq .[].name
   "clone:example/app": "/tmp/…/app-origin"    gh repo clone example/app <folder> -- …  (a local git repo, cloned)
+  "collaborators:example/app": ["asha-dev"]   gh api repos/example/app/collaborators … (the logins with push)
 gh pr merge <n> --repo <r> --squash --match-head-commit <sha> merges only when <sha> is the pull request's
 headRefOid; it then marks it MERGED in the data file, as GitHub would."""
 import json
@@ -26,6 +27,13 @@ def value_after(flag):
 
 if args[:2] == ["api", "user"]:
     print(data.get("user", ""))
+    sys.exit(0)
+if args[:1] == ["api"] and len(args) > 1 and args[1].startswith("repos/") and args[1].endswith("/collaborators"):
+    repo = args[1][len("repos/"):-len("/collaborators")]
+    if f"collaborators:{repo}" not in data:
+        print("HTTP 403: Must have push access to view repository collaborators.", file=sys.stderr)
+        sys.exit(1)
+    print(json.dumps(data[f"collaborators:{repo}"]))  # what the --jq filter gives: the logins with push
     sys.exit(0)
 if args[:1] == ["api"] and len(args) > 1 and args[1].startswith("repos/") and args[1].endswith("/contents"):
     repo = args[1][len("repos/"):-len("/contents")]

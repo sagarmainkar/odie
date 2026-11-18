@@ -64,7 +64,10 @@
       "uv.lock",
       "notes"
     ],
-    "user": "you-dev"
+    "user": "you-dev",
+    "collaborators:you-dev/notes": [
+      "you-dev"
+    ]
   },
   "expect": {
     "loops": 1,

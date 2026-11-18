@@ -114,11 +114,14 @@ async def test_a_running_job_is_on_it_with_stop(api, store):
 async def test_allow_it_and_run_again_carries_exactly_what_was_needed(api, store, tmp_path):
     jid = ended_job(store, tmp_path, outcome="blocked", needed=[CHMOD])
     Scripted.stall = True
-    r = await api.post(f"/api/jobs/{jid}/allow")
+    card = next(c for c in needs.cards(store, now()) if c["ref"] == f"job:{jid}")
+    assert (await api.post(f"/api/jobs/{jid}/allow", json={"hash": "something else"})).status_code == 409
+    r = await api.post(f"/api/jobs/{jid}/allow", json={"hash": card["allow_hash"]})
     assert r.status_code == 200
     row = jobs.get(store, jid)
-    assert row["status"] in ("queued", "running") and jobs.loads(row["allowed_json"]) == [CHMOD]
-    assert (await api.post(f"/api/jobs/{jid}/allow")).status_code == 409  # still going
+    assert row["status"] in ("queued", "running")
+    assert [{k: v for k, v in a.items() if k != "files"} for a in jobs.loads(row["allowed_json"])] == [CHMOD]
+    assert (await api.post(f"/api/jobs/{jid}/allow", json={"hash": card["allow_hash"]})).status_code == 409  # still going
 
 
 async def test_retry_and_clear_from_pulse(api, store, tmp_path):

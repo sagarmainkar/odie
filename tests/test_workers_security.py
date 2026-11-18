@@ -77,7 +77,7 @@ async def test_an_old_jobs_table_is_upgraded_and_its_rows_stay_out_of_sight(isol
     async def think(prompt, instruction):
         return '{"choice": "wait", "why": "x", "hours": 2}'
     await choose.choose(store, ledger.get(store, lid), now, think)  # no "no such column" (gh fails: a muddle)
-    Scripted.script = [("report", {"outcome": "ready", "text": "ok"})]
+    Scripted.script, Scripted.seen, Scripted.stall = [("report", {"outcome": "ready", "text": "ok"})], [], False
     worker.model_for_job = lambda store, job: Scripted(model="scripted")
     try:
         got = await make_worker_tools(store)[0].func("New", "Do it.", tool_context=Ctx("chat-2026-11-18"))
@@ -227,58 +227,7 @@ def test_a_tainted_jobs_card_says_so(world, tmp_path):
 
 
 # ── I5/I6: the sandbox ───────────────────────────────────────────────────────
-
-needs_sandbox = pytest.mark.skipif(not sandbox.available(), reason="no sandbox-exec on this computer")
-
-
-def stand_ins(tmp_path):
-    home = tmp_path / "home"
-    (home / ".odie").mkdir(parents=True)
-    (home / ".odie" / ".env").write_text("FAKE_KEY=stand-in\n")
-    (home / ".ssh").mkdir()
-    (home / ".ssh" / "id_test").write_text("stand-in\n")
-    job = home / ".odie" / "data" / "workspace" / "jobs" / "a"
-    job.mkdir(parents=True)
-    return home, job
-
-
-def run_in(argv, cwd):
-    return subprocess.run(argv, cwd=cwd, capture_output=True, text=True, timeout=30)
-
-
-@needs_sandbox
-def test_the_sandbox_keeps_secrets_unread_and_writes_inside_the_folder(tmp_path):
-    home, job = stand_ins(tmp_path)
-    secrets = [str(home / ".odie"), str(home / ".ssh")]
-    outside = tmp_path / "outside"
-    outside.mkdir()
-    argv = sandbox.command(["/bin/sh", "-c", f"cat {home}/.odie/.env; cat {home}/.ssh/id_test; echo x > {outside}/w.txt; "
-                            "echo ok > mine.txt; cat mine.txt"], job, secrets=secrets)
-    done = run_in(argv, job)
-    assert "stand-in" not in done.stdout and "ok" in done.stdout
-    assert not (outside / "w.txt").exists() and (job / "mine.txt").exists()
-    script = job / "wipe.sh"
-    script.write_text(f"rm -rf {outside}\n")  # a script it wrote itself: the text rules can't read it, the sandbox holds
-    run_in(sandbox.command(["/bin/sh", "wipe.sh"], job, secrets=secrets), job)
-    assert outside.exists()
-
-
-@needs_sandbox
-def test_a_tainted_sandbox_has_no_network(tmp_path):
-    _, job = stand_ins(tmp_path)
-    code = "import socket\ntry:\n    socket.create_connection(('127.0.0.1', 9), 2)\nexcept Exception as e:\n    print(type(e).__name__)"
-    open_net = run_in(sandbox.command([sys.executable, "-c", code], job, secrets=[]), job)
-    closed = run_in(sandbox.command([sys.executable, "-c", code], job, secrets=[], offline=True), job)
-    assert "ConnectionRefusedError" in open_net.stdout
-    assert "PermissionError" in closed.stdout
-
-
-def test_the_secret_places_cover_odie_and_the_keys():
-    places = sandbox.secret_places(Path("/Users/someone"))
-    for wanted in ("/Users/someone/.odie", "/Users/someone/.ssh", "/Users/someone/.config/gh", "/Users/someone/.aws",
-                   "/Users/someone/.gnupg", "/Users/someone/.netrc", "/Users/someone/Library/Keychains",
-                   "/Users/someone/Library/Mobile Documents"):
-        assert wanted in places
+# Superseded by the default-deny profile's own tests (tests/test_workers_sandbox.py, second review).
 
 
 # ── I7: the nudge leaves questions alone ─────────────────────────────────────

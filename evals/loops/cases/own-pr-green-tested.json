@@ -63,7 +63,10 @@
       ]
     },
     "user": "you-dev",
-    "diff:you-dev/app#70": "diff --git a/app/threads.py b/app/threads.py\n-    rows.sort()\n+    rows.sort(reverse=True)\n"
+    "diff:you-dev/app#70": "diff --git a/app/threads.py b/app/threads.py\n-    rows.sort()\n+    rows.sort(reverse=True)\n",
+    "collaborators:you-dev/app": [
+      "you-dev"
+    ]
   },
   "recipes": {
     "you-dev/app": "make test"

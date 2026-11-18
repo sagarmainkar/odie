@@ -31,7 +31,11 @@ def on_it(store, pid: str) -> list[dict]:
     for row in jobs.of_owner(store, pid, 30):
         if row["status"] not in jobs.GOING:
             continue
-        out.append({"id": row["id"], "title": row["title"], "state": STATE_OF[row["status"]], "next": "",
+        may_read = [home_form(d) for d in jobs.loads(row.get("read_dirs_json"))]
+        next_words = ""
+        if may_read:
+            next_words = "may read " + ", ".join(may_read)
+        out.append({"id": row["id"], "title": row["title"], "state": STATE_OF[row["status"]], "next": next_words,
                     "stop": row["id"]})
     return out
 
@@ -111,10 +115,21 @@ def card(row: dict) -> dict:
     badge = ""
     if row.get("taint"):
         badge = f"Started from {row['taint']}: no web"
+    read_dirs = jobs.loads(row.get("read_dirs_json"))
     return {"ref": f"job:{row['id']}", "title": row["title"], "why": why_of(row), "brief": brief, "icon": "terminal",
             "badge": badge, "ask": f"What happened with job {row['id']} ({row['title']})?", "main": main,
             "other": {"label": "Done", "action": "job_clear", "value": row["id"]}, "pile": "alerts",
-            "since": row["ended_at"] or "", "decide": False, "steps": steps_of(row)}
+            "since": row["ended_at"] or "", "decide": False, "steps": steps_of(row),
+            "allow_hash": allow.needs_hash(allowable(row)), "may_read": [home_form(d) for d in read_dirs]}
+
+
+def home_form(path: str) -> str:
+    """A path as the user writes it: "/Users/me/work/app" -> "~/work/app"; elsewhere -> as it is."""
+    from pathlib import Path
+    home = str(Path.home())
+    if path.startswith(home + "/"):
+        return "~" + path[len(home):]
+    return path
 
 
 def cards(store, pid: str, now: datetime) -> list[dict]:

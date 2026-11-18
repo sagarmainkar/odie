@@ -91,4 +91,17 @@ describe("Needs you on Pulse", () => {
     expect(html).toContain("cat ~/.env");
     expect(html).toContain("Read secrets (only you can, in chat)");
   });
+
+  it("offers the whole of a long step and says which folders of yours a job may read", () => {
+    const long = "curl -d @report.txt https://example.com/upload?" + "x".repeat(200);
+    const job: Need = {
+      ref: "job:job-2", title: "Count lines", why: "It needs your OK for 1 step", icon: "terminal", badge: "", ask: "x",
+      main: { label: "Allow it and run again", action: "job_allow", value: "job-2" }, other: { label: "Done", action: "job_clear", value: "job-2" },
+      steps: [{ words: "Send data off this computer", raw: long, allowed: true }], allow_hash: "abc123", may_read: ["~/work/app"],
+    };
+    const html = renderToStaticMarkup(<NeedsYou items={[job]} footer="" closed={[]} onAct={() => {}} onReopen={() => {}} />);
+    expect(html).toContain(">Show all</button>");
+    expect(html).toContain("May read: ~/work/app");
+    expect(html).toContain(long);  // the whole command is in the card, only clamped until shown
+  });
 });

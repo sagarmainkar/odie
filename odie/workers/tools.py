@@ -3,6 +3,9 @@ Their docstrings are the model's guidance on when a job is for a Worker and when
 works on the jobs of whoever the chat belongs to (everyday Odie or a personality), never another's."""
 from __future__ import annotations
 
+import os
+from pathlib import Path
+
 from google.adk.tools import FunctionTool, ToolContext
 
 from odie.agent.context import session_id_of
@@ -68,14 +71,18 @@ def calls_this_turn(tool_context) -> list[str]:
 
 
 def taint_of(store: Store, tool_context) -> str:
-    """What outside text this turn had read when it starts a job, or "" when none: the job is then tainted (no web,
-    no apps, no network for its commands).
-      the turn read mail or messages (other people's words)         -> "mail"
-      the turn fetched or searched the web, or used the browser      -> "web pages"
-      the turn called a connected app's tool                         -> "an app"
-      the turn read only notes or memory, or nothing                 -> "" """
+    """What outside text this chat has read, this turn or any earlier one, when it starts a job, or "" when none: the
+    job is then tainted (no web, no apps; its shell has no network anyway). odie.workers.taint keeps it for the chat.
+      the chat read mail or messages (other people's words), now or turns ago -> "mail"
+      it fetched or searched the web, or used the browser                     -> "web pages"
+      it called a connected app's tool                                        -> "an app"
+      it read only notes or memory, or nothing (a new chat)                   -> "" """
     from odie.agent import turn
     from odie.plugins import access
+    from odie.workers import taint as job_taint
+    earlier = job_taint.of_chat(store, session_id_of(tool_context))
+    if earlier:
+        return earlier
     read = turn.read_sources()
     if "your mail" in read or "your messages" in read:
         return "mail"
@@ -88,6 +95,64 @@ def taint_of(store: Store, tool_context) -> str:
     return ""
 
 
+READ_DIRS_MOST = 3
+
+
+def odie_places() -> list[Path]:
+    from odie import config
+    places = [config.settings.data_dir, config.settings.config_dir, Path.home() / ".odie"]
+    named = os.environ.get("ODIE_HOME")
+    if named:
+        places.append(Path(named).expanduser())
+    return [Path(p).expanduser().resolve() for p in places]
+
+
+def overlaps(a: Path, b: Path) -> bool:
+    return a == b or a in b.parents or b in a.parents
+
+
+def named_by_user(given: str, folder: Path, words: str | None) -> bool:
+    """Whether the user's own words this turn name the folder: as the model passed it, with ~ for the home, or in
+    full. "check the tests in ~/work/app" and given "~/work/app" -> True; given "/Users/me/work/app" -> True (its ~ form
+    is there); words that never mention it -> False."""
+    if not words:
+        return False
+    home = str(Path.home())
+    forms = {given.rstrip("/"), str(folder)}
+    if str(folder).startswith(home + "/"):
+        forms.add("~" + str(folder)[len(home):])
+    return any(form and form in words for form in forms)
+
+
+def readable_dir(given: str, words: str | None) -> tuple[str | None, str]:
+    """A folder of his a job may read, checked by code: (its real path, "") or (None, why not). It must be a folder
+    under the home (not the home itself), with no hidden part and not in Library, apart from Odie's own folders (not
+    inside them, not around them), and named by the user in this turn's own words.
+      "~/work/app", said in the request          -> ("/Users/me/work/app", "")
+      "~/.ssh" or "~/Library/Mail"               -> (None, "hidden or app data")
+      "~" or "/etc"                              -> (None, "not a folder under your home")
+      "~/work/app", never said by the user       -> (None, "you didn't name it")"""
+    folder = Path(given)
+    if given == "~" or given.startswith("~/"):
+        folder = Path.home() / given[2:]
+    if not folder.is_absolute():
+        return None, f"{given}: give the folder's whole path"
+    folder = folder.resolve()
+    home = Path.home().resolve()
+    if home not in folder.parents:
+        return None, f"{given}: not a folder under your home"
+    if not folder.is_dir():
+        return None, f"{given}: no such folder"
+    parts = folder.relative_to(home).parts
+    if any(part.startswith(".") for part in parts) or parts[0] == "Library":
+        return None, f"{given}: hidden or app data, never readable by a job"
+    if any(overlaps(folder, place) for place in odie_places()):
+        return None, f"{given}: Odie's own folders, never readable by a job"
+    if not named_by_user(given, folder, words):
+        return None, f"{given}: you didn't name it in your request"
+    return str(folder), ""
+
+
 def own_job(store: Store, job_id: str, owner: str) -> dict | None:
     """The job when it belongs to this owner; another's (or none) -> None."""
     row = jobs.get(store, job_id)
@@ -97,8 +162,9 @@ def own_job(store: Store, job_id: str, owner: str) -> dict | None:
 
 
 def make_worker_tools(store: Store) -> list[FunctionTool]:
-    async def start_job(title: str, brief: str, tool_context: ToolContext = None) -> dict:
-        """Hand a long job to a background Worker and answer the user now. A job is: code to write and run, a test to run, a check that takes more than one shell command, or anything that would take you over a minute. One read or one command: do it here yourself; a question (today's market, a sum, a note, a picture): answer here. If unsure, start the job. The Worker runs alone with the shell, its own folder, the web and your apps, never asks the user anything (a step that would need their tap is skipped and named in its report), and posts its report into this chat when done or stuck. title: a few words the user will recognise. brief: everything the Worker needs, in full: the goal, where things are, what done looks like, what to leave alone. Tell the user it started and that the result will come here."""
+    async def start_job(title: str, brief: str, read_dirs: list[str] | None = None,
+                        tool_context: ToolContext = None) -> dict:
+        """Hand a long job to a background Worker and answer the user now. A job is: code to write and run, a test to run, a check that takes more than one shell command, or anything that would take you over a minute. One read or one command: do it here yourself; a question (today's market, a sum, a note, a picture): answer here. If unsure, start the job. The Worker runs alone with the shell, its own folder, the web and your apps, never asks the user anything (a step that would need their tap is skipped and named in its report), and posts its report into this chat when done or stuck. It can't read the user's files unless they named the folder in this request: then pass it in read_dirs (its whole path, as they said it, at most 3); such a job gets no web. title: a few words the user will recognise. brief: everything the Worker needs, in full: the goal, where things are, what done looks like, what to leave alone. Tell the user it started and that the result will come here."""
         session_id = chat_of(tool_context)
         if session_id is None:
             return {"error": ONLY_IN_CHAT}
@@ -111,13 +177,22 @@ def make_worker_tools(store: Store) -> list[FunctionTool]:
         clean_title = title.strip()[:80]
         if not clean_title:
             clean_title = "Job"
+        from odie.agent import turn
+        folders = []
+        for given in (read_dirs or [])[:READ_DIRS_MOST]:
+            folder, why = readable_dir(str(given), turn.USER_TEXT.get())
+            if folder is None:
+                return {"error": f"Not started: {why}."}
+            folders.append(folder)
         taint = taint_of(store, tool_context)
         try:
             job = router.start(clean_title, brief.strip(), session_id, personality=owner_of(store, tool_context),
-                               taint=taint)
+                               taint=taint, read_dirs=folders)
         except router.TooMany as e:
             return {"error": f"Not started: {e}"}
         out = {"job_id": job.id, "status": "started", "folder": str(job.folder)}
+        if folders:
+            out["may_read"] = folders
         if taint:
             out["note"] = f"This chat read {taint} this turn, so the job runs without web, apps or network."
         return out

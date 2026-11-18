@@ -62,7 +62,11 @@
         }
       ]
     },
-    "user": "you-dev"
+    "user": "you-dev",
+    "collaborators:you-dev/app": [
+      "you-dev",
+      "asha-codes"
+    ]
   },
   "recipes": {
     "you-dev/app": "make test"

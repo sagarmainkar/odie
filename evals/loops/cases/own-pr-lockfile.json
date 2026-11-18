@@ -63,7 +63,10 @@
         }
       ]
     },
-    "user": "you-dev"
+    "user": "you-dev",
+    "collaborators:you-dev/app": [
+      "you-dev"
+    ]
   },
   "recipes": {
     "you-dev/app": "make test"

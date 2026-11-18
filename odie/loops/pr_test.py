@@ -3,14 +3,18 @@
 
   1. clone the repo into the job's own folder through gh (signed in as the user);
   2. fetch the pull request's head and check out exactly the commit the rail looked at (refused if it differs);
-  3. run the approved command (one of odie.loops.recipes.TABLE's, checked again here) in the clone, inside the sandbox
-     (odie.workers.sandbox): it can't read Odie's home, ~/.ssh, ~/.config/gh, ~/.aws, the Keychains or iCloud Drive,
-     it writes only to the job's folder and the package caches, HOME is a throwaway folder inside the job, and its
-     environment carries no token, key or SSH agent. The network is open (packages install). Within TEST_SECONDS;
-     whatever it leaves running is stopped when it ends;
+  3. run the approved command (one of odie.loops.recipes.TABLE's, checked again here) in the clone, inside the
+     default-deny sandbox (odie.workers.sandbox): it reads only the system, the toolchains and the job's own folder
+     (nothing of the user's home: no keys, no tokens, no Odie, no documents), writes only the job's folder (HOME, temp
+     and every package cache are inside it, so packages download afresh each time), can't start anything outside the
+     sandbox (no LaunchServices, no AppleEvents), reaches the internet but nothing on this computer (no localhost, no
+     unix sockets), and its environment carries no token, key or SSH agent. Within TEST_SECONDS; whatever it leaves
+     running, in its process group or not, is killed when it ends (odie.workers.shell.sweep);
   4. record the exit code, the counts read from the output and the output's tail on the loop: evidence, so "tests
      pass" is a fact, not a claim. The loop gets news and stage 4 looks at it again (the brief, then the card).
-The clone is removed afterwards; the whole output stays in the job's folder as output.log."""
+The clone is removed afterwards; the whole output is kept in Odie's own record of the job (beside its folder, where no
+sandbox can write), opened so that no link a test planted is ever followed. Odie's own git commands in the clone run
+with hooks and the file-system monitor switched off, before any of the pull request's code runs."""
 from __future__ import annotations
 
 import asyncio
@@ -122,16 +126,38 @@ async def run_command(argv: list[str], cwd: Path, seconds: float, env: dict | No
 
 
 async def run_test(command: str, repo: Path, folder: Path) -> tuple[int | None, str]:
-    """The approved command in the clone, inside the job's sandbox, with HOME a throwaway folder in the job."""
-    from odie.workers import sandbox
-    home = folder / "home"
-    home.mkdir(parents=True, exist_ok=True)
-    argv = sandbox.command(["/bin/sh", "-c", command], folder)
-    return await run_command(argv, repo, TEST_SECONDS, env=sandbox.env(folder, home=home))
+    """The approved command in the clone, inside the job's sandbox (internet, never this computer), with HOME, temp
+    and caches inside the job's folder; afterwards every process left in its sandbox is killed."""
+    from odie.workers import sandbox, shell
+    argv = sandbox.command(["/bin/sh", "-c", command], folder, network=sandbox.INTERNET)
+    try:
+        return await run_command(argv, repo, TEST_SECONDS, env=sandbox.env(folder))
+    finally:
+        shell.sweep(folder)
+
+
+def keep_output(folder: Path, run: int, output: str) -> Path:
+    """Writes the test's whole output to output-<run>.log in Odie's record of the job (beside the job's folder, where
+    no sandbox writes), creating it fresh and never following a link (O_CREAT | O_EXCL | O_NOFOLLOW)."""
+    from odie.workers.shell import records_of
+    records = records_of(folder)
+    records.mkdir(parents=True, exist_ok=True)
+    path = records / f"output-{run}.log"
+    if path.is_symlink() or path.exists():
+        path.unlink()
+    fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write(output)
+    return path
+
+
+GIT_SAFE = ("-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false")
 
 
 async def git(cwd: Path, *args: str) -> str:
-    code, out = await run_command(["git", *args], cwd, GIT_SECONDS)
+    """Odie's own git command in the clone: hooks and the file-system monitor are switched off, so nothing in the
+    repository runs (a clone brings no config or hooks of its own; the pull request's code runs only in the sandbox)."""
+    code, out = await run_command(["git", *GIT_SAFE, *args], cwd, GIT_SECONDS)
     if code != 0:
         raise PrTestError(f"git {args[0]} failed: {out.strip()[:200]}")
     return out.strip()
@@ -254,7 +280,7 @@ async def run_job(job, store) -> str:
             raise PrTestError("this computer has no sandbox to run tests in")
         repo = await checkout(ref, sha, job.folder)
         code, output = await run_test(command, repo, job.folder)
-        (job.folder / "output.log").write_text(output)
+        keep_output(job.folder, job.runs, output)
         found = counts(output)
         result.update(exit=code, tail=output[-TAIL:], ok=code == 0)
         if found is not None:

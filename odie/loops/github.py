@@ -199,6 +199,29 @@ def is_own_repo(ref: Ref, you: str) -> bool:
     return bool(you) and ref.owner.lower() == you.lower()
 
 
+async def pushers(ref: Ref) -> list[str] | None:
+    """Every account that can push to the repo (tier 0): `gh api repos/<owner/repo>/collaborators --paginate --jq
+    [.[] | select(.permissions.push) | .login]`; None when GitHub won't say (then the rail refuses to test)."""
+    try:
+        text = await run_gh(["api", f"repos/{ref.repo_path}/collaborators", "--paginate", "--jq",
+                             "[.[] | select(.permissions.push) | .login]"])
+    except GitHubError:
+        return None
+    logins = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            page = json.loads(line)
+        except ValueError:
+            return None
+        if not isinstance(page, list):
+            return None
+        logins += [str(x) for x in page]
+    return logins
+
+
 async def pr_diff(ref: Ref) -> str:
     """Step brief's read (tier 0): `gh pr diff <n> --repo <owner/repo>`, cut at DIFF_MOST characters."""
     text = await run_gh(["pr", "diff", str(ref.number), "--repo", ref.repo_path])

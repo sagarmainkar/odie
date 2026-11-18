@@ -258,6 +258,7 @@ async def test_step(store, loop: dict, now: datetime, ref: github.Ref, facts: di
                  with "Not tested: <why>" in its evidence"""
     repo = ref.repo_path
     recipe = recipes.approved(store, repo)
+    facts = {**facts, "pushers": await github.pushers(ref)}  # read now, only when a test is asked for
     why = rail.why_not(facts, recipe)
     if why == rail.NO_RECIPE:
         why = await offer_recipe(store, loop, now, ref)

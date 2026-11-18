@@ -72,7 +72,8 @@ def waiting_for(store: Store, personality: str) -> int:
 
 
 def start(title: str, brief: str, session_id: str | None, personality: str = "", kind: str = "task",
-          started_by: str = "you", loop_id: int | None = None, taint: str = "") -> Job | None:
+          started_by: str = "you", loop_id: int | None = None, taint: str = "",
+          read_dirs: list | None = None) -> Job | None:
     """Start a job: the row, the folder, and a task that runs it when a slot is free. Returns the job, or None when it
     is Odie's own and today's ODIE_DAILY are used. A user's job with MAX_WAITING of theirs already waiting raises
     TooMany. taint: the outside text the starting chat had read (no web, no apps for its Worker). Needs the running loop."""
@@ -85,7 +86,7 @@ def start(title: str, brief: str, session_id: str | None, personality: str = "",
     job_id = jobs.new_id()
     folder = folder_for(title, job_id)
     job = jobs.create(store, kind, title, brief, session_id, folder, worker.BUDGET_SECONDS, personality=personality,
-                      started_by=started_by, loop_id=loop_id, job_id=job_id, taint=taint)
+                      started_by=started_by, loop_id=loop_id, job_id=job_id, taint=taint, read_dirs=read_dirs)
     launch(job)
     return job
 
@@ -130,6 +131,14 @@ async def _run(job: Job) -> str:
         return "failed"
 
 
+def folder_of(job_id: str) -> Path | None:
+    """The job's folder, from its row (None when there is no such job)."""
+    row = jobs.get(hooks["store"], job_id)
+    if row is None:
+        return None
+    return Path(row["folder"])
+
+
 def stop(job_id: str) -> bool:
     """Stop a queued or running job: its task is cancelled (a shell command in flight dies with it) and the row says
     stopped. A job that is not going -> False."""
@@ -138,7 +147,7 @@ def stop(job_id: str) -> bool:
     if task is None or task.done():
         return False
     task.cancel()
-    kill_job(job_id)  # its commands' processes, background children too
+    kill_job(job_id, folder_of(job_id))  # everything its commands started, in its sandbox
     jobs.ended(hooks["store"], job_id, "stopped", error="stopped by you")
     return True
 
@@ -173,7 +182,7 @@ async def fail(job_id: str, why: str) -> None:
     task = _tasks.get(job_id)
     if task is not None and not task.done():
         task.cancel()
-    kill_job(job_id)
+    kill_job(job_id, folder_of(job_id))
     row = jobs.get(store, job_id)
     if row is None:
         return
@@ -203,11 +212,14 @@ def retry(job_id: str, allowed: list | None = None) -> Job | None:
 
 
 async def recover() -> list[str]:
-    """Odie started: a job that was queued or running is told as cut off (its task is gone). Returns one line per
-    job, for the log."""
+    """Odie started: a job that was queued or running is told as cut off (its task is gone), and whatever its commands
+    left running (a crash skips the shutdown's kill) is killed. Returns one line per job, for the log."""
+    from odie.workers import sandbox, shell
     store = hooks["store"]
     lines = []
     for row in jobs.running(store):
+        if sandbox.available() and shell.folder_ran_commands(Path(row["folder"])):
+            shell.sweep(Path(row["folder"]))  # what it left running when Odie stopped: found by its sandbox, killed
         jobs.ended(store, row["id"], "failed", error="Odie restarted")
         await tell_cut_off(row, "Odie restarted")
         lines.append(f"{row['id']}: cut off by the restart")
@@ -223,5 +235,5 @@ async def stop_all() -> None:
     tasks = list(_tasks.items())
     for job_id, task in tasks:
         task.cancel()
-        kill_job(job_id)
+        kill_job(job_id, folder_of(job_id))
     await asyncio.gather(*(t for _, t in tasks), return_exceptions=True)
