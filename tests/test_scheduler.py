@@ -22,7 +22,8 @@ async def test_brief_job_is_a_coroutine_function(tmp_path):
         sched2 = start_scheduler(s, R(), Background())
         # "brief_missed" is set aside: it is added only when Odie starts owing a round (between 07:30 and noon with no
         # brief yet today, or from 05:00 with no hello yet today).
-        assert {j.id for j in sched2.get_jobs()} - {"brief_missed"} == {"brief", "reminders", "expiry", "news", "background", "background_now"}
+        assert {j.id for j in sched2.get_jobs()} - {"brief_missed"} == {"brief", "reminders", "expiry", "news", "background", "background_now",
+                                                                   "workers_watchdog"}
         sched2.shutdown(wait=False)
     finally:
         sched.shutdown(wait=False)

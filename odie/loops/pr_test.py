@@ -107,6 +107,9 @@ async def run_command(argv: list[str], cwd: Path, seconds: float) -> tuple[int |
         _kill(proc)
         await proc.wait()
         return None, b"".join(chunks).decode(errors="replace")
+    except asyncio.CancelledError:
+        _kill(proc)  # the job was stopped: the tests stop with it, process group and all
+        raise
     return proc.returncode, b"".join(chunks).decode(errors="replace")
 
 

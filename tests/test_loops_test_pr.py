@@ -439,3 +439,15 @@ def test_deleting_a_personality_forgets_its_tests_and_offers(store):
     recipes.offer(store, "asha-dev/app", "uv run pytest -q", ledger.get(store, lid), NOW)
     ledger.forget_personality(store, mira.id)
     assert pr_test.result_for(store, lid) is None and recipes.offered(store, "asha-dev/app") is None
+
+
+async def test_a_test_cut_off_by_a_restart_may_run_again(store, fake_gh, origin):
+    sha = origin()
+    own_pr(fake_gh, sha)
+    recipes.approve(store, "asha-dev/app", "sh test.sh", NOW)
+    lid = a_loop(store)
+    pr_test.cut_off(store, {"id": "job-1", "brief": json.dumps({"sha": sha, "command": "sh test.sh"}), "loop_id": lid},
+                    "Odie restarted")
+    assert ledger.events(store, lid)[-1]["fact"] == f"The test of {sha[:7]} couldn't run: Odie restarted"
+    assert await choose.choose(store, ledger.get(store, lid), NOW, model_says(TEST)) == "test"
+    assert await finished(store, lid)  # (its clone fails here: no origin given; it must still end)

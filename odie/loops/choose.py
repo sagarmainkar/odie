@@ -228,10 +228,12 @@ def tested_headline(tested: dict, facts: dict) -> str:
 
 def tests_of(store, loop: dict, facts: dict) -> tuple[dict | None, dict | None]:
     """The loop's last test, sorted against the head commit now: (the test of this head, None), or (None, the test of
-    an older commit), or (None, None) when it was never tested. A test of an older commit loses its card's Merge.
-      tested abc…, head abc… -> (that test, None);  tested abc…, head def… -> (None, that test);  never -> (None, None)"""
+    an older commit), or (None, None) when it was never tested or its test couldn't run (cut off by a restart, a
+    failed clone), so it may be tested again (Odie's 8 a day bound that). A test of an older commit loses its Merge.
+      tested abc…, head abc… -> (that test, None);  tested abc…, head def… -> (None, that test);
+      never, or abc…'s test cut off by a restart -> (None, None)"""
     result = pr_test.result_for(store, loop["id"])
-    if result is None:
+    if result is None or result.get("error"):
         return None, None
     if facts.get("head_sha") and result.get("sha") == facts["head_sha"]:
         return result, None

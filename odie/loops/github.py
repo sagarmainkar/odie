@@ -113,6 +113,9 @@ async def run_gh(args: list[str], seconds: float | None = None) -> str:
         proc.kill()
         await proc.wait()  # reaped, so no stopped gh is left behind
         raise GitHubError(f"gh took longer than {int(seconds)} seconds.")
+    except asyncio.CancelledError:
+        proc.kill()  # its job was stopped: gh (a clone) stops with it
+        raise
     if proc.returncode != 0:
         raise GitHubError((err.decode(errors="replace").strip() or "gh failed")[:300])
     return out.decode(errors="replace")
