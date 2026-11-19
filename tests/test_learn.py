@@ -55,7 +55,8 @@ def test_outcome_of_a_card(store):
     ledger.close(store, by_evidence, NOW, "odie", "paid 18 Nov")
     assert learn.outcome(store, ledger.get(store, by_evidence), NOW) is None  # he acted in the world: neutral
     dropped = card(store, "Old thing", shown_days=15)
-    ledger.close(store, dropped, NOW, "odie", "No move in 14 days: dropped", state="dropped")
+    from odie.loops import ladder
+    ledger.close(store, dropped, NOW, "odie", ladder.DROP_WHY, state="dropped")
     assert learn.outcome(store, ledger.get(store, dropped), NOW) == "ignored"
 
 

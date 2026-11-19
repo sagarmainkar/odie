@@ -19,6 +19,7 @@ PUT_ASIDE = "rollback"  # closed for a rollback (odie.loops.migrate.before_rollb
 REMEMBER_DAYS = 30  # a closed loop is remembered this long after its close, or until its due time, whichever is later
 FINISHED_DAYS = REMEMBER_DAYS  # (the name stage 2's prompt uses)
 REOPEN_DAYS = 7  # a closed loop may be reopened this long after its close
+TICKED = "review_ticked"  # in a loop's card: the reminders of Odie's the evening review's drop ticked (Reopen reopens)
 # The reminders a loop may close with it: the ones Odie made (for a loop, a watch thread of old, a reminder with a source
 # ref the watch added). His own (no source kind) are never touched.
 ODIES_TASKS = ("loop", "watch", "ref")
@@ -375,11 +376,26 @@ def reopen(store, loop_id: int, now: datetime) -> None:
         return
     if unmerge(store, loop_id, now):
         return
+    reopen_ticked(store, loop, now)
     at = _at(now)
     store.execute("update loops set state=?, closed_by=null, closed_why=null, closed_at=null, has_news=1, "
                   "attempts=0, next_check_at=?, hidden_until=null, shown_at=?, tapped='reopen', updated_at=? where id=?",
                   (state_after_reopen(loop), at, at, at, int(loop_id)))
     add_event(store, loop_id, now, CLOSED_BY_USER, "", "Reopened by you")
+
+
+def reopen_ticked(store, loop: dict, now: datetime) -> None:
+    """The reminders the evening review's drop ticked (its card's TICKED) ring again when the loop is reopened, and the
+    note is cleared. A dropped order with Odie's "check the delivery" reminder ticked, reopened -> the reminder is open
+    again; a loop the review never dropped -> nothing to do."""
+    ticked = loop["card"].get(TICKED) or []
+    for task_id in ticked:
+        row = store.one("select status from tasks where id=?", (int(task_id),))
+        if row is not None and row["status"] == "done":
+            store.update_task(int(task_id), status="open", completed_at=None)
+    if ticked:
+        card = {k: v for k, v in loop["card"].items() if k != TICKED}
+        store.execute("update loops set card_json=? where id=?", (json.dumps(card, ensure_ascii=False), loop["id"]))
 
 
 def may_reopen(loop: dict, now: datetime) -> bool:
@@ -447,12 +463,12 @@ def split(store, loop_id: int, event_ids: list[int], now: datetime, by: str = CL
 def unsplit(store, loop_id: int, now: datetime) -> bool:
     """Undo of a split Odie made (the evening review): every line of evidence of the split-off loop goes back to the
     loop it came from (its "split off" lines are dropped), with its refs, and the split-off loop is deleted. False
-    when this loop wasn't split off by Odie, or the loop it came from is gone."""
+    when this loop wasn't split off by Odie, or either loop is gone or closed (his Done on either stands)."""
     loop = get(store, loop_id)
-    if loop is None or not loop["card"].get("split_from"):
+    if loop is None or not loop["card"].get("split_from") or loop["state"] not in OPEN:
         return False
     home = get(store, int(loop["card"]["split_from"]))
-    if home is None:
+    if home is None or home["state"] not in OPEN:
         return False
     store.execute("delete from loop_events where loop_id=? and ref='split'", (int(loop_id),))
     store.execute("update loop_events set loop_id=? where loop_id=?", (home["id"], int(loop_id)))
@@ -483,21 +499,47 @@ def merge(store, keep_id: int, gone_id: int, now: datetime, why: str) -> list[in
     new_refs = [r for r in gone["refs"] if r not in keep["refs"]]
     store.execute("update loops set refs_json=?, updated_at=? where id=?",
                   (json.dumps([*keep["refs"], *new_refs]), _at(now), keep["id"]))
+    changed: dict = {}  # field -> [before, after]: only what this merge changed on the kept loop, for unmerge
     if not keep.get("due_at") and gone.get("due_at"):
-        update(store, keep["id"], now, due_at=gone["due_at"])
+        changed["due_at"] = [keep.get("due_at"), gone["due_at"]]
+    if gone["state"] == "ready" and keep["state"] != "ready":  # his card stays his card
+        changed["state"] = [keep["state"], "ready"]
+        if keep["owner"] != "you":
+            changed["owner"] = [keep["owner"], "you"]
+    if changed:
+        update(store, keep["id"], now, **{field: values[1] for field, values in changed.items()})
     if gone["state"] == "ready" and keep["state"] != "ready":
-        update(store, keep["id"], now, state="ready", owner="you", shown_at=_at(now))  # his card stays his card
+        update(store, keep["id"], now, shown_at=_at(now))
+    amount = gone["card"].get("amount")
+    if amount and not keep["card"].get("amount"):  # a bill's amount goes with it: two bills stay two (the review's rail)
+        merge_card(store, keep["id"], now, {"amount": amount})
+        changed["amount"] = [None, amount]
     note = f"Evening review: merged #{gone['id']} ({gone['title'][:80]}) into this"
     if why:
         note += f": {why}"
     add_event(store, keep["id"], now, "odie", "review", note)
     merge_card(store, gone["id"], now, {"merged_into": keep["id"], "moved": moved, "refs_moved": new_refs,
-                                        "refs_before": gone["refs"],
-                                        "kept_before": {"state": keep["state"], "owner": keep["owner"],
-                                                        "due_at": keep.get("due_at")}})
+                                        "refs_before": gone["refs"], "kept_changes": changed})
     store.execute("update loops set refs_json='[]' where id=?", (gone["id"],))  # its reminders are the kept loop's now
     close(store, gone["id"], now, "odie", f"Evening review: merged into #{keep['id']} ({keep['title'][:80]})")
     return moved
+
+
+def undo_changes(store, into: dict, changed: dict, now: datetime) -> None:
+    """Puts back what a merge changed on the kept loop, field by field, but only a field that still holds the value
+    the merge set: {"due_at": [None, "21 Nov 15:00"]} and still 21 Nov 15:00 -> no due again; moved on to 25 Nov since
+    (stage 2 saw his reply) -> left as it is. The amount the merge copied leaves its card the same way."""
+    fields = {}
+    for field, (before, after) in changed.items():
+        if field == "amount":
+            if into["card"].get("amount") == after:
+                card = {k: v for k, v in into["card"].items() if k != "amount"}
+                store.execute("update loops set card_json=? where id=?", (json.dumps(card, ensure_ascii=False), into["id"]))
+            continue
+        if into.get(field) == after:
+            fields[field] = before
+    if fields and into["state"] in OPEN:
+        update(store, into["id"], now, **fields)
 
 
 def unmerge(store, loop_id: int, now: datetime) -> bool:
@@ -514,12 +556,10 @@ def unmerge(store, loop_id: int, now: datetime) -> bool:
         brought = set(loop["card"].get("refs_moved") or [])
         kept = [r for r in into["refs"] if r not in brought]
         store.execute("update loops set refs_json=?, updated_at=? where id=?", (json.dumps(kept), _at(now), into["id"]))
-        before = loop["card"].get("kept_before") or {}
-        if into["state"] in OPEN and before.get("state"):  # the kept loop as it was before the merge
-            update(store, into["id"], now, state=before["state"], owner=before["owner"], due_at=before.get("due_at"))
+        undo_changes(store, into, loop["card"].get("kept_changes") or {}, now)
         add_event(store, into["id"], now, CLOSED_BY_USER, "", f"Put back by you: #{loop_id} is a thing of its own")
     card = {k: v for k, v in loop["card"].items()
-            if k not in ("merged_into", "moved", "refs_moved", "refs_before", "kept_before")}
+            if k not in ("merged_into", "moved", "refs_moved", "refs_before", "kept_changes")}
     at = _at(now)
     store.execute("update loops set state=?, closed_by=null, closed_why=null, closed_at=null, refs_json=?, card_json=?, "
                   "hidden_until=null, shown_at=?, updated_at=? where id=?",
@@ -561,14 +601,15 @@ def closed_since(store, pid: str, since: datetime) -> list[dict]:
 
 
 def forget(store, loop_id: int) -> None:
-    """His "Forget this": the loop, its evidence, its taps and its PR test's record are deleted, and the reminders Odie
-    made for it close (his own tasks are never touched). Nothing of it is remembered: the same mail again is news."""
+    """His "Forget this": the loop, its evidence, its taps and its PR test's record are deleted, and the reminders only
+    Odie makes (ODIE_ONLY) close; his own, and a 'ref' reminder he may have asked for in chat, are never touched.
+    Nothing of it is remembered: the same mail again is news."""
     loop = get(store, loop_id)
     if loop is None:
         return
     for task_id in reminders_of(loop):
         row = store.one("select status, source_kind from tasks where id=?", (task_id,))
-        if row is not None and row["status"] in ("open", "waiting") and row["source_kind"] in ODIES_TASKS:
+        if row is not None and row["status"] in ("open", "waiting") and row["source_kind"] in ODIE_ONLY:
             store.update_task(task_id, status="done")
     store.execute("delete from loop_events where loop_id=?", (int(loop_id),))
     store.execute("delete from loop_taps where loop_id=?", (int(loop_id),))

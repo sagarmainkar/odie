@@ -23,7 +23,7 @@ SEEN = "digest.seen"  # per owner: when he last opened Pulse
 AWAY = timedelta(hours=3)
 TEXT_MOST = 400
 NAMES_SHOWN = 3
-ADDRESS = re.compile(r"https?://|www\.|\b[\w.-]+\.(com|net|org|io|in|co|app|dev|xyz|ru)\b/", re.I)
+ADDRESS = re.compile(r"@|https?://|www\.|\b[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,}\b", re.I)  # any domain-shaped word
 
 
 def _key(pid: str, name: str) -> str:
@@ -44,16 +44,16 @@ def names(titles: list[str]) -> str:
 
 
 def held_today(store, pid: str, now: datetime, take: bool = False) -> list[str]:
-    """The pushes held back today for this owner over the day's budget (odie.watch.pushes.HELD), as titles; with take,
-    they are taken out of the held list (the evening digest says them)."""
+    """The pushes held back for this owner over the day's budget (odie.watch.pushes.HELD) and not said yet, as titles:
+    every one held before now, so one held after last night's digest is said tonight. With take, they are taken out of
+    the held list (the evening digest says them)."""
     from odie.watch import pushes
     held = list(store.get_setting(pushes.HELD) or [])
-    start = start_of_day(now)
     mine = []
     rest = []
     for item in held:
         at = item.get("at") or ""
-        is_mine = (item.get("owner") or "") == pid and at and datetime.fromisoformat(at) >= start
+        is_mine = (item.get("owner") or "") == pid and at and datetime.fromisoformat(at) <= now
         if is_mine:
             mine.append(str(item.get("title") or ""))
         else:
@@ -122,9 +122,9 @@ def code_text(f: dict, away: bool = False) -> str:
 
 def checked_text(text) -> str | None:
     """The review's digest words as they may be shown and pushed: one paragraph of at most TEXT_MOST characters, with
-    no web address and nothing secret-shaped; else None (code's words are used).
+    no web or mail address (not even a bare domain) and nothing secret-shaped; else None (code's words are used).
       "Two things need you: the reply to Asha and the gas bill." -> kept;  "Open http://x.example now" -> None;
-      "Your PIN is 4321" -> None;  "" -> None"""
+      "Verify at secure-login.com" -> None;  "Write to help@pay.example" -> None;  "Your PIN is 4321" -> None"""
     if not isinstance(text, str):
         return None
     one = " ".join(text.split())

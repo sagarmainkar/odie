@@ -44,6 +44,7 @@ EVIDENCE_SHOWN = 4
 CLOSED_DAYS = 2
 MOST = {"merge": 5, "split": 3, "priority": 20, "stale": 10, "quiet": 2, "skills": 3}
 WHY_MOST = 160
+STALE_AFTER = timedelta(days=14)  # no evidence for this long, and no due time ahead, before a loop may be stale
 KEEP_CHANGES = 60
 KEEP_IDEAS = 20
 EVIDENCE_ID = re.compile(r"^e?(\d+)$")
@@ -212,13 +213,26 @@ def mine(store, pid: str, value) -> dict | None:
     return loop
 
 
-def why_not_merge(a: dict | None, b: dict | None) -> str | None:
+def merged_lately(store, loop: dict, now: datetime) -> bool:
+    """Whether a loop took part in a merge within REOPEN_DAYS: it absorbed another ("Evening review: merged #5 …") or
+    was merged into one and put back. A loop merged yesterday -> True; a merge 8 days ago -> False; never -> False."""
+    since = now - timedelta(days=ledger.REOPEN_DAYS)
+    for e in ledger.events(store, loop["id"]):
+        took_part = e["fact"].startswith(("Evening review: merged #", "Closed: Evening review: merged into"))
+        if took_part and datetime.fromisoformat(e["at"]) >= since:
+            return True
+    return False
+
+
+def why_not_merge(store, a: dict | None, b: dict | None, now: datetime) -> str | None:
     """Why two loops may not be merged, or None when they may: both this owner's open loops (mine), two different
-    ones, neither a playbook's, and not both carrying an amount (two bills or orders are two things, whatever the
-    model thinks).
+    ones, neither a playbook's, not both carrying an amount (two bills or orders are two things, whatever the model
+    thinks), not two different senders (two people), and neither in a merge this week (no chains: each merge stays
+    one Undo).
       "Send the deck" + "Call about the deck" -> None;  a loop and itself -> "the same loop";  a loop + a pull request
-      -> "a pull request or a promise";  two loops with amounts -> "two amounts: two bills or orders";  a loop + None
-      -> "not an open loop of this owner\""""
+      -> "a pull request or a promise";  two loops with amounts -> "two amounts: two bills or orders";  asha@… and
+      ravi@… -> "two senders";  a loop that absorbed another yesterday -> "merged lately";  a loop + None -> "not an
+      open loop of this owner\""""
     if a is None or b is None:
         return "not an open loop of this owner"
     if a["id"] == b["id"]:
@@ -227,6 +241,12 @@ def why_not_merge(a: dict | None, b: dict | None) -> str | None:
         return "a pull request or a promise"
     if a["card"].get("amount") and b["card"].get("amount"):
         return "two amounts: two bills or orders"
+    sender_a = quiet.sender_of(a)
+    sender_b = quiet.sender_of(b)
+    if sender_a and sender_b and sender_a != sender_b:
+        return "two senders: two people's things"
+    if merged_lately(store, a, now) or merged_lately(store, b, now):
+        return "merged lately: one merge at a time, so each stays one Undo"
     return None
 
 
@@ -287,7 +307,7 @@ def do_merge(store, pid: str, now: datetime, item: dict, done: Applied) -> None:
         return
     a = mine(store, pid, ids[0])
     b = mine(store, pid, ids[1])
-    reason = why_not_merge(a, b)
+    reason = why_not_merge(store, a, b, now)
     if reason is None and ({a["id"], b["id"]} & done.touched):
         reason = "changed already in this review"
     if reason is not None:
@@ -338,12 +358,39 @@ def do_priority(store, pid: str, now: datetime, item: dict, done: Applied) -> No
                                {"loop": loop["id"], "priority": loop["priority"]}))
 
 
+def looks_stale(store, loop: dict, now: datetime) -> bool:
+    """Whether a loop may be called stale at all: no due time still ahead, and no evidence in the last STALE_AFTER.
+    An order shipped 6 weeks ago, nothing since -> True; a refund due the day after tomorrow -> False; an order with
+    news 5 days ago -> False."""
+    due = loop.get("due_at")
+    if due and datetime.fromisoformat(due) > now:
+        return False
+    for e in ledger.events(store, loop["id"]):
+        if now - datetime.fromisoformat(e["at"]) < STALE_AFTER:
+            return False
+    return True
+
+
+def odies_open_reminders(store, loop: dict) -> list[int]:
+    """The open reminders only Odie makes (ledger.ODIE_ONLY) that this loop points at: a drop ticks these."""
+    out = []
+    for task_id in ledger.reminders_of(loop):
+        row = store.one("select status, source_kind from tasks where id=?", (task_id,))
+        if row is not None and row["status"] in ("open", "waiting") and row["source_kind"] in ledger.ODIE_ONLY:
+            out.append(task_id)
+    return out
+
+
 def do_stale(store, pid: str, now: datetime, item: dict, done: Applied) -> None:
     """His loop (owner you) is only marked: priority low, "stale" on its card, the digest asks; never closed. A loop
-    waiting on someone, or Odie's, is dropped by Odie, with Reopen."""
+    waiting on someone, or Odie's, is dropped by Odie, with Reopen; the reminders the drop ticks are kept with it, so
+    Undo or Reopen brings them back. Only a loop that looks stale (looks_stale) may be either."""
     loop = mine(store, pid, item.get("loop"))
     if loop is None or loop["playbook"] or loop["id"] in done.touched:
         done.refused.append(f"stale {item.get('loop')}: not a loop it may mark")
+        return
+    if not looks_stale(store, loop, now):
+        done.refused.append(f"stale #{loop['id']}: due ahead, or news within {STALE_AFTER.days} days")
         return
     why = why_of(item) or "nothing new for a long time"
     done.touched.add(loop["id"])
@@ -354,9 +401,11 @@ def do_stale(store, pid: str, now: datetime, item: dict, done: Applied) -> None:
         done.changes.append(record(store, pid, now, "stale", f"“{loop['title'][:60]}” looks stale",
                                    {"loop": loop["id"], "priority": loop["priority"]}))
         return
+    ticked = odies_open_reminders(store, loop)
     ledger.close(store, loop["id"], now, "odie", f"Evening review: stale: {why}", state="dropped")
+    ledger.merge_card(store, loop["id"], now, {ledger.TICKED: ticked})
     done.changes.append(record(store, pid, now, "drop", f"Dropped “{loop['title'][:60]}”: stale",
-                               {"loop": loop["id"]}))
+                               {"loop": loop["id"], "tasks": ticked}))
 
 
 def senders(store, pid: str) -> set[str]:
@@ -367,7 +416,10 @@ def senders(store, pid: str) -> set[str]:
 def propose(store, pid: str, now: datetime, answer: dict, done: Applied) -> None:
     """The proposals: Quiet rules and a Now list as cards for his tap; skill ideas recorded."""
     known = senders(store, pid)
+    kinds = {learn.kind_of(lp["kind"]) for lp in ledger.open_loops(store, pid)} - {""}
     for item in answer["quiet"][:MOST["quiet"]]:
+        if learn.kind_of(str(item.get("kind") or "")) not in kinds:
+            continue  # only a kind on one of his open loops: never words the answer made up
         sender = str(item.get("sender") or "").strip().lower()
         if sender not in known:
             sender = ""  # only an address on one of his loops: never one the answer made up

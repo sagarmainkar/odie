@@ -22,6 +22,7 @@ DROP_AFTER = timedelta(days=14)
 QUIET_FOR = timedelta(days=3)
 DUE_PUSH_WITHIN = timedelta(hours=24)
 DUE_PUSH = "due-push"  # the evidence ref that says the day-before push was made (or held)
+DROP_WHY = "No move in 14 days: dropped (kept for 30 days)"  # the day-14 drop's reason (learning reads it)
 
 
 def night(now: datetime) -> bool:
@@ -121,7 +122,7 @@ def run(store, now: datetime, push_for=None) -> list[tuple[int, str]]:
                 continue
             if loop["owner"] == "you" and loop["state"] == "ready":
                 if stale(loop, now):
-                    ledger.close(store, loop["id"], now, "odie", "No move in 14 days: dropped (kept for 30 days)",
+                    ledger.close(store, loop["id"], now, "odie", DROP_WHY,
                                  state="dropped")
                     done.append((loop["id"], "dropped"))
                     continue

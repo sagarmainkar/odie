@@ -26,9 +26,9 @@ def store(isolated_settings, tmp_path):
     return s
 
 
-def loop(store, title, kind="reply owed", owner="you", pid="", fact="From mail", ref="", **kw):
+def loop(store, title, kind="reply owed", owner="you", pid="", fact="From mail", ref="", days=2, **kw):
     state = kw.pop("state", "ready" if owner == "you" else "waiting")
-    return ledger.open_loop(store, pid, NOW - timedelta(days=2), title, kind, owner=owner, state=state, fact=fact,
+    return ledger.open_loop(store, pid, NOW - timedelta(days=days), title, kind, owner=owner, state=state, fact=fact,
                             ref=ref, refs=[ref] if ref else [], **kw)
 
 
@@ -162,10 +162,17 @@ def test_two_bills_are_never_merged(store):
 def test_why_not_merge_examples(store):
     a = ledger.get(store, loop(store, "Send the deck"))
     b = ledger.get(store, loop(store, "Call about the deck"))
-    assert review.why_not_merge(a, b) is None
-    assert review.why_not_merge(a, a) is not None
-    assert review.why_not_merge(a, ledger.get(store, pr(store))) is not None
-    assert review.why_not_merge(a, None) is not None
+    assert review.why_not_merge(store, a, b, NOW) is None
+    assert review.why_not_merge(store, a, a, NOW) is not None
+    assert review.why_not_merge(store, a, ledger.get(store, pr(store)), NOW) is not None
+    assert review.why_not_merge(store, a, None, NOW) is not None
+    asha = ledger.get(store, loop(store, "Reply to Asha", card={"sender": "asha@x.example"}))
+    ravi = ledger.get(store, loop(store, "Reply to Ravi", card={"sender": "ravi@y.example"}))
+    assert review.why_not_merge(store, asha, ravi, NOW).startswith("two senders")
+    ledger.merge(store, a["id"], b["id"], NOW, "x")
+    c = ledger.get(store, loop(store, "Deck slides"))
+    assert review.why_not_merge(store, ledger.get(store, a["id"]), c, NOW).startswith("merged lately")
+    assert review.why_not_merge(store, ledger.get(store, a["id"]), c, NOW + timedelta(days=8)) is None
 
 
 def test_a_pull_request_only_changes_priority(store):
@@ -181,8 +188,8 @@ def test_a_pull_request_only_changes_priority(store):
 
 
 def test_stale_never_closes_his_loop_and_drops_theirs_by_odie(store):
-    his = loop(store, "Reply to an old thread")
-    theirs = loop(store, "Order: lamp", kind="order", owner="them")
+    his = loop(store, "Reply to an old thread", days=40)
+    theirs = loop(store, "Order: lamp", kind="order", owner="them", days=40)
     review.apply(store, "", NOW, answer(stale=[{"loop": his, "why": "no word in 5 weeks"},
                                                {"loop": theirs, "why": "delivered long ago"}]))
     h, t = ledger.get(store, his), ledger.get(store, theirs)
@@ -218,7 +225,7 @@ def test_proposals_are_cards_or_records_and_change_nothing_on_their_own(store):
     loop(store, "Acme weekly", kind="newsletter", card={"sender": "news@acme.example"})
     done = review.apply(store, "", NOW, answer(
         quiet=[{"kind": "newsletter", "sender": "news@acme.example", "why": "put off 5 times"},
-               {"kind": "promo", "sender": "evil@attacker.example", "why": "x"}],
+               {"kind": "newsletter", "sender": "evil@attacker.example", "why": "x"}],
         now={"lines": ["Ship Odie 0.3.1", "Asha's deck"], "why": "the deck is new"},
         skills=[{"title": "Learn to handle school-fee mails", "why": "did it by hand 3 times"}]))
     assert quiet.rules(store, "") == []  # only his tap writes a rule
@@ -237,7 +244,7 @@ def test_a_now_proposal_never_replaces_one_waiting(store):
 
 
 def test_at_most_a_few_changes_of_each_kind(store):
-    ids = [loop(store, f"Old thing {n}", owner="them") for n in range(15)]
+    ids = [loop(store, f"Old thing {n}", owner="them", days=40) for n in range(15)]
     done = review.apply(store, "", NOW, answer(stale=[{"loop": i, "why": "old"} for i in ids]))
     assert len(done.changes) == review.MOST["stale"]
 
@@ -247,8 +254,8 @@ def test_at_most_a_few_changes_of_each_kind(store):
 def test_every_change_can_be_undone(store):
     deck = loop(store, "Send the deck")
     call = loop(store, "Call about the deck", kind="meeting")
-    theirs = loop(store, "Order: lamp", kind="order", owner="them")
-    his = loop(store, "Old reply")
+    theirs = loop(store, "Order: lamp", kind="order", owner="them", days=40)
+    his = loop(store, "Old reply", days=40)
     p = pr(store)
     done = review.apply(store, "", NOW, answer(merge=[{"loops": [deck, call]}], stale=[{"loop": theirs}, {"loop": his}],
                                                priority=[{"loop": p, "to": "low"}]))
@@ -263,7 +270,7 @@ def test_every_change_can_be_undone(store):
 
 def test_undo_is_the_owners_own(store):
     mira = personalities.create(store, "Mira")
-    theirs = loop(store, "Order: lamp", kind="order", owner="them", pid=mira.id)
+    theirs = loop(store, "Order: lamp", kind="order", owner="them", pid=mira.id, days=40)
     [change] = review.apply(store, mira.id, NOW, answer(stale=[{"loop": theirs}])).changes
     assert review.undo(store, "", change["id"], NOW) is False
     assert review.undo(store, mira.id, change["id"], NOW) is True

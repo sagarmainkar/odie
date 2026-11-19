@@ -6,9 +6,10 @@ model takes part: the count is code's, so a mail can't talk Odie into hiding or 
 
 What a card's outcome is:
   acted    he used it: its move (the app posts it; chat's watch_item notes "ask"), Merge, Done (on Pulse or in chat)
-  ignored  he never acted on it: only Later and shown IGNORED_AFTER or longer, or it ended unused (the ladder's day-14
-           drop, Sunday's "Drop them", Less like this)
-  neutral  too early to say, or Odie closed it by evidence (he acted in the world: paid, replied): not counted
+  ignored  he never acted on it: still his card (ready, owner you) with only Later, shown IGNORED_AFTER or longer;
+           or it ended unused (the ladder's day-14 drop, Sunday's "Drop them", Less like this)
+  neutral  too early to say; it moved on without a tap (stage 2 saw his reply: now waiting on them); or Odie closed it
+           by evidence or the evening review dropped it: not counted
 Pull requests and promises (playbook loops) are never learned: they carry Odie's finished work.
 
 The day's taps are context for stages 2 and 4 (today_text), fenced there as data: their titles may come from mail."""
@@ -56,16 +57,20 @@ def taps_of(store, loop_id: int) -> list[str]:
 def outcome(store, loop: dict, now: datetime) -> str | None:
     """What came of one card (this module's notes): "acted", "ignored" or None (not counted).
       his Done or his move -> "acted";  shown 5 days ago, only Later since -> "ignored";  shown yesterday -> None;
-      closed by Odie's evidence ("paid 18 Nov") before he did anything -> None;  dropped by the ladder -> "ignored" """
+      closed by Odie's evidence ("paid 18 Nov") before he did anything -> None;  dropped by the ladder -> "ignored";
+      dropped as stale by the evening review -> None;  he replied in Mail, so it waits on them now -> None"""
+    from odie.loops import ladder
     taps = taps_of(store, loop["id"])
     if any(t in ACTED for t in taps):
         return "acted"
     if any(t in ENDED_UNUSED for t in taps):
         return "ignored"
-    if loop["state"] == "dropped" and loop.get("closed_by") == "odie":
+    if loop["state"] == "dropped" and loop.get("closed_by") == "odie" and loop.get("closed_why") == ladder.DROP_WHY:
         return "ignored"  # the ladder's day-14 drop: shown two weeks, never used
     if loop["state"] not in ledger.OPEN:
-        return None  # Odie closed it by evidence: he dealt with the thing itself
+        return None  # Odie closed it by evidence (he dealt with the thing itself), or the review dropped it
+    if loop["state"] != "ready" or loop["owner"] != "you":
+        return None  # no longer his card: it moved on without a tap (his reply seen in Mail, say)
     shown = loop.get("shown_at")
     if not shown or now - datetime.fromisoformat(shown) < IGNORED_AFTER:
         return None

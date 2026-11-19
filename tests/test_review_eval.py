@@ -28,7 +28,6 @@ async def test_every_case_is_right_with_the_scripted_model(case, isolated_settin
 async def test_a_wrong_answer_scores_wrong(isolated_settings, tmp_path):
     store = Store(tmp_path / "a.db")
     store.init_schema()
-    [case] = [c for c in CASES if c["id"] == "two-bills-stay-two"]
-    bad = {**case, "script": {"merge": [{"loops": ["oct", "nov"]}], "stale": [{"loop": "nov"}]}}
-    got = await review_eval.run_case(store, bad, NOW)
-    assert got["score"]["wrong"] == ["untouched nov"]  # the rail refused the merge of two bills; the stale mark stuck
+    [case] = [c for c in CASES if c["id"] == "merge-deck-and-call"]
+    got = await review_eval.run_case(store, {**case, "script": {"digest": "x"}}, NOW)
+    assert got["score"]["wrong"] == ["merged deck+call"]
