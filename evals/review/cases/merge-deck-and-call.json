@@ -1,0 +1,20 @@
+{
+  "id": "merge-deck-and-call",
+  "about": "Asha's mail asks for the deck; a separate loop holds the call with Asha about the deck. One thing: merge.",
+  "loops": [
+    {"key": "deck", "title": "Send the Q4 deck to Asha", "kind": "reply owed", "owner": "you", "days_ago": 2,
+     "due": "2026-11-21T00:00:00+05:30",
+     "evidence": [{"source": "mail", "fact": "Asha Rao asks: can you send the Q4 deck by Friday?"}]},
+    {"key": "call", "title": "Call with Asha about the Q4 deck", "kind": "meeting", "owner": "you", "days_ago": 1,
+     "due": "2026-11-20T15:00:00+05:30",
+     "evidence": [{"source": "calendar", "fact": "Call with Asha Rao, Fri 15:00: walk through the Q4 deck"}]},
+    {"key": "dentist", "title": "Confirm the dentist appointment", "kind": "appointment", "owner": "you", "days_ago": 1,
+     "evidence": [{"source": "mail", "fact": "The clinic asks you to confirm Tuesday 10:00"}]}
+  ],
+  "tomorrow": [{"title": "Call with Asha Rao", "start": "2026-11-20T15:00:00+05:30"}],
+  "now_list": ["Q4 planning with Asha", "Ship Odie 0.3.1"],
+  "script": {"merge": [{"loops": ["deck", "call"], "why": "the call is about the same deck"}],
+             "priority": [{"loop": "deck", "to": "high", "why": "the call is tomorrow"}],
+             "digest": "The Q4 deck for Asha is due before tomorrow's call; the dentist wants a confirmation."},
+  "expect": {"merged": [["deck", "call"]], "untouched": ["dentist"]}
+}

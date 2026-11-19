@@ -1,0 +1,16 @@
+{
+  "id": "due-tomorrow-high",
+  "about": "A form due tomorrow and on tomorrow's calendar is raised to high; nothing is merged.",
+  "loops": [
+    {"key": "form", "title": "Submit the school consent form", "kind": "deadline", "owner": "you", "days_ago": 4,
+     "due": "2026-11-20T09:00:00+05:30",
+     "evidence": [{"source": "mail", "fact": "School: consent form for the trip due Friday 9am"}]},
+    {"key": "book", "title": "Return the library book", "kind": "reminder", "owner": "you", "days_ago": 2,
+     "evidence": [{"source": "watch", "fact": "Library book due 3 Dec"}]}
+  ],
+  "tomorrow": [{"title": "School trip consent form due", "start": "2026-11-20T09:00:00+05:30"}],
+  "now_list": [],
+  "script": {"priority": [{"loop": "form", "to": "high", "why": "due tomorrow morning"}],
+             "digest": "The school consent form is due tomorrow at 9."},
+  "expect": {"priority": {"form": "high"}, "not_merged": [["form", "book"]]}
+}
