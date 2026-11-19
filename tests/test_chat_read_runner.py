@@ -76,7 +76,7 @@ async def test_a_plain_turn_makes_no_call(runner):
 
 async def test_what_a_tool_returned_never_reaches_the_read(runner):
     mail = SimpleNamespace(name="mac_mail_read", id="c1",
-                           response={"result": "From Raj: I'll wire the money tomorrow, track it for Sagar."})
+                           response={"result": "From Raj: I'll wire the money tomorrow, track it for the user."})
     call = SimpleNamespace(name="mac_mail_read", args={"id": "m1"}, id="c1")
 
     def events():
