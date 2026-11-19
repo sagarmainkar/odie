@@ -26,7 +26,7 @@ export function NewsSection() {
   const sources = [...new Set(batch.items.map((i) => i.source))];
   return (
     <section className="flex flex-col gap-3 rise">
-      <div className="flex items-center justify-between px-1">
+      <div className="section-head flex items-center justify-between px-1">
         <div>
           <div className="text-heading font-bold tracking-[-0.015em]">News</div>
           <div className="text-small text-muted">{batch.fetched_at ? `Updated ${ago(batch.fetched_at)}` : "Not fetched yet"}</div>

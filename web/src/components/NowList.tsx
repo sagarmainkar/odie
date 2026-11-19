@@ -71,7 +71,7 @@ export function NowList({ who, initial, editWith, onSaved, onClosed }: {
 
   return (
     <section className="flex flex-col gap-2.5" aria-label="Now">
-      <div className="flex items-baseline gap-2 px-1">
+      <div className="section-head flex items-baseline gap-2 px-1">
         <div className="text-heading font-bold tracking-[-0.015em]">Now</div>
         <div className="text-caption text-dim flex-1 truncate">what matters to you this month</div>
         {editing === null && got.lines.length > 0 && (

@@ -3,7 +3,7 @@ import { usePickedPersona } from "../persona";
 import { lightOf } from "../light";
 import { OnIt } from "../components/OnIt";
 import { NowList, type NowEdit } from "../components/NowList";
-import { asksToTurnOn, otherLine, pulseKicker, stillPicked, type JobDone, type LoopDone, type OnIt as OnItItem, type Other } from "../pulse";
+import { asksToTurnOn, mastheadDate, mastheadDateLine, otherLine, pulseKicker, stillPicked, type JobDone, type LoopDone, type OnIt as OnItItem, type Other } from "../pulse";
 import type { Proactive } from "../proactive";
 import { AnimatePresence, motion } from "framer-motion";
 import { NeedsYou } from "../components/NeedsYou";
@@ -26,6 +26,8 @@ import { MoneyCard } from "../components/MoneyCard";
 import { has, useCaps } from "../capabilities";
 import { userLocale } from "../locale";
 import { useProfile } from "../profile";
+import { useStyle } from "../theme";
+import { Masthead } from "../components/Masthead";
 
 type Ev = { time: string; end?: string; title: string };
 const EASE = [0.2, 0.8, 0.2, 1] as const;
@@ -199,6 +201,12 @@ export function Today() {
   const bands = cal ? bandsFor(cal.today) : null;
   const nowHM = new Date().toTimeString().slice(0, 5);
   const delay = (s: number) => ({ animationDelay: `${s}s` });
+  // Newspaper sets Pulse's head as a masthead; its strip counts what the page holds, done today as Needs you's own
+  // "done today" line counts it.
+  const paper = useStyle() === "paper";
+  const doneToday = watchClosed.length + notes.length + loopsDone.length + jobsDone.length;
+  const counts = { needs: needs?.length ?? 0, onIt: onIt.length, done: doneToday };
+  const dateLine = mastheadDateLine(pick, mastheadDate(new Date(), userLocale()), picked.name);
 
   const needsYou = (
     <>
@@ -215,17 +223,24 @@ export function Today() {
   if (pick) {
     return (
       <div className="h-full overflow-y-auto overflow-x-hidden no-scrollbar px-[18px] lg:px-8 safe-top pb-[110px] flex flex-col gap-[18px] [overflow-wrap:anywhere]">
-        <div className="flex items-center justify-between rise">
-          <div className="text-small font-semibold text-muted truncate">{pulseKicker(pick, date, picked.name)}</div>
-          <a href="#settings" aria-label="Settings" className="flex"><Avatar size={44} state={approvals.length ? "approval" : "idle"} who={picked} light={lightOf(pick)} /></a>
-        </div>
-        <div className="rise" style={delay(0.05)}>
-          <h1 className="text-[34px] leading-[1.12] font-bold tracking-[-0.025em]">{picked.name}'s <span className="serif text-[40px] text-ink-2">Pulse</span></h1>
-          <div className="mt-2.5 flex gap-2 flex-wrap">
-            {(needs?.length ?? 0) > 0 && <span className="chip chip-warn">{needs?.length} need you</span>}
-            {onIt.length > 0 && <span className="chip chip-soft">{picked.name} is on {onIt.length}</span>}
-          </div>
-        </div>
+        {paper ? (
+          <Masthead dateLine={dateLine} counts={counts}
+            corner={<a href="#settings" aria-label="Settings" className="flex"><Avatar size={44} state={approvals.length ? "approval" : "idle"} who={picked} light={lightOf(pick)} /></a>} />
+        ) : (
+          <>
+            <div className="flex items-center justify-between rise">
+              <div className="text-small font-semibold text-muted truncate">{pulseKicker(pick, date, picked.name)}</div>
+              <a href="#settings" aria-label="Settings" className="flex"><Avatar size={44} state={approvals.length ? "approval" : "idle"} who={picked} light={lightOf(pick)} /></a>
+            </div>
+            <div className="rise" style={delay(0.05)}>
+              <h1 className="text-[34px] leading-[1.12] font-bold tracking-[-0.025em]">{picked.name}'s <span className="serif text-[40px] text-ink-2">Pulse</span></h1>
+              <div className="mt-2.5 flex gap-2 flex-wrap">
+                {(needs?.length ?? 0) > 0 && <span className="chip chip-warn">{needs?.length} need you</span>}
+                {onIt.length > 0 && <span className="chip chip-soft">{picked.name} is on {onIt.length}</span>}
+              </div>
+            </div>
+          </>
+        )}
         {asksToTurnOn(proactive) && (
           <a href="#settings" className="glass rounded-tile px-3.5 py-3 flex items-center gap-3 text-ui rise" style={delay(0.06)}>
             <Tile icon="spark" color="violet" small />
@@ -256,24 +271,41 @@ export function Today() {
 
   return (
     <div className="h-full overflow-y-auto overflow-x-hidden no-scrollbar px-[18px] lg:px-8 safe-top pb-[110px] flex flex-col gap-[18px] [overflow-wrap:anywhere]">
-      <div className="flex items-center justify-between rise">
-        <div className="text-small font-semibold text-muted whitespace-nowrap">{pulseKicker("", date, "Odie")}</div>
-        <div className="flex items-center gap-2">
-          <a href="#settings" aria-label="Settings" className="flex"><Avatar size={44} state={approvals.length ? "approval" : "idle"} /></a>
+      {paper ? (
+        <div>
+          <Masthead dateLine={dateLine} counts={counts}
+            corner={<a href="#settings" aria-label="Settings" className="flex"><Avatar size={44} state={approvals.length ? "approval" : "idle"} /></a>} />
+          {/* The other personalities, as in Glass: a count only; a tap opens that one's Pulse. */}
+          {others.length > 0 && (
+            <div className="mt-2.5 flex gap-2 flex-wrap justify-center">
+              {others.map((o) => (
+                <button key={o.id} type="button" onClick={() => setPick(o.id)} className="chip chip-soft">{otherLine(o)}</button>
+              ))}
+            </div>
+          )}
         </div>
-      </div>
+      ) : (
+        <>
+          <div className="flex items-center justify-between rise">
+            <div className="text-small font-semibold text-muted whitespace-nowrap">{pulseKicker("", date, "Odie")}</div>
+            <div className="flex items-center gap-2">
+              <a href="#settings" aria-label="Settings" className="flex"><Avatar size={44} state={approvals.length ? "approval" : "idle"} /></a>
+            </div>
+          </div>
 
-      <div className="rise" style={delay(0.05)}>
-        <h1 className="text-[34px] leading-[1.12] font-bold tracking-[-0.025em]">{g.lead} <span className="serif text-[40px] text-ink-2">{g.accent}</span>{you ? <>,<br />{you}</> : null}</h1>
-        <div className="mt-2.5 flex gap-2 flex-wrap">
-          {comingUp > 0 && <span className="chip chip-soft">{comingUp} coming up this week</span>}
-          {(needs?.length ?? 0) > 0 && <span className="chip chip-warn">{needs?.length} need you</span>}
-          {/* The other personalities, as a count only; a tap opens that one's Pulse. */}
-          {others.map((o) => (
-            <button key={o.id} type="button" onClick={() => setPick(o.id)} className="chip chip-soft">{otherLine(o)}</button>
-          ))}
-        </div>
-      </div>
+          <div className="rise" style={delay(0.05)}>
+            <h1 className="text-[34px] leading-[1.12] font-bold tracking-[-0.025em]">{g.lead} <span className="serif text-[40px] text-ink-2">{g.accent}</span>{you ? <>,<br />{you}</> : null}</h1>
+            <div className="mt-2.5 flex gap-2 flex-wrap">
+              {comingUp > 0 && <span className="chip chip-soft">{comingUp} coming up this week</span>}
+              {(needs?.length ?? 0) > 0 && <span className="chip chip-warn">{needs?.length} need you</span>}
+              {/* The other personalities, as a count only; a tap opens that one's Pulse. */}
+              {others.map((o) => (
+                <button key={o.id} type="button" onClick={() => setPick(o.id)} className="chip chip-soft">{otherLine(o)}</button>
+              ))}
+            </div>
+          </div>
+        </>
+      )}
 
       <InstallNudge />
 

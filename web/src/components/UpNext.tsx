@@ -116,7 +116,7 @@ export function UpNext({ items, loading }: { items: UpItem[] | null; loading: bo
   const [first, ...rest] = items;
   return (
     <section className="flex flex-col gap-2.5">
-      <div className="text-small font-bold text-muted px-1.5">Up next</div>
+      <div className="section-head section-head-small text-small font-bold text-muted px-1.5">Up next</div>
       <Hero it={first} />
       {rest.length > 0 && (
         <div className="flex gap-2.5 overflow-x-auto no-scrollbar snap-x -mx-[18px] px-[18px] pb-1">

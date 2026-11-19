@@ -33,7 +33,7 @@ export function TrackingSection() {
   if (!rows.length) return null;
   return (
     <section className="flex flex-col gap-2">
-      <div className="text-small leading-5 font-bold text-muted px-1.5 flex items-center gap-1.5"><Icon name="bell" size={14} /> Tracking</div>
+      <div className="section-label text-small leading-5 font-bold text-muted px-1.5 flex items-center gap-1.5"><Icon name="bell" size={14} /> Tracking</div>
       {rows.map((t) => {
         const blocks = t.blocks ? parseBlocks(JSON.stringify(t.blocks)) : null;
         const live = t.status === "active";

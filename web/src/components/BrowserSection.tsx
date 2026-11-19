@@ -85,7 +85,7 @@ export function BrowserSection() {
   const since = sinceText(info.accepted_at, userLocale());
   return (
     <section className="flex flex-col gap-2">
-      <div className="text-small leading-5 font-bold text-muted px-1.5">Browser</div>
+      <div className="section-label text-small leading-5 font-bold text-muted px-1.5">Browser</div>
       <div className="glass rounded-card overflow-hidden">
         <div className="flex items-center gap-3 px-4 py-3 min-h-14 border-b border-line">
           <Tile icon="lock" color={info.on ? "green" : "ink"} small />

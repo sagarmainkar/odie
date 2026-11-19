@@ -18,7 +18,7 @@ export function ApprovalsSection() {
   const shown = mode ?? "careful";
   return (
     <section className="flex flex-col gap-2">
-      <div className="text-small leading-5 font-bold text-muted px-1.5">Approvals</div>
+      <div className="section-label text-small leading-5 font-bold text-muted px-1.5">Approvals</div>
       <div className="glass rounded-card overflow-hidden">
         <div className="p-3 flex flex-col gap-3">
           <div className="bg-well rounded-control p-1 flex gap-1" role="radiogroup" aria-label="Approvals">

@@ -10,7 +10,7 @@ import { engineLine, previewUrl, voiceGroups, voiceSection, withPhononVoices, ty
 function Part({ title, children }: { title?: string; children: ReactNode }) {
   return (
     <section className="flex flex-col gap-2">
-      {title && <div className="text-small leading-5 font-bold text-muted px-1.5">{title}</div>}
+      {title && <div className="section-label text-small leading-5 font-bold text-muted px-1.5">{title}</div>}
       <div className="glass rounded-card p-3 flex flex-col gap-3">{children}</div>
     </section>
   );

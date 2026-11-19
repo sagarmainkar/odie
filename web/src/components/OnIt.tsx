@@ -25,7 +25,7 @@ export function OnIt({ items, who, onStop }: { items: OnItItem[]; who: string; o
   if (!items.length) return null;
   return (
     <section className="flex flex-col gap-2.5" aria-label={`${who} is on it`}>
-      <div className="text-heading font-bold tracking-[-0.015em] px-1">{who} is on it <span className="text-dim font-semibold">({items.length})</span></div>
+      <div className="section-head text-heading font-bold tracking-[-0.015em] px-1">{who} is on it <span className="text-dim font-semibold">({items.length})</span></div>
       <div className="glass rounded-card px-3 py-1">
         {items.map((it, i) => (
           <div key={it.id} className={`flex items-center gap-3 py-2.5 px-1 ${i ? "border-t border-line" : ""}`}>
