@@ -271,11 +271,12 @@ def seen_of(job: Job) -> set:
     return seen
 
 
-def reads_a_named_folder(job: Job, args: dict) -> bool:
-    """Whether a shell call reaches one of the job's named folders: it runs inside one, or names one."""
-    command = str(args.get("command") or "")
-    cwd = str(args.get("cwd") or "")
-    return any(cwd.startswith(d) or d in command for d in job.read_dirs or [])
+def shell_sees_his_folders(job: Job) -> bool:
+    """Whether a shell command of this job may have read his named folders: whenever the job has any. Its sandbox can
+    read them whatever the command's words say (`cat ../../x`, `$USER`, a script it wrote), so the text is never
+    trusted for this (independent review, 19 Nov 2026).
+      a job that may read ~/work/app, `python3 read.py` -> True;  a job with no named folder, `npm install` -> False"""
+    return bool(job.read_dirs)
 
 
 def guard_for(store: Store, job: Job, runner):
@@ -306,6 +307,8 @@ def guard_for(store: Store, job: Job, runner):
             reasons = shell_reasons(store, job, command, args.get("cwd"))
             missing = allow.uncovered(allowed, "run_shell", args, reasons, job.folder)
             if not missing:
+                if shell_sees_his_folders(job):
+                    seen.add("private")  # before it runs: a web call made alongside it is refused too
                 return None
             return refuse(tool.name, args, allow.need_for_shell(command, missing[0], args.get("cwd")))
         mixes = (tool.name in WEB_TOOLS and "private" in seen) or (
@@ -328,7 +331,8 @@ def guard_for(store: Store, job: Job, runner):
 
 def after_for(store: Store, job: Job):
     """after_tool_callback: every call that ran goes on the record with the size of its answer, and what it brought
-    into the run is noted for the guard (a web result -> "web"; an app's answer or a named folder -> "private"). A
+    into the run is noted for the guard (a web result -> "web"; an app's answer, or any command of a job with named
+    folders -> "private"). A
     call the guard refused is already on the record (ADK still calls this with the refusal as the answer)."""
     seen = seen_of(job)
 
@@ -339,7 +343,7 @@ def after_for(store: Store, job: Job):
             seen.add("web")
         elif getattr(tool, "_odie_server", None) is not None:
             seen.add("private")
-        elif tool.name == "run_shell" and isinstance(args, dict) and reads_a_named_folder(job, args):
+        elif tool.name == "run_shell" and shell_sees_his_folders(job):
             seen.add("private")
         jobs.record_action(store, job.id, tool.name, args, result_chars=len(json.dumps(tool_response, default=str)))
     return after

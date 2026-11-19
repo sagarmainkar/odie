@@ -36,7 +36,9 @@ class ChatIn(BaseModel):
     thinking: bool | None = None  # left out: the chat's own Think harder (odie.thinking); given (an older web app): saved first
     images: list[str] = []
     session_id: str | None = None  # continue an older thread; None = today's
-    via: Literal["terminal"] | None = None  # who typed it: "terminal" is the odie command (odie chat), for an agent or script
+    # Who sent it when he didn't type it: "terminal" is the odie command (odie chat), for an agent or script; "tap" is a
+    # button or a card the app sent for him (its words came from the model or a mail: never "his typed words").
+    via: Literal["terminal", "tap"] | None = None
 
 
 class Keys(BaseModel):
@@ -2676,25 +2678,18 @@ async def job_keep(job_id: str, request: Request) -> dict[str, Any]:
     does it. Answers where it went, as the user writes it."""
     import asyncio
 
-    from odie.store.db import now_iso
     from odie.workers import cards as job_cards
     from odie.workers import keep as job_keep_copy
-    from odie.workers import store as jobs_store
-    row = _own_job(request, job_id)
+    _own_job(request, job_id)
     store = request.app.state.store
     try:
-        kept = await asyncio.to_thread(job_keep_copy.keep_job, row)
-    except job_keep_copy.KeepStopped as e:  # what it copied stays; the card says so and offers Keep it again
-        stopped = {"path": str(e.path), "partial": True, "stopped": e.reason, "at": now_iso()}
-        jobs_store.set_kept(store, job_id, stopped)
-        store.audit("user", "job_kept_partly", args=stopped, result_summary=job_id)
+        kept = await asyncio.to_thread(job_keep_copy.keep_job, store, job_id)
+    except job_keep_copy.KeepStopped as e:  # recorded as partial: the card says what it copied and offers Keep it again
+        store.audit("user", "job_kept_partly", args={"path": str(e.path), "stopped": e.reason}, result_summary=job_id)
         raise HTTPException(409, f"Not kept: {e}.") from e
     except job_keep_copy.KeepRefused as e:
         raise HTTPException(409, f"Not kept: {e}.") from e
-    record = {"path": str(kept.path), "links_left_out": kept.links_left_out, "others_left_out": kept.others_left_out,
-              "git_reset": kept.git_reset, "venvs_left_out": kept.venvs_left_out, "at": now_iso()}
-    jobs_store.set_kept(store, job_id, record)
-    store.audit("user", "job_kept", args=record, result_summary=job_id)
+    store.audit("user", "job_kept", args=job_keep_copy.record_of(kept), result_summary=job_id)
     return {"ok": True, "kept": job_cards.home_form(str(kept.path)), "line": kept.line(job_cards.home_form)}
 
 

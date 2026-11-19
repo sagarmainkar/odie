@@ -45,7 +45,7 @@ import { LocationAsk } from "../components/LocationAsk";
 import { MarkdownSpan } from "../blocks/InlineText";
 import { remarkInline } from "../blocks/inlineSyntax";
 import type { OrbState } from "../components/Orb";
-import { streamChat, type ChatEvent } from "../sse";
+import { streamChat, type ChatEvent, type SentVia } from "../sse";
 import { ConnectCard } from "../components/ConnectCard";
 import { splitConnect } from "../google";
 import { Star, ThreadsPill, ThreadsSheet, ThreadsSidebar } from "../components/ThreadsSheet";
@@ -76,7 +76,7 @@ import { useHoldReload } from "../freshness";
 
 // key and sid: the name the server gave a reply (its ADK event id) and the session it is in; its saved ticks hang off them.
 // inv: the turn it belongs to; what Odie does after a tap joins the message of its turn (turns.ts).
-type Msg = { id: number; key?: string; sid?: string; inv?: string; role: "user" | "odie" | "approval"; text: string; tools: Tool[]; error?: string; awaiting?: boolean; ts?: number; live?: boolean; label?: string; approval?: Approval; images?: string[]; asked?: string; media?: Media[]; autoplay?: string; private?: boolean; usage?: ReplyUsage; via?: "terminal" };  // private: its chat read a signed-in page; usage: the reply's own token counts
+type Msg = { id: number; key?: string; sid?: string; inv?: string; role: "user" | "odie" | "approval"; text: string; tools: Tool[]; error?: string; awaiting?: boolean; ts?: number; live?: boolean; label?: string; approval?: Approval; images?: string[]; asked?: string; askedVia?: SentVia; media?: Media[]; autoplay?: string; private?: boolean; usage?: ReplyUsage; via?: "terminal" };  // private: its chat read a signed-in page; usage: the reply's own token counts
 type Pending = { id: string; url: string; w: number; h: number };
 let nextId = 1;
 const EASE = [0.2, 0.8, 0.2, 1] as const;
@@ -513,7 +513,9 @@ export function Chat({ orb, setOrb, showing }: { orb: OrbState; setOrb: (s: OrbS
     bottom.current?.scrollIntoView({ behavior: "smooth" });
   }
 
-  async function send(text: string) {
+  // Sends a turn. via: "tap" when a button, a card or the app sent the words for him (never his typing, to Odie);
+  // left out for what he typed or dictated in the composer.
+  async function send(text: string, via?: SentVia) {
     const t = text.trim() || (pending.length ? "What do you see in this?" : "");
     if (!t || busy) return;
     if (/^\/(clear|new)$/i.test(t)) { void newChat(); return; }
@@ -522,7 +524,7 @@ export function Chat({ orb, setOrb, showing }: { orb: OrbState; setOrb: (s: OrbS
     setInput((cur) => (cur.trim() === text.trim() ? "" : cur)); setPending([]); setBusy(true); setOrb("thinking");  // a tapped button keeps the draft
     const now = Date.now() / 1000;
     const replyId = nextId + 1;
-    setMsgs((m) => [...m, { id: nextId++, role: "user", text: t, tools: [], ts: now, images: imgs }, { id: nextId++, role: "odie", text: "", tools: [], ts: now, asked: t }]);
+    setMsgs((m) => [...m, { id: nextId++, role: "user", text: t, tools: [], ts: now, images: imgs }, { id: nextId++, role: "odie", text: "", tools: [], ts: now, asked: t, askedVia: via }]);
     // Patch the streaming reply by id: a live Odie message (reminder) may be appended while tokens arrive.
     const patch = (f: (last: Msg) => Msg) => setMsgs((m) => m.map((x) => (x.id === replyId ? f(x) : x)));
     let streamed = "";
@@ -534,7 +536,7 @@ export function Chat({ orb, setOrb, showing }: { orb: OrbState; setOrb: (s: OrbS
     streamAbort.current = ac;
     lastEventAt.current = Date.now();
     try {
-      for await (const ev of streamChat(t, imgs, thread?.id, ac.signal)) {
+      for await (const ev of streamChat(t, imgs, thread?.id, ac.signal, via)) {
         lastEventAt.current = Date.now();
         const turnNow = turnSoFar(turn, ev);
         if (turnNow !== turn) { turn = turnNow; patch((l) => ({ ...l, inv: turnNow })); }
@@ -577,7 +579,7 @@ export function Chat({ orb, setOrb, showing }: { orb: OrbState; setOrb: (s: OrbS
     if (busy || queued.length === 0) return;
     const [next, ...rest] = queued;
     setQueued(rest);
-    void send(next);
+    void send(next, "tap");  // the app's own lines and a Today card's button: never typed by him
   }, [busy, queued]);  // eslint-disable-line react-hooks/exhaustive-deps
 
   // Today's tiles and threads open Chat with a question (#chat?q=...): it waits in the composer for the user to send.
@@ -610,7 +612,7 @@ export function Chat({ orb, setOrb, showing }: { orb: OrbState; setOrb: (s: OrbS
   function retry(m: Msg) {
     if (!m.asked) return;
     setMsgs((all) => all.filter((x) => x.id !== m.id && !(x.role === "user" && x.text === m.asked && x.id === m.id - 1)));
-    void send(m.asked);
+    void send(m.asked, m.askedVia);
   }
 
   async function toggleMic() {
@@ -746,7 +748,7 @@ export function Chat({ orb, setOrb, showing }: { orb: OrbState; setOrb: (s: OrbS
 
         <div className="relative flex-1 min-h-0 flex flex-col">
           <main ref={mainRef} onScroll={onScroll} className="chat-col flex-1 overflow-y-auto no-scrollbar px-[18px] pb-3 flex flex-col">
-            <ChatActions.Provider value={{ send: (t) => void send(t), busy, fill: (t) => {
+            <ChatActions.Provider value={{ send: (t) => void send(t, "tap"), busy, fill: (t) => {
               setInput(t);
               requestAnimationFrame(() => { const f = field.current; if (f) { f.focus(); f.setSelectionRange(t.length, t.length); } });
             } }}>
@@ -759,7 +761,7 @@ export function Chat({ orb, setOrb, showing }: { orb: OrbState; setOrb: (s: OrbS
               </div>
             )}
             {latestIsHello && <div ref={bottom} />}
-            {morningOnTop && <MorningHello reply={morningOnTop} onChip={(t) => void send(t)} />}
+            {morningOnTop && <MorningHello reply={morningOnTop} onChip={(t) => void send(t, "tap")} />}
             {msgs.length === 0 && pick !== "" && (
               <div className="min-h-[60dvh] flex flex-col items-center justify-center text-center pt-5">
                 <Avatar size={132} halo who={picked} light={lightOf(pick)} />

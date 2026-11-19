@@ -103,31 +103,42 @@ OWN_WORDS_ONLY = ("(This chat had read outside text, so only the user's own mess
                   "Work from them and the web.)")
 
 
-def sent_from_terminal(args_json: str | None) -> bool:
-    """Whether a recorded message of his was sent by a program from the terminal (odie chat), not typed in an app:
-    '{"via": "terminal"}' -> True;  None (typed or dictated in an app) -> False;  anything unreadable -> False."""
+def not_typed(args_json: str | None) -> bool:
+    """Whether a recorded message of his was sent for him rather than typed or dictated: by a program from the
+    terminal (odie chat), or by a button or card the app sent (its words came from a model or a mail).
+      '{"via": "terminal"}' -> True;  '{"via": "tap"}' -> True;  None (typed or dictated) -> False;  unreadable -> False"""
     import json
     try:
         args = json.loads(args_json or "null")
     except ValueError:
         return False
-    return isinstance(args, dict) and args.get("via") == "terminal"
+    return isinstance(args, dict) and args.get("via") in ("terminal", "tap")
+
+
+def typed_now() -> str | None:
+    """This turn's words when he typed or dictated them; None when a tap sent them (a button's or a card's words never
+    name his folders: odie.agent.turn.SENT_VIA). The terminal's words count, as before: an agent he runs typed them.
+      he typed "test ~/work/app" -> that;  a card's "Open the email from … about ~/x" -> None"""
+    from odie.agent import turn
+    if turn.SENT_VIA.get() == "tap":
+        return None
+    return turn.USER_TEXT.get()
 
 
 def typed_words(store: Store, session_id: str) -> list[str]:
     """His own last messages in this chat, newest last: what he typed or dictated, as the runner recorded each turn
     before anything ran (the audit log: actor "user", event "message"). Never Odie's replies, a tool's answer or a
-    job's report (those are "agent" rows), nor a message a program sent from the terminal (odie chat: marked "via
-    terminal"). At most TYPED_MOST, each cut to TYPED_CHARS; a form's answer as its line only.
+    job's report (those are "agent" rows), nor a message sent for him (not_typed: the terminal, a tapped button or
+    card). At most TYPED_MOST, each cut to TYPED_CHARS; a form's answer as its line only.
       he said "first", "second", "third", "fourth"           -> ["second", "third", "fourth"]
-      he said "a", the terminal sent "b", he said "c"        -> ["a", "c"]
+      he said "a", the terminal sent "b", a card sent "c", he said "d" -> ["a", "d"]
       a new chat, or only the terminal spoke                 -> []"""
     from odie.blocks.answers import without_form_answers
     rows = store.query("select result_summary, args_json from audit_log where session_id=? and actor='user' and "
                        "event='message' order by id desc limit 30", (session_id,))
     newest_first = []
     for row in rows:
-        if sent_from_terminal(row["args_json"]):
+        if not_typed(row["args_json"]):
             continue
         text = without_form_answers(row["result_summary"] or "")
         if not text:
@@ -287,17 +298,20 @@ def readable_dir(given: str, words: str | None) -> tuple[str | None, str]:
     return str(folder), ""
 
 
-def keep_place(typed: list[str]) -> str:
+def keep_place(typed: list[str], read_dirs: list[str] | tuple = ()) -> str:
     """The folder of his a job's result may be kept in (the card's "Keep it in …"), found by code in his own typed
-    words, newest message first, the first folder named there: a real folder of his own, written as a whole path
-    (readable_dir's checks), or "" when he named none (then no button; the report says where the result is).
+    words, newest message first, the first folder named there that the job isn't given to read: a real folder of his
+    own, written as a whole path (readable_dir's checks), or "" when he named none (then no button; the report says
+    where the result is).
       ["can we try https://github.com/example/app.git in ~/code/demos/"] -> "<home>/code/demos"
       ["put it in ~/code/demos", "go ahead"]                             -> "<home>/code/demos" (said earlier)
+      ["read ~/work/app and put the result in ~/code/demos"], reading ~/work/app -> "<home>/code/demos"
+      ["fix the tests in ~/work/app"], reading ~/work/app -> "" (never copied into what it read)
       ["try example/app"], ["keep it in ~/.ssh"], ["keep it in /etc"] -> "" (no button)"""
     for words in reversed(typed):
         for folder in folders_named(words):
             found, _ = readable_dir(str(folder), words)
-            if found is not None:
+            if found is not None and found not in read_dirs:
                 return found
     return ""
 
@@ -366,10 +380,9 @@ def make_worker_tools(store: Store) -> list[FunctionTool]:
         clean_title = title.strip()[:80]
         if not clean_title:
             clean_title = "Job"
-        from odie.agent import turn
         folders = []
         for given in (read_dirs or [])[:READ_DIRS_MOST]:
-            folder, why = readable_dir(str(given), turn.USER_TEXT.get())
+            folder, why = readable_dir(str(given), typed_now())
             if folder is None:
                 return {"error": f"Not started: {why}."}
             folders.append(folder)
@@ -380,8 +393,8 @@ def make_worker_tools(store: Store) -> list[FunctionTool]:
             return {"error": "Not started: this chat has read outside text, so a job gets only the user's own words "
                              "as its brief, and there are none here to hand over. Ask them to say what they want."}
         from odie.plugins import access
-        uses = uses_for(turn.USER_TEXT.get(), list(access.known_tools(store)))
-        keep_to = keep_place(typed)
+        uses = uses_for(typed_now(), list(access.known_tools(store)))
+        keep_to = keep_place(typed, folders)
         try:
             job = router.start(clean_title, job_brief, session_id, personality=owner_of(store, tool_context),
                                taint=taint, read_dirs=folders, uses=uses, keep_to=keep_to)

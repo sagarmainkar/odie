@@ -207,11 +207,13 @@ def may_retry(row: dict | None) -> bool:
 def retry(job_id: str, allowed: list | None = None) -> Job | None:
     """Start a job that ended again: same row, same folder, same brief. allowed: what the user's tap in the app lets
     through on this run (odie.workers.allow); the chat's retry_job passes none. One that may_retry refuses -> None."""
+    from odie.workers import keep
     store = hooks["store"]
-    row = jobs.get(store, job_id)
-    if not may_retry(row):
-        return None
-    jobs.queued_again(store, job_id, list(allowed or []))
+    with keep.lock:  # never under a Keep it copy, and a keep that looks after this sees it running (keep.keep_job)
+        row = jobs.get(store, job_id)
+        if not may_retry(row):
+            return None
+        jobs.queued_again(store, job_id, list(allowed or []))
     job = jobs.from_row(jobs.get(store, job_id))
     launch(job)
     return job

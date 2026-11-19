@@ -28,11 +28,16 @@ export function parseSseLines(buffer: string): { events: ChatEvent[]; rest: stri
   return { events, rest: buffer };
 }
 
-/** One chat turn. Think harder isn't sent: Odie uses the chat's own setting (/api/chat/thinking). */
-export async function* streamChat(text: string, images: string[] = [], sessionId?: string, signal?: AbortSignal): AsyncGenerator<ChatEvent> {
+/** Who sent a turn's words when he didn't type or dictate them: "tap", a button or a card the app sent for him (its
+ *  words came from a model or a mail, so Odie never takes them as his typing). */
+export type SentVia = "tap";
+
+/** One chat turn. Think harder isn't sent: Odie uses the chat's own setting (/api/chat/thinking). via: "tap" when a
+ *  button or card sent the words; left out when he typed or dictated them. */
+export async function* streamChat(text: string, images: string[] = [], sessionId?: string, signal?: AbortSignal, via?: SentVia): AsyncGenerator<ChatEvent> {
   const res = await fetch(withPick("/api/chat"), {
     method: "POST", headers: { "Content-Type": "application/json" }, signal,
-    body: JSON.stringify({ text, images, ...(sessionId ? { session_id: sessionId } : {}) }),
+    body: JSON.stringify({ text, images, ...(sessionId ? { session_id: sessionId } : {}), ...(via ? { via } : {}) }),
   });
   if (!res.ok || !res.body) { yield { type: "error", message: `HTTP ${res.status}` }; return; }
   const reader = res.body.getReader();

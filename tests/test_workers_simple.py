@@ -393,7 +393,8 @@ def test_the_copy_never_overwrites(tmp_path):
     assert (dest / "app" / "mine.txt").read_text() == "his" and not (dest / "app" / "new.txt").exists()
     (job / "notes.txt").write_text("n")
     (dest / "notes.txt").write_text("his notes")
-    assert job_keep.copy_into(job_keep.source_in(job, "notes.txt"), dest).path == dest / "notes-2.txt"
+    (dest / "kept").mkdir()  # a folder by the name a single file would go into
+    assert job_keep.copy_into(job_keep.source_in(job, "notes.txt"), dest).path == dest / "kept-2" / "notes.txt"
     assert (dest / "notes.txt").read_text() == "his notes"
 
 

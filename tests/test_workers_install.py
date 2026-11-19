@@ -241,7 +241,7 @@ async def test_a_partial_keep_shows_on_the_card_and_can_be_kept_again(api, world
     dest = home / "code" / "demos"
     jid, _ = finished(store, tmp_path, keep_to=str(dest.resolve()))
 
-    def stops(source, dest_dir):
+    def stops(source, dest_dir, file_folder="kept"):
         (dest_dir / "app").mkdir()
         raise job_keep.KeepStopped(dest_dir / "app", "No space left on device")
     monkeypatch.setattr(job_keep, "copy_into", stops)

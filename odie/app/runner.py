@@ -1098,13 +1098,14 @@ class OdieRunner:
         """One user turn. session_id defaults to today's chat session; pass one to start elsewhere (eval, new thread).
         thinking: Think harder for this turn; None (every app now) uses the chat's own (odie.thinking).
         images: upload ids; each becomes an inline image part the vision model sees, and an [image:id] marker in the text.
-        via: "terminal" when the odie command sent it (odie chat): VIA_TERMINAL joins the hidden context."""
+        via: "terminal" when the odie command sent it (odie chat): VIA_TERMINAL joins the hidden context; "tap" when a
+        button or a card in the app sent it for him (recorded so, never taken as his typed words)."""
         s = config.settings
         today = datetime.now(self.tz).strftime("%Y-%m-%d")
         session_id = session_id or self.current_session_id(today)
         lock = self.lock_for(session_id)
         await lock.acquire()
-        turn_token = private_token = read_token = compact_token = model_token = None
+        turn_token = private_token = read_token = compact_token = model_token = via_token = None
         was_private = False
         from odie.agent import turns
         try:
@@ -1144,6 +1145,7 @@ class OdieRunner:
             self._remember_question(session_id, words)
             from odie.agent import turn as turn_words
             turn_token = turn_words.USER_TEXT.set(text)  # the user's own words, for tools that act only when asked
+            via_token = turn_words.SENT_VIA.set(via)  # a tap's or the terminal's: not his typing (odie.workers.tools)
             from odie.signin import guard as signin_guard  # the signed-in sites this chat has read (signed-in browsing)
             private_token = turn_words.PRIVATE.set(signin_guard.private_of(self.store, session_id))
             read_token = turn_words.READ.set(signin_guard.read_of(self.store, session_id))  # its mail, notes, memory read so far
@@ -1154,8 +1156,8 @@ class OdieRunner:
             model_token = turn_words.MODEL.set(self._chat_model(selection, effort_up))  # this turn's, for all its calls
             self.agent.generate_content_config = chat_generate_config(self.store)  # Creativity, as set right now
             sent_by = None
-            if via == "terminal":
-                sent_by = {"via": "terminal"}  # not his typing: a Worker's brief never takes it (odie.workers.tools)
+            if via in ("terminal", "tap"):
+                sent_by = {"via": via}  # not his typing: a Worker's brief never takes it (odie.workers.tools)
             self.store.audit("user", "message", args=sent_by, result_summary=text, session_id=session_id)
             final: list[str] = []
             called: set[str] = set()
@@ -1235,6 +1237,8 @@ class OdieRunner:
                 was_private = bool(turn_words.private_sites())
                 try:
                     turn_words.USER_TEXT.reset(turn_token)
+                    if via_token is not None:
+                        turn_words.SENT_VIA.reset(via_token)
                     turn_words.PRIVATE.reset(private_token)
                     if read_token is not None:
                         turn_words.READ.reset(read_token)
