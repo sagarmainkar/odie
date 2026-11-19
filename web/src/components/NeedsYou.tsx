@@ -1,11 +1,12 @@
 import { AnimatePresence, motion } from "framer-motion";
 import { useState } from "react";
-import { badgeTone, buttonsOf, tileColour, type Need, type NeedAction, type WatchNote } from "../needs";
+import { badgeTone, buttonsOf, knowsAction, tileColour, type Need, type NeedAction, type WatchNote } from "../needs";
 import { mediaUrl } from "../media";
 import { Orb } from "./Orb";
 import { Icon, Tile } from "./Tile";
 import { WatchClosed, type WatchClosedItem } from "./WatchClosed";
 import type { JobDone, LoopDone } from "../pulse";
+import { fresh } from "../freshness";
 
 const ask = (q: string) => { location.hash = `#chat?q=${encodeURIComponent(q)}`; };
 
@@ -21,8 +22,16 @@ export function NeedsYou({ items, footer, closed, notes = [], loopsDone = [], jo
 }) {
   const [showClosed, setShowClosed] = useState(open);
   const [unfolded, setUnfolded] = useState<Record<string, "why" | "output" | undefined>>({});
-  const [wholeStep, setWholeStep] = useState<Record<string, boolean>>({});  // "<ref>:<i>" -> the step's command shown whole
+  const [wholeStep, setWholeStep] = useState<Record<string, boolean>>({});
+  const [needsNewer, setNeedsNewer] = useState<Record<string, boolean>>({});  // ref -> a tapped button this app doesn't know  // "<ref>:<i>" -> the step's command shown whole
   const toggle = (ref: string, what: "why" | "output") => setUnfolded((u) => ({ ...u, [ref]: u[ref] === what ? undefined : what }));
+  // A tap: "Show failures" unfolds the output here; an action this app doesn't know says the card needs the new
+  // version; anything else goes to the screen (Today's act).
+  const tap = (n: Need, a: NeedAction) => {
+    if (a.action === "show_output") { toggle(n.ref, "output"); return; }
+    if (!knowsAction(a.action)) { setNeedsNewer((m) => ({ ...m, [n.ref]: true })); return; }
+    onAct(n, a);
+  };
   const doneCount = closed.length + notes.length + loopsDone.length + jobsDone.length;
   return (
     <section className="flex flex-col gap-2.5" aria-label="Needs you">
@@ -84,9 +93,14 @@ export function NeedsYou({ items, footer, closed, notes = [], loopsDone = [], jo
             )}
             {/* The move first and solid, then Done and Later, always on one row: a long move ends in "…" (its whole
                 label is its title), Done and Later keep their size. Under the tile only on a wide phone or larger (430px up). */}
+            {needsNewer[n.ref] && (
+              <div role="status" className="min-[430px]:ml-12 text-ui text-muted">
+                This needs the new version · <button type="button" onClick={() => fresh.tap()} className="font-semibold text-ink underline underline-offset-2">Reload</button>
+              </div>
+            )}
             <div className="flex gap-2 min-[430px]:pl-12" data-buttons="one-row">
               {buttonsOf(n).map((a, i) => (
-                <button key={a.action + i} type="button" onClick={() => (a.action === "show_output" ? toggle(n.ref, "output") : onAct(n, a))} title={a.label}
+                <button key={a.action + i} type="button" onClick={() => tap(n, a)} title={a.label}
                   className={i === 0 ? "pill pill-solid h-9 px-4 text-ui shadow-none min-w-0 shrink max-w-[60%]" : "pill h-9 px-3 text-ui shrink-0"}><span className="truncate">{a.label}</span></button>
               ))}
             </div>

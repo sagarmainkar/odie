@@ -82,7 +82,8 @@ async def health(request: Request) -> dict[str, Any]:
     hearing = await voice.hearing_available()  # the Mac listens through /api/talk/listen when this is true
     return {"status": "ok", "name": "Odie", "version": update.version(), "model": chosen["model"], "provider": chosen["provider"],
             "leaves_mini": chosen["leaves_mini"], "lm_studio": lm, "connections": connections,
-            "brain_chosen": brain_chosen(request.app.state.store), "brain_reachable": brain_reachable, "hearing": hearing}
+            "brain_chosen": brain_chosen(request.app.state.store), "brain_reachable": brain_reachable, "hearing": hearing,
+            "build": update.web_build(config.settings.web_dist)}
 
 
 @router.get("/update")

@@ -20,6 +20,8 @@ import { useProfile } from "./profile";
 import { usePersona } from "./persona";
 import { has, tabFor, useCaps } from "./capabilities";
 import { useUpdate } from "./update";
+import { startFreshness } from "./freshness";
+import { NewVersionPill } from "./components/NewVersionPill";
 import { PRIVATE_EVENT, codeFromHash, needsPairing, type PairStatus } from "./devices";
 import { columnWidth, opensDuringSetup, showsRail, tabFromHash } from "./layout";
 
@@ -31,6 +33,7 @@ export type Tab = "chat" | "today" | "settings" | "brain" | "voice" | "sample" |
 export default function App() {
   const [status, setStatus] = useState<PairStatus | null | undefined>(undefined);  // undefined: not asked yet
   const [locked, setLocked] = useState(false);
+  useEffect(() => startFreshness(), []);  // picks up a new version of the app by itself
   useEffect(() => {
     getJSON<PairStatus>("/api/pair/status").then((s) => { setStatus(s); setLocked(needsPairing(s) || (!s.paired && !!codeFromHash(location.hash))); }).catch(() => setStatus(null));
     const on = () => setLocked(true);
@@ -94,6 +97,7 @@ function Main() {
       </div>
       {tab === "today" && <AskBar pending={pending} />}
       <ReminderCurtain />
+      <NewVersionPill />
     </div>
   );
 }

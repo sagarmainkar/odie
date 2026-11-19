@@ -235,7 +235,7 @@ export function Today() {
   return (
     <div className="h-full overflow-y-auto overflow-x-hidden no-scrollbar px-[18px] lg:px-8 safe-top pb-[110px] flex flex-col gap-[18px] [overflow-wrap:anywhere]">
       <div className="flex items-center justify-between rise">
-        <div className="text-small font-semibold text-muted whitespace-nowrap">{date}</div>
+        <div className="text-small font-semibold text-muted whitespace-nowrap">{pulseKicker("", date, "Odie")}</div>
         <div className="flex items-center gap-2">
           <a href="#settings" aria-label="Settings" className="flex"><Avatar size={44} state={approvals.length ? "approval" : "idle"} /></a>
         </div>

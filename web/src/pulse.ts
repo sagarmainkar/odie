@@ -29,11 +29,11 @@ export function otherLine(other: Other): string {
   return `${other.name}: ${other.waiting} waiting`;
 }
 
-/** The Pulse heading's small line: everyday Odie's Pulse is the day ("Wednesday 18 November"); a personality's says
- *  whose it is.  ("", "Wednesday 18 November", "Odie") -> "Wednesday 18 November";
+/** The Pulse heading's small line: the screen's name and the day; a personality's also says whose it is.
+ *  ("", "Wednesday 18 November", "Odie") -> "Pulse · Wednesday 18 November";
  *  ("abc", "Wednesday 18 November", "Mira") -> "Mira's Pulse · Wednesday 18 November" */
 export function pulseKicker(pick: string, date: string, name: string): string {
-  if (!pick) return date;
+  if (!pick) return `Pulse · ${date}`;
   return `${name}'s Pulse · ${date}`;
 }
 

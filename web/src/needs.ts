@@ -7,6 +7,18 @@ import type { Media } from "./media";
 export type NeedAction = { label: string; action: "chat" | "dismiss" | "done_task" | "snooze_task" | "later" | "open" | "loop_done"
   | "job_retry" | "job_allow" | "job_clear" | "merge" | "recipe_use" | "recipe_no" | "show_output"; value: string | number };
 
+/** Every button action this app handles; a newer server may send one it doesn't know yet. */
+const KNOWN_ACTIONS: ReadonlySet<string> = new Set<NeedAction["action"]>([
+  "chat", "dismiss", "done_task", "snooze_task", "later", "open", "loop_done",
+  "job_retry", "job_allow", "job_clear", "merge", "recipe_use", "recipe_no", "show_output",
+]);
+
+/** Whether this app knows what a card's button does: "job_allow" -> true; "job_pause" (from a newer server) -> false,
+ *  so the card says "This needs the new version · Reload" instead of the tap doing nothing. */
+export function knowsAction(action: string): boolean {
+  return KNOWN_ACTIONS.has(action);
+}
+
 /** One card in a Pulse's "Needs you": a watch item from mail, or one of the user's own reminders. Every card has the
  *  same three buttons: its one move (main), Done (other) and Later (later; an older server sends no Later). */
 export type Need = { ref: string; title: string; why: string; brief?: string; icon: IconName; badge: string; ask: string; main: NeedAction; other: NeedAction; later?: NeedAction;

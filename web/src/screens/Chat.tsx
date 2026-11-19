@@ -72,6 +72,7 @@ import { useProfile } from "../profile";
 import { MicWave } from "../components/MicWave";
 import { composerWith, phoneSpeech, pickMode, startDictation } from "../dictation";
 import { shrinkPhoto } from "../shrinkPhoto";
+import { useHoldReload } from "../freshness";
 
 // key and sid: the name the server gave a reply (its ADK event id) and the session it is in; its saved ticks hang off them.
 // inv: the turn it belongs to; what Odie does after a tap joins the message of its turn (turns.ts).
@@ -665,6 +666,11 @@ export function Chat({ orb, setOrb, showing }: { orb: OrbState; setOrb: (s: OrbS
   const ctxText = ctxKnown ? `About ${Math.round(ctx.used / 1000)}k of ${Math.round(ctx.limit / 1000)}k · older turns trimmed at ${Math.round(ctx.limit / 1000)}k` : "";
   const status = ctxNote && ctxText ? ctxText : busy ? (stopping ? "Stopping…" : "Working on it") : orb === "listening" ? "Listening" : orb === "speaking" ? "Speaking" : orb === "approval" ? "Waiting for your tap" : "Here";
   const hasDraft = input.trim().length > 0 || pending.length > 0;
+  // A new version of the app waits to reload while any of these is going on (freshness.ts).
+  useHoldReload("stream", busy);
+  useHoldReload("voice", talking || connecting || listening || transcribing);
+  useHoldReload("approval", orb === "approval");
+  useHoldReload("draft", hasDraft);
   let micPlaceholder = `Ask ${name} anything`;
   if (connecting) micPlaceholder = "Connecting…";
   if (listening) micPlaceholder = "Listening… tap the mic to finish";

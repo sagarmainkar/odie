@@ -14,7 +14,7 @@ describe("Pulse", () => {
   });
 
   it("says whose Pulse it is", () => {
-    expect(pulseKicker("", "Wednesday 18 November", "Odie")).toBe("Wednesday 18 November");
+    expect(pulseKicker("", "Wednesday 18 November", "Odie")).toBe("Pulse · Wednesday 18 November");
     expect(pulseKicker("abc", "Wednesday 18 November", "Mira")).toBe("Mira's Pulse · Wednesday 18 November");
   });
 
