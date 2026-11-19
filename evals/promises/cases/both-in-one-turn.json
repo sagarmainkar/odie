@@ -1,0 +1,28 @@
+{
+  "id": "both-in-one-turn",
+  "about": "He must file taxes by the 30th; Odie will check the portal's deadline on Monday.",
+  "typed": "I have to finish the tax filing by the 30th. Can you check the portal deadline again next week?",
+  "reply": "Sure. I'll check the portal's deadline again on Monday.",
+  "script": {
+    "odie": [
+      {
+        "what": "Check the tax portal's deadline",
+        "when": "2026-11-23T09:00:00+05:30",
+        "said": "I'll check the portal's deadline again on Monday"
+      }
+    ],
+    "you": [
+      {
+        "what": "Finish the tax filing",
+        "when": "2026-11-30T09:00:00+05:30",
+        "said": "I have to finish the tax filing by the 30th"
+      }
+    ]
+  },
+  "expect": {
+    "promises": 1,
+    "offers": 1,
+    "promise_due": "2026-11-23",
+    "offer_due": "2026-11-30"
+  }
+}

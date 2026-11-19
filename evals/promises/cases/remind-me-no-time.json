@@ -1,0 +1,19 @@
+{
+  "id": "remind-me-no-time",
+  "about": "\"Remind me to renew the passport\" with no time, and Odie asks when: an offer with no due.",
+  "typed": "remind me to renew the passport",
+  "reply": "Sure. When should I remind you?",
+  "script": {
+    "odie": [],
+    "you": [
+      {
+        "what": "Renew the passport",
+        "said": "remind me to renew the passport"
+      }
+    ]
+  },
+  "expect": {
+    "promises": 0,
+    "offers": 1
+  }
+}

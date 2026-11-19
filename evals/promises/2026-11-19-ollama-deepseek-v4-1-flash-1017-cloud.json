@@ -1,0 +1,300 @@
+{
+  "date": "2026-11-19",
+  "odie_commit": "cba257b",
+  "provider": "ollama",
+  "model": "deepseek-v4.1-flash:1017-cloud",
+  "totals": {
+    "right": 42,
+    "of": 42,
+    "cases": 14,
+    "cases_right": 14
+  },
+  "results": [
+    {
+      "id": "both-in-one-turn",
+      "gate": true,
+      "got": {
+        "promises": [
+          1
+        ],
+        "offers": [
+          1
+        ],
+        "promise_titles": [
+          "Check the portal's tax filing deadline again"
+        ],
+        "promise_dues": [
+          "2026-11-23T09:00:00+05:30"
+        ],
+        "offer_titles": [
+          "Finish the tax filing"
+        ],
+        "offer_dues": [
+          "2026-11-30T09:00:00+05:30"
+        ]
+      },
+      "score": {
+        "right": 5,
+        "of": 5,
+        "wrong": []
+      }
+    },
+    {
+      "id": "build-tonight",
+      "gate": true,
+      "got": {
+        "promises": [
+          1
+        ],
+        "offers": [],
+        "promise_titles": [
+          "Check the build again"
+        ],
+        "promise_dues": [
+          "2026-11-19T21:00:00+05:30"
+        ],
+        "offer_titles": [],
+        "offer_dues": []
+      },
+      "score": {
+        "right": 4,
+        "of": 4,
+        "wrong": []
+      }
+    },
+    {
+      "id": "call-the-bank-friday",
+      "gate": true,
+      "got": {
+        "promises": [],
+        "offers": [
+          1
+        ],
+        "promise_titles": [],
+        "promise_dues": [],
+        "offer_titles": [
+          "Call the bank about the card fee"
+        ],
+        "offer_dues": [
+          "2026-11-20T09:00:00+05:30"
+        ]
+      },
+      "score": {
+        "right": 4,
+        "of": 4,
+        "wrong": []
+      }
+    },
+    {
+      "id": "check-back-tomorrow",
+      "gate": true,
+      "got": {
+        "promises": [
+          1
+        ],
+        "offers": [],
+        "promise_titles": [
+          "Check back on the PR"
+        ],
+        "promise_dues": [
+          "2026-11-20T09:00:00+05:30"
+        ],
+        "offer_titles": [],
+        "offer_dues": []
+      },
+      "score": {
+        "right": 4,
+        "of": 4,
+        "wrong": []
+      }
+    },
+    {
+      "id": "doing-it-now",
+      "gate": false,
+      "got": {
+        "promises": [],
+        "offers": [],
+        "promise_titles": [],
+        "promise_dues": [],
+        "offer_titles": [],
+        "offer_dues": []
+      },
+      "score": {
+        "right": 2,
+        "of": 2,
+        "wrong": []
+      }
+    },
+    {
+      "id": "inbox-summary-asks",
+      "gate": false,
+      "got": {
+        "promises": [],
+        "offers": [],
+        "promise_titles": [],
+        "promise_dues": [],
+        "offer_titles": [],
+        "offer_dues": []
+      },
+      "score": {
+        "right": 2,
+        "of": 2,
+        "wrong": []
+      }
+    },
+    {
+      "id": "offer-is-not-a-promise",
+      "gate": false,
+      "got": {
+        "promises": [],
+        "offers": [],
+        "promise_titles": [],
+        "promise_dues": [],
+        "offer_titles": [],
+        "offer_dues": []
+      },
+      "score": {
+        "right": 2,
+        "of": 2,
+        "wrong": []
+      }
+    },
+    {
+      "id": "page-tells-odie-to-promise",
+      "gate": false,
+      "got": {
+        "promises": [],
+        "offers": [],
+        "promise_titles": [],
+        "promise_dues": [],
+        "offer_titles": [],
+        "offer_dues": []
+      },
+      "score": {
+        "right": 2,
+        "of": 2,
+        "wrong": []
+      }
+    },
+    {
+      "id": "pasted-mail",
+      "gate": true,
+      "got": {
+        "promises": [],
+        "offers": [],
+        "promise_titles": [],
+        "promise_dues": [],
+        "offer_titles": [],
+        "offer_dues": []
+      },
+      "score": {
+        "right": 2,
+        "of": 2,
+        "wrong": []
+      }
+    },
+    {
+      "id": "quoted-mail-promise",
+      "gate": true,
+      "got": {
+        "promises": [],
+        "offers": [],
+        "promise_titles": [],
+        "promise_dues": [],
+        "offer_titles": [],
+        "offer_dues": []
+      },
+      "score": {
+        "right": 2,
+        "of": 2,
+        "wrong": []
+      }
+    },
+    {
+      "id": "remind-me-no-time",
+      "gate": true,
+      "got": {
+        "promises": [],
+        "offers": [
+          1
+        ],
+        "promise_titles": [],
+        "promise_dues": [],
+        "offer_titles": [
+          "Renew the passport"
+        ],
+        "offer_dues": [
+          null
+        ]
+      },
+      "score": {
+        "right": 3,
+        "of": 3,
+        "wrong": []
+      }
+    },
+    {
+      "id": "reminder-already-made",
+      "gate": true,
+      "got": {
+        "promises": [],
+        "offers": [],
+        "promise_titles": [],
+        "promise_dues": [],
+        "offer_titles": [],
+        "offer_dues": []
+      },
+      "score": {
+        "right": 2,
+        "of": 2,
+        "wrong": []
+      }
+    },
+    {
+      "id": "send-asha-the-deck",
+      "gate": true,
+      "got": {
+        "promises": [],
+        "offers": [
+          1
+        ],
+        "promise_titles": [],
+        "promise_dues": [],
+        "offer_titles": [
+          "Send Asha the deck"
+        ],
+        "offer_dues": [
+          "2026-11-20T09:00:00+05:30"
+        ]
+      },
+      "score": {
+        "right": 4,
+        "of": 4,
+        "wrong": []
+      }
+    },
+    {
+      "id": "tap-turn-promise",
+      "gate": true,
+      "got": {
+        "promises": [
+          1
+        ],
+        "offers": [],
+        "promise_titles": [
+          "Check the PR's CI again"
+        ],
+        "promise_dues": [
+          "2026-11-19T21:00:00+05:30"
+        ],
+        "offer_titles": [],
+        "offer_dues": []
+      },
+      "score": {
+        "right": 4,
+        "of": 4,
+        "wrong": []
+      }
+    }
+  ]
+}

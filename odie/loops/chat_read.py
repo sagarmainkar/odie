@@ -7,7 +7,7 @@ model call with no tools reads what he typed and Odie's reply, and answers:
 
 The model thinks, code keeps it safe (§3):
   - the call sees only his typed words and Odie's reply, never a tool's result (mail, pages, job reports), and the
-    reply is fenced: it may quote other people;
+    reply is marked off as Odie's (it may quote other people, whose words are data);
   - each item quotes its words, and code checks them: Odie's must be in Odie's reply outside any quotation marks or
     "> " lines, his in his own typed words (also outside quotes); words a button or the terminal sent never propose;
   - never a secret; not what this turn's own reminder covers (the same minute) or what is already followed (the same
@@ -48,6 +48,9 @@ HIS_COMMITMENTS = re.compile(r"\b(?:i need to|i have to|i've got to|i got to|i g
                              r"i'm going to|i am going to|i promised|i owe|remind me|don't let me forget|"
                              r"do not let me forget|i'm supposed to|i need to remember|have to remember|"
                              r"i mustn't forget|to-?do)\b", re.I)
+# Odie's reply is marked off as its own (not as "untrusted email": the model then took Odie's own promises for a mail's,
+# found in the live eval of 19 Nov); a marker inside the reply is defanged so the reply can't close it.
+REPLY_OPEN, REPLY_CLOSE = "<<<ODIE'S REPLY>>>", "<<<END ODIE'S REPLY>>>"
 QUOTED = re.compile(r'"[^"\n]*"|“[^”\n]*”|«[^»\n]*»')
 QUOTE_LINE = re.compile(r"^\s*>.*$", re.M)
 
@@ -127,15 +130,22 @@ def followed(store, pid: str, now: datetime) -> list[str]:
     return titles[-FOLLOWED_SHOWN:]
 
 
+def marked_reply(reply: str) -> str:
+    """Odie's reply between its own markers, any marker inside it defanged:
+    "I'll check tonight." -> "<<<ODIE'S REPLY>>>\nI'll check tonight.\n<<<END ODIE'S REPLY>>>"."""
+    body = reply.replace(REPLY_CLOSE, "[marker removed]").replace(REPLY_OPEN, "[marker removed]")
+    return f"{REPLY_OPEN}\n{body}\n{REPLY_CLOSE}"
+
+
 def prompt_for(store, pid: str, now: datetime, typed: str, reply: str, made: list[dict]) -> str:
-    """What the call reads: the time, his typed words (his own), Odie's reply (fenced: it may quote others), the
+    """What the call reads: the time, his typed words (his own), Odie's reply (marked off: it may quote others), the
     reminders this turn made and what is already followed (fenced: titles may come from mail)."""
     said = typed[:TYPED_MOST] or "(nothing: a button sent this turn, so write no \"you\")"
     made_lines = [f"- {m['title']}" + (f" · {m['due_at'][:16]}" if m["due_at"] else "") for m in made]
     known = [f"- {t}" for t in followed(store, pid, now)]
     parts = [f"It is {now.strftime('%A %d %B %Y, %H:%M')} (offset {now.strftime('%z')[:3]}:{now.strftime('%z')[3:]}).",
              f"What the user typed:\n{said}",
-             f"Odie's reply:\n{wrap_untrusted(reply[:REPLY_MOST])}",
+             f"Odie's reply:\n{marked_reply(reply[:REPLY_MOST])}",
              f"Reminders this turn already made:\n{chr(10).join(made_lines) or '(none)'}",
              f"Already followed:\n{wrap_untrusted(chr(10).join(known) or '(nothing)')}"]
     return "\n\n".join(parts)

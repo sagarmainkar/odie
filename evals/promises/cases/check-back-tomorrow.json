@@ -1,0 +1,21 @@
+{
+  "id": "check-back-tomorrow",
+  "about": "Odie will check back tomorrow on a pull request.",
+  "typed": "did Asha review the PR?",
+  "reply": "No review yet. I'll check back on the PR tomorrow morning.",
+  "script": {
+    "odie": [
+      {
+        "what": "Check the PR for Asha's review",
+        "when": "2026-11-20T09:00:00+05:30",
+        "said": "I'll check back on the PR tomorrow morning"
+      }
+    ],
+    "you": []
+  },
+  "expect": {
+    "promises": 1,
+    "offers": 0,
+    "promise_due": "2026-11-20"
+  }
+}

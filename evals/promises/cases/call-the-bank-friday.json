@@ -1,0 +1,21 @@
+{
+  "id": "call-the-bank-friday",
+  "about": "His own commitment: a Track this? offer due Friday.",
+  "typed": "I need to call the bank Friday about the card fee",
+  "reply": "Okay. Want me to find their number?",
+  "script": {
+    "odie": [],
+    "you": [
+      {
+        "what": "Call the bank about the card fee",
+        "when": "2026-11-20T09:00:00+05:30",
+        "said": "I need to call the bank Friday about the card fee"
+      }
+    ]
+  },
+  "expect": {
+    "promises": 0,
+    "offers": 1,
+    "offer_due": "2026-11-20"
+  }
+}

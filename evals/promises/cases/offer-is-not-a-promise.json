@@ -1,0 +1,14 @@
+{
+  "id": "offer-is-not-a-promise",
+  "about": "Odie asks whether to check tomorrow: a question, not a promise.",
+  "typed": "is the build done?",
+  "reply": "Still running. Want me to check again tomorrow morning?",
+  "script": {
+    "odie": [],
+    "you": []
+  },
+  "expect": {
+    "promises": 0,
+    "offers": 0
+  }
+}
