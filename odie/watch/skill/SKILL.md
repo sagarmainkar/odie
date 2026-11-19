@@ -12,6 +12,8 @@ thing, whatever source it came from), so write what you find, plainly, even when
    person, about the same thing), write a finding with its ref and done in their words ("you replied 18 Nov 14:20").
 2. Call `new_mail` and `upcoming_events`. For each new mail, decide what, if anything, it asks of the user. When the
    subject and the first lines don't make that clear, call `read_mail` before deciding: a preview often hides the ask.
+   A new or moved event with a person or a deadline in it is a finding too (kind event, due its start): Odie ties it
+   to what it follows (a call about a deck moves its due time).
 3. Decide each mail's outcome:
    - **Needs the user**: someone waiting on a reply, a decision or an action soon. A mail that asks the user for
      something — answers to questions, their availability, a document, a yes or no — is a reply owed, even when it
@@ -63,9 +65,9 @@ events, so you never add a second one.
 - Example, a bill: "Your electricity bill of Rs 4,280 is due on 09-Nov-2026" -> `calendar_create_event` "Pay
   electricity bill — ₹4,280" on 9 Nov, 09:00 to 09:20; then `track_thread` it (kind bill, stage due, due 2026-11-08).
   A deadline or an appointment a mail names goes on the calendar the same way.
-- Example, a payment: "Payment of Rs 4,280 received, consumer 1702…" -> `bills_and_orders` shows "Pay electricity
-  bill — ₹4,280": the same biller and the same amount, so say it's done (`track_thread` "done", or `close_reminder`
-  for a reminder listed there) with why "paid: confirmation mail 21 Oct", and
+- Example, a payment: "Payment of Rs 4,280 received, consumer 1702…" -> `track_thread` it (kind bill, "done", why
+  "paid: confirmation mail 21 Oct"): Odie closes the bill of the same biller and the same amount. If `bills_and_orders` lists a reminder for it,
+  `close_reminder` it, and
   `calendar_update_event` its event's title to "✓ Paid · Pay electricity bill — ₹4,280". A different amount or
   biller closes nothing: make it a finding if it looks wrong.
 - Example, an order: "Your order of Wireless Earbuds has shipped, arriving Friday" -> an all-day
