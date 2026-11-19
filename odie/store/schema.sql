@@ -26,6 +26,13 @@ CREATE TABLE IF NOT EXISTS push_subscriptions(id INTEGER PRIMARY KEY, endpoint T
 CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value_json TEXT NOT NULL);
 -- chat threads the user pinned or renamed (odie.threads); the conversations themselves live in the session store
 CREATE TABLE IF NOT EXISTS threads(session_id TEXT PRIMARY KEY, title TEXT, pinned_at TEXT);
+-- other ways for the assistant to be (odie.personalities): a name and a picture each; its SOUL and its memories
+-- are files. A thread's and a task's `personality` column (added in Store.init_schema) says whose it is; NULL = Odie
+CREATE TABLE IF NOT EXISTS personalities(id TEXT PRIMARY KEY, name TEXT NOT NULL, avatar TEXT, created_at TEXT NOT NULL);
+-- which connected apps (MCP servers) each one may use (odie.plugins.access): a row only where a switch was set;
+-- no row = on. personality '' = everyday Odie
+CREATE TABLE IF NOT EXISTS app_access(server TEXT NOT NULL, personality TEXT NOT NULL, allowed INTEGER NOT NULL,
+  PRIMARY KEY(server, personality));
 
 create table if not exists trackers (
   id integer primary key autoincrement,
@@ -69,3 +76,92 @@ create table if not exists block_state (
   updated_at text not null,
   primary key (session_id, message_key, block_path)
 );
+
+-- open loops (proactive design §5): one row per real-world thing Odie follows until it closes, whatever source it came
+-- from (odie.loops.ledger). personality NULL = everyday Odie's, as tasks. loop_events is each loop's evidence, append-only.
+create table if not exists loops (
+  id integer primary key autoincrement,
+  personality text,
+  title text not null,
+  kind text not null default '',
+  owner text not null default 'odie' check (owner in ('odie','you','them')),
+  state text not null default 'new' check (state in ('new','working','ready','waiting','closed','dropped')),
+  next_step text not null default '',
+  playbook text not null default '',
+  priority text not null default 'normal' check (priority in ('high','normal','low')),
+  due_at text,
+  next_check_at text,
+  hidden_until text,
+  refs_json text not null default '[]',
+  has_news integer not null default 0,
+  result text not null default '',
+  brief text not null default '',
+  link text not null default '',
+  nudges integer not null default 0,
+  attempts integer not null default 0,
+  shown_at text,
+  tapped text,
+  closed_by text,
+  closed_why text,
+  created_at text not null,
+  updated_at text not null,
+  closed_at text,
+  card_json text not null default '{}'
+);
+create table if not exists loop_events (
+  id integer primary key autoincrement,
+  loop_id integer not null,
+  at text not null,
+  source text not null,
+  ref text not null default '',
+  fact text not null
+);
+create index if not exists loop_events_loop on loop_events(loop_id);
+
+-- Workers (odie.workers, Workers design 18 Nov 2026): one row per background job, and one per tool call it made.
+-- kind: task (a Worker the user started from chat) or pr_test (code runs a pull request's tests for a loop).
+-- personality NULL = everyday Odie's. needed_json: what the Worker was refused (would need a tap); allowed_json: what
+-- the user's tap in the app allowed for the job's next run only. taint: the outside text the chat had read when it
+-- started the job ("mail", "web pages"): such a Worker gets no web and no apps. version: rows this code wrote are 2;
+-- an older install's rows (the bots experiment's jobs table, upgraded by Store.init_schema) stay 0 and are never shown,
+-- told, recovered or retried. uses: what the job may reach besides its folder, ONE of: web (the web), apps:mail /
+-- apps:calendar / apps (the personality's apps, no web), folder (named folders, no web), none (tainted: nothing).
+create table if not exists jobs (
+  id text primary key,
+  kind text not null,
+  title text not null,
+  brief text not null,
+  personality text,
+  started_by text not null default 'you' check (started_by in ('you','odie')),
+  loop_id integer,
+  status text not null check (status in ('queued','running','done','failed','stopped')),
+  session_id text,
+  folder text not null,
+  budget_seconds integer not null,
+  runs integer not null default 0,
+  outcome text,
+  report text,
+  error text,
+  needed_json text not null default '[]',
+  allowed_json text not null default '[]',
+  cleared integer not null default 0,
+  taint text not null default '',
+  read_dirs_json text not null default '[]',
+  uses text not null default 'web',
+  version integer not null default 0,
+  created_at text not null,
+  started_at text,
+  ended_at text
+);
+create index if not exists jobs_status on jobs(status);
+create table if not exists job_actions (
+  id integer primary key autoincrement,
+  job_id text not null,
+  ts text not null,
+  tool text not null,
+  args_json text,
+  result_chars integer,
+  refused text,
+  error text
+);
+create index if not exists job_actions_job on job_actions(job_id, id);

@@ -26,18 +26,18 @@ export function UpdateCurtain({ from, to }: { from: string; to: string }) {
   return (
     <motion.div role="dialog" aria-label="Updating Odie" aria-busy={!stuck} initial={{ opacity: 0 }} animate={{ opacity: 1 }}
       className="fixed inset-0 z-50 bg-overlay backdrop-blur-xl flex items-center justify-center px-6">
-      <div className="glass glass-solid rounded-[26px] px-6 py-7 w-full max-w-[420px] flex flex-col items-center text-center gap-3 shadow-[0_24px_60px_-24px_rgba(60,40,20,.45)]">
+      <div className="glass glass-solid rounded-card px-6 py-7 w-full max-w-[420px] flex flex-col items-center text-center gap-3 shadow-[0_24px_60px_-24px_rgba(60,40,20,.45)]">
         <Avatar size={64} state={stuck ? "idle" : "thinking"} />
         {stuck ? (
           <>
-            <div className="text-[19px] font-bold tracking-[-0.01em]">Still on {from}</div>
-            <div className="text-[14px] leading-5 text-muted">The update to {to} hasn't landed after five minutes: it may have rolled back. On the Mac, <span className="font-mono">odie logs</span> says what happened.</div>
-            <button type="button" onClick={() => void reloadFresh()} className="pill pill-solid h-11 px-6 text-[15px] shadow-none mt-1">Reload</button>
+            <div className="text-heading font-bold tracking-[-0.01em]">Still on {from}</div>
+            <div className="text-ui leading-5 text-muted">The update to {to} hasn't landed after five minutes: it may have rolled back. On the Mac, <span className="font-mono">odie logs</span> says what happened.</div>
+            <button type="button" onClick={() => void reloadFresh()} className="pill pill-solid h-11 px-6 text-body shadow-none mt-1">Reload</button>
           </>
         ) : (
           <>
-            <div className="text-[19px] font-bold tracking-[-0.01em]">Updating Odie…</div>
-            <div className="text-[14px] leading-5 text-muted">{from} → {to}. Fetching, building and restarting takes about a minute. Odie comes back on its own.</div>
+            <div className="text-heading font-bold tracking-[-0.01em]">Updating Odie…</div>
+            <div className="text-ui leading-5 text-muted">{from} → {to}. Fetching, building and restarting takes about a minute. Odie comes back on its own.</div>
             <span className="spinner mt-1" />
           </>
         )}

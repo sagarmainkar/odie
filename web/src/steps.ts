@@ -2,9 +2,10 @@
 // The pure functions here change a list of steps; Chat.tsx only calls them.
 import { userLocale } from "./locale";
 
-/** Who let a step run: "you" tapped Allow, "no" tapped Don't, "pass" ran under a pass (no card), "lapsed": nobody
- * tapped the card in time. `at` is the tap (or lapse) time. */
-export type Allowed = { by: "you" | "no" | "pass" | "lapsed"; at?: string };
+/** Who let a step run: "you" tapped Allow, "no" tapped Don't, "pass" ran under a pass (no card), "chat" ran under
+ * this chat's "don't ask again" pass for its kind, "lapsed": nobody tapped the card in time. `at` is the tap (or lapse)
+ * time. */
+export type Allowed = { by: "you" | "no" | "pass" | "chat" | "lapsed"; at?: string };
 
 /** What became of a step: "done" it ran, "wait" it needs your tap, "no" it never ran (you refused it, or its card
  * lapsed), "lost" its answer never came (Odie restarted while it ran). */
@@ -129,7 +130,8 @@ export function fromHistory(item: HistoryItem): Tool[] {
  *    allowed {by: "you"} (no time known)        -> You allowed
  *    allowed {by: "lapsed"}                     -> Lapsed  (nobody tapped the card in time)
  *    allowed {by: "no"}, or state "no" alone    -> You said no
- *    allowed {by: "pass"}                       -> pass   (a shell command under the pass: no card)
+ *    allowed {by: "pass"}                       -> ran on its own   (a shell command under the pass: no card)
+ *    allowed {by: "chat"}                       -> allowed for this chat   (its kind was allowed for this chat)
  *    no allowed (no tap was needed)             -> ""     (no pill) */
 export function allowedPill(t: Tool): string {
   const by = t.allowed?.by;
@@ -141,6 +143,7 @@ export function allowedPill(t: Tool): string {
   if (by === "lapsed") return "Lapsed";
   if (by === "no" || t.state === "no") return "You said no";
   if (by === "pass") return "ran on its own";  // a 30-minute pass or Smart mode; the activity log says which
+  if (by === "chat") return "allowed for this chat";
   return "";
 }
 
@@ -215,4 +218,26 @@ export function metaLine(t: Tool): string {
 export function outputHead(result: string, lines = 12): { head: string; rest: number } {
   const all = linesOf(result);
   return { head: all.slice(0, lines).join("\n"), rest: Math.max(0, all.length - lines) };
+}
+
+/** "1 step", "4 steps". */
+export function stepsCount(n: number): string {
+  return n === 1 ? "1 step" : `${n} steps`;
+}
+
+/** A summary cut to at most `max` characters at the end of a word, with "…" when something was left out and no comma
+ *  left dangling before it; one word longer than `max` is cut inside the word, as nothing else can fit.
+ *    ("Checked trackers, looked back, checked the time", 30) -> "Checked trackers, looked back…"
+ *    ("Searched the web, remembered that", 40)               -> unchanged (it fits) */
+export function cutAtWord(text: string, max: number): string {
+  if (text.length <= max) return text;
+  let kept = "";
+  for (const word of text.split(" ")) {
+    const longer = kept ? `${kept} ${word}` : word;
+    const withoutComma = longer.replace(/,$/, "");
+    if (withoutComma.length + 1 > max) break;  // + 1 leaves room for the "…"
+    kept = longer;
+  }
+  if (!kept) return `${text.slice(0, max - 1)}…`;
+  return `${kept.replace(/,$/, "")}…`;
 }

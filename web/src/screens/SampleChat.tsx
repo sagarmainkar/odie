@@ -18,17 +18,17 @@ export function SampleChat() {
         <a href="#settings" aria-label="Back" className="pill w-11 px-0">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 6l-6 6 6 6" /></svg>
         </a>
-        <div className="text-[21px] font-bold tracking-[-0.015em]">Sample chat</div>
+        <div className="text-heading font-bold tracking-[-0.015em]">Sample chat</div>
       </div>
-      <div className="px-1 text-[13px] leading-5 text-muted">A made-up conversation, drawn exactly as the chat draws it. Nobody in it is real.</div>
-      {chat === undefined && <div className="px-1 text-[13px] text-muted">Loading…</div>}
-      {chat === null && <div className="px-1 text-[13px] text-muted">This build has no sample chat.</div>}
+      <div className="px-1 text-small leading-5 text-muted">A made-up conversation, drawn exactly as the chat draws it. Nobody in it is real.</div>
+      {chat === undefined && <div className="px-1 text-small text-muted">Loading…</div>}
+      {chat === null && <div className="px-1 text-small text-muted">This build has no sample chat.</div>}
       {chat && (
         <ChatActions.Provider value={{ send: (t) => setTapped(`Would ask: “${t}”`), fill: (t) => setTapped(`Would type: “${t}”`), busy: false }}>
           {chat.turns.map((turn) => <ChatTurnView key={turn.n} turn={turn} />)}
         </ChatActions.Provider>
       )}
-      {tapped && <div className="fixed left-1/2 -translate-x-1/2 bottom-6 glass glass-solid rounded-full px-4 py-2.5 text-[13px] max-w-[90%] truncate" onClick={() => setTapped("")}>{tapped}</div>}
+      {tapped && <div className="fixed left-1/2 -translate-x-1/2 bottom-6 glass glass-solid rounded-full px-4 py-2.5 text-small max-w-[90%] truncate" onClick={() => setTapped("")}>{tapped}</div>}
     </div>
   );
 }
@@ -38,7 +38,7 @@ function ChatTurnView({ turn }: { turn: ChatTurn }) {
   return (
     <section className="flex flex-col gap-2.5" aria-label={`Turn ${turn.n}`}>
       <div className="ml-auto max-w-[80%] w-fit">
-        <div className="bubble-me rounded-[24px] rounded-br-[8px] px-4 py-3 text-[15.5px] leading-[1.5] whitespace-pre-wrap break-words">{turn.user}</div>
+        <div className="bubble-me rounded-card rounded-br-inner px-4 py-3 text-body leading-[1.5] whitespace-pre-wrap break-words">{turn.user}</div>
       </div>
       <Steps tools={turn.tools.map((t) => ({ name: t.tool, done: true }))} running={false} />
       {turn.media.length > 0 && (
@@ -48,7 +48,7 @@ function ChatTurnView({ turn }: { turn: ChatTurn }) {
           ))}
         </div>
       )}
-      {turn.reply ? <ReplyText text={turn.reply} /> : <div className="px-1 text-[13px] text-muted">No reply</div>}
+      {turn.reply ? <ReplyText text={turn.reply} /> : <div className="px-1 text-small text-muted">No reply</div>}
     </section>
   );
 }

@@ -1,0 +1,62 @@
+{
+  "id": "forward-leaves-reply-open",
+  "about": "A reply owed to Asha; he forwards the mail to Priya in the same thread: not an answer to Asha.",
+  "checks": [
+    {
+      "at": "2026-11-19T09:00:00+05:30",
+      "mails": [
+        {
+          "id": "f1",
+          "from": "Asha Rao <asha@example.com>",
+          "subject": "Can you review the lease draft?",
+          "at": "2026-11-19T03:00:00Z",
+          "snippet": "Could you review the lease draft and tell me what you think by Saturday?",
+          "body": "Could you review the lease draft and tell me what you think by Saturday?",
+          "thread": "tf1"
+        }
+      ],
+      "script": {
+        "findings": [
+          {
+            "ref": "mail:f1",
+            "title": "Review Asha's lease draft",
+            "kind": "reply owed",
+            "why": "by Saturday",
+            "owner": "you",
+            "due": "2026-11-21"
+          }
+        ],
+        "answers": [
+          {
+            "f": "F1",
+            "is": "new"
+          }
+        ]
+      }
+    },
+    {
+      "at": "2026-11-19T12:00:00+05:30",
+      "sent": [
+        {
+          "id": "s9",
+          "from": "Me <me@example.com>",
+          "to": "Priya Shah <priya@example.com>",
+          "subject": "Fwd: Can you review the lease draft?",
+          "at": "2026-11-19T05:00:00Z",
+          "snippet": "FYI, see below. Any thoughts?",
+          "thread": "tf1"
+        }
+      ],
+      "script": {
+        "findings": [],
+        "answers": []
+      }
+    }
+  ],
+  "expect": {
+    "loops": 1,
+    "cards": [
+      "mail:f1"
+    ]
+  }
+}

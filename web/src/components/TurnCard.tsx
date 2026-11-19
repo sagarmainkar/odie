@@ -21,22 +21,22 @@ export function TurnCard({ m }: { m: Media }) {
   const finish = () => { setDone(true); sendInChat(signedInLine(site, true)); };
   const state = done ? "done" : m.state;
   return (
-    <div className="glass rounded-[22px] p-3.5 flex flex-col gap-2.5">
+    <div className="glass rounded-tile p-3.5 flex flex-col gap-2.5">
       <div className="flex items-center gap-3">
         <Tile icon="lock" color={done ? "green" : "blue"} />
         <div className="flex-1 min-w-0">
-          <div className="text-[15px] font-semibold leading-5 break-words">{turnTitle(state, site, !!m.auto && m.state === "done")}</div>
-          <div className="text-[13px] leading-[18px] text-muted">{done ? "Odie carries on from here." : m.why}</div>
+          <div className="text-body font-semibold leading-5 break-words">{turnTitle(state, site, !!m.auto && m.state === "done")}</div>
+          <div className="text-small leading-[18px] text-muted">{done ? "Odie carries on from here." : m.why}</div>
         </div>
       </div>
       {!done && m.tab && (
         <>
           {m.state === "captcha" ? (
-            <button onClick={() => setLive(true)} className="pill pill-solid h-11 text-[15px] shadow-none">Open the page</button>
+            <button onClick={() => setLive(true)} className="pill pill-solid h-11 text-body shadow-none">Open the page</button>
           ) : (
-            <button onClick={() => setSheet(true)} className="pill pill-solid h-11 text-[15px] shadow-none">{m.state === "code" ? "Enter the code" : "Sign in"}</button>
+            <button onClick={() => setSheet(true)} className="pill pill-solid h-11 text-body shadow-none">{m.state === "code" ? "Enter the code" : "Sign in"}</button>
           )}
-          {m.state !== "captcha" && <button onClick={() => setLive(true)} className="text-[13px] text-muted self-start">Open the page instead</button>}
+          {m.state !== "captcha" && <button onClick={() => setLive(true)} className="text-small text-muted self-start">Open the page instead</button>}
         </>
       )}
       {sheet && m.tab && (
@@ -54,11 +54,11 @@ export function PayCard({ m }: { m: Media }) {
   if (!link) return null;
   const { payee, amount } = upiDetails(link);
   return (
-    <a href={link} className="glass rounded-[22px] p-3.5 flex items-center gap-3 active:opacity-80">
+    <a href={link} className="glass rounded-tile p-3.5 flex items-center gap-3 active:opacity-80">
       <Tile icon="rupee" color="green" />
       <span className="flex-1 min-w-0">
-        <b className="block text-[15px] font-semibold leading-5">Pay {amount ? `₹${amount} ` : ""}in your UPI app</b>
-        <span className="block text-[13px] leading-[18px] text-muted">{payee ? `To ${payee}. ` : ""}Opens GPay, PhonePe or Paytm on your phone; you approve it with your PIN.</span>
+        <b className="block text-body font-semibold leading-5">Pay {amount ? `₹${amount} ` : ""}in your UPI app</b>
+        <span className="block text-small leading-[18px] text-muted">{payee ? `To ${payee}. ` : ""}Opens GPay, PhonePe or Paytm on your phone; you approve it with your PIN.</span>
       </span>
     </a>
   );

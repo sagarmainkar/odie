@@ -73,14 +73,16 @@ def _reply(text):
 
 async def _turns(store, monkeypatch, selection, turns):
     """Run each (text, thinking) turn through a real OdieRunner; what each sent and the effort its model had."""
+    from odie import brains
     from odie.app import runner as R
-    monkeypatch.setattr(R, "resolve_selection", lambda st, slot: selection)
+    monkeypatch.setattr(brains, "resolve_selection", lambda st, slot: selection)
     r = R.OdieRunner(store)
     seen = []
 
     async def fake_run(**kw):
-        seen.append({"text": kw["new_message"].parts[0].text, "effort": r.agent.model._additional_args["reasoning_effort"],
-                     "model": r.agent.model})
+        model = r.agent.canonical_model  # the turn's own model (odie.agent.agent.ChatAgent)
+        seen.append({"text": kw["new_message"].parts[0].text, "effort": model._additional_args["reasoning_effort"],
+                     "model": model})
         yield _reply("Done.")
     r.runner.run_async = fake_run
     for text, thinking in turns:

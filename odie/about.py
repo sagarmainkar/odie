@@ -21,6 +21,7 @@ SCHEDULE = {
     "expiry": "Approvals left untapped lapse after 24 hours",
     "news": "News on Today refreshed at 06, 10, 14, 18 and 22",
     "background": "The background agent every 5 minutes (and once just after start): the mail and calendar watch every 30 minutes, then trackers that are due, one at a time",
+    "workers_watchdog": "Background Workers checked every minute: one past its 45 minutes, silent for 10, or refused the same way 3 times is stopped and its chat told",
 }
 
 EXTEND = [

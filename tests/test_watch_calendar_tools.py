@@ -64,3 +64,42 @@ def test_mail_is_sorted_by_when_it_came_whatever_the_date_format():
              fetch.Mail("mac", "a@b.c", "Newest", "2026-10-21T12:00:00+05:30", "", [], "mail:mac"),
              fetch.Mail("odd", "a@b.c", "No date", "sometime", "", [], "mail:g")]
     assert [m.id for m in fetch.newest_first(mails)] == ["mac", "wed", "tue", "thu", "odd"]
+
+
+async def test_a_personalitys_watch_turn_uses_its_own_app_and_brain(store, monkeypatch):
+    """Real classes: the app on for Mira alone is listed and runs in her watch's turn, which thinks with her brain;
+    in everyday Odie's background turn the same call is refused before it runs."""
+    from odie import brains, personalities
+    from odie.app import runner as runner_mod
+    from odie.plugins import access, mcp
+    mcp.write_config({"tester": TESTER})
+    mira = personalities.create(store, "Mira").id
+    access.set_allowed(store, "tester", access.ODIE, False)
+    access.set_allowed(store, "tester", mira, True)
+    picked = []
+    real_for_personality = brains.for_personality
+
+    def for_personality(store_, pid):
+        picked.append(pid)
+        return real_for_personality(store_, pid)
+    monkeypatch.setattr(brains, "for_personality", for_personality)
+    monkeypatch.setattr(runner_mod, "model_for", lambda selection, thinking: Scripted(model="scripted"))
+    r = runner_mod.OdieRunner(store)
+    await r.load_plugins()
+    try:
+        Scripted.seen = []
+        Scripted.script = {"It is ": [("echo", {"text": "x"}), "Done."]}
+        await r.background_turn("Check the thing", skills=("mcp-tester",), owner=mira)
+        hers = [p["function_response"]["response"] for m in Scripted.seen[-1]["messages"] for p in m["parts"]
+                if p.get("function_response", {}).get("name") == "echo"]
+        Scripted.seen = []
+        Scripted.script = {"It is ": [("echo", {"text": "x"}), "Done."]}
+        await r.background_turn("Check the thing", skills=("mcp-tester",))
+        odies = [p["function_response"]["response"] for m in Scripted.seen[-1]["messages"] for p in m["parts"]
+                 if p.get("function_response", {}).get("name") == "echo"]
+    finally:
+        await r.close()
+    assert picked == [mira]
+    assert hers and "switched off" not in str(hers[0])
+    assert not odies or "switched off" in str(odies[0])  # never listed for Odie, or refused before it runs
+    assert personalities.of_session(store, "anything") == ""  # nothing left belonging to her

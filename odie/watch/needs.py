@@ -1,9 +1,14 @@
-"""Today's "Needs you" (23 Oct 2026): one list of cards, refreshed by every watch check. First the watch's items (what
-it found in mail that needs the user, in the order it ranked them), then the user's own open reminders, dues and
-to-dos, soonest due first. Each card has two buttons; what a button does is decided here, the app only carries it out:
-  "chat": send the value as the user's chat request ("Show the draft for watch item mail:r1");
-  "dismiss": take a watch item off and stop following it (POST /api/watch/done with the ref);
-  "done_task" / "snooze_task": tick a task off, or move it to tomorrow 09:00.
+"""Pulse's "Needs you" (23 Oct 2026; a view of the ledger since 19 Nov 2026, proactive design phase 3): one list of
+cards. First the loops that need the user (odie.loops.cards: everything the watch found, one card per real thing),
+then jobs that need him, then his own open reminders, dues and to-dos, soonest due first (a reminder Odie made for a
+loop is that loop's, never a card of its own). Every card has the same three buttons (18 Nov 2026): its one move
+("main"), Done ("other": off the list and no longer followed, whether it was done or won't be) and Later ("later":
+hidden until 09:00 the next morning, then back). What a button does is decided here, the app only carries it out:
+  "chat": send the value as the user's chat request ("Show the draft for loop #3");
+  "dismiss": Sunday's "Still care?" card's "Drop them" (POST /api/watch/done with its ref);
+  "loop_done": a loop's Done (POST /api/loops/<id>/done);
+  "done_task" / "snooze_task": tick a task off, or move it to tomorrow 09:00;
+  "later": put the card off until 09:00 the next morning (POST /api/needs_you/later with the card's ref).
 Every card also says where it belongs and how it should be shown (25 Oct 2026, for the Mac app's buckets):
   "pile": one of report.PILES ("bills", "orders", "alerts", ...);
   "since": when the card started needing the user, as ISO with an offset ("2026-10-21T09:00:00+05:30"), or "";
@@ -11,27 +16,105 @@ Every card also says where it belongs and how it should be shown (25 Oct 2026, f
 from __future__ import annotations
 
 import re
-from datetime import datetime, timedelta
+from datetime import datetime, time, timedelta
 
 from odie.watch import bills, report, threads
 from odie.watch import cards as card_text
+from odie.watch.owner import ODIE, key
 
 NOTES_HOURS = 24  # what the watch told the user stays under Needs you for a day
 MAIL_TITLE = re.compile(r"^Reply to (.+?): (.*)$")  # the title an inbox add-on gives its "reply to" tasks
 PILE_OF_ICON = {"rupee": "bills", "ticket": "orders"}  # a task's pile follows its icon; every other icon is "alerts"
+LATER_AT = time(9, 0)  # Later brings a card back at this hour of the next day (the owner's choice, 18 Nov 2026)
+TELL_ME_MORE = "Tell me more"
 
 
-def cards(store, now: datetime) -> list[dict]:
-    """Everything that needs the user, as cards: the watch's open items, then their own open tasks (the watch's
-    threads only when the card doesn't show them and they have a date that fires: a bill, a deadline)."""
-    card = store.get_setting(report.CARD) or {}
-    watch_items = [i for i in card.get("needs_you", []) if not i.get("done")]
-    shown = {i["ref"] for i in watch_items}
-    out = [watch_card(i) for i in watch_items]
-    tasks = [t for t in store.open_tasks(now.isoformat()) if shows_as_task(t, shown)]
+def cards(store, now: datetime, owner: str = ODIE) -> list[dict]:
+    """Everything that needs the user, as cards: the loops in "ready" (one each), the jobs that need him, then his own
+    open tasks. Everyday Odie's Pulse (owner ""), or a personality's: its own loops and tasks, never the everyday ones
+    (they are on Odie's)."""
+    from odie.loops import cards as loop_cards
+    out = loop_cards.cards(store, owner, now)  # one card per ready loop, first
+    from odie.workers import cards as job_cards
+    out += job_cards.cards(store, owner, now)  # a job that failed, got stuck or needed his OK
+    a_loops = loops_reminders(store, owner)
+    tasks = [t for t in owners_tasks(store, now, owner) if shows_as_task(t, a_loops)]
     tasks.sort(key=lambda t: t["due_at"] or "9999")
     out += [task_card(t, now) for t in tasks]
     return out
+
+
+def loops_reminders(store, owner: str) -> set[int]:
+    """The reminders Odie made that open loops point at: their cards are the loops'. Only Odie's own (made for a loop,
+    a watch thread of old, a reminder the watch added): his own task is never hidden behind a loop, whatever points at
+    it. The vote loop's reminder -> hidden (the loop is the card); his "Renew passport" -> always its own card."""
+    from odie.loops import ledger
+    pointed = set()
+    for loop in ledger.open_loops(store, owner):
+        pointed.update(ledger.reminders_of(loop))
+    out = set()
+    for task_id in pointed:
+        row = store.one("select source_kind from tasks where id=?", (task_id,))
+        if row is not None and row["source_kind"] in ledger.ODIES_TASKS:
+            out.add(task_id)
+    return out
+
+
+def owners_tasks(store, now: datetime, owner: str) -> list:
+    """The open tasks on this owner's Pulse: everyday Odie's (no personality) for Odie; a personality's own alone for
+    it ("Pay rent", set in Mira's chat -> on Mira's Pulse only; "Call the plumber", everyday -> on Odie's only)."""
+    if owner == ODIE:
+        return store.open_tasks(now.isoformat())
+    every_one_it_sees = store.open_tasks(now.isoformat(), owner)
+    return [t for t in every_one_it_sees if t["personality"] == owner]
+
+
+def hidden(item: dict, now: datetime) -> bool:
+    """Whether a watch item is put off (Later) at this moment: its "hidden_until" is still ahead. Hidden until 09:00
+    tomorrow, asked at 12:00 today -> True; asked at 09:00 tomorrow -> False; never put off -> False; a time that
+    can't be read -> False (shown, rather than lost)."""
+    until = item.get("hidden_until")
+    if not until:
+        return False
+    try:
+        back_at = datetime.fromisoformat(until)
+    except ValueError:
+        return False
+    if back_at.tzinfo is None:
+        back_at = back_at.replace(tzinfo=now.tzinfo)
+    return now < back_at
+
+
+def later_until(now: datetime) -> str:
+    """When a card put off with Later comes back: 09:00 the next day, on the user's clock. 23 Oct 23:50 ->
+    "2026-10-24T09:00:00+05:30"; 31 Oct 08:00 -> "2026-11-01T09:00:00+05:30" (always the next day, as asked)."""
+    tomorrow = now.date() + timedelta(days=1)
+    return datetime.combine(tomorrow, LATER_AT, now.tzinfo).isoformat(timespec="seconds")
+
+
+def later(store, ref: str, now: datetime, owner: str = ODIE) -> str | None:
+    """Puts a card off until later_until(now) and says until when, or None when there is no such card. A loop
+    ("loop:3") is hidden till then (its third Later: till Sunday, odie.loops.cards.later); Sunday's batch goes to next
+    Sunday; a task ("task:12") is snoozed as the old Tomorrow button did, so it also rings then."""
+    from odie.loops import cards as loop_cards
+    until = later_until(now)
+    if ref == loop_cards.BATCH:
+        return loop_cards.later_batch(store, owner, now)
+    if ref.startswith("loop:"):
+        loop_id = ref[len("loop:"):]
+        if not loop_id.isdigit():
+            return None
+        return loop_cards.later(store, int(loop_id), until, owner, now)
+    if ref.startswith("task:"):
+        task_id = ref[len("task:"):]
+        if not task_id.isdigit():
+            return None
+        mine, values = bills.whose_tasks(owner)  # only a task on this owner's Pulse: never another one's
+        if store.one(f"select id from tasks where id=? and {mine}", (int(task_id), *values)) is None:
+            return None
+        store.snooze_task(int(task_id), until)
+        return until
+    return None
 
 
 def counts(cards: list[dict]) -> dict[str, int]:
@@ -44,72 +127,41 @@ def counts(cards: list[dict]) -> dict[str, int]:
     return out
 
 
-def shows_as_task(task, on_the_card: set[str]) -> bool:
-    """Whether an open task gets its own card. The user's own tasks always do; the watch's threads only when its card
-    doesn't already show them and they have a due date (a bill or a deadline). "Pay rent" (the user's) -> True; the
-    watch's "Order: desk lamp" in transit (no due date) -> False; its "Reply to Asha" on the card -> False; its "Gas bill"
-    due 25 Oct, not on the card -> True."""
-    if task["source_kind"] != threads.SOURCE_KIND:
-        return True
-    if task["source_ref"] in on_the_card:
+def shows_as_task(task, loops_reminders: set[int]) -> bool:
+    """Whether an open task gets its own card: the user's own always do; a reminder Odie made that a loop points at,
+    or one of the watch's threads of old, never (its loop is the card). "Pay rent" (his) -> True; the vote's reminder Odie made for
+    its loop -> False; the watch's old "Gas bill" thread -> False."""
+    if task["id"] in loops_reminders:
         return False
-    return task["due_at"] is not None
+    return task["source_kind"] != threads.SOURCE_KIND
 
 
-def offers_a_move(item: dict) -> bool:
-    """Whether the watch gave an item a move of its own (a labelled suggestion with something to run). A bill with
-    "Remind me Thursday" -> True; a declined payment with only an escape ("It was me") -> False."""
-    suggestion = item.get("suggestion") or {}
-    return bool(suggestion.get("label") and suggestion.get("run"))
-
-
-def pile_of_item(item: dict) -> str:
-    """The pile a watch item belongs to: one of report.PILES as it is; anything else, or none, is "alerts".
-    "bills" -> "bills"; "urgent" -> "alerts"; missing -> "alerts"."""
-    pile = item.get("pile", "")
-    if pile in report.PILES:
-        return pile
-    return "alerts"
-
-
-def watch_card(item: dict) -> dict:
-    """One of the watch's items as a card: its suggestion as the main button (else "Tell me more"), its way out as the
-    other (else "Dismiss"); both close nothing in chat, a way out takes the item off directly."""
-    ref = item["ref"]
-    suggestion = item.get("suggestion") or {}
-    main = {"label": "Tell me more", "action": "chat", "value": card_text.ask_about(item)}
-    if offers_a_move(item):
-        main = {"label": suggestion["label"], "action": "chat", "value": suggestion["run"]}
-    escape = item.get("escape") or {}
-    other = {"label": escape.get("label") or "Dismiss", "action": "dismiss", "value": ref}
-    # With no move Odie can make, the choice is the user's: "Tell me more" and the way out show as two equal buttons.
-    decide = not offers_a_move(item)
-    return {"ref": ref, "title": item.get("title") or "Needs you", "why": item.get("why", ""),
-            "icon": card_text.PILE_ICON.get(item.get("pile", ""), card_text.DEFAULT_ICON),
-            "badge": card_text.when_or_amount(item), "ask": card_text.ask_about(item), "main": main, "other": other,
-            "pile": pile_of_item(item), "since": item.get("at", ""), "decide": decide}
+def later_button(ref: str) -> dict:
+    """Every card's Later button: puts the card with this ref off until 09:00 the next morning."""
+    return {"label": "Later", "action": "later", "value": ref}
 
 
 def task_card(task, now: datetime) -> dict:
-    """One of the user's open tasks as a card, with Done and Tomorrow; a reply owed from mail ("Reply to Priya Nair:
-    Can we move our 1:1?") gets "Open it" (chat opens that email) and Done instead."""
+    """One of the user's open tasks as a card: "Tell me more" (a reply owed from mail, "Reply to Priya Nair: Can we
+    move our 1:1?", gets "Open it": chat opens that email), then Done and Later."""
     tid = task["id"]
+    ref = f"task:{tid}"
     detail = (task["detail"] or "").strip().splitlines()
     why = ""  # a plain reminder says it all in its title
     if detail:
         why = detail[-1]
-    main = {"label": "Done", "action": "done_task", "value": tid}
-    other = {"label": "Tomorrow", "action": "snooze_task", "value": tid}
+    ask = f"Tell me about task #{tid}: {task['title']}"
+    main = {"label": TELL_ME_MORE, "action": "chat", "value": ask}
     mail = MAIL_TITLE.match(task["title"] or "") if task["source_kind"] == "mail" else None
     if mail:
         sender, subject = mail.groups()
-        other = main
         main = {"label": "Open it", "action": "chat", "value": f"Open the email from {sender} about {subject}"}
+    done = {"label": "Done", "action": "done_task", "value": tid}
+    decide = main["label"] == TELL_ME_MORE  # only "Tell me more": Odie has no move, the choice is the user's
     icon = task_icon(task)
-    return {"ref": f"task:{tid}", "title": task["title"], "why": why, "icon": icon,
-            "badge": due_badge(task["due_at"], now), "ask": f"Tell me about task #{tid}: {task['title']}",
-            "main": main, "other": other,
-            "pile": pile_of_task(icon), "since": local_since(task["created_at"], now), "decide": False}
+    return {"ref": ref, "title": task["title"], "why": why, "icon": icon,
+            "badge": due_badge(task["due_at"], now), "ask": ask, "main": main, "other": done, "later": later_button(ref),
+            "pile": pile_of_task(icon), "since": local_since(task["created_at"], now), "decide": decide}
 
 
 def pile_of_task(icon: str) -> str:
@@ -154,11 +206,11 @@ def due_badge(due_at: str | None, now: datetime) -> str:
     return card_text.day(due_at)
 
 
-def recent_notes(store, now: datetime) -> list[dict]:
+def recent_notes(store, now: datetime, owner: str = ODIE) -> list[dict]:
     """What the watch did for a Watch for entry and said was worth telling, in the last NOTES_HOURS, newest first, for
     Today's "done while you were away": "Added a heads-up for the recital" (told, an hour ago) -> listed with any files;
     "HN: still no reply" (not told), or a told note from two days ago -> left out."""
-    card = store.get_setting(report.CARD) or {}
+    card = store.get_setting(key(report.CARD, owner)) or {}
     since = now - timedelta(hours=NOTES_HOURS)
     out = []
     for note in card.get("done", []):

@@ -3,7 +3,7 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it } from "vitest";
 import { Steps, stepsSummary, toolLabel } from "./Steps";
-import type { Tool } from "../steps";
+import { cutAtWord, stepsCount, type Tool } from "../steps";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -20,6 +20,35 @@ describe("steps", () => {
   it("summarises unique steps", () => {
     expect(stepsSummary([{ name: "gmail_search", done: true }, { name: "gmail_search", done: true }, { name: "calendar_list_events", done: true }]))
       .toBe("Searched mail, checked calendar");
+  });
+  it("counts the steps in words", () => {
+    expect(stepsCount(1)).toBe("1 step");
+    expect(stepsCount(4)).toBe("4 steps");
+  });
+  it("cuts a long summary at a word, never mid-word, and drops a dangling comma", () => {
+    expect(cutAtWord("Checked trackers, looked back, checked the time", 30)).toBe("Checked trackers, looked back…");
+    expect(cutAtWord("Searched the web, remembered that", 40)).toBe("Searched the web, remembered that");  // fits: whole
+    expect(cutAtWord("Searched the web, remembered that", 20)).toBe("Searched the web…");
+    expect(cutAtWord("Supercalifragilisticexpialidocious", 10)).toBe("Supercali…");  // one long word: cut it
+  });
+});
+
+describe("the folded steps line", () => {
+  const four: Tool[] = [
+    { name: "list_trackers", done: true }, { name: "recall", done: true }, { name: "now", done: true }, { name: "web_search", done: true },
+  ];
+  it("puts the count first, then the summary cut at a word", async () => {
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    await act(async () => root.render(<Steps tools={four} running={false} />));
+    unmount = () => act(() => root.unmount());
+    const header = host.querySelector<HTMLButtonElement>("button[aria-expanded]")!;
+    expect(header.textContent?.startsWith("4 steps ·")).toBe(true);  // the count comes before the summary
+    const summary = header.querySelector("[role=status]")!.textContent ?? "";
+    expect(summary).toBe("Checked trackers, looked back…");
+    expect(stepsSummary(four).startsWith(summary.replace(/…$/, ""))).toBe(true);
+    if (summary.endsWith("…")) expect(stepsSummary(four).charAt(summary.length - 1)).toMatch(/[ ,]/);  // the cut is at a word's end
   });
 });
 

@@ -1,0 +1,86 @@
+{
+  "id": "own-pr-green-tested",
+  "about": "The user's own pull request on their own repo, CI green, a test command approved: Odie tests it and the card offers Merge.",
+  "mails": [
+    {
+      "id": "og1",
+      "from": "you-dev <notifications@github.com>",
+      "subject": "[you-dev/app] Sort threads newest first (PR #70)",
+      "at": "2026-11-18T03:40:00Z",
+      "snippet": "All checks have passed.",
+      "body": "All checks have passed.",
+      "thread": "gh-thread-70"
+    }
+  ],
+  "gh": {
+    "pr:you-dev/app#70": {
+      "number": 70,
+      "title": "Sort threads newest first",
+      "state": "OPEN",
+      "isDraft": false,
+      "mergedAt": null,
+      "closedAt": null,
+      "author": {
+        "login": "you-dev"
+      },
+      "headRefName": "branch-70",
+      "baseRefName": "main",
+      "additions": 41,
+      "deletions": 9,
+      "changedFiles": 2,
+      "files": [
+        {
+          "path": "app/threads.py",
+          "additions": 20,
+          "deletions": 4
+        },
+        {
+          "path": "tests/test_threads.py",
+          "additions": 20,
+          "deletions": 4
+        }
+      ],
+      "isCrossRepository": false,
+      "reviewDecision": "",
+      "reviewRequests": [],
+      "url": "https://github.com/you-dev/app/pull/70",
+      "statusCheckRollup": [
+        {
+          "name": "tests",
+          "status": "COMPLETED",
+          "conclusion": "SUCCESS"
+        }
+      ],
+      "commits": [
+        {
+          "oid": "",
+          "authors": [
+            {
+              "login": "you-dev"
+            }
+          ]
+        }
+      ]
+    },
+    "user": "you-dev",
+    "diff:you-dev/app#70": "diff --git a/app/threads.py b/app/threads.py\n-    rows.sort()\n+    rows.sort(reverse=True)\n",
+    "collaborators:you-dev/app": [
+      "you-dev"
+    ]
+  },
+  "recipes": {
+    "you-dev/app": "make test"
+  },
+  "origin": {
+    "repo": "you-dev/app",
+    "pulls": {
+      "70": "echo '12 passed in 0.31s'"
+    }
+  },
+  "expect": {
+    "loops": 1,
+    "tested_cards": [
+      "you-dev/app#70"
+    ]
+  }
+}

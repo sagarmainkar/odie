@@ -1,3 +1,4 @@
+import { withPick } from "./pick";
 import type { DoneEvent, StartEvent, WaitEvent } from "./steps";
 import type { ReplyUsage } from "./usage";
 
@@ -29,7 +30,7 @@ export function parseSseLines(buffer: string): { events: ChatEvent[]; rest: stri
 
 /** One chat turn. Think harder isn't sent: Odie uses the chat's own setting (/api/chat/thinking). */
 export async function* streamChat(text: string, images: string[] = [], sessionId?: string, signal?: AbortSignal): AsyncGenerator<ChatEvent> {
-  const res = await fetch("/api/chat", {
+  const res = await fetch(withPick("/api/chat"), {
     method: "POST", headers: { "Content-Type": "application/json" }, signal,
     body: JSON.stringify({ text, images, ...(sessionId ? { session_id: sessionId } : {}) }),
   });

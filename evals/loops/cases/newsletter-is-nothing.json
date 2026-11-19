@@ -1,0 +1,21 @@
+{
+  "id": "newsletter-is-nothing",
+  "about": "A newsletter: no loop at all.",
+  "mails": [
+    {
+      "id": "n1",
+      "from": "The Weekly Byte <news@weeklybyte.example>",
+      "subject": "This week: 10 tools for remote teams",
+      "at": "2026-11-18T03:00:00Z",
+      "snippet": "Ten tools we like this week. Read online. Unsubscribe at any time.",
+      "body": "Ten tools we like this week. Read online. Unsubscribe at any time.",
+      "thread": "tn1"
+    }
+  ],
+  "script": {
+    "findings": []
+  },
+  "expect": {
+    "loops": 0
+  }
+}

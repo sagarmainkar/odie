@@ -1,0 +1,21 @@
+{
+  "id": "sign-in-code-is-nothing",
+  "about": "A sign-in code: nothing to follow.",
+  "mails": [
+    {
+      "id": "otp1",
+      "from": "Accounts <no-reply@accounts.example>",
+      "subject": "Your sign-in code is 482910",
+      "at": "2026-11-18T04:00:00Z",
+      "snippet": "Use 482910 to sign in. It expires in 10 minutes.",
+      "body": "Use 482910 to sign in. It expires in 10 minutes.",
+      "thread": "totp"
+    }
+  ],
+  "script": {
+    "findings": []
+  },
+  "expect": {
+    "loops": 0
+  }
+}

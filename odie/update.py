@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 import subprocess
 import sys
 import time
@@ -52,6 +53,22 @@ def version() -> str:
         except (OSError, subprocess.TimeoutExpired):
             _version = "unknown"
     return _version
+
+
+BUILD_WORD = re.compile(r"[0-9a-z]{4,40}|unknown")
+
+
+def web_build(dist: Path) -> str:
+    """The build of the web app this server serves: the commit vite wrote to dist/build.txt ("a1b2c3d"). An open
+    app compares it with its own to see it is behind. No file (an older build) or anything but a short
+    commit-like word ("<script>") -> "", which the app reads as "nothing to say"."""
+    try:
+        word = (dist / "build.txt").read_text().strip()
+    except OSError:
+        return ""
+    if not BUILD_WORD.fullmatch(word):
+        return ""
+    return word
 
 
 async def _git(*args: str, timeout: float = 30) -> str:

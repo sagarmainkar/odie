@@ -38,24 +38,24 @@ export function OwnPhotoLarge({ uuid, big, caption }: { uuid: string; big: strin
   if (view?.show === "video") {
     return (
       <div onClick={stop} className="flex flex-col items-center max-w-full">
-        <video src={originalUrl(uuid)} controls autoPlay playsInline className="max-w-full max-h-[78vh] rounded-[28px] bg-black" />
-        {caption && <div className="mt-3 text-center text-[14px] text-white/85">{caption}</div>}
+        <video src={originalUrl(uuid)} controls autoPlay playsInline className="max-w-full max-h-[78vh] rounded-card bg-black" />
+        {caption && <div className="mt-3 text-center text-ui text-white/85">{caption}</div>}
       </div>
     );
   }
   return (
     <div className="flex flex-col items-center max-w-full">
       <div className="relative">
-        <img src={big} alt={caption ?? ""} className="max-w-full max-h-[78vh] object-contain rounded-[28px]" />
+        <img src={big} alt={caption ?? ""} className="max-w-full max-h-[78vh] object-contain rounded-card" />
         {view?.button && (
           <button type="button" onClick={play} aria-label={view.button} onPointerDown={stop}
-            className="absolute inset-0 m-auto w-20 h-20 rounded-full bg-white/90 text-ink grid place-items-center text-[15px] font-semibold shadow-lg active:scale-95">
+            className="absolute inset-0 m-auto w-20 h-20 rounded-full bg-white/90 text-ink grid place-items-center text-body font-semibold shadow-lg active:scale-95">
             {view.button === "Play" ? <svg width="30" height="30" viewBox="0 0 24 24" fill="currentColor" aria-hidden><path d="M8 5v14l11-7z" /></svg> : "Retry"}
           </button>
         )}
       </div>
       {(caption || view?.note) && (
-        <div className="mt-3 text-center text-[14px] text-white/85">{caption}{view?.note ? <span className="block text-[13px] text-white/70 mt-1">{view.note}</span> : null}</div>
+        <div className="mt-3 text-center text-ui text-white/85">{caption}{view?.note ? <span className="block text-small text-white/70 mt-1">{view.note}</span> : null}</div>
       )}
     </div>
   );

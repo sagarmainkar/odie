@@ -4,11 +4,16 @@ from __future__ import annotations
 
 import re
 from contextvars import ContextVar
+from typing import Any
 
 USER_TEXT: ContextVar[str | None] = ContextVar("odie_user_text", default=None)
 # This chat's history limit in tokens (odie.models.history_limit_for), pinned per session by the runner; past it the
 # older turns go as words only (odie.agent.compaction). None outside a chat turn: the default limit.
 HISTORY_LIMIT: ContextVar[int | None] = ContextVar("odie_history_limit", default=None)
+# The brain of the chat turn in progress: the ADK model of whoever the thread belongs to (odie.brains), set by the runner
+# for each chat turn and each turn resumed by a tap. The chat agent reads it on every model call (odie.agent.agent.
+# ChatAgent), so two turns running at once each keep their own brain. None outside a chat turn.
+MODEL: ContextVar[Any] = ContextVar("odie_turn_model", default=None)
 
 _ASKS = {
     "deck": re.compile(r"\b(decks?|slides?|slide ?show|presentations?|ppts?|pptx|power ?point|keynote|pdf)\b", re.I),

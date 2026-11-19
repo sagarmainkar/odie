@@ -133,7 +133,10 @@ async def test_the_card_reads_two_weeks_of_events_without_touching_the_checks_li
 # ── the watch's tools, its permission, its catch-up and its card ──
 
 def test_the_watch_may_update_a_calendar_event_but_still_never_edit_a_task():
-    assert check.guard(SimpleNamespace(name="calendar_update_event", _require_confirmation=True), {}, None) is None
+    check.STAGE1.events = {"bill-ev-1"}  # what bills_and_orders listed this check: only those may change
+    assert check.guard(SimpleNamespace(name="calendar_update_event", _require_confirmation=True),
+                       {"event_id": "bill-ev-1"}, None) is None
+    check.STAGE1.events = set()
     assert check.guard(SimpleNamespace(name="task_update", _require_confirmation=False), {}, None) is not None
 
 
@@ -163,9 +166,9 @@ async def test_the_first_check_catches_up_once(store, tmp_path):
         prompts.append(prompt)
         await call(tools, "report", needs_you=[], line="Caught up.")
     await check.run_check(store, NOW, turn, _push)
-    await check.run_check(store, NOW + timedelta(minutes=30), turn, _push)
+    assert await check.run_check(store, NOW + timedelta(minutes=30), turn, _push) == "quiet"  # nothing new: no call
     assert "catch-up" in prompts[0] and "Wireless Earbuds" in prompts[0] and "Lunch tomorrow" not in prompts[0]
-    assert "catch-up" not in prompts[1]
+    assert len(prompts) == 1  # the catch-up ran once
 
 
 async def _post(text, media=None):
@@ -209,7 +212,7 @@ def test_the_card_keeps_a_busy_fortnight_of_events():
 
 def test_the_watch_skill_shows_bills_payments_and_orders_by_example():
     text = check.SKILL.read_text()
-    for name in ("bills_and_orders", "close_reminder", "calendar_update_event", "calendar_create_event", "task_add"):
+    for name in ("bills_and_orders", "close_reminder", "calendar_update_event", "calendar_create_event", "remind_at"):
         assert name in text
     for mark, _state in bills.DONE_MARKS:  # the same marks Up next reads (bills.done_state)
         assert mark.strip() in text

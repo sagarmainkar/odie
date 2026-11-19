@@ -164,15 +164,15 @@ export function TalkMode({ onClose }: { onClose: () => void }) {
             <Avatar state={orb} size={210} halo />
           </motion.button>
         </div>
-        <div className="mt-11 h-5 text-[14px] font-bold text-muted flex items-center gap-2">{phase === "speaking" && !muted && <SpeakingBars />}{muted ? "Muted" : STATUS[phase]}</div>
+        <div className="mt-11 h-5 text-ui font-bold text-muted flex items-center gap-2">{phase === "speaking" && !muted && <SpeakingBars />}{muted ? "Muted" : STATUS[phase]}</div>
         <div className="mt-4 min-h-[120px] max-w-[340px] flex flex-col items-center gap-2.5">
           <AnimatePresence mode="wait">
             {phase === "error" ? (
-              <motion.div key="err" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="text-[16px] leading-6">{error || "Couldn't connect."}</motion.div>
+              <motion.div key="err" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="text-body leading-6">{error || "Couldn't connect."}</motion.div>
             ) : captions ? (
               <motion.div key={last.slice(0, 20) + lastYou.slice(0, 10)} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} className="flex flex-col gap-2.5">
-                {lastYou && <div className="text-[18px] leading-[1.4] text-muted">{lastYou}</div>}
-                {last && <div className="text-[23px] leading-[1.4] font-medium tracking-[-0.015em]">{last}</div>}
+                {lastYou && <div className="text-title leading-[1.4] text-muted">{lastYou}</div>}
+                {last && <div className="text-display-sm leading-[1.4] font-medium tracking-[-0.015em]">{last}</div>}
               </motion.div>
             ) : null}
           </AnimatePresence>

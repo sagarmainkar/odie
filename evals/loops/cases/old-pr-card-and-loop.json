@@ -1,0 +1,66 @@
+{
+  "id": "old-pr-card-and-loop",
+  "about": "The owner's case: the same pull request followed as a loop and named again by a review request: one loop, one card, never two.",
+  "open_loops": [
+    {
+      "title": "app #46 Threads newest first",
+      "kind": "pull request",
+      "refs": [
+        "example/app#46",
+        "thread:gh-46"
+      ]
+    }
+  ],
+  "mails": [
+    {
+      "id": "g7",
+      "from": "Asha Rao <notifications@github.com>",
+      "subject": "Re: [example/app] Threads newest first (PR #46)",
+      "at": "2026-11-18T04:00:00Z",
+      "snippet": "@asha-dev requested your review on this pull request.",
+      "body": "@asha-dev requested your review on this pull request.",
+      "thread": "gh-46"
+    }
+  ],
+  "gh": {
+    "pr:example/app#46": {
+      "number": 46,
+      "title": "Threads newest first",
+      "state": "OPEN",
+      "isDraft": false,
+      "mergedAt": null,
+      "closedAt": null,
+      "author": {
+        "login": "asha-dev"
+      },
+      "headRefName": "branch-46",
+      "baseRefName": "main",
+      "additions": 41,
+      "deletions": 9,
+      "changedFiles": 3,
+      "isCrossRepository": false,
+      "reviewDecision": "REVIEW_REQUIRED",
+      "url": "https://github.com/example/app/pull/46",
+      "statusCheckRollup": [
+        {
+          "name": "tests",
+          "status": "COMPLETED",
+          "conclusion": "SUCCESS"
+        }
+      ],
+      "reviewRequests": [
+        {
+          "login": "you-dev"
+        }
+      ]
+    },
+    "user": "you-dev"
+  },
+  "expect": {
+    "loops": 1,
+    "cards": [
+      "example/app#46"
+    ],
+    "why": true
+  }
+}

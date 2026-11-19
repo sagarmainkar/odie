@@ -1,0 +1,44 @@
+{
+  "id": "issue-assigned-to-you",
+  "about": "An issue assigned to the user this morning.",
+  "mails": [
+    {
+      "id": "ia1",
+      "from": "Sam <notifications@github.com>",
+      "subject": "[example/app] Export to CSV drops the last row (Issue #8)",
+      "at": "2026-11-18T05:10:00Z",
+      "snippet": "Assigned #8 to @you-dev.",
+      "body": "The last row is missing from every export.\n\nAssigned #8 to @you-dev.",
+      "thread": "gh-thread-8"
+    }
+  ],
+  "gh": {
+    "issue:example/app#8": {
+      "number": 8,
+      "title": "Export to CSV drops the last row",
+      "state": "OPEN",
+      "closedAt": null,
+      "author": {
+        "login": "sam-dev"
+      },
+      "assignees": [
+        {
+          "login": "you-dev"
+        }
+      ],
+      "labels": [
+        {
+          "name": "bug"
+        }
+      ],
+      "url": "https://github.com/example/app/issues/8"
+    },
+    "user": "you-dev"
+  },
+  "expect": {
+    "loops": 1,
+    "cards": [
+      "example/app#8"
+    ]
+  }
+}

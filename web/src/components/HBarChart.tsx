@@ -66,15 +66,15 @@ export function HBarChart({ spec }: { spec: ChartSpec }) {
   const rowEvents = (i: number) => ({ onPointerEnter: () => pick(i), onPointerDown: () => pick(i) });
   const trackHeight = single ? "h-3.5" : "h-3";
   return (
-    <figure className="chart glass glass-solid rounded-[26px] px-4 pt-4 pb-3 my-2">
-      <figcaption className="text-[13px] font-semibold text-muted truncate">{spec.title ?? spec.series[0].name ?? "Chart"}</figcaption>
+    <figure className="chart glass glass-solid rounded-card px-4 pt-4 pb-3 my-2">
+      <figcaption className="text-small font-semibold text-muted truncate">{spec.title ?? spec.series[0].name ?? "Chart"}</figcaption>
       {!single && <ChartLegend series={spec.series} />}
       <div ref={box} className="relative mt-2.5 mb-1">
         <div className="chart-hbar-grid" role="img" aria-label={spec.title ?? "chart"}
           {...pickKeys(spec.x.length, picked, pick, true)} onPointerLeave={(e) => clearsOnLeave(e.pointerType) && pick(null)}>
           {spec.x.map((label, i) => (
             <Fragment key={i}>
-              <div className="min-w-[64px] text-[13px] leading-[17px] text-ink-2" {...rowEvents(i)}>{label}</div>
+              <div className="min-w-[64px] text-small leading-[17px] text-ink-2" {...rowEvents(i)}>{label}</div>
               <div className="flex flex-col gap-1" ref={(el) => { tracks.current[i] = el; }} {...rowEvents(i)}>
                 {spec.series.map((s, k) => {
                   const v = s.data[i] ?? null;
@@ -101,7 +101,7 @@ export function HBarChart({ spec }: { spec: ChartSpec }) {
         </div>
         <ChartTip tip={tip} />
       </div>
-      {spec.source && <div className="text-[11px] text-dim text-right">{spec.source}</div>}
+      {spec.source && <div className="text-tiny text-dim text-right">{spec.source}</div>}
     </figure>
   );
 }
@@ -109,11 +109,11 @@ export function HBarChart({ spec }: { spec: ChartSpec }) {
 /** A row's value after its bar, shortened from 100,000 up (every digit in its title attribute); green or orange when
  *  the bars go both ways. */
 function HBarValue({ value, unit, tone, small }: { value: number | null; unit?: string; tone: boolean; small: boolean }) {
-  if (value === null) return <span className="text-right text-[12px] text-dim">–</span>;
+  if (value === null) return <span className="text-right text-caption text-dim">–</span>;
   const text = fmt(value, unit);
   const full = fmt(value, unit, { full: true });
   let colour = "";
   if (tone) colour = value >= 0 ? "text-good" : "text-warn-ink";
-  const size = small ? "text-[12px] leading-3" : "text-[13px] leading-[14px]";
+  const size = small ? "text-caption leading-3" : "text-small leading-[14px]";
   return <span className={`text-right font-semibold tabular-nums whitespace-nowrap ${size} ${colour}`} title={full !== text ? full : undefined}>{text}</span>;
 }

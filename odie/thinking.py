@@ -24,6 +24,14 @@ def _save(store, default_on: bool, chats: dict[str, bool]) -> None:
     store.set_setting(KEY, {"default": default_on, "chats": chats})
 
 
+def forget(store, session_ids) -> None:
+    """Drop these chats' own Think harder choices (threads that were erased); the default stays."""
+    saved = _load(store)
+    kept = {sid: on for sid, on in saved["chats"].items() if sid not in set(session_ids)}
+    if len(kept) != len(saved["chats"]):
+        _save(store, saved["default"], kept)
+
+
 def default(store) -> bool:
     """What a chat that hasn't been set starts with: the last choice made in any chat (off before the first)."""
     return _load(store)["default"]

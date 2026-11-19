@@ -12,16 +12,16 @@ export function Heatmap({ title, rows, cols, values, unit, scale }: {
   const [picked, setPicked] = useState<{ row: number; col: number } | null>(null);
   const range = rangeOf(values);
   const numbersInCells = cols.length <= SHOW_NUMBERS_UP_TO;
-  const cell = "h-8 rounded-[8px] grid place-items-center text-[11.5px] leading-none font-semibold tabular-nums text-ink";
+  const cell = "h-8 rounded-inner grid place-items-center text-caption leading-none font-semibold tabular-nums text-ink";
   return (
-    <div className="glass glass-solid rounded-[24px] px-4 py-3.5 my-2">
-      {title && <b className="block text-[17px] font-bold tracking-[-0.01em] mb-2">{title}</b>}
+    <div className="glass glass-solid rounded-card px-4 py-3.5 my-2">
+      {title && <b className="block text-title font-bold tracking-[-0.01em] mb-2">{title}</b>}
       <div className="grid gap-1" style={{ gridTemplateColumns: `minmax(0, max-content) repeat(${cols.length}, minmax(0, 1fr))` }} role="table" aria-label={title ?? "Heat map"}>
         <span />
-        {cols.map((c, j) => <span key={j} className="text-[11px] font-semibold text-muted text-center truncate" role="columnheader">{c}</span>)}
+        {cols.map((c, j) => <span key={j} className="text-tiny font-semibold text-muted text-center truncate" role="columnheader">{c}</span>)}
         {rows.map((r, i) => (
           <Fragment key={i}>
-            <span className="text-[12px] font-semibold truncate pr-1.5 self-center max-w-[96px]" role="rowheader">{r}</span>
+            <span className="text-caption font-semibold truncate pr-1.5 self-center max-w-[96px]" role="rowheader">{r}</span>
             {cols.map((c, j) => {
               const v = values[i][j];
               return (
@@ -35,7 +35,7 @@ export function Heatmap({ title, rows, cols, values, unit, scale }: {
         ))}
       </div>
       {picked && (
-        <div className="text-[12.5px] text-muted mt-2 tabular-nums">
+        <div className="text-small text-muted mt-2 tabular-nums">
           {rows[picked.row]} · {cols[picked.col]}: <span className="font-semibold text-ink">{cellText(values[picked.row][picked.col], unit)}</span>
         </div>
       )}

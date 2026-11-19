@@ -197,22 +197,23 @@ async def test_the_live_check_on_claude_reports_the_binding(store, isolated_sett
 
 async def test_the_chat_rebuilds_the_model_when_the_toggle_changes(isolated_settings, tmp_path, monkeypatch):
     """OdieRunner builds a new model whenever "Think harder" changes; the same value keeps it."""
+    from odie import brains
     from odie.app import runner as runner_mod
     from odie.store.db import Store
     claude = _selection("anthropic", "claude-opus-5-5")
-    monkeypatch.setattr(runner_mod, "resolve_selection", lambda st, slot="chat": claude)
+    monkeypatch.setattr(brains, "resolve_selection", lambda st, slot="chat": claude)
     s = Store(tmp_path / "assistant.db")
     s.init_schema()
     r = runner_mod.OdieRunner(s)
+    seen = []
 
     async def no_model(**kw):
+        seen.append(r.agent.canonical_model)  # the turn's own model (odie.agent.agent.ChatAgent)
         if False:
             yield None
     r.runner.run_async = no_model
-    seen = []
     for thinking in (True, True, False):
         [e async for e in r.chat("hi", thinking=thinking, session_id="t-1")]
-        seen.append(r.agent.model)
     assert [m._additional_args["reasoning_effort"] for m in seen] == ["medium", "medium", "low"]
     assert seen[0] is seen[1] and seen[2] is not seen[1]
     await r.close()

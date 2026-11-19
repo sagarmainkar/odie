@@ -83,12 +83,12 @@ export function VoiceMemo({ m, autoPlay = false }: { m: Media; autoPlay?: boolea
           className="flex-1 min-w-0 flex items-center gap-[2px] h-8 cursor-pointer">
           {bars.map((v, i) => <span key={i} className={`flex-1 rounded-full ${on[i] ? "bg-ember" : "bg-dim/40"}`} style={{ height: `${Math.max(14, v * 100)}%` }} />)}
         </div>
-        <span className="text-[12.5px] text-muted tabular-nums shrink-0">{clock(p.playing || p.time ? p.time : p.duration)}</span>
+        <span className="text-small text-muted tabular-nums shrink-0">{clock(p.playing || p.time ? p.time : p.duration)}</span>
       </div>
       {typeof m.transcript === "string" && m.transcript && (
         <>
-          <button onClick={() => setOpen(!open)} className="self-start ml-3 text-[12.5px] text-muted font-semibold">{open ? "Hide transcript" : "Transcript"}</button>
-          {open && <div className="ml-3 text-[13.5px] leading-[20px] text-ink-2">{m.transcript}</div>}
+          <button onClick={() => setOpen(!open)} className="self-start ml-3 text-small text-muted font-semibold">{open ? "Hide transcript" : "Transcript"}</button>
+          {open && <div className="ml-3 text-ui leading-[20px] text-ink-2">{m.transcript}</div>}
         </>
       )}
     </div>

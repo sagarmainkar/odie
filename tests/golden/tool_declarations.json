@@ -1140,7 +1140,7 @@
     }
   },
   {
-    "description": "Takes a watch item off Today (the user handled it, or doesn't want it) and closes the watch's thread for it.\nwhy: in the user's words (\"not interested\", \"replied from my phone\").",
+    "description": "The user's Done on a card, said in chat (they handled it, or don't want it): Odie stops following it and\nremembers it's finished. why: in the user's words (\"not interested\", \"replied from my phone\"). Never a pull\nrequest's card (he taps Done on it), never from a background check or the terminal.",
     "name": "watch_close",
     "parameters_json_schema": {
       "properties": {
@@ -1162,7 +1162,7 @@
     }
   },
   {
-    "description": "A watch card's item on Today by its ref (\"mail:<id>\"): what it is, its suggestion and escape, and its\ndrafted reply when it has one. Use it when the user taps a card or asks about a watch item. To send a draft,\nshow it, then use the mail app's draft and send tools: the user approves the send.",
+    "description": "A card on Pulse by its loop (\"loop:3\", from \"Tell me about loop #3\" or \"Show the draft for loop #3\"): what\nit is, its suggested move, its drafted reply when it has one, and why (its evidence). Use it when the user taps\na card or asks about one. To send a draft, show it, then use the mail app's draft and send tools: the user\napproves the send.",
     "name": "watch_item",
     "parameters_json_schema": {
       "properties": {

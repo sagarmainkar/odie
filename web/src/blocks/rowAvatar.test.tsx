@@ -57,7 +57,7 @@ describe("drawing mail rows", () => {
       { title: "Asha · Lease renewal", subtitle: ":badge[Action] Sign by Friday", value: "11:30am", icon: "alert", run: "Open the email from Asha about the lease renewal" },
       { title: "Ravi · Dinner on Sat", subtitle: "Asks if 8pm works", value: "Yesterday" },
     ] }]);
-    expect(html).toContain("rounded-[12px] grid place-items-center bg-ember-tint");  // Asha's alert icon
+    expect(html).toContain("rounded-control grid place-items-center bg-ember-tint");  // Asha's alert icon
     expect(html).toMatch(/rounded-full[^>]*background:var\(--t-chart-\d\)[^>]*>R</);  // Ravi's letter
     expect(html).not.toMatch(/rounded-full[^>]*>A</);  // Asha has an icon, so no letter
     expect(html).toContain("chip chip-inline");  // the Action badge

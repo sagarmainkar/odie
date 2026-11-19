@@ -1,0 +1,37 @@
+{
+  "id": "heads-up-for-an-event",
+  "about": "His Watch for asks for a heads-up the evening before school events: one reminder.",
+  "watch_for": "- School events: a heads-up reminder the evening before",
+  "events": [
+    {
+      "id": "es1",
+      "title": "Sports day at Lakeside School",
+      "start": "2026-11-21T08:30:00+05:30",
+      "end": "2026-11-21T12:00:00+05:30",
+      "change": "new"
+    }
+  ],
+  "script": {
+    "findings": [
+      {
+        "ref": "event:es1",
+        "title": "Sports day at Lakeside School",
+        "kind": "heads-up",
+        "why": "Saturday 08:30",
+        "owner": "you",
+        "remind_at": "2026-11-20T19:00",
+        "pile": "events"
+      }
+    ],
+    "answers": [
+      {
+        "f": "F1",
+        "is": "new"
+      }
+    ]
+  },
+  "expect": {
+    "loops": 1,
+    "reminders": 1
+  }
+}

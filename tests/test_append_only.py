@@ -137,7 +137,8 @@ async def test_claude_requests_only_grow_and_keep_their_thoughts(thinking, isola
     _served(monkeypatch, "anthropic", script)
     claude = Selection(Provider("anthropic", "Anthropic", "https://api.anthropic.com/v1", "sk-test", False),
                        "claude-sonnet-5-5", "chat")
-    monkeypatch.setattr(runner_mod, "resolve_selection", lambda st, slot="chat": claude)
+    from odie import brains
+    monkeypatch.setattr(brains, "resolve_selection", lambda st, slot="chat": claude)  # every chat thread's brain
     store = Store(tmp_path / "assistant.db")
     store.init_schema()
     r = runner_mod.OdieRunner(store)
@@ -176,7 +177,8 @@ async def test_claude_accepts_a_cut_that_drops_older_thoughts(isolated_settings,
     _served(monkeypatch, "anthropic", script)
     claude = Selection(Provider("anthropic", "Anthropic", "https://api.anthropic.com/v1", "sk-test", False),
                        "claude-sonnet-5-5", "chat")
-    monkeypatch.setattr(runner_mod, "resolve_selection", lambda st, slot="chat": claude)
+    from odie import brains
+    monkeypatch.setattr(brains, "resolve_selection", lambda st, slot="chat": claude)  # every chat thread's brain
     store = Store(tmp_path / "assistant.db")
     store.init_schema()
     r = runner_mod.OdieRunner(store)

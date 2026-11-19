@@ -65,3 +65,34 @@ describe("shareLive", () => {
     expect(back).toEqual(["a", "b"]);
   });
 });
+
+describe("shareLive.reopen", () => {
+  it("opens the one stream again (the picked personality changed) and keeps its listeners", () => {
+    const heard: string[] = [];
+    const subscribe = shareLive(() => new FakeSource() as unknown as EventSource);
+    const stop = subscribe({ onEvent: (e) => heard.push(e.type) });
+    subscribe.reopen();
+    expect(FakeSource.made.length).toBe(2);
+    expect(FakeSource.made[0].closed).toBe(true);
+    FakeSource.made[1].onmessage?.({ data: JSON.stringify({ type: "elsewhere", personality: "abc", what: "reply" }) });
+    expect(heard).toEqual(["elsewhere"]);
+    stop();
+    expect(FakeSource.made[1].closed).toBe(true);
+  });
+
+  it("opens nothing while nobody listens", () => {
+    const subscribe = shareLive(() => new FakeSource() as unknown as EventSource);
+    subscribe.reopen();
+    expect(FakeSource.made.length).toBe(0);
+  });
+});
+
+
+describe("liveLabel", () => {
+  it("names what a message Odie posted on its own is", async () => {
+    const { liveLabel } = await import("./live");
+    expect(liveLabel("job")).toBe("job");
+    expect(liveLabel("tracker")).toBe("tracker");
+    expect(liveLabel(undefined)).toBe("reminder");
+  });
+});

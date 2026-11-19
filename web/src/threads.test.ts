@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { belongsHere, groupThreads, type Thread } from "./threads";
+import { belongsHere, groupThreads, sameAsTopRow, type Thread } from "./threads";
 
 const t = (o: Partial<Thread>): Thread => ({ id: "chat-2026-10-05", title: "x", renamed: false, date: "2026-10-05", messages: 2, started: 0, updated: 0, pinned: false, snippet: null, ...o });
 
@@ -17,5 +17,32 @@ describe("threads", () => {
     expect(belongsHere("chat-2026-10-02", "chat-2026-10-02", "2026-10-05")).toBe(true);
     expect(belongsHere("chat-2026-10-05", "chat-2026-10-02", "2026-10-05")).toBe(false);
     expect(belongsHere(undefined, null, "2026-10-05")).toBe(true);
+  });
+
+  it("keeps each personality's live messages in its own chat", () => {
+    expect(belongsHere("chat-2026-10-05-2", null, "2026-10-05", "mira", "")).toBe(false);  // hers, while Odie is picked
+    expect(belongsHere("chat-2026-10-05", null, "2026-10-05", "", "mira")).toBe(false);  // an everyday one, while she is picked
+    expect(belongsHere("chat-2026-10-03-2", "chat-2026-10-03-2", "2026-10-05", "mira", "mira")).toBe(true);  // hers, in her shown thread
+    expect(belongsHere("chat-2026-10-03-4", "chat-2026-10-03-2", "2026-10-05", "mira", "mira")).toBe(false);  // another thread of hers
+    expect(belongsHere("chat-2026-10-03-2", null, "2026-10-05", "mira", "mira")).toBe(true);  // her first thread, not shown yet
+  });
+
+  it("leaves out of the list the one chat the top row already opens", () => {
+    const today = "2026-10-05";
+    // Everyday Odie with one chat today: the top row is that chat, so the list doesn't show it again.
+    const only = [t({ id: "chat-2026-10-05" }), t({ id: "chat-2026-10-04", date: "2026-10-04" })];
+    expect(sameAsTopRow(only, today, "", null)).toBe("chat-2026-10-05");
+    // A New chat earlier today: the top row shows both parts together, and each alone is a different view.
+    expect(sameAsTopRow([...only, t({ id: "chat-2026-10-05-2" })], today, "", null)).toBe(null);
+    // An imported thread dated today is a thread of its own, not part of today's chat.
+    expect(sameAsTopRow([...only, t({ id: "chat-2026-10-05-101" })], today, "", null)).toBe("chat-2026-10-05");
+    // Nothing today yet: nothing to leave out.
+    expect(sameAsTopRow([t({ id: "chat-2026-10-04", date: "2026-10-04" })], today, "", null)).toBe(null);
+    // Pinned stays listed: its star is how it gets unpinned.
+    expect(sameAsTopRow([t({ id: "chat-2026-10-05", pinned: true })], today, "", null)).toBe(null);
+    // A personality: its current thread, however old, is the top row.
+    const hers = [t({ id: "chat-2026-10-03-4", date: "2026-10-03" }), t({ id: "chat-2026-10-05-2" })];
+    expect(sameAsTopRow(hers, today, "mira", "chat-2026-10-03-4")).toBe("chat-2026-10-03-4");
+    expect(sameAsTopRow(hers, today, "mira", null)).toBe(null);  // her history hasn't said which yet
   });
 });

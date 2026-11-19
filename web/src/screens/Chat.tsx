@@ -2,14 +2,19 @@ import { AnimatePresence, motion } from "framer-motion";
 import { badge } from "../watch";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { useLive } from "../live";
+import { liveLabel, useLive } from "../live";
 import { loadThinking, saveThinking, thinkingAfter, type ChatThinking } from "../thinking";
 import { ThinkChip, ThinkSwitch } from "../components/ThinkHarder";
 import { has, useCaps, userCountry } from "../capabilities";
 import { ideasFor } from "../ideas";
 import { getJSON, postJSON, todayISO } from "../api";
 import { speak, stopSpeaking } from "../voice";
-import { usePersona } from "../persona";
+import { usePickedPersona } from "../persona";
+import { lightOf } from "../light";
+import { ctxWorthShowing } from "../contextRing";
+import { usePick } from "../pick";
+import { clearElsewhere, noteElsewhere, somethingElsewhere, useElsewhere, usePersonalities } from "../personalities";
+import { Switcher } from "../components/Switcher";
 import { TalkMode } from "../components/TalkMode";
 import { SpeakingBars } from "../components/Orb";
 import { Avatar } from "../components/Avatar";
@@ -43,7 +48,8 @@ import type { OrbState } from "../components/Orb";
 import { streamChat, type ChatEvent } from "../sse";
 import { ConnectCard } from "../components/ConnectCard";
 import { splitConnect } from "../google";
-import { Star, ThreadsSheet, ThreadsSidebar } from "../components/ThreadsSheet";
+import { Star, ThreadsPill, ThreadsSheet, ThreadsSidebar } from "../components/ThreadsSheet";
+import { useThreadsSidebar } from "../threadsSidebar";
 import { useWide } from "../layout";
 import { belongsHere, type Thread } from "../threads";
 import { drawnText } from "../blocks/drawnText";
@@ -66,10 +72,11 @@ import { useProfile } from "../profile";
 import { MicWave } from "../components/MicWave";
 import { composerWith, phoneSpeech, pickMode, startDictation } from "../dictation";
 import { shrinkPhoto } from "../shrinkPhoto";
+import { useHoldReload } from "../freshness";
 
 // key and sid: the name the server gave a reply (its ADK event id) and the session it is in; its saved ticks hang off them.
 // inv: the turn it belongs to; what Odie does after a tap joins the message of its turn (turns.ts).
-type Msg = { id: number; key?: string; sid?: string; inv?: string; role: "user" | "odie" | "approval"; text: string; tools: Tool[]; error?: string; awaiting?: boolean; ts?: number; live?: boolean; approval?: Approval; images?: string[]; asked?: string; media?: Media[]; autoplay?: string; private?: boolean; usage?: ReplyUsage; via?: "terminal" };  // private: its chat read a signed-in page; usage: the reply's own token counts
+type Msg = { id: number; key?: string; sid?: string; inv?: string; role: "user" | "odie" | "approval"; text: string; tools: Tool[]; error?: string; awaiting?: boolean; ts?: number; live?: boolean; label?: string; approval?: Approval; images?: string[]; asked?: string; media?: Media[]; autoplay?: string; private?: boolean; usage?: ReplyUsage; via?: "terminal" };  // private: its chat read a signed-in page; usage: the reply's own token counts
 type Pending = { id: string; url: string; w: number; h: number };
 let nextId = 1;
 const EASE = [0.2, 0.8, 0.2, 1] as const;
@@ -110,7 +117,7 @@ const mdComponents: Components = {
     return <CodeBlock lang={lang} code={code} />;
   },
   table({ children }) { return <div className="table-wrap" data-visual="table"><table>{children}</table></div>; },
-  img({ src, alt }) { return typeof src === "string" && /^(https?:\/\/|\/api\/(photos|media)\/)/.test(src) ? <SafeImage src={src} alt={alt} className="my-2 max-w-full max-h-[320px] rounded-[16px] border border-line object-cover" /> : null; },
+  img({ src, alt }) { return typeof src === "string" && /^(https?:\/\/|\/api\/(photos|media)\/)/.test(src) ? <SafeImage src={src} alt={alt} className="my-2 max-w-full max-h-[320px] rounded-control border border-line object-cover" /> : null; },
   a({ href, children }) { return <a href={href} target="_blank" rel="noreferrer">{children}</a>; },
   span: MarkdownSpan,  // :icon[…] in reply text (remarkInline marks them)
 };
@@ -139,12 +146,12 @@ function SegmentDivider({ text, ts }: { text: string; ts?: number }) {
   return (
     <div className="flex flex-col gap-2">
       <button onClick={() => setOpen((v) => !v)} className="min-h-11 flex items-center justify-center" aria-expanded={open}>
-        <span className="self-center text-[12px] font-semibold text-muted px-3 py-1 rounded-full bg-well">Fresh start{ts ? ` · ${fmtTime(ts)}` : ""} · {open ? "hide summary" : "summary of earlier"}</span>
+        <span className="self-center text-caption font-semibold text-muted px-3 py-1 rounded-full bg-well">Fresh start{ts ? ` · ${fmtTime(ts)}` : ""} · {open ? "hide summary" : "summary of earlier"}</span>
       </button>
       <AnimatePresence initial={false}>
         {open && (
           <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.16 }} className="overflow-hidden">
-            <div className="glass rounded-[18px] px-4 py-3 text-[14px] leading-5 text-muted">{text}</div>
+            <div className="glass rounded-tile px-4 py-3 text-ui leading-5 text-muted">{text}</div>
           </motion.div>
         )}
       </AnimatePresence>
@@ -154,7 +161,7 @@ function SegmentDivider({ text, ts }: { text: string; ts?: number }) {
 
 function NewChatDivider({ ts, name }: { ts?: number; name: string }) {
   return (
-    <div className="flex justify-center min-h-11 items-center"><span className="self-center text-[12px] font-semibold text-muted px-3 py-1 rounded-full bg-well text-center">New chat{ts ? ` · ${fmtTime(ts)}` : ""} · {name} doesn't see anything above</span></div>
+    <div className="flex justify-center min-h-11 items-center"><span className="self-center text-caption font-semibold text-muted px-3 py-1 rounded-full bg-well text-center">New chat{ts ? ` · ${fmtTime(ts)}` : ""} · {name} doesn't see anything above</span></div>
   );
 }
 
@@ -163,7 +170,7 @@ function ContextRing({ used, limit }: { used: number; limit: number }) {
   const pct = Math.min(100, Math.round((used / Math.max(1, limit)) * 100));
   const r = 7, c = 2 * Math.PI * r;
   return (
-    <span className="flex items-center gap-1.5 text-[12px] tabular-nums">
+    <span className="flex items-center gap-1.5 text-caption tabular-nums">
       <svg width="18" height="18" viewBox="0 0 18 18" className="-rotate-90" aria-hidden="true">
         <circle cx="9" cy="9" r={r} fill="none" stroke="currentColor" strokeOpacity=".25" strokeWidth="2.5" />
         <circle cx="9" cy="9" r={r} fill="none" stroke={pct >= 80 ? "var(--t-warn)" : "var(--t-brand)"} strokeWidth="2.5" strokeLinecap="round"
@@ -195,20 +202,22 @@ function TimeDivider({ ts }: { ts: number }) {
   const d = new Date(ts * 1000);
   const today = new Date().toDateString() === d.toDateString();
   return (
-    <div className="flex justify-center"><span className="self-center text-[12px] font-semibold text-muted px-3 py-1 rounded-full bg-well">{today ? "Today" : d.toLocaleDateString(userLocale(), { day: "numeric", month: "short" })} · {fmtTime(ts)}</span></div>
+    <div className="flex justify-center"><span className="self-center text-caption font-semibold text-muted px-3 py-1 rounded-full bg-well">{today ? "Today" : d.toLocaleDateString(userLocale(), { day: "numeric", month: "short" })} · {fmtTime(ts)}</span></div>
   );
 }
 
-export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => void }) {
-  // The count on Back to Today: what the background watch flagged that Today hasn't shown yet. Chat stays mounted, so it's
-  // read again each time chat comes back into view.
+export function Chat({ orb, setOrb, showing }: { orb: OrbState; setOrb: (s: OrbState) => void; showing: boolean }) {
+  // The count on Back to Pulse: what the picked one's background watch flagged that its Pulse hasn't shown yet. Chat
+  // stays mounted, so it's read again each time chat comes back into view, and on a switch of personality.
   const [needYou, setNeedYou] = useState(0);
+  const pickForCount = usePick();
   useEffect(() => {
+    setNeedYou(0);
     const load = () => { if (location.hash.startsWith("#chat") || location.hash === "") getJSON<{ unseen?: number }>("/api/watch").then((w) => setNeedYou(w.unseen ?? 0)).catch(() => {}); };
     load();
     window.addEventListener("hashchange", load);
     return () => window.removeEventListener("hashchange", load);
-  }, []);
+  }, [pickForCount]);
   const you = useProfile()?.user_name ?? "";
   const caps = useCaps();
   const signedInBrowsing = has(caps, "signin");  // the live view exists only with it on: Watch shows only then
@@ -232,7 +241,20 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
   const [micNote, setMicNote] = useState("");  // why the mic couldn't write it down, shown under the box
   const micLevel = useRef(0);  // the voice's loudness right now, for the wave
   const [talking, setTalking] = useState(false);
-  const { name } = usePersona();
+  // Who this chat is with: everyday Odie (""), or a personality picked in the switcher. The name, the picture, the
+  // threads and every call for the chat follow it (api.ts names the pick on those calls).
+  const pick = usePick();
+  const pickRef = useRef(pick);
+  pickRef.current = pick;
+  const picked = usePickedPersona();
+  const { name } = picked;
+  const [switcherOpen, setSwitcherOpen] = useState(false);
+  const [pickThread, setPickThread] = useState<string | null>(null);  // a personality's current thread, as its history said
+  const pickThreadRef = useRef<string | null>(null);
+  pickThreadRef.current = pickThread;
+  const personalities = usePersonalities();
+  const elsewhere = useElsewhere();
+  const someoneElseWaits = somethingElsewhere(personalities.list, elsewhere, pick, personalities.everydayWaiting);  // the header's dot
   const stopDictate = useRef<(() => void) | null>(null);
   const bottom = useRef<HTMLDivElement>(null);
   const field = useRef<HTMLTextAreaElement>(null);
@@ -241,8 +263,25 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
   useEffect(() => { if (!busy) setStopping(false); }, [busy]);  // eslint-disable-line react-hooks/exhaustive-deps
   const [thread, setThread] = useState<Thread | null>(null);  // null = today's chat
   const [threadsOpen, setThreadsOpen] = useState(false);
-  // On a desktop Threads stays open beside the chat instead of sliding in (layout.ts); it reloads after each reply.
+  // On a desktop Threads is a sidebar beside the chat instead of sliding in (layout.ts); it reloads after each reply.
   const wide = useWide();
+  // There the sidebar can be hidden (this device remembers it) and brought back; Cmd+\ / Ctrl+\ toggles it while the
+  // chat is the screen showing. Focus follows the change to the button that undoes it.
+  const sidebar = useThreadsSidebar(wide && showing);
+  const threadsPillRef = useRef<HTMLButtonElement>(null);
+  const hideThreadsRef = useRef<HTMLButtonElement>(null);
+  function hideSidebar() {
+    sidebar.setOpen(false);
+    requestAnimationFrame(() => threadsPillRef.current?.focus());
+  }
+  function pressThreadsPill() {
+    if (!wide) {
+      setThreadsOpen(true);
+      return;
+    }
+    sidebar.setOpen(true);
+    requestAnimationFrame(() => hideThreadsRef.current?.focus());
+  }
   const [threadsReload, setThreadsReload] = useState(0);
   const threadRef = useRef<Thread | null>(null);
   const [chatKey, setChatKey] = useState(0);  // a new segment of today's chat: its Think harder is read again
@@ -268,7 +307,7 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
   const mainRef = useRef<HTMLElement>(null);
   type H = { items: HistoryItem[]; total: number; start: number };
   // One turn, one message: a turn's lines fold into one first (turns.ts), however many taps it took.
-  const toMsgs = (items: H["items"]): Msg[] => foldTurns(items).filter((m) => m.text || m.tools.length || m.images?.length || m.approval || m.media?.length).map((m) => ({ id: nextId++, key: m.key, sid: m.sid, inv: m.inv, role: m.role, text: m.text, ts: m.ts, images: m.images, approval: m.approval, media: m.media, private: m.private, usage: m.usage, via: m.via, tools: fromHistory(m) }));
+  const toMsgs = (items: H["items"]): Msg[] => foldTurns(items).filter((m) => m.text || m.tools.length || m.images?.length || m.approval || m.media?.length).map((m) => ({ id: nextId++, key: m.key, sid: m.sid, inv: m.inv, role: m.role, text: m.text, ts: m.ts, images: m.images, approval: m.approval, media: m.media, private: m.private, usage: m.usage, via: m.via, live: !!m.kind, label: m.kind ? liveLabel(m.kind) : undefined, tools: fromHistory(m) }));
   const [pending, setPending] = useState<Pending[]>([]);
   const [uploading, setUploading] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -301,12 +340,26 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
   const lastEventAt = useRef(0);
   const settling = useRef(false);
   const toLatest = () => requestAnimationFrame(() => { bottom.current?.scrollIntoView(); setAtBottom(true); atBottomRef.current = true; });
+  // Switching to someone else: the screen is theirs at once. The other's messages, opened thread and half-typed words
+  // go, and an answer still streaming stops being drawn (it finishes on the server and is there on the way back).
+  const sawFirstPick = useRef(false);
+  useEffect(() => {
+    clearElsewhere(pick);  // what was waiting here is on screen now
+    if (!sawFirstPick.current) { sawFirstPick.current = true; return; }
+    streamAbort.current?.abort();
+    setThread(null); setMsgs([]); setEarlier(0); setPickThread(null); setInput("");
+    setThreadsReload((n) => n + 1);
+    setChatKey((n) => n + 1);
+  }, [pick]);  // eslint-disable-line react-hooks/exhaustive-deps
   const loadHistory = useCallback(async () => {
     // Last 30 messages first (fast on a phone), then pending approvals appended once, so neither fetch can wipe the other.
     const wasAtBottom = atBottomRef.current;
     settling.current = true;
+    const askedFor = pick;
     try {
-      const h = await getJSON<H>(historyUrl("limit=30"));
+      const h = await getJSON<H & { thread?: string | null }>(historyUrl("limit=30"));
+      if (askedFor !== pickRef.current) return;  // switched while it loaded: this history is someone else's
+      setPickThread(h.thread ?? null);
       const fresh = afterLastNewChat(h.items);
       setEarlier(fresh.cut ? 0 : h.start);  // nothing above a "/new" is shown here
       setHistoryCut({ threadId: thread?.id ?? null, cut: fresh.cut });
@@ -320,7 +373,7 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
       if (wasAtBottom) toLatest();
     } catch { /* offline: keep what we have */ }
     finally { window.setTimeout(() => { settling.current = false; }, 600); }
-  }, [setOrb, thread]);  // eslint-disable-line react-hooks/exhaustive-deps
+  }, [setOrb, thread, pick]);  // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { void loadHistory(); loadCtx(); }, [loadHistory, loadCtx]);
 
   async function loadEarlier() {
@@ -376,7 +429,17 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
 
   // After Act on a reminder's curtain: the chat is open and the cursor goes to the composer.
   useLive(useCallback((e: any) => {
-    if (e.type === "message" && e.text !== NEW_CHAT && belongsHere(e.session_id, threadRef.current?.id ?? null, todayISO())) {
+    // Whose event it is: the server marks a personality's with its id; everyday Odie's carry none. Only the events of
+    // whoever is on screen touch this chat. Someone else's are noted for the header's dot and the switcher, no more.
+    const owner: string = e.personality ?? "";
+    const shownId = threadRef.current?.id ?? pickThreadRef.current ?? null;
+    if (e.type === "elsewhere") { noteElsewhere(e.personality, e.what); return; }
+    if (owner !== pickRef.current) {
+      if (e.type === "approval" && e.status === "pending") noteElsewhere(owner, "card");
+      if (e.type === "message" && e.text !== NEW_CHAT) noteElsewhere(owner, "reply");
+      if (e.session_id || e.type === "approval" || e.type === "approval_done") return;  // about a thread that isn't on screen
+    }
+    if (e.type === "message" && e.text !== NEW_CHAT && belongsHere(e.session_id, shownId, todayISO(), owner, pickRef.current)) {
       // A reply after a tap is her answer, not a reminder: show it like any other reply.
       // A reply after a tap replaces the "still working" row that waitForTap put up.
       // Words after a tap join the message of their turn; with none on screen (opened later) they come as a new one.
@@ -385,12 +448,12 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
         const shown = e.kind === "reply" ? m.filter((x) => !x.awaiting) : m;
         const joined = withTurnEvent(shown, e);
         if (joined) return joined;
-        return [...shown, { id: nextId++, role: "odie", text: e.text, tools: [], ts: e.ts, live: e.kind !== "reply", media: e.media, autoplay, private: !!e.private }];
+        return [...shown, { id: nextId++, role: "odie", text: e.text, tools: [], ts: e.ts, live: e.kind !== "reply", label: liveLabel(e.kind), media: e.media, autoplay, private: !!e.private }];
       });
       setUnseen(true);
     }
     // A resumed run's steps join the message of their turn; a finished one falls back to the reply holding its id.
-    const stepHere = belongsHere(e.session_id, threadRef.current?.id ?? null, todayISO());
+    const stepHere = belongsHere(e.session_id, shownId, todayISO(), owner, pickRef.current);
     if ((e.type === "step_start" || e.type === "step_wait") && stepHere) setMsgs((m) => withTurnEvent(m, e) ?? m);
     if (e.type === "step" && stepHere) setMsgs((m) => withTurnEvent(m, e) ?? withStepEvent(m, e as StepEvent));
     if (e.type === "thinking") setThink((shown) => thinkingAfter(shown, e));  // flipped in another app or browser
@@ -603,6 +666,11 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
   const ctxText = ctxKnown ? `About ${Math.round(ctx.used / 1000)}k of ${Math.round(ctx.limit / 1000)}k · older turns trimmed at ${Math.round(ctx.limit / 1000)}k` : "";
   const status = ctxNote && ctxText ? ctxText : busy ? (stopping ? "Stopping…" : "Working on it") : orb === "listening" ? "Listening" : orb === "speaking" ? "Speaking" : orb === "approval" ? "Waiting for your tap" : "Here";
   const hasDraft = input.trim().length > 0 || pending.length > 0;
+  // A new version of the app waits to reload while any of these is going on (freshness.ts).
+  useHoldReload("stream", busy);
+  useHoldReload("voice", talking || connecting || listening || transcribing);
+  useHoldReload("approval", orb === "approval");
+  useHoldReload("draft", hasDraft);
   let micPlaceholder = `Ask ${name} anything`;
   if (connecting) micPlaceholder = "Connecting…";
   if (listening) micPlaceholder = "Listening… tap the mic to finish";
@@ -613,7 +681,7 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
   const morning = useMorning(thread?.id ?? null);
   const onScreen = chatOnScreen(thread?.id ?? null, historyCut, earlier);
   let morningOnTop: MorningReply | null = null;
-  if (morning && shouldShowMorning(onScreen, todayISO(), morning.state)) morningOnTop = morning;
+  if (pick === "" && morning && shouldShowMorning(onScreen, todayISO(), morning.state)) morningOnTop = morning;  // the hello is everyday Odie's
   const morningReady = morningOnTop?.card != null;
   // In an empty chat the hello is the latest thing, so "to the latest" (opening the chat, a reload) lands on its top,
   // not under its chips.
@@ -622,37 +690,42 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
 
   return (
     <div className="flex h-full">
-      {wide && <ThreadsSidebar current={thread?.id ?? null} onOpen={setThread} onNewChat={() => void newChat()} reload={threadsReload} />}
+      {wide && <ThreadsSidebar open={sidebar.open} onHide={hideSidebar} hideRef={hideThreadsRef} current={thread?.id ?? null} pickThread={pickThread}
+        onOpen={setThread} onNewChat={() => void newChat()} reload={threadsReload} />}
       <div className="relative flex flex-col h-full flex-1 min-w-0">
         <AnimatePresence>{talking && <TalkMode onClose={() => setTalking(false)} />}</AnimatePresence>
+        <Switcher open={switcherOpen} onClose={() => setSwitcherOpen(false)} />
         <header className="chat-col sticky top-0 z-10 grid grid-cols-[auto_1fr_auto] items-center gap-2.5 px-[18px] pb-4 safe-top bg-overlay backdrop-blur-xl backdrop-saturate-150 [mask-image:linear-gradient(180deg,#000_82%,transparent)]">
           {/* On a desktop the rail has Today; an empty span holds the back button's place in the header grid. */}
           {wide ? <span /> : (
-            <a href="#today" aria-label={`Back to Today${needYou ? `, ${needYou} need you` : ""}`} className="pill w-11 px-0 relative">
+            <a href="#today" aria-label={`Back to Pulse${needYou ? `, ${needYou} need you` : ""}`} className="pill w-11 px-0 relative">
               <Glyph name="back" />
-              {badge(needYou) && <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-ember text-on-ember text-[11px] font-bold grid place-items-center">{badge(needYou)}</span>}
+              {badge(needYou) && <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-ember text-on-ember text-tiny font-bold grid place-items-center">{badge(needYou)}</span>}
             </a>
           )}
-          <div className="flex items-center justify-center gap-2.5 min-w-0">
+          <button type="button" onClick={() => setSwitcherOpen(true)} aria-haspopup="dialog"
+            aria-label={`Switch personality. Talking to ${name}${someoneElseWaits ? "; someone else has something for you" : ""}`}
+            className="flex items-center justify-center gap-2.5 min-w-0 text-left rounded-tile px-2 py-1 -my-1 active:bg-well">
             <span className="relative shrink-0">
-              <Avatar size={40} state={orb} />
+              <Avatar size={40} state={orb} who={picked} light={lightOf(pick)} />
               <i className={`absolute right-0 bottom-0 w-3 h-3 rounded-full border-2 border-[var(--t-ground)] ${busy || orb === "approval" ? "bg-gold" : "bg-good"}`} aria-hidden="true" />
+              {someoneElseWaits && <i className="absolute -left-0.5 -top-0.5 w-3 h-3 rounded-full border-2 border-[var(--t-ground)] bg-ember" aria-hidden="true" />}
             </span>
             <div className="flex flex-col items-start leading-tight min-w-0">
-            <b className="text-[17px] font-bold truncate max-w-full">{name}</b>
+            <b className="text-title font-bold truncate max-w-full inline-flex items-center gap-1">{name}<span className="text-muted text-caption" aria-hidden="true">▾</span></b>
             <AnimatePresence mode="wait" initial={false}>
               <motion.span key={status} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.16 }}
-                className="text-[12.5px] text-muted inline-flex items-center gap-1.5 whitespace-nowrap max-w-full truncate">
+                className="text-small text-muted inline-flex items-center gap-1.5 whitespace-nowrap max-w-full truncate">
                 {status}
               </motion.span>
             </AnimatePresence>
             </div>
-          </div>
+          </button>
           <div className="flex items-center gap-1.5">
-            {!wide && <button onClick={() => setThreadsOpen(true)} aria-label="Threads" title="Threads" className="pill w-11 px-0"><Glyph name="menu" size={18} /></button>}
-            {ctx && ctxKnown && !thread && (
+            <ThreadsPill wide={wide} sidebarOpen={sidebar.open} onPress={pressThreadsPill} pillRef={threadsPillRef} />
+            {ctx && ctxKnown && !thread && ctxWorthShowing(ctx.used, ctx.limit) && (
               <button onClick={() => { setCtxNote(true); setTimeout(() => setCtxNote(false), 4000); }} aria-label={`Conversation ${ctxText}`} title={ctxText}
-                className="pill h-11 px-2.5 text-[12px] font-bold"><ContextRing used={ctx.used} limit={ctx.limit} /></button>
+                className="pill h-11 px-2.5 text-caption font-bold"><ContextRing used={ctx.used} limit={ctx.limit} /></button>
             )}
             <button onClick={refreshApp} aria-label="Refresh" title="Refresh" className="pill w-11 px-0">
               <span className={`flex ${refreshing ? "animate-spin" : ""}`}><Glyph name="refresh" size={17} /></span>
@@ -660,15 +733,15 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
           </div>
         </header>
         {thread && (
-          <div className="chat-col-edge mx-[18px] -mt-2 mb-1 flex items-center gap-2 px-3 py-2 rounded-[18px] glass">
-            <button onClick={() => setThread(null)} className="text-[13px] font-semibold text-ember-text shrink-0">‹ Today</button>
+          <div className="chat-col-edge mx-[18px] -mt-2 mb-1 flex items-center gap-2 px-3 py-2 rounded-tile glass">
+            <button onClick={() => setThread(null)} className="text-small font-semibold text-ember-text shrink-0">{pick ? "‹ Current chat" : "‹ Today"}</button>
             <button onClick={() => { const t = prompt("Name this thread", thread.title); if (t !== null) void postJSON(`/api/threads/${thread.id}/rename`, { title: t }).then(() => setThread({ ...thread, title: t.trim() || thread.title })); }}
-              className="flex-1 min-w-0 text-left text-[14px] font-semibold truncate" title="Rename">{thread.title}</button>
+              className="flex-1 min-w-0 text-left text-ui font-semibold truncate" title="Rename">{thread.title}</button>
             <button aria-label={thread.pinned ? "Unpin" : "Pin"} onClick={() => { const p = !thread.pinned; setThread({ ...thread, pinned: p }); void postJSON(`/api/threads/${thread.id}/pin`, { pinned: p }); }}
               className={`w-8 h-8 grid place-items-center shrink-0 ${thread.pinned ? "text-gold" : "text-dim"}`}><Star on={thread.pinned} /></button>
           </div>
         )}
-        {!wide && <ThreadsSheet open={threadsOpen} current={thread?.id ?? null} onClose={() => setThreadsOpen(false)}
+        {!wide && <ThreadsSheet open={threadsOpen} current={thread?.id ?? null} pickThread={pickThread} onClose={() => setThreadsOpen(false)}
           onOpen={(t) => { setThreadsOpen(false); setThread(t); }} />}
 
         <div className="relative flex-1 min-h-0 flex flex-col">
@@ -681,22 +754,29 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
             {earlier > 0 && (
               <div className="self-center pt-1 pb-3">
                 {loadingEarlier ? <span className="spinner inline-block" /> : (
-                  <button onClick={loadEarlier} className="pill pill-flat h-8 text-[12px]">Earlier today · {earlier} more</button>
+                  <button onClick={loadEarlier} className="pill pill-flat h-8 text-caption">Earlier today · {earlier} more</button>
                 )}
               </div>
             )}
             {latestIsHello && <div ref={bottom} />}
             {morningOnTop && <MorningHello reply={morningOnTop} onChip={(t) => void send(t)} />}
-            {msgs.length === 0 && !morningReady && (() => { const g = greetingParts(); return (
+            {msgs.length === 0 && pick !== "" && (
+              <div className="min-h-[60dvh] flex flex-col items-center justify-center text-center pt-5">
+                <Avatar size={132} halo who={picked} light={lightOf(pick)} />
+                <h2 className="text-display font-bold tracking-[-0.02em] mt-7">Say hello to {name}.</h2>
+                <p className="text-muted mt-1.5 max-w-[30ch]">What you say here stays in {name}'s own threads and memory.</p>
+              </div>
+            )}
+            {msgs.length === 0 && pick === "" && !morningReady && (() => { const g = greetingParts(); return (
               <div className="min-h-[60dvh] flex flex-col items-center justify-center text-center pt-5">
                 <Orb size={150} halo />
-                <h2 className="text-[28px] font-bold tracking-[-0.02em] mt-7">{g.lead} <span className="serif text-[32px]">{g.accent}</span>{you ? `, ${you}` : ""}</h2>
+                <h2 className="text-display font-bold tracking-[-0.02em] mt-7">{g.lead} <span className="serif text-display-lg">{g.accent}</span>{you ? `, ${you}` : ""}</h2>
                 <p className="text-muted mt-1.5">What can I do for you?</p>
                 <div className="self-start font-bold mt-8 mb-3">Try one of these</div>
                 <div className="flex gap-3 overflow-x-auto no-scrollbar -mx-[18px] px-[18px] pb-2.5 w-[calc(100%+36px)]">
                   {ideasFor(caps, userCountry()).map((s) => (
-                    <button key={s.q} onClick={() => { setInput(s.q); field.current?.focus(); }} className="glass shrink-0 w-[168px] text-left rounded-[24px] p-4 active:scale-[.97] transition-transform">
-                      <Tile icon={s.icon} color={s.color} /><b className="block mt-3.5 text-[15px] leading-[1.3]">{s.q}</b><span className="text-[12.5px] text-muted">{s.from}</span>
+                    <button key={s.q} onClick={() => { setInput(s.q); field.current?.focus(); }} className="glass shrink-0 w-[168px] text-left rounded-card p-4 active:scale-[.97] transition-transform">
+                      <Tile icon={s.icon} color={s.color} /><b className="block mt-3.5 text-body leading-[1.3]">{s.q}</b><span className="text-small text-muted">{s.from}</span>
                     </button>
                   ))}
                 </div>
@@ -713,7 +793,7 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
                   <div key={m.id} className={spacing}>
                     {showTime && <div className="mb-3"><TimeDivider ts={m.ts!} /></div>}
                     {m.role === "approval" && m.approval ? (
-                      <motion.div {...enter}><ChatApproval a={m.approval} onDecided={(id, st, until) => { setOrb("idle"); setMsgs((all) => all.map((x) => x.approval?.id === id ? { ...x, approval: answered(x.approval, st, until) } : x)); if (st === "approved") waitForTap(id); }} /></motion.div>
+                      <motion.div {...enter}><ChatApproval a={m.approval} onDecided={(id, st, until, chatPass) => { setOrb("idle"); setMsgs((all) => all.map((x) => x.approval?.id === id ? { ...x, approval: answered(x.approval, st, until, chatPass) } : x)); if (st === "approved") waitForTap(id); }} /></motion.div>
                     ) : m.role === "odie" && m.text === NEW_CHAT ? (
                       <NewChatDivider ts={m.ts} name={name} />
                     ) : m.role === "odie" && m.text.startsWith(ROLLOVER) ? (
@@ -722,15 +802,15 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
                       <motion.div {...enter} className="flex flex-col"><YourMessage text={m.text} images={m.images} via={m.via} /></motion.div>
                     ) : (
                       <motion.div {...enter} className="flex flex-col gap-2.5">
-                        <div className="flex items-center gap-2 text-[12.5px] text-muted font-semibold">
-                          <Avatar size={36} /><span className="text-[13.5px]"><b className="text-ink-2 font-bold">{name}</b>{m.live ? " · reminder" : ""}{m.ts ? ` · ${fmtTime(m.ts)}` : ""}</span>
+                        <div className="flex items-center gap-2 text-small text-muted font-semibold">
+                          <Avatar size={36} who={picked} light={lightOf(pick)} /><span className="text-ui"><b className="text-ink-2 font-bold">{name}</b>{m.live ? ` · ${m.label ?? "reminder"}` : ""}{m.ts ? ` · ${fmtTime(m.ts)}` : ""}</span>
                         </div>
                         <Steps tools={m.tools} running={streaming} />
                         {m.awaiting && (
-                          <div className="flex items-center gap-3"><Orb state="thinking" size={28} /><span className="text-[14px] font-semibold shimmer-text">Still working on it, the answer will appear here</span></div>
+                          <div className="flex items-center gap-3"><Orb state="thinking" size={28} /><span className="text-ui font-semibold shimmer-text">Still working on it, the answer will appear here</span></div>
                         )}
                         {!m.text && !m.error && !m.awaiting && streaming && !m.tools.some((t) => !t.done) && (  /* a running step shows in the trace */
-                          <div className="flex items-center gap-3"><Orb state="thinking" size={28} /><span className="text-[14px] font-semibold shimmer-text">{thinking ? "Thinking longer" : "Thinking"}</span></div>
+                          <div className="flex items-center gap-3"><Orb state="thinking" size={28} /><span className="text-ui font-semibold shimmer-text">{thinking ? "Thinking longer" : "Thinking"}</span></div>
                         )}
                         {m.text && (() => {
                           const shown = drawnText(splitConnect(m.text).text);
@@ -746,7 +826,7 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
                         {m.media && m.media.length > 0 && <MediaList items={m.media} live={streaming && m.id === lastOdie?.id} autoplay={m.autoplay} tab={m.sid ?? thread?.id ?? undefined} watchable={signedInBrowsing} who={name} />}
                         {m.text && splitConnect(m.text).connect && <ConnectCard since={m.ts} />}
                         {m.error && (
-                          <div className="flex items-center gap-3 bg-warn-tint rounded-[18px] px-3.5 py-2.5 text-[13px] leading-[18px] text-ink-2">
+                          <div className="flex items-center gap-3 bg-warn-tint rounded-tile px-3.5 py-2.5 text-small leading-[18px] text-ink-2">
                             <span className="text-warn-ink"><Glyph name="x" size={16} /></span>
                             <span className="flex-1">{/network|fetch|connection|load failed/i.test(m.error) ? "Lost the connection." : `That didn't work: ${m.error}`}</span>
                             {m.asked && <button onClick={() => retry(m)} className="text-ember-text font-semibold min-h-8 px-1">Retry</button>}
@@ -759,7 +839,7 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
                             </button>
                             <CopyButton text={m.text} />
                             <ShareWords text={m.text} title={name} bubbleId={String(m.id)} />
-                            {m.usage && <span className="ml-1 text-[12px] text-dim">{replyLine(m.usage)}</span>}
+                            {m.usage && <span className="ml-1 text-caption text-dim">{replyLine(m.usage)}</span>}
                           </motion.div>
                         )}
                       </motion.div>
@@ -785,18 +865,18 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
         </div>
 
         <LocationAsk />
-        <form onSubmit={(e) => { e.preventDefault(); void send(input); }} className="chat-composer glass relative z-20 mx-3 mb-[max(env(safe-area-inset-bottom),12px)] rounded-[30px] pt-3 pb-2.5 pl-4 pr-2.5">
+        <form onSubmit={(e) => { e.preventDefault(); void send(input); }} className="chat-composer glass relative z-20 mx-3 mb-[max(env(safe-area-inset-bottom),12px)] rounded-card pt-3 pb-2.5 pl-4 pr-2.5">
           <input ref={fileRef} type="file" accept="image/*" multiple onChange={onPick} className="hidden" />
           {(pending.length > 0 || uploading) && (
             <div className="flex gap-2 mb-2">
               {pending.map((p) => (
                 <div key={p.id} className="relative">
-                  <img src={p.url} alt="" className="w-14 h-14 object-cover rounded-[14px]" />
+                  <img src={p.url} alt="" className="w-14 h-14 object-cover rounded-control" />
                   <button type="button" onClick={() => setPending((x) => x.filter((y) => y.id !== p.id))} aria-label="Remove photo"
-                    className="hit absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-solid text-on-solid text-[12px] leading-none flex items-center justify-center">×</button>
+                    className="hit absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-solid text-on-solid text-caption leading-none flex items-center justify-center">×</button>
                 </div>
               ))}
-              {uploading && <div className="w-14 h-14 rounded-[14px] bg-well flex items-center justify-center"><span className="spinner" /></div>}
+              {uploading && <div className="w-14 h-14 rounded-control bg-well flex items-center justify-center"><span className="spinner" /></div>}
             </div>
           )}
           {listening && <MicWave level={micLevel} />}
@@ -807,7 +887,7 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
               enterKeyHint="enter"
               onFocus={() => setTimeout(() => bottom.current?.scrollIntoView({ behavior: "smooth" }), 50)}
               placeholder={micPlaceholder}
-              className={`flex-1 min-w-0 resize-none bg-transparent outline-none text-[16px] leading-[22px] py-1.5 max-h-[114px] ${listening || transcribing || connecting ? "placeholder:text-ember-text" : "placeholder:text-muted"}`}
+              className={`flex-1 min-w-0 resize-none bg-transparent outline-none text-body leading-[22px] py-1.5 max-h-[114px] ${listening || transcribing || connecting ? "placeholder:text-ember-text" : "placeholder:text-muted"}`}
               autoComplete="off" />
             {input && !listening && !transcribing && !connecting && (
               <button type="button" onClick={() => { setInput(""); field.current?.focus(); }} aria-label="Clear" className="shrink-0 w-9 h-9 rounded-full grid place-items-center text-muted active:bg-well">
@@ -819,7 +899,7 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
               {transcribing || connecting ? <span className="spinner" /> : listening ? <span className="w-3.5 h-3.5 rounded-[3px] bg-current" /> : <Glyph name="mic" size={19} />}
             </button>
           </div>
-          {micNote && <div role="status" className="text-[12.5px] leading-[17px] text-warn mt-1">{micNote}</div>}
+          {micNote && <div role="status" className="text-small leading-[17px] text-warn mt-1">{micNote}</div>}
           <div className="flex items-center gap-2 mt-2">
             <div className="relative">
               <button type="button" onClick={() => setPlusOpen((v) => !v)} aria-label="More options" aria-expanded={plusOpen} className="pill pill-flat w-[42px] h-[42px] px-0">
@@ -830,13 +910,13 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
                   <>
                     <ToBody><div className="fixed inset-0 z-10" onClick={() => setPlusOpen(false)} /></ToBody>
                     <motion.div role="menu" initial={{ opacity: 0, y: 8, scale: 0.95 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 8, scale: 0.95 }} transition={{ duration: 0.16 }}
-                      className="glass glass-solid absolute bottom-[52px] left-0 z-20 w-[250px] rounded-[24px] p-2 origin-bottom-left">
+                      className="glass glass-solid absolute bottom-[52px] left-0 z-20 w-[250px] rounded-card p-2 origin-bottom-left">
                       <button type="button" role="menuitem" onClick={() => void newChat()} disabled={busy}
-                        className="w-full flex items-center gap-3 p-2 rounded-2xl text-[15px] font-semibold text-left active:bg-well disabled:opacity-50">
+                        className="w-full flex items-center gap-3 p-2 rounded-2xl text-body font-semibold text-left active:bg-well disabled:opacity-50">
                         <Tile icon="spark" color="violet" small />New chat
                       </button>
                       <button type="button" role="menuitem" onClick={() => { setPlusOpen(false); fileRef.current?.click(); }}
-                        className="w-full flex items-center gap-3 p-2 rounded-2xl text-[15px] font-semibold text-left active:bg-well">
+                        className="w-full flex items-center gap-3 p-2 rounded-2xl text-body font-semibold text-left active:bg-well">
                         <Tile icon="photo" color="pink" small />Add a photo
                       </button>
                       <ThinkSwitch on={thinking} disabled={savingThink || think === null} onToggle={() => void setThinking(!thinking)} />
@@ -848,7 +928,7 @@ export function Chat({ orb, setOrb }: { orb: OrbState; setOrb: (s: OrbState) => 
             <ThinkChip on={thinking} onTap={() => setPlusOpen(true)} />
             <span className="flex-1" />
             {/* Talk (a live voice conversation) is held back for now: the server never grants "talk", so this stays hidden. */}
-            {has(caps, "talk") && (
+            {has(caps, "talk") && pick === "" && (  /* Talk is everyday Odie's in this build */
               <button type="button" onClick={() => { stopSpeaking(); setTalking(true); }} aria-label={`Talk with ${name}`} className="pill pill-flat h-[42px]"><Glyph name="wave" size={18} /> Speak</button>
             )}
             {busy ? (

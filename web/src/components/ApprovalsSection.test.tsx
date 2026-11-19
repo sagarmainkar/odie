@@ -30,6 +30,7 @@ describe("Settings → Approvals", () => {
     const view = await mount(<ApprovalsSection />);
     expect(radios(view.host)).toEqual([["Careful", "false"], ["Smart", "true"]]);
     expect(view.host.textContent).toContain("reading secrets always ask");
+    expect(view.host.textContent).toContain("stop asking for that kind in that chat for 30 minutes");
     await view.done();
   });
 

@@ -22,7 +22,7 @@ function Actions({ items }: { items: { label: string; run: string }[] }) {
   return (
     <div className="flex flex-wrap gap-2 my-2">
       {items.map((a) => (
-        <button key={a.label} type="button" disabled={busy} onClick={() => send(a.run)} className="pill pill-solid h-10 text-[14px] shadow-none disabled:opacity-40">
+        <button key={a.label} type="button" disabled={busy} onClick={() => send(a.run)} className="pill pill-solid h-10 text-ui shadow-none disabled:opacity-40">
           <Icon name="spark" size={15} /> {a.label}
         </button>
       ))}
@@ -31,8 +31,8 @@ function Actions({ items }: { items: { label: string; run: string }[] }) {
 }
 
 function Source({ text, url }: { text: string; url?: string }) {
-  if (!url) return <div className="text-[11.5px] text-dim my-1.5">{text}</div>;
-  return <div className="text-[11.5px] text-dim my-1.5"><a href={url} target="_blank" rel="noreferrer" className="underline underline-offset-2">{text}</a></div>;
+  if (!url) return <div className="text-caption text-dim my-1.5">{text}</div>;
+  return <div className="text-caption text-dim my-1.5"><a href={url} target="_blank" rel="noreferrer" className="underline underline-offset-2">{text}</a></div>;
 }
 
 // Each kind and how it is drawn. Containers draw their children with drawAll, which comes back through this map.
@@ -100,7 +100,7 @@ function CouldNotDraw({ source }: { source?: string }) {
   const [open, setOpen] = useState(false);
   return (
     <div className="blocks">
-      <div className="my-2 rounded-[16px] bg-well px-3.5 py-2.5 text-[13.5px] text-muted">
+      <div className="my-2 rounded-control bg-well px-3.5 py-2.5 text-ui text-muted">
         <div className="flex items-center gap-2">
           <Icon name="alert" size={15} stroke={2.2} />
           <span className="flex-1">Couldn’t draw this</span>
@@ -110,7 +110,7 @@ function CouldNotDraw({ source }: { source?: string }) {
             </button>
           )}
         </div>
-        {open && source && <div className="mt-2 whitespace-pre-wrap text-[14px] leading-[20px] text-ink-2">{fenceAsText(source)}</div>}
+        {open && source && <div className="mt-2 whitespace-pre-wrap text-ui leading-[20px] text-ink-2">{fenceAsText(source)}</div>}
       </div>
     </div>
   );

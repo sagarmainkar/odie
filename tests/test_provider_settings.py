@@ -297,16 +297,18 @@ async def test_the_next_message_uses_a_new_fallback(isolated_settings, tmp_path)
     s = Store(tmp_path / "assistant.db")
     s.init_schema()
     r = OdieRunner(s)
+    used = []
 
     async def fake_run(**kw):
+        used.append(r.agent.canonical_model.model)  # the turn's own model (odie.agent.agent.ChatAgent)
         if False:
             yield None
     r.runner.run_async = fake_run
     [e async for e in r.chat("hi", session_id="t-1")]
-    assert r.agent.model.model == "openai/" + MODEL          # litellm's name for it (odie.agent.model.litellm_model)
+    assert used[-1] == "openai/" + MODEL          # litellm's name for it (odie.agent.model.litellm_model)
     s.set_setting(FALLBACK_SETTING, {"provider": "ollama", "model": "glm-5.3-flash:cloud"})
     [e async for e in r.chat("again", session_id="t-1")]
-    assert r.agent.model.model == "openai/glm-5.3-flash:cloud"
+    assert used[-1] == "openai/glm-5.3-flash:cloud"
     await r.close()
 
 

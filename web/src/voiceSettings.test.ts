@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { NO_VOICE_TEXT, PULL_PHONON_TEXT, engineLine, voiceGroups, voiceSection, type VoiceInfo } from "./voiceSettings";
+import { NO_VOICE_TEXT, PULL_PHONON_TEXT, engineLine, voiceGroups, voiceRow, voiceSection, type VoiceInfo } from "./voiceSettings";
 
 const local = { id: "kokoro", label: "Odie's voice", note: "", local: true, available: true, voices: [] };
 const cloud = { id: "openai", label: "Cloud", note: "", local: false, available: true, voices: [] };
@@ -45,5 +45,32 @@ describe("the voice picker's groups and engine line", () => {
     expect(engineLine({ ...phonon, available: true })).toEqual({ pill: "on this computer", text: "Quick." });
     expect(engineLine({ ...local, available: false }).text).toBe("The local voice service isn't running: odie restart starts it.");
     expect(engineLine({ ...cloud, note: "Cloud voices." })).toEqual({ pill: "leaves this computer", text: "Cloud voices." });
+  });
+});
+
+describe("Settings' Voice row", () => {
+  const phonon = { id: "phonon", label: "Phonon (Ollama)", note: "", local: true, available: true,
+    voices: [{ id: "Zoey", label: "Zoey" }, { id: "Noémie (phonon:fr)", label: "Noémie" }] };
+
+  it("says the chosen voice and its engine, by the names the picker shows", () => {
+    expect(voiceRow({ ...base, engines: [phonon], engine: "phonon", voice: "Zoey" })).toEqual({ sub: "Zoey · Phonon (Ollama)", state: "ok" });
+    expect(voiceRow({ ...base, engines: [phonon], engine: "phonon", voice: "Noémie (phonon:fr)" }).sub).toBe("Noémie · Phonon (Ollama)");
+  });
+
+  it("adds that reminders are spoken when they are", () => {
+    expect(voiceRow({ ...base, engines: [phonon], engine: "phonon", voice: "Zoey", reminders_spoken: true }).sub)
+      .toBe("Zoey · Phonon (Ollama) · speaks reminders");
+  });
+
+  it("falls back to the voice's id when the list doesn't have it", () => {
+    expect(voiceRow({ ...base, engines: [phonon], engine: "phonon", voice: "Gone" }).sub).toBe("Gone · Phonon (Ollama)");
+  });
+
+  it("warns when the chosen engine can't speak right now", () => {
+    expect(voiceRow({ ...base, engines: [{ ...phonon, available: false }], engine: "phonon", voice: "Zoey" }).state).toBe("warn");
+  });
+
+  it("says the browser reads replies when there is no engine at all", () => {
+    expect(voiceRow(base)).toEqual({ sub: "No voice yet: the browser's own voice reads replies", state: "warn" });
   });
 });

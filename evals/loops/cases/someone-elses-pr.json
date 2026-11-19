@@ -1,0 +1,83 @@
+{
+  "id": "someone-elses-pr",
+  "about": "Asha's pull request on the user's repo asks for their review, CI green: never run here; a card briefed from CI.",
+  "mails": [
+    {
+      "id": "se1",
+      "from": "Asha <notifications@github.com>",
+      "subject": "[you-dev/app] Add a dark map style (PR #72)",
+      "at": "2026-11-18T03:40:00Z",
+      "snippet": "@you-dev requested your review on this pull request.",
+      "body": "@you-dev requested your review on this pull request.",
+      "thread": "gh-thread-72"
+    }
+  ],
+  "gh": {
+    "pr:you-dev/app#72": {
+      "number": 72,
+      "title": "Add a dark map style",
+      "state": "OPEN",
+      "isDraft": false,
+      "mergedAt": null,
+      "closedAt": null,
+      "author": {
+        "login": "asha-codes"
+      },
+      "headRefName": "branch-72",
+      "baseRefName": "main",
+      "additions": 41,
+      "deletions": 9,
+      "changedFiles": 1,
+      "files": [
+        {
+          "path": "app/map.py",
+          "additions": 20,
+          "deletions": 4
+        }
+      ],
+      "isCrossRepository": false,
+      "reviewDecision": "",
+      "reviewRequests": [
+        {
+          "login": "you-dev"
+        }
+      ],
+      "url": "https://github.com/you-dev/app/pull/72",
+      "statusCheckRollup": [
+        {
+          "name": "tests",
+          "status": "COMPLETED",
+          "conclusion": "SUCCESS"
+        }
+      ],
+      "headRefOid": "2222222222222222222222222222222222222222",
+      "commits": [
+        {
+          "oid": "2222222222222222222222222222222222222222",
+          "authors": [
+            {
+              "login": "asha-codes"
+            }
+          ]
+        }
+      ]
+    },
+    "user": "you-dev",
+    "collaborators:you-dev/app": [
+      "you-dev",
+      "asha-codes"
+    ]
+  },
+  "recipes": {
+    "you-dev/app": "make test"
+  },
+  "expect": {
+    "loops": 1,
+    "cards": [
+      "you-dev/app#72"
+    ],
+    "untested": [
+      "you-dev/app#72"
+    ]
+  }
+}

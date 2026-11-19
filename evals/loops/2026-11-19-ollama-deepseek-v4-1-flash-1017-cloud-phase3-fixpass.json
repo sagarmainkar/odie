@@ -1,0 +1,465 @@
+{
+  "date": "2026-11-19",
+  "odie_commit": "b584f8b",
+  "provider": "ollama",
+  "model": "deepseek-v4.1-flash:1017-cloud",
+  "totals": {
+    "right": 76,
+    "of": 82,
+    "wrong": [
+      "bill-then-paid: mail:b1 not closed with a reason",
+      "deck-by-friday-then-a-call: mail:d1 due 2026-11-20T09:00+05:30, wanted 2026-11-20T15:00",
+      "fourteen-mails-one-pr: 3 loops, wanted 1",
+      "order-shipped-then-delivered: mail:o1 not closed with a reason",
+      "two-mails-one-order: 0 loops, wanted 1",
+      "two-mails-one-order: mail:oc2 owner no loop, wanted them"
+    ]
+  },
+  "results": [
+    {
+      "id": "a-draft-waits",
+      "error": "",
+      "ran": [
+        [
+          1,
+          "wait"
+        ]
+      ],
+      "score": {
+        "right": 1,
+        "of": 1,
+        "wrong": [],
+        "loops": 1
+      }
+    },
+    {
+      "id": "bill-then-paid",
+      "error": "",
+      "ran": [],
+      "score": {
+        "right": 1,
+        "of": 2,
+        "wrong": [
+          "mail:b1 not closed with a reason"
+        ],
+        "loops": 1
+      }
+    },
+    {
+      "id": "deck-by-friday-then-a-call",
+      "error": "",
+      "ran": [],
+      "score": {
+        "right": 3,
+        "of": 4,
+        "wrong": [
+          "mail:d1 due 2026-11-20T09:00+05:30, wanted 2026-11-20T15:00"
+        ],
+        "loops": 1
+      }
+    },
+    {
+      "id": "dismissed-event-stays-gone",
+      "error": "",
+      "ran": [],
+      "score": {
+        "right": 3,
+        "of": 3,
+        "wrong": [],
+        "loops": 1
+      }
+    },
+    {
+      "id": "done-pr-gets-mail",
+      "error": "",
+      "ran": [],
+      "score": {
+        "right": 2,
+        "of": 2,
+        "wrong": [],
+        "loops": 1
+      }
+    },
+    {
+      "id": "done-then-a-new-ask",
+      "error": "",
+      "ran": [],
+      "score": {
+        "right": 3,
+        "of": 3,
+        "wrong": [],
+        "loops": 2
+      }
+    },
+    {
+      "id": "forward-leaves-reply-open",
+      "error": "",
+      "ran": [],
+      "score": {
+        "right": 2,
+        "of": 2,
+        "wrong": [],
+        "loops": 1
+      }
+    },
+    {
+      "id": "fourteen-mails-one-pr",
+      "error": "",
+      "ran": [
+        [
+          9,
+          "ready"
+        ],
+        [
+          11,
+          "ready"
+        ],
+        [
+          10,
+          "ready"
+        ]
+      ],
+      "score": {
+        "right": 1,
+        "of": 2,
+        "wrong": [
+          "3 loops, wanted 1"
+        ],
+        "loops": 3
+      }
+    },
+    {
+      "id": "heads-up-for-an-event",
+      "error": "",
+      "ran": [],
+      "score": {
+        "right": 2,
+        "of": 2,
+        "wrong": [],
+        "loops": 1
+      }
+    },
+    {
+      "id": "issue-assigned-to-you",
+      "error": "",
+      "ran": [
+        [
+          13,
+          "ready"
+        ]
+      ],
+      "score": {
+        "right": 2,
+        "of": 2,
+        "wrong": [],
+        "loops": 1
+      }
+    },
+    {
+      "id": "issue-not-yours",
+      "error": "",
+      "ran": [],
+      "score": {
+        "right": 1,
+        "of": 1,
+        "wrong": [],
+        "loops": 0
+      }
+    },
+    {
+      "id": "lone-merged-mail",
+      "error": "",
+      "ran": [
+        [
+          14,
+          "drop"
+        ]
+      ],
+      "score": {
+        "right": 1,
+        "of": 1,
+        "wrong": [],
+        "loops": 1
+      }
+    },
+    {
+      "id": "meeting-moved",
+      "error": "",
+      "ran": [],
+      "score": {
+        "right": 3,
+        "of": 3,
+        "wrong": [],
+        "loops": 1
+      }
+    },
+    {
+      "id": "merged-pr-closes",
+      "error": "",
+      "ran": [
+        [
+          16,
+          "drop"
+        ]
+      ],
+      "score": {
+        "right": 3,
+        "of": 3,
+        "wrong": [],
+        "loops": 1
+      }
+    },
+    {
+      "id": "newsletter-is-nothing",
+      "error": "",
+      "ran": [],
+      "score": {
+        "right": 1,
+        "of": 1,
+        "wrong": [],
+        "loops": 0
+      }
+    },
+    {
+      "id": "old-pr-card-and-loop",
+      "error": "",
+      "ran": [
+        [
+          17,
+          "ready"
+        ]
+      ],
+      "score": {
+        "right": 3,
+        "of": 3,
+        "wrong": [],
+        "loops": 1
+      }
+    },
+    {
+      "id": "order-shipped-then-delivered",
+      "error": "",
+      "ran": [],
+      "score": {
+        "right": 3,
+        "of": 4,
+        "wrong": [
+          "mail:o1 not closed with a reason"
+        ],
+        "loops": 1
+      }
+    },
+    {
+      "id": "own-pr-ci-failing",
+      "error": "",
+      "ran": [
+        [
+          19,
+          "ready"
+        ]
+      ],
+      "score": {
+        "right": 2,
+        "of": 2,
+        "wrong": [],
+        "loops": 1
+      }
+    },
+    {
+      "id": "own-pr-green-tested",
+      "error": "",
+      "ran": [
+        [
+          20,
+          "test"
+        ],
+        [
+          20,
+          "ready"
+        ]
+      ],
+      "score": {
+        "right": 2,
+        "of": 2,
+        "wrong": [],
+        "loops": 1
+      }
+    },
+    {
+      "id": "own-pr-lockfile",
+      "error": "",
+      "ran": [
+        [
+          21,
+          "ready"
+        ]
+      ],
+      "score": {
+        "right": 2,
+        "of": 2,
+        "wrong": [],
+        "loops": 1
+      }
+    },
+    {
+      "id": "own-pr-no-recipe",
+      "error": "",
+      "ran": [
+        [
+          22,
+          "ask"
+        ]
+      ],
+      "score": {
+        "right": 3,
+        "of": 3,
+        "wrong": [],
+        "loops": 1
+      }
+    },
+    {
+      "id": "personality-inbox",
+      "error": "",
+      "ran": [],
+      "score": {
+        "right": 3,
+        "of": 3,
+        "wrong": [],
+        "loops": 1
+      }
+    },
+    {
+      "id": "promise-from-them",
+      "error": "",
+      "ran": [],
+      "score": {
+        "right": 3,
+        "of": 3,
+        "wrong": [],
+        "loops": 1
+      }
+    },
+    {
+      "id": "reply-from-the-phone",
+      "error": "",
+      "ran": [],
+      "score": {
+        "right": 2,
+        "of": 2,
+        "wrong": [],
+        "loops": 1
+      }
+    },
+    {
+      "id": "reply-owed-no-due-date",
+      "error": "",
+      "ran": [],
+      "score": {
+        "right": 4,
+        "of": 4,
+        "wrong": [],
+        "loops": 1
+      }
+    },
+    {
+      "id": "security-notice",
+      "error": "",
+      "ran": [],
+      "score": {
+        "right": 3,
+        "of": 3,
+        "wrong": [],
+        "loops": 1
+      }
+    },
+    {
+      "id": "sign-in-code-is-nothing",
+      "error": "",
+      "ran": [],
+      "score": {
+        "right": 1,
+        "of": 1,
+        "wrong": [],
+        "loops": 0
+      }
+    },
+    {
+      "id": "someone-elses-pr",
+      "error": "",
+      "ran": [],
+      "score": {
+        "right": 3,
+        "of": 3,
+        "wrong": [],
+        "loops": 1
+      }
+    },
+    {
+      "id": "thanks-closes-nothing",
+      "error": "",
+      "ran": [],
+      "score": {
+        "right": 3,
+        "of": 3,
+        "wrong": [],
+        "loops": 1
+      }
+    },
+    {
+      "id": "two-invoices-one-biller",
+      "error": "",
+      "ran": [],
+      "score": {
+        "right": 3,
+        "of": 3,
+        "wrong": [],
+        "loops": 2
+      }
+    },
+    {
+      "id": "two-mails-one-order",
+      "error": "",
+      "ran": [],
+      "score": {
+        "right": 0,
+        "of": 2,
+        "wrong": [
+          "0 loops, wanted 1",
+          "mail:oc2 owner no loop, wanted them"
+        ],
+        "loops": 0
+      }
+    },
+    {
+      "id": "two-prs-alike",
+      "error": "",
+      "ran": [
+        [
+          32,
+          "wait"
+        ],
+        [
+          33,
+          "wait"
+        ]
+      ],
+      "score": {
+        "right": 3,
+        "of": 3,
+        "wrong": [],
+        "loops": 2
+      }
+    },
+    {
+      "id": "vote-event-digest-event",
+      "error": "",
+      "ran": [],
+      "score": {
+        "right": 4,
+        "of": 4,
+        "wrong": [],
+        "loops": 1
+      }
+    }
+  ]
+}

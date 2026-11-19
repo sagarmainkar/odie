@@ -211,15 +211,42 @@ def _session_id_of(readonly_context) -> str | None:
 class PluginMcpToolset(McpToolset):
     """An MCP toolset whose tools need the user's tap, unless the user switched "Reading doesn't need a tap" on for
     the server (reads_free) and the tool's name says it reads (asks); the server's own read-only hint frees nothing.
-    `smart` is a zero-argument function that says whether the approvals mode is Smart right now (None: always Careful).
-    It is called on every listing, and ADK lists the tools again at each step of a turn, so switching the mode mid-chat
-    shows on the next step."""
+    `smart` says whether the approvals mode is Smart right now (None: always Careful), and `allowed` whether a chat may
+    use this server at all. Both are read on every listing, and the listing is made again at every step of a turn
+    (ADK's per-invocation cache is off here: google/adk/tools/base_toolset.py get_tools_with_prefix), so a mode or a
+    switch changed mid-chat shows on the next step. The server's own tool list is reused for LIST_CACHE_SECONDS, so a
+    step costs no round trip to the server.
 
-    def __init__(self, *args, reads_free: bool = False, smart: Callable[[str | None], bool] | None = None, **kwargs):
+    Every tool it hands out carries the name of its server (`_odie_server`): two connections of one service list the
+    same tool names, and which account a call reaches is a fact of the tool object ADK runs, not of its name
+    (odie.plugins.access.server_of_call)."""
+
+    def __init__(self, *args, reads_free: bool = False, smart: Callable[[str | None], bool] | None = None,
+                 allowed: Callable[[str | None], bool] | None = None, server: str | None = None, **kwargs):
         # smart: reads the live mode for a chat (the session id, or None outside one) on every listing; see runs_free.
+        # allowed: whether the chat (the session id, or None outside one) may use this server at all
+        # (odie.plugins.access); None: every chat may. server: its name in mcp.json, stamped on its tools.
         super().__init__(*args, **kwargs)
+        self._use_invocation_cache = False  # a listing per step: the switches and the mode are read live
         self.reads_free = reads_free
         self.smart = smart
+        self.allowed = allowed
+        self.server = server
+
+    def _allowed_in(self, session_id: str | None) -> bool:
+        """Whether this chat may use the server, read live on every listing (a switch flipped in Settings counts from
+        the next step). A reader that fails counts as no: an app's tools are never listed in a thread where they might
+        be off.
+          no reader                         -> True
+          Mira's thread, the server off for her -> False
+          the reader raises                 -> False (logged)"""
+        if self.allowed is None:
+            return True
+        try:
+            return bool(self.allowed(session_id))
+        except Exception:
+            log.warning("could not read who may use an app; its tools are left out", exc_info=True)
+            return False
 
     def _smart_now(self, session_id: str | None) -> bool:
         """Whether the approvals mode is Smart right now; Careful when there is no reader or it fails (a locked database
@@ -233,30 +260,82 @@ class PluginMcpToolset(McpToolset):
             return False
 
     async def get_tools(self, readonly_context=None):
+        session_id = _session_id_of(readonly_context)
+        if not self._allowed_in(session_id):
+            return []  # switched off for whoever this thread belongs to: none of its tools exist there
         tools = await super().get_tools(readonly_context)
-        smart_now = self._smart_now(_session_id_of(readonly_context))
+        smart_now = self._smart_now(session_id)
         for t in tools:  # per tool; ADK's toolset option can't see annotations
             tool = {"name": t.name, "read_only": is_read_only(t), "destructive": is_destructive(t)}
             t._require_confirmation = asks(tool, self.reads_free, smart=smart_now)
+            t._odie_server = self.server  # which connection this object reaches, whatever its name
             # Background turns share these tool objects and must never get Smart's looser rule: they read this instead.
             t._asks_in_careful = asks(tool, self.reads_free, smart=False)
         return tools
 
 
-def toolset_for(name: str, spec: dict, timeout: float = 30, smart: Callable[[str | None], bool] | None = None) -> PluginMcpToolset:
+LIST_CACHE_SECONDS = 60  # how long a server's own tool list is reused between listings (PluginMcpToolset)
+
+
+def toolset_for(name: str, spec: dict, timeout: float = 30, smart: Callable[[str | None], bool] | None = None,
+                allowed: Callable[[str | None], bool] | None = None) -> PluginMcpToolset:
     if spec.get("url"):
         params = StreamableHTTPConnectionParams(url=spec["url"], headers=dict(spec.get("headers") or {}), timeout=timeout)
     else:
         env = {**server_env(), **(spec.get("env") or {})}
         params = StdioConnectionParams(server_params=StdioServerParameters(command=spec["command"], args=list(spec.get("args") or []), env=env),
                                        timeout=timeout)
-    return PluginMcpToolset(connection_params=params, reads_free=bool(spec.get("readsFree")), smart=smart)
+    return PluginMcpToolset(connection_params=params, reads_free=bool(spec.get("readsFree")), smart=smart, allowed=allowed,
+                            server=name, tool_list_cache_ttl_seconds=LIST_CACHE_SECONDS)
 
 
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 MASK = "••••"
 TOOL_APP: dict[str, str] = {}  # tool name -> the app (server title) it comes from, for approval cards
 TOOL_SKILL: dict[str, str] = {}  # tool name -> the skill that loads it (mcp-<server>), to point a model that skipped it
+# Tool name -> every working server that lists it (its name in mcp.json), in load order. Two connections of one service
+# list the same names; they both load when no one has both switched on (load_servers), and which one a call reaches is
+# the one on for the thread's owner (odie.plugins.access.server_of_tool).
+TOOL_SERVERS: dict[str, list[str]] = {}
+SERVER_TITLE: dict[str, str] = {}  # server -> the app's title, for approval cards and hints
+SERVER_SKILL: dict[str, str] = {}  # server -> the skill that loads its tools (mcp-<server>); none for an always-on one
+
+
+def skill_name_of(server: str) -> str:
+    """The on-demand skill that brings a server's tools: "work-mail" -> "mcp-work-mail"."""
+    return f"mcp-{server}"
+
+
+def server_of_skill(skill: str) -> str | None:
+    """The server whose skill this is, or None for any other skill: "mcp-work-mail" -> "work-mail"; "trackers" -> None."""
+    if not skill.startswith("mcp-"):
+        return None
+    return skill.removeprefix("mcp-")
+
+
+def _set_tool_servers(entries: list) -> None:
+    """Which servers each tool name comes from, and each working server's title and skill, after a load; nothing stale
+    stays."""
+    by_tool: dict[str, list[str]] = {}
+    titles: dict[str, str] = {}
+    skills: dict[str, str] = {}
+    for e in entries:
+        if e.status != "ok":
+            continue
+        titles[e.name] = e.title or e.name
+        if e.skill is not None:
+            skills[e.name] = e.skill.name
+        for tool in e.tools:
+            by_tool.setdefault(tool, []).append(e.name)
+    for registry, fresh in ((TOOL_SERVERS, by_tool), (SERVER_TITLE, titles), (SERVER_SKILL, skills)):
+        registry.clear()
+        registry.update(fresh)
+
+
+def servers_with_tool(tool_name: str) -> list[str]:
+    """Every working server that lists this tool, in load order: send_email from home and work mail -> ["mail",
+    "mail-2"]; a tool no server lists -> []."""
+    return list(TOOL_SERVERS.get(tool_name, []))
 
 
 def _set_tool_apps(entries: list[tuple]) -> None:
@@ -519,7 +598,7 @@ def reads_mail(tools: list[str]) -> bool:
 
 
 def _skill_for(name: str, description: str, tools: list[str]) -> Skill:
-    fm = Frontmatter(name=f"mcp-{name}", description=description, metadata={"adk_additional_tools": tools})
+    fm = Frontmatter(name=skill_name_of(name), description=description, metadata={"adk_additional_tools": tools})
     instructions = f"Tools from the {name} MCP server: {', '.join(tools)}. Use them for: {description}"
     if reads_mail(tools):
         instructions += SHOW_MAIL
@@ -587,14 +666,28 @@ async def probe_tools(spec: dict, timeout: float) -> list[dict]:
 
 
 async def load_servers(timeout: float = 15, reserved: dict[str, str] | None = None,
-                       smart: Callable[[str | None], bool] | None = None) -> list[ServerEntry]:
+                       smart: Callable[[str | None], bool] | None = None,
+                       allowed: Callable[[str, str | None], bool] | None = None,
+                       may_share: Callable[[str, str], bool] | None = None,
+                       could_clash: Callable[[str, str], bool] | None = None,
+                       advice: str = "") -> list[ServerEntry]:
     """Every server in mcp.json with its status. `reserved` maps tool names Odie already has (built-ins, skill
-    tools) to their owner, so a server can't shadow them. `smart` reads the live approvals mode for each server's toolset."""
+    tools) to their owner, so a server can't shadow them. `smart` reads the live approvals mode for each server's
+    toolset. `allowed(server, session_id)` says whether a chat may use a server (odie.plugins.access), read on every
+    listing. `may_share(a, b)` says whether two servers may list the same tool names (no one has both switched on);
+    None: never, as before personalities. `could_clash(a, b)` says whether two servers could list the same names from
+    what is known of them beyond this load (odie.plugins.access.could_clash), so an earlier server that didn't answer
+    this time still keeps a later one of the same service from loading in its place. `advice`: what a clash's words
+    say to do (ONE_OF_TWO with personalities; ONLY_ONE, the default, without)."""
+    if not advice:
+        advice = ONLY_ONE
     servers, err = read_config()
     if err:
         log.warning(err)
     out: list[ServerEntry] = []
-    seen: dict[str, str] = dict(reserved or {})  # tool name -> who owns it
+    seen: dict[str, str] = dict(reserved or {})  # tool name -> the built-in or skill that owns it
+    by_servers: dict[str, list[str]] = {}  # tool name -> the servers loaded so far that list it
+    unanswered: list[str] = []  # earlier servers, switched on, that didn't list this time
     for name, spec in servers.items():
         spec = spec if isinstance(spec, dict) else {}
         e = ServerEntry(name, "http" if spec.get("url") else "stdio", spec.get("description") or "", "ok",
@@ -613,19 +706,81 @@ async def load_servers(timeout: float = 15, reserved: dict[str, str] | None = No
             listed = await probe_tools(spec, timeout)
         except Exception as ex:  # noqa: BLE001 (timeouts, refused connections, bad commands)
             e.status, e.reason = "failed", scrub(str(ex) or type(ex).__name__, spec)
+            unanswered.append(name)
             continue
         e.tools = [t["name"] for t in listed]
         e.title = spec.get("title") or name
-        clash = next((f"{t} ({seen[t]})" for t in e.tools if t in seen), None)
+        clash = _clash(e.tools, name, seen, by_servers, may_share, advice)
+        if clash is None:
+            clash = _clash_with_unanswered(name, unanswered, may_share, could_clash, advice)
         if clash:
             e.status, e.reason = "error", f"tool names clash with {clash}"
             continue
         for t in e.tools:
-            seen[t] = name
-        e.toolset = toolset_for(name, spec, smart=smart)  # connects lazily, the first time a tool is needed
+            by_servers.setdefault(t, []).append(name)
+        e.toolset = toolset_for(name, spec, smart=smart, allowed=_allowed_for(name, allowed))  # connects lazily
         if not e.description:
             e.description = f"Tools from {name}: {', '.join(e.tools[:8])}"
         if not e.always_on:
             e.skill = _skill_for(name, e.description, e.tools)
-    _set_tool_apps([(e.title or e.name, e.status, e.tools, e.skill.name if e.skill else None) for e in out])
+    remember_loaded(out)
     return out
+
+
+def remember_loaded(entries: list[ServerEntry]) -> None:
+    """After a load: which app, server and skill each tool name belongs to (TOOL_APP, TOOL_SKILL, TOOL_SERVERS,
+    SERVER_TITLE, SERVER_SKILL), from the loaded entries."""
+    _set_tool_apps([(e.title or e.name, e.status, e.tools, e.skill.name if e.skill else None) for e in entries])
+    _set_tool_servers(entries)
+
+
+def _clash(tools: list[str], server: str, reserved: dict[str, str], by_servers: dict[str, list[str]],
+           may_share: Callable[[str, str], bool] | None, advice: str = "") -> str | None:
+    """The first of a server's tools that it may not have, as "<tool> (<who has it>)", or None when it may load. A
+    built-in's or a skill's tool name is never shared; another server's is, when may_share says no one has both on.
+      write_note, already a built-in tool                         -> "write_note (Odie)"
+      send_email, also in `mail`, both on for everyday Odie        -> "send_email (mail). Only one of them can be on: …"
+      send_email, also in `mail` (Odie's), this one Mira's alone   -> None: both load
+      nothing in common                                            -> None"""
+    for tool in tools:
+        if tool in reserved:
+            return f"{tool} ({reserved[tool]})"
+        for other in by_servers.get(tool, []):
+            shared_by_no_one = may_share is not None and may_share(other, server)
+            if not shared_by_no_one:
+                return f"{tool} ({other}). {advice or ONLY_ONE}"
+    return None
+
+
+# What a clash's words say to do: with personalities, a switch for each one can clear it too; with none, only the
+# whole server's switch can (load_servers' `advice`).
+ONE_OF_TWO = "Only one of them can be on for each one: switch one of the two off, or off for whoever has both."
+ONLY_ONE = "Only one of them can be on: switch one of the two off."
+CLASH_ADVICE = (ONE_OF_TWO, ONLY_ONE)
+
+
+def _clash_with_unanswered(server: str, unanswered: list[str], may_share: Callable[[str, str], bool] | None,
+                           could_clash: Callable[[str, str], bool] | None, advice: str = "") -> str | None:
+    """A clash with an earlier server that didn't list this time, as "<server> (<server>)", or None. That server would
+    have kept this one out had it answered, so it still does when they could list the same names and someone has
+    both on: a blip never lets a second connection of a service answer in the first one's place.
+      mail-2 after mail, mail failed, both on for Odie, the same tools known   -> "mail (mail). Only one of them…"
+      mail-2 after mail, mail failed, mail Odie's alone and mail-2 Mira's       -> None (they may share)
+      nothing earlier failed, or no could_clash given                          -> None"""
+    if could_clash is None:
+        return None
+    for other in unanswered:
+        shared_by_no_one = may_share is not None and may_share(other, server)
+        if not shared_by_no_one and could_clash(server, other):
+            return f"{other} ({other}). {advice or ONLY_ONE}"
+    return None
+
+
+def _allowed_for(server: str, allowed: Callable[[str, str | None], bool] | None) -> Callable[[str | None], bool] | None:
+    """load_servers' `allowed`, for one server: what its toolset asks with a chat's session id."""
+    if allowed is None:
+        return None
+
+    def for_this_server(session_id: str | None) -> bool:
+        return allowed(server, session_id)
+    return for_this_server

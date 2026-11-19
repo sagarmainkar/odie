@@ -253,13 +253,16 @@ def guard(tool, args, tool_context) -> dict | None:
     sending mail), when an app tool would ask in Careful (Smart never reaches a background check), or when its own
     require_confirmation says it would ask (background_asks).
     Example: a price tracker calls web_search -> None (runs); run_shell -> refused; gmail_send_draft -> refused;
+    task_update, watch_close -> refused (his Done is his);
     gmail_create_draft from an app with Smart on -> refused; list_items with the server's reads switch on -> runs."""
     from odie import addons
     from odie.agent.agent import GATED_TOOLS
     from odie.signin.guard import background_asks
     always_gated = tool.name in GATED_TOOLS | addons.gated_tools()
     is_skill_install = tool.name == "install_skill"
-    is_the_users_item = tool.name == "watch_close"  # only the user takes a watch item off Today
+    # only the user takes a card off Pulse; and a tracker has no business with tasks: ticking a loop's reminder is his
+    # Done (odie.loops.chat_done), so task_update is refused here too
+    is_the_users_item = tool.name in ("watch_close", "task_update")
     careful_asks = getattr(tool, "_asks_in_careful", None)  # set on app tools only; None for every other tool
     asks_in_careful = careful_asks is True
     if always_gated or is_skill_install or is_the_users_item or asks_in_careful or background_asks(tool, args, tool_context):

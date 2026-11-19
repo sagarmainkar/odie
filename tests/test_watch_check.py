@@ -74,7 +74,10 @@ async def test_a_standing_instruction_makes_the_deck_and_says_so(store, tmp_path
     assert note["media"]  # the deck as its file, for Today's "done while you were away"
     assert posts == []  # nothing goes into a conversation
     assert [t for t, _ in pushes] == ["Deck from xyz", "Odie: done"]
-    assert store.get_setting(report.CARD)["needs_you"][0]["ref"] == "mail:m1"
+    from odie.loops import ledger
+    loop = ledger.find_by_refs(store, "", ["mail:m1"])
+    assert loop["state"] == "ready" and loop["title"] == "Deck from xyz"  # the item is a loop: its card on Pulse
+    assert f"loop:{loop['id']}" in store.get_setting(report.FLAGGED)
 
 
 async def test_no_report_still_leaves_a_card_from_the_check(store, tmp_path):
@@ -171,13 +174,37 @@ async def test_a_check_that_added_a_reminder_tells_even_without_tell(store, tmp_
 
     async def turn(prompt, tools, instruction):
         await call(tools, "new_mail")
-        store.add_task("Heads-up: Asha's recital", "reminder", due_at="2026-10-09T17:30:00+05:30")  # what task_add does
-        await call(tools, "report", needs_you=[], line="2 new emails", done=[{"message": news, "files": []}])
+        heads_up = {"ref": "mail:m1", "title": "Heads-up: Asha's recital", "why": "Friday 17:30",
+                    "remind_at": "2026-10-09T17:30"}  # a reminder is a finding's remind_at: Odie makes it once
+        await call(tools, "report", findings=[heads_up], line="2 new emails", done=[{"message": news, "files": []}])
         return ""
     assert await check.run_check(store, DAY, turn, push) == "ok"
     assert posts == []
-    assert pushes == [("Odie: done", news)]
+    assert ("Odie: done", news) in pushes
     assert store.get_setting(report.CARD)["done"][-1]["told"] is True
+    made = store.query("select title, due_at from tasks where source_kind = 'loop'")
+    assert [(r["title"], r["due_at"]) for r in made] == [("Heads-up: Asha's recital", "2026-10-09T17:30+05:30")]
+
+
+async def test_a_reminder_for_something_he_finished_is_neither_made_nor_told(store, tmp_path):
+    """The vote case (19 Nov 2026): he ticked the reminder off; a later check sees the same thing again and its note
+    says "added a reminder". Nothing is made, and the note isn't told."""
+    from odie.loops import ledger
+    from odie.plugins import mcp
+    mcp.write_config({"mymail": spec_for("plain", tmp_path, mail=ZAP_MAIL, events=EVENTS)})
+    posts, pushes, post, push = recorder()
+    lid = ledger.open_loop(store, "", DAY, "Heads-up: Asha's recital", "reminder", owner="you", refs=["mail:m1"])
+    ledger.done(store, lid, DAY)
+
+    async def turn(prompt, tools, instruction):
+        await call(tools, "new_mail")
+        heads_up = {"ref": "mail:m1", "title": "Heads-up: Asha's recital", "remind_at": "2026-10-09T17:30"}
+        await call(tools, "report", findings=[heads_up], line="", done=[{"message": "Added a heads-up", "files": []}])
+        return ""
+    assert await check.run_check(store, DAY, turn, push) == "ok"
+    assert store.query("select id from tasks where source_kind = 'loop'") == []
+    assert pushes == [] and store.get_setting(report.CARD)["done"][-1]["told"] is False
+    assert ledger.get(store, lid)["state"] == "closed"
 
 
 @pytest.mark.parametrize("item, told", [
@@ -272,10 +299,14 @@ def test_the_watch_reads_like_an_assistant():
     assert "a reply owed" in text and "unsubscribe footer" in text and "opportunity for the user" in text
     assert "read_thread" in text and "sent_to" in text and "search_mail" in text
     assert "Always finish with `report`" in text and "refused" in text
-    assert "open_threads" in text and "`track`" in text and "draft" in text
+    assert "`track_thread`" in text and "draft" in text and "finding" in text
     assert all(pile in text for pile in ("alerts", "bills", "events", "personal", "orders"))
-    assert "suggestion" in text and "escape" in text
-    assert len(text.split()) <= 1000  # it also reviews its threads now; it still runs every 30 minutes
+    assert "suggestion" in text and "escape" not in text  # Done and Later are fixed: the model writes only the move
+    assert "what_you_sent" in text and "answers someone" in text  # the user's own mail closes what it answers (18 Nov)
+    assert len(text.split()) <= 1180
+    # Stage 1 (19 Nov): it reads, Odie remembers; no ledger, no memory, a reminder is a finding's remind_at
+    assert "one loop per real" in text and "remind_at" in text
+    assert "open_threads" not in text and "open_loops" not in text and "task_add" not in text
 
 
 
@@ -308,7 +339,7 @@ async def test_tracking_a_thread_is_not_telling_the_user(store, tmp_path):
 
     async def turn(prompt, tools, instruction):
         await call(tools, "new_mail")
-        await call(tools, "track", ref="mail:m1", kind="order", title="Order: desk lamp", stage="placed")
+        await call(tools, "track_thread", ref="mail:m1", kind="order", title="Order: desk lamp", stage="placed")
         await call(tools, "report", needs_you=[], line="quiet", done=[{"message": "Nothing new, already covered"}])
     await check.run_check(store, DAY, turn, push)
     assert all("Nothing new" not in text for text, _media in posts)
@@ -328,7 +359,7 @@ def test_the_instructions_have_no_braced_word_adk_would_fill_in():
     # (KeyError: Context variable not found). Lists like "{to, subject, body}" are fine.
     import re
     from odie.watch import check as watch_check
-    text = watch_check._instruction("", "")
+    text = watch_check._instruction("")
     assert re.findall(r"\{[A-Za-z_][A-Za-z0-9_.:]*\??\}", text) == []
 
 
@@ -342,7 +373,7 @@ async def test_the_watch_cant_open_a_thread_for_a_mail_it_hasnt_seen(store, tmp_
 
     async def turn(prompt, tools, instruction):
         await call(tools, "new_mail")
-        said.append(await call(tools, "track", ref="mail:unknown9", kind="order", title="Order: kettle", stage="placed"))
+        said.append(await call(tools, "track_thread", ref="mail:unknown9", kind="order", title="Order: kettle", stage="placed"))
         await call(tools, "report", needs_you=[], line="quiet")
     await check.run_check(store, DAY, turn, push)
     assert "search_mail" in str(said[0])
@@ -350,15 +381,16 @@ async def test_the_watch_cant_open_a_thread_for_a_mail_it_hasnt_seen(store, tmp_
 
 
 def test_after_reading_mail_the_watch_stays_off_the_web_except_watch_for_addresses():
-    """A mail in the check's own window is other people's text too: once any mail or event is read, a search or a fetch
-    could carry it out. The only fetch left is of an address the user wrote in a Watch for entry (and tapped)."""
+    """A mail in the check's own window is other people's text too, and code reads it before the turn starts: from the
+    first call a search or a fetch could carry it out. The only fetch is of an address the user wrote in a Watch for
+    entry (and tapped)."""
     from odie.watch.tools import READ_MAIL, mark_read, mark_read_beyond
     check.WATCH_FOR_ADDRESSES.clear()
     check.WATCH_FOR_ADDRESSES.update(check.addresses_in("- HN: check https://news.ycombinator.com/item?id=1 daily.\n- Nothing else"))
     assert check.WATCH_FOR_ADDRESSES == {"https://news.ycombinator.com/item?id=1"}
     fresh = SimpleNamespace(state={})
     for name in ("web_fetch", "web_search", "find_images"):
-        assert check.guard(SimpleNamespace(name=name, _require_confirmation=False), {"url": "https://evil.example/?d=x"}, fresh) is None, name
+        assert check.guard(SimpleNamespace(name=name, _require_confirmation=False), {"url": "https://evil.example/?d=x"}, fresh) is not None, name
     mark_read(fresh)  # new_mail, read_mail or upcoming_events ran
     assert fresh.state[READ_MAIL] is True
     assert check.guard(SimpleNamespace(name="web_search", _require_confirmation=False), {"query": "x"}, fresh) is not None
@@ -371,3 +403,63 @@ def test_after_reading_mail_the_watch_stays_off_the_web_except_watch_for_address
     assert older.state[READ_MAIL] is True
     assert check.guard(SimpleNamespace(name="web_search", _require_confirmation=False), {"query": "x"}, older) is not None
     check.WATCH_FOR_ADDRESSES.clear()
+
+
+def test_the_watchs_tools_never_shadow_odies_own(store):
+    # The watch's turn has Odie's own tools too (the trackers skill's "track" among them): a tool of the same name was
+    # shadowed ("Duplicate tool name 'track'"), so the watch's thread tool is named for what it does.
+    from odie.skills.trackers.tools import TOOLS as TRACKER_TOOLS
+    from odie.agent.tools.watch_items import make_watch_item_tools
+    from odie.watch.fetch import Fetcher
+    from odie.watch.tools import Check, watch_tools
+    watch_names = {t.name for t in watch_tools(Check(Fetcher(store, DAY)))}
+    chat_names = {t.name for t in [*TRACKER_TOOLS, *make_watch_item_tools(store)]}
+    assert watch_names.isdisjoint(chat_names)
+    assert "track_thread" in watch_names
+    text = check.SKILL.read_text()
+    assert "`track_thread`" in text and "`track`" not in text
+
+
+async def test_a_report_whose_lists_came_as_text_still_lands_on_the_card(store, tmp_path):
+    """A model sometimes sends a list as its JSON text (19 Nov 2026: needs_you came as one long string, the save
+    failed on its first character and the check's card was lost). The text is read as the list it spells."""
+    from odie.plugins import mcp
+    mcp.write_config({"mymail": spec_for("plain", tmp_path, mail=ZAP_MAIL, events=EVENTS)})
+    posts, pushes, post, push = recorder()
+
+    async def turn(prompt, tools, instruction):
+        await call(tools, "new_mail")
+        needs_as_text = json.dumps([{"ref": "mail:m1", "title": "Reply to Asha", "why": "asks for a call this week"}])
+        done_as_text = json.dumps([{"message": "nothing new for the standing check", "files": []}])
+        await call(tools, "report", needs_you=needs_as_text, line="1 new email", done=done_as_text)
+        return "done"
+    store.set_setting("watch.state", {"last_check": None, "seen": [], "events": {}, "sources": {"mail:mymail": {"fails": 0}, "calendar:mymail": {"fails": 0}}})
+    assert await check.run_check(store, DAY, turn, push) == "ok"
+    from odie.loops import ledger
+    loops = ledger.open_loops(store, "")
+    assert [lp["title"] for lp in loops] == ["Reply to Asha"] and "mail:m1" in loops[0]["refs"]
+
+
+@pytest.mark.parametrize("given, kept", [
+    ([{"ref": "mail:m1"}], [{"ref": "mail:m1"}]),                       # a proper list: as it is
+    ('[{"ref": "mail:m1"}]', [{"ref": "mail:m1"}]),                     # the list as its JSON text
+    ('{"ref": "mail:m1"}', [{"ref": "mail:m1"}]),                       # one item's JSON text
+    ({"ref": "mail:m1"}, [{"ref": "mail:m1"}]),                         # one item, not in a list
+    ([{"ref": "mail:m1"}, "mail:m2", 7, None], [{"ref": "mail:m1"}]),   # what isn't an item is dropped
+    ("not json at all", []), ("", []), (None, []), (42, []),
+])
+def test_items_of_reads_a_list_however_the_model_sent_it(given, kept):
+    from odie.watch.tools import items_of
+    assert items_of(given) == kept
+
+
+@pytest.mark.parametrize("given, kept", [
+    (["example/app#49"], ["example/app#49"]),            # a proper list
+    ('["example/app#49"]', ["example/app#49"]),          # the list as its JSON text
+    ("example/app#49", ["example/app#49"]),              # one text, not in a list
+    (["example/app#49", 7, None, ""], ["example/app#49"]),
+    (None, []), ("", []), (42, []),
+])
+def test_texts_of_reads_a_list_of_texts_however_the_model_sent_it(given, kept):
+    from odie.watch.tools import texts_of
+    assert texts_of(given) == kept

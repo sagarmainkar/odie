@@ -33,10 +33,22 @@ class Store:
         self._lock = threading.RLock()
 
     TASK_COLUMNS = {"delivered_at": "TEXT", "snoozed_until": "TEXT", "last_seen_at": "TEXT", "detail": "TEXT",
-                    "seen_at": "TEXT", "notice_media": "TEXT"}  # the curtain: when the user acted or dismissed; a spoken memo, as JSON
+                    "seen_at": "TEXT", "notice_media": "TEXT",  # the curtain: when the user acted or dismissed; a spoken memo, as JSON
+                    "personality": "TEXT"}  # whose reminder it is (odie.personalities); NULL = everyday Odie
     APPROVAL_COLUMNS = {"risk": "TEXT", "call_id": "TEXT"}  # call_id: the tool call this approval answered
     PUSH_COLUMNS = {"device_id": "INTEGER"}  # the paired device that subscribed (none before pairing)
+    THREAD_COLUMNS = {"personality": "TEXT"}  # whose thread it is (odie.personalities); NULL = everyday Odie
+    # Phase 3 of the proactive design: what a loop's card shows (pile, amount, draft, the mail it came from), as JSON.
+    LOOP_COLUMNS = {"card_json": "TEXT NOT NULL DEFAULT '{}'"}
     TRACKER_COLUMNS = {"page_url": "TEXT", "signin_allowed": "INTEGER NOT NULL DEFAULT 0"}  # a signed-in tracker's page and the user's Allow
+    # Workers (odie.workers): an install that tried the old bots experiment already has a jobs table of another shape
+    # (create table if not exists leaves it as it was). Its missing columns are added; its rows keep version 0, which
+    # this code never reads (odie.workers.store.CURRENT).
+    JOB_COLUMNS = {"personality": "TEXT", "started_by": "TEXT NOT NULL DEFAULT 'you'", "loop_id": "INTEGER",
+                   "needed_json": "TEXT NOT NULL DEFAULT '[]'", "allowed_json": "TEXT NOT NULL DEFAULT '[]'",
+                   "cleared": "INTEGER NOT NULL DEFAULT 0", "taint": "TEXT NOT NULL DEFAULT ''",
+                   "read_dirs_json": "TEXT NOT NULL DEFAULT '[]'", "uses": "TEXT NOT NULL DEFAULT 'web'",
+                   "version": "INTEGER NOT NULL DEFAULT 0"}
 
     def init_schema(self) -> None:
         with self._lock:
@@ -58,10 +70,22 @@ class Store:
             for col, typ in self.PUSH_COLUMNS.items():
                 if col not in have:
                     self._conn.execute(f"alter table push_subscriptions add column {col} {typ}")
+            have = {r["name"] for r in self._conn.execute("pragma table_info(threads)")}
+            for col, typ in self.THREAD_COLUMNS.items():
+                if col not in have:
+                    self._conn.execute(f"alter table threads add column {col} {typ}")
             have = {r["name"] for r in self._conn.execute("pragma table_info(trackers)")}
             for col, typ in self.TRACKER_COLUMNS.items():
                 if col not in have:
                     self._conn.execute(f"alter table trackers add column {col} {typ}")
+            have = {r["name"] for r in self._conn.execute("pragma table_info(loops)")}
+            for col, typ in self.LOOP_COLUMNS.items():
+                if col not in have:
+                    self._conn.execute(f"alter table loops add column {col} {typ}")
+            have = {r["name"] for r in self._conn.execute("pragma table_info(jobs)")}
+            for col, typ in self.JOB_COLUMNS.items():
+                if col not in have:
+                    self._conn.execute(f"alter table jobs add column {col} {typ}")
 
     def close(self) -> None:
         with self._lock:
@@ -82,10 +106,21 @@ class Store:
     # tasks
     def add_task(self, title: str, kind: str, due_at: str | None = None, next_check_at: str | None = None,
                  source_kind: str | None = None, source_ref: str | None = None, origin: str = "user",
-                 notes: str | None = None) -> int:
+                 notes: str | None = None, personality: str | None = None) -> int:
+        """`personality`: the personality whose chat it was set in (odie.personalities); None or "" = an everyday task."""
         return self.execute(
-            "insert into tasks(title,kind,due_at,next_check_at,source_kind,source_ref,origin,notes) values(?,?,?,?,?,?,?,?)",
-            (title, kind, due_at, next_check_at, source_kind, source_ref, origin, notes)).lastrowid
+            "insert into tasks(title,kind,due_at,next_check_at,source_kind,source_ref,origin,notes,personality) values(?,?,?,?,?,?,?,?,?)",
+            (title, kind, due_at, next_check_at, source_kind, source_ref, origin, notes, personality or None)).lastrowid
+
+    @staticmethod
+    def _whose_tasks(personality: str) -> tuple[str, tuple]:
+        """The SQL condition (and its values) for the tasks someone may see. A task set with a personality is that
+        personality's alone; a personality also sees the everyday ones.
+          everyday Odie ("") -> ("personality is null", ())
+          Mira ("ab12…")     -> ("(personality is null or personality = ?)", ("ab12…",))"""
+        if not personality:
+            return "personality is null", ()
+        return "(personality is null or personality = ?)", (personality,)
 
     def update_task(self, task_id: int, **fields: Any) -> None:
         fields["updated_at"] = now_iso()
@@ -94,15 +129,19 @@ class Store:
         cols = ", ".join(f"{k}=?" for k in fields)
         self.execute(f"update tasks set {cols} where id=?", (*fields.values(), task_id))
 
-    def list_tasks(self, status: str | None = None) -> list[sqlite3.Row]:
+    def list_tasks(self, status: str | None = None, personality: str = "") -> list[sqlite3.Row]:
+        """The tasks `personality` may see (_whose_tasks; everyday Odie's when none is named), with one status or all."""
+        whose, values = self._whose_tasks(personality)
         if status:
-            return self.query("select * from tasks where status=? order by coalesce(due_at,next_check_at,created_at)", (status,))
-        return self.query("select * from tasks order by coalesce(due_at,next_check_at,created_at)")
+            return self.query(f"select * from tasks where status=? and {whose} order by coalesce(due_at,next_check_at,created_at)",
+                              (status, *values))
+        return self.query(f"select * from tasks where {whose} order by coalesce(due_at,next_check_at,created_at)", values)
 
     def closed_today(self, since_utc_iso: str) -> int:
         """Tasks the user closed since local midnight (given in UTC); ones closed because the source dropped them don't count."""
         row = self.one(
-            "select count(*) n from tasks where status='done' and completed_at >= ? and coalesce(notes,'') != 'resolved at source'",
+            "select count(*) n from tasks where status='done' and completed_at >= ? and coalesce(notes,'') != 'resolved at source' "
+            "and personality is null",  # Today's count is everyday Odie's
             (since_utc_iso,),
         )
         return int(row["n"]) if row else 0
@@ -131,10 +170,13 @@ class Store:
             self.update_task(r["id"], status="done", notes="resolved at source")
         return closed
 
-    def open_tasks(self, now: str | None = None) -> list[sqlite3.Row]:
+    def open_tasks(self, now: str | None = None, personality: str = "") -> list[sqlite3.Row]:
+        """The open tasks `personality` may see (_whose_tasks). With none named they are everyday Odie's, which is what
+        Today, the brief, the morning hello and the watch read: a reminder set with a personality is never among them."""
         now = now or local_now_iso()
+        whose, values = self._whose_tasks(personality)
         return self.query("select * from tasks where status in ('open','waiting') and (snoozed_until is null or snoozed_until <= ?) "
-                          "order by coalesce(due_at,next_check_at,created_at)", (now,))
+                          f"and {whose} order by coalesce(due_at,next_check_at,created_at)", (now, *values))
 
     def due_tasks(self, now: str | None = None) -> list[sqlite3.Row]:
         now = now or local_now_iso()
@@ -154,7 +196,7 @@ class Store:
         seen, still open. Example: a reminder that rang at 6 pm while the phone was in a pocket -> listed when the app
         opens; one the user dismissed -> not listed, though it stays on Today."""
         return self.query("select * from tasks where delivered_at is not null and seen_at is null and status in ('open','waiting') "
-                          "order by delivered_at")
+                          "and personality is null order by delivered_at")  # a personality's reminder fires in its own thread
 
     def mark_seen(self, task_id: int, when: str | None = None) -> None:
         self.update_task(task_id, seen_at=when or local_now_iso())
@@ -193,6 +235,13 @@ class Store:
         """True if this call made the decision; False if it was already decided or expired (second tap is a no-op)."""
         cur = self.execute("update approvals set status=?, decided_at=? where id=? and status='pending'",
                            ("approved" if approve else "rejected", now_iso(), approval_id))
+        return cur.rowcount == 1
+
+    def lapse_approval(self, approval_id: int) -> bool:
+        """Mark a card lapsed (status "expired") when its tap can't be honoured as it was asked: waiting, or tapped and
+        about to run. True when it changed; False for one already answered otherwise."""
+        cur = self.execute("update approvals set status='expired', decided_at=? where id=? and status in ('pending','approved')",
+                           (now_iso(), approval_id))
         return cur.rowcount == 1
 
     def set_approval_result(self, approval_id: int, text: str) -> None:

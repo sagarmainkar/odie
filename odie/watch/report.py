@@ -1,13 +1,15 @@
-"""What a check leaves (spec part 3): the Today card, and the pushes with their rules: only items the model marks,
-at most 3 a check, never one ref twice, none on the first check after a source appears, none from 22:00 to 07:00 (held
-for the brief). A check that ends without a report gets a card written by code."""
+"""What a check leaves (spec part 3): the watch's card (its line, the next events, each source's status, what it did
+for a Watch for entry), and the pushes with their rules: only loops the model marks, at most 3 a check, never one ref
+twice, none on the first check after a source appears, none from 22:00 to 07:00 (held for the brief). What needs the
+user is a loop now (odie.loops); the labels a finding carries are read here (labelled) and kept on its loop."""
 from __future__ import annotations
 
 from datetime import datetime
 
-from odie.watch.fetch import Event, Mail
+from odie.watch.fetch import Event, Mail, address_of
+from odie.watch.owner import ODIE, key
 
-CARD, FLAGGED, HELD = "watch.card", "watch.flagged", "watch.held"
+CARD, FLAGGED, HELD = "watch.card", "watch.flagged", "watch.held"  # everyday Odie's keys; a personality's: owner.key
 PILES = ("alerts", "bills", "events", "personal", "orders")  # where an item belongs (the icon its card gets)
 WHY_MAX = 120
 LABEL_MAX = 40
@@ -55,7 +57,7 @@ def badges_of(source_ids: list[str], statuses: dict) -> list[dict]:
 
 
 def _label(value) -> str:
-    """A button's words from the model's suggestion or escape: {"label": "Reply with your fee"} -> that, trimmed to
+    """A button's words from the model's suggestion: {"label": "Reply with your fee"} -> that, trimmed to
     fit; no label, or not an object -> "". The model writes only the words, never what the tap sends."""
     if not isinstance(value, dict):
         return ""
@@ -98,9 +100,9 @@ def _day(value) -> str | None:
 def labelled(n: dict) -> dict:
     """The labels of one item the model reported, each kept only when it is usable; a bad one is left out, never the
     item. {"pile": "alerts", "suggestion": {"label": "Reply", "run": "…"}, "due": "2026-10-24"} -> those three;
-    {"pile": "urgent", "suggestion": {}, "due": "next week"} -> {}. A suggestion's or escape's tap always sends Odie's
-    own request naming the item ("Show the draft for watch item mail:m1", "Close watch item mail:m1: Not interested"),
-    whatever run the model wrote."""
+    {"pile": "urgent", "suggestion": {}, "due": "next week"} -> {}. A suggestion's tap always sends Odie's own request
+    naming the item ("Show the draft for watch item mail:m1"), whatever run the model wrote. An older report's
+    "escape" (a way out, "Not now") is accepted and left out: every card has the same Done and Later (odie.watch.needs)."""
     out: dict = {}
     ref = str(n.get("ref") or "")
     pile = str(n.get("pile") or "").strip().lower()
@@ -113,9 +115,6 @@ def labelled(n: dict) -> dict:
         if draft:
             run = f"Show the draft for watch item {ref}"
         out["suggestion"] = {"label": suggestion, "run": run}
-    escape = _label(n.get("escape"))
-    if escape:
-        out["escape"] = {"label": escape, "run": f"Close watch item {ref}: {escape}"}
     due = _day(n.get("due"))
     if due:
         out["due"] = due
@@ -139,8 +138,13 @@ def _mail_fields(ref: str, mails: list[Mail], statuses: dict | None = None) -> d
     if mail is None:
         return {}
     holds_the_id = badge_of(mail.source, statuses or {})["app"]
-    return {"from": sender_name(mail.frm), "subject": mail.subject[:120], "when": mail.at, "gist": (mail.snippet or "")[:160],
-            "badges": badges_of(mail.sources or [mail.source], statuses or {}), "app": holds_the_id}
+    fields = {"from": sender_name(mail.frm), "subject": mail.subject[:120], "when": mail.at,
+              "gist": (mail.snippet or "")[:160], "badges": badges_of(mail.sources or [mail.source], statuses or {}),
+              "app": holds_the_id}
+    if mail.thread:  # the user's own reply in this thread, to this sender, closes the item (odie.watch.sent)
+        fields["thread"] = mail.thread
+        fields["sender"] = address_of(mail.frm).lower()
+    return fields
 
 
 CARD_EVENTS = 20  # Today's two weeks: Up next shows a big card and up to 14 small ones
@@ -150,69 +154,80 @@ def _events(events: list[Event], statuses: dict | None = None) -> list[dict]:
     return [{**e.brief(), "badges": badges_of(e.sources or [e.source], statuses or {})} for e in events if e.change != "cancelled"][:CARD_EVENTS]
 
 
-def apply(store, now: datetime, needs_you: list[dict], line: str, mails: list[Mail], events: list[Event],
-          statuses: dict, first: bool) -> list[dict]:
-    from odie.watch import threads
-    known = {f"mail:{m.id}" for m in mails} | {f"event:{e.id}" for e in events}
-    known |= threads.open_refs(store)  # a thread the watch follows can come back (a reply now overdue)
-    card = store.get_setting(CARD) or {}
-    closed = threads.closed_refs(store)  # the user ticked it on Today, or the watch closed it: its card goes too
-    items = [i for i in card.get("needs_you", []) if not i.get("done") and i.get("ref") not in closed]
-    have = {i["ref"] for i in items}
-    fresh = []
-    for n in needs_you or []:
-        ref = str(n.get("ref") or "")
-        if ref not in known or ref in have:
-            continue
-        it = {"ref": ref, "title": str(n.get("title") or "")[:120], "why": str(n.get("why") or "")[:WHY_MAX],
-              "at": now.isoformat(timespec="seconds"), "done": False, **_mail_fields(ref, mails, statuses),
-              **labelled(n)}
-        if ref.startswith("event:"):
-            event = next((e for e in events if f"event:{e.id}" == ref), None)
-            if event is not None:
-                it["badges"] = badges_of(event.sources or [event.source], statuses)
-        items.append(it)
-        have.add(ref)
-        if n.get("push"):
-            fresh.append(it)
-    store.set_setting(CARD, {"checked_at": now.isoformat(timespec="seconds"), "line": str(line or "")[:200], "needs_you": items[-30:],
-                             "events": _events(events, statuses), "sources": statuses, "off": "", "done": card.get("done", [])})
-    flagged = list(store.get_setting(FLAGGED) or [])
-    push = [i for i in fresh if i["ref"] not in flagged]
+def save_card(store, now: datetime, line: str, events: list[Event], statuses: dict, owner: str = ODIE) -> None:
+    """Saves one check on its owner's card (everyday Odie's, or a personality's own: odie.watch.owner): when it
+    checked, its line, the next two weeks of events and each source's status. What needs the user isn't kept here any
+    more: each thing is a loop (odie.loops), and its card is the loop's. An older install's needs_you list is left as
+    it was, never read again (kept for a rollback)."""
+    card_key = key(CARD, owner)
+    card = store.get_setting(card_key) or {}
+    store.set_setting(card_key, {"done": [], **card, "checked_at": now.isoformat(timespec="seconds"),
+                                 "line": str(line or "")[:200], "events": _events(events, statuses),
+                                 "sources": statuses, "off": ""})
+
+
+def to_push(store, now: datetime, items: list[dict], first: bool, owner: str = ODIE) -> list[dict]:
+    """Of the loops a check just made cards and the model marked to push ({"ref": "loop:3", "title", "why"}), the
+    ones to push now: never one already pushed (flagged), none on the first check after a source appears, at most
+    MAX_PUSH a check, and from 22:00 to 07:00 none: held for the morning brief.
+      two new items at 10:00 -> both;  the same again later -> [] (flagged when pushed);  at 23:00 -> [] (held)"""
+    flagged = list(store.get_setting(key(FLAGGED, owner)) or [])
+    push = [i for i in items if i["ref"] not in flagged]
     if first or not push:
         return []
     if quiet(now):
-        store.set_setting(HELD, [*(store.get_setting(HELD) or []), *push][-20:])
+        held_key = key(HELD, owner)
+        store.set_setting(held_key, [*(store.get_setting(held_key) or []), *push][-20:])
         return []
-    push = push[:MAX_PUSH]
-    store.set_setting(FLAGGED, [*(i["ref"] for i in push), *flagged][:500])
-    return push
+    return push[:MAX_PUSH]  # flagged (said) only once a push really goes out: flag_pushed
 
 
-def fallback(store, now: datetime, mails: list[Mail], events: list[Event], statuses: dict, reason: str) -> None:
+def flag_pushed(store, ref: str, owner: str = ODIE) -> None:
+    """Notes that an item was pushed, so it is never pushed again. One held over the day's budget isn't flagged: it
+    stays in push.held for the digest (odie.watch.pushes)."""
+    flagged_key = key(FLAGGED, owner)
+    flagged = list(store.get_setting(flagged_key) or [])
+    store.set_setting(flagged_key, [ref, *flagged][:500])
+
+
+def fallback(store, now: datetime, mails: list[Mail], events: list[Event], statuses: dict, reason: str,
+             owner: str = ODIE) -> None:
+    """A check that ended without a report: the card says how many mails came and what's next, and that it couldn't
+    check properly; the loops stay as they were."""
     upcoming = [e for e in events if e.change != "cancelled"]
     bits = [f"{len(mails)} new email{'s' if len(mails) != 1 else ''}"]
     if upcoming:
         bits.append(f"next: {upcoming[0].title} at {upcoming[0].start[11:16]}")
-    card = store.get_setting(CARD) or {}
-    store.set_setting(CARD, {"checked_at": now.isoformat(timespec="seconds"), "line": ", ".join(bits),
-                             "needs_you": [i for i in card.get("needs_you", []) if not i.get("done")],
-                             "events": _events(events, statuses), "sources": statuses, "off": f"couldn't check properly: {reason}"[:200],
-                             "done": card.get("done", [])})
+    card_key = key(CARD, owner)
+    card = store.get_setting(card_key) or {}
+    store.set_setting(card_key, {"done": [], **card, "checked_at": now.isoformat(timespec="seconds"),
+                                 "line": ", ".join(bits), "events": _events(events, statuses), "sources": statuses,
+                                 "off": f"couldn't check properly: {reason}"[:200]})
+
+
+def nothing_new(store, now: datetime, events: list[Event], statuses: dict, owner: str = ODIE) -> None:
+    """A check that found nothing new (no model call): the card keeps its line and notes, and says when it checked,
+    through what, and what is coming up."""
+    card_key = key(CARD, owner)
+    card = store.get_setting(card_key) or {}
+    store.set_setting(card_key, {"line": "", "done": [], **card,
+                                 "checked_at": now.isoformat(timespec="seconds"), "events": _events(events, statuses),
+                                 "sources": statuses, "off": ""})
 
 
 KEEP_DONE = 10
 
 
-def keep_done(store, now: datetime, message: str, told: bool, media: list | None = None) -> None:
+def keep_done(store, now: datetime, message: str, told: bool, media: list | None = None, owner: str = ODIE) -> None:
     """Note on the card what the watch did for a Watch for entry, told or not, so a quiet one is still there to look
     up; a told one (with any files it made) shows on Today under Needs you. The card keeps the last KEEP_DONE."""
-    card = store.get_setting(CARD) or {}
+    card_key = key(CARD, owner)
+    card = store.get_setting(card_key) or {}
     note = {"at": now.isoformat(timespec="seconds"), "message": message[:500], "told": told}
     if media:
         note["media"] = media
     done = [*card.get("done", []), note]
-    store.set_setting(CARD, {**card, "done": done[-KEEP_DONE:]})
+    store.set_setting(card_key, {**card, "done": done[-KEEP_DONE:]})
 
 
 def _failures_before(prev: dict, sid: str) -> int:
@@ -221,12 +236,12 @@ def _failures_before(prev: dict, sid: str) -> int:
     return int(saved.get("fails", 0))
 
 
-def failing_now(store, statuses: dict) -> list[str]:
+def failing_now(store, statuses: dict, owner: str = ODIE) -> list[str]:
     """The apps to say "stopped working" for: the ones whose failure in this check is their SAY_FAILING_AT-th in a
     row. Read against the last check's saved state, so before Fetcher.commit().
     Example: Gmail failed the last 2 checks and fails this one too (its 3rd in a row) -> ["Gmail"];
     its 4th failure in a row -> [] (already said); its 1st or 2nd -> [] (often a blip)."""
-    prev = (store.get_setting("watch.state") or {}).get("sources") or {}
+    prev = (store.get_setting(key("watch.state", owner)) or {}).get("sources") or {}
     apps = set()
     for sid, st in statuses.items():
         if st.get("ok"):
@@ -235,15 +250,3 @@ def failing_now(store, statuses: dict) -> list[str]:
         if failures_in_a_row == SAY_FAILING_AT:
             apps.add(st.get("app", sid))
     return sorted(apps)
-
-
-def drop_item(store, ref: str) -> None:
-    """Takes an item off the card (its thread closed, or the user dismissed it); nothing when it isn't there."""
-    card = store.get_setting(CARD)
-    if not card:
-        return
-    items = card.get("needs_you", [])
-    kept = [i for i in items if i.get("ref") != ref]
-    if len(kept) != len(items):
-        card["needs_you"] = kept
-        store.set_setting(CARD, card)

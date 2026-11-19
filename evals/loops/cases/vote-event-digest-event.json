@@ -1,0 +1,118 @@
+{
+  "id": "vote-event-digest-event",
+  "about": "The owner's case (19 Nov): a reminder for a postal ballot from a calendar event, then the same vote in a digest mail, then the event again. He ticked the first reminder done: one loop, one reminder, no card.",
+  "watch_for": "- Votes and ballots: remind me the morning before e-voting closes\n- Morning digest: pass on anything with a deadline as a reminder",
+  "checks": [
+    {
+      "at": "2026-11-19T04:30:00+05:30",
+      "events": [
+        {
+          "id": "uid-vote",
+          "title": "E-voting closes: Northwind postal ballot",
+          "start": "2026-11-21T17:00:00+05:30",
+          "end": "2026-11-21T17:30:00+05:30",
+          "change": "new"
+        }
+      ],
+      "script": {
+        "findings": [
+          {
+            "ref": "event:uid-vote",
+            "title": "Vote: Northwind postal ballot — e-voting closes 21 Nov",
+            "kind": "reminder",
+            "why": "e-voting closes 21 Nov, 17:00",
+            "owner": "you",
+            "due": "2026-11-21T17:00",
+            "remind_at": "2026-11-20T09:00",
+            "pile": "alerts"
+          }
+        ],
+        "answers": [
+          {
+            "f": "F1",
+            "is": "new"
+          }
+        ]
+      },
+      "then": {
+        "done": [
+          "event:uid-vote"
+        ]
+      }
+    },
+    {
+      "at": "2026-11-19T06:29:00+05:30",
+      "mails": [
+        {
+          "id": "dg1",
+          "from": "Morning Digest <digest@newsroom.example>",
+          "subject": "Your morning digest, 19 Nov",
+          "at": "2026-11-19T00:55:00Z",
+          "snippet": "Deadlines: Northwind postal ballot e-voting closes 21 Nov, 17:00. Weather: clear. Markets: flat.",
+          "body": "Deadlines: Northwind postal ballot e-voting closes 21 Nov, 17:00. Weather: clear. Markets: flat.",
+          "thread": "tdg1"
+        }
+      ],
+      "script": {
+        "findings": [
+          {
+            "ref": "mail:dg1",
+            "title": "Vote: Northwind postal ballot – e-voting closes 21 Nov",
+            "kind": "reminder",
+            "owner": "you",
+            "remind_at": "2026-11-20T09:00"
+          }
+        ],
+        "answers": [
+          {
+            "f": "F1",
+            "is": "same",
+            "loop_ref": "event:uid-vote"
+          }
+        ]
+      }
+    },
+    {
+      "at": "2026-11-19T09:05:00+05:30",
+      "events": [
+        {
+          "id": "uid-vote",
+          "title": "E-voting closes: Northwind postal ballot",
+          "start": "2026-11-21T17:00:00+05:30",
+          "end": "2026-11-21T17:30:00+05:30",
+          "change": null
+        }
+      ],
+      "script": {
+        "findings": [
+          {
+            "ref": "event:uid-vote",
+            "title": "Vote: Northwind postal ballot — e-voting closes 21 Nov",
+            "kind": "reminder",
+            "why": "e-voting closes 21 Nov, 17:00",
+            "owner": "you",
+            "due": "2026-11-21T17:00",
+            "remind_at": "2026-11-20T09:00",
+            "pile": "alerts"
+          }
+        ],
+        "answers": [
+          {
+            "f": "F1",
+            "is": "new"
+          }
+        ]
+      }
+    }
+  ],
+  "expect": {
+    "loops": 1,
+    "reminders": 1,
+    "closed": [
+      "event:uid-vote"
+    ],
+    "no_card": [
+      "event:uid-vote"
+    ]
+  }
+}

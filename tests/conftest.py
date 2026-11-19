@@ -49,6 +49,15 @@ def pytest_collection_modifyitems(items):
             item.add_marker(pytest.mark.skip(reason=f"only on a Mac with Odie built: {reason}"))
 
 @pytest.fixture(autouse=True)
+def no_shell_passes():
+    """Shell passes live in the running server's memory: every test starts, and ends, with none."""
+    from odie.agent import shell_grant
+    shell_grant.forget_all()
+    yield
+    shell_grant.forget_all()
+
+
+@pytest.fixture(autouse=True)
 def no_real_ollama_voice(monkeypatch):
     """The voice side never reaches a real Ollama from a test (the owner's Mac runs one): its address is a closed port,
     and what a process learnt about Phonon (its voices, whether Ollama has it) starts empty in every test. A test that

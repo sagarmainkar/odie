@@ -1,0 +1,85 @@
+{
+  "id": "done-then-a-new-ask",
+  "about": "He finished the vote; then the vote is reopened with a new deadline: a genuinely new ask, a new loop.",
+  "watch_for": "- Votes and ballots: remind me the morning before e-voting closes\n- Morning digest: pass on anything with a deadline as a reminder",
+  "checks": [
+    {
+      "at": "2026-11-19T04:30:00+05:30",
+      "events": [
+        {
+          "id": "uid-vote",
+          "title": "E-voting closes: Northwind postal ballot",
+          "start": "2026-11-21T17:00:00+05:30",
+          "end": "2026-11-21T17:30:00+05:30",
+          "change": "new"
+        }
+      ],
+      "script": {
+        "findings": [
+          {
+            "ref": "event:uid-vote",
+            "title": "Vote: Northwind postal ballot — e-voting closes 21 Nov",
+            "kind": "reminder",
+            "why": "e-voting closes 21 Nov, 17:00",
+            "owner": "you",
+            "due": "2026-11-21T17:00",
+            "remind_at": "2026-11-20T09:00",
+            "pile": "alerts"
+          }
+        ],
+        "answers": [
+          {
+            "f": "F1",
+            "is": "new"
+          }
+        ]
+      },
+      "then": {
+        "done": [
+          "event:uid-vote"
+        ]
+      }
+    },
+    {
+      "at": "2026-11-22T10:00:00+05:30",
+      "mails": [
+        {
+          "id": "rv1",
+          "from": "Northwind Registrar <evoting@northwind-registrar.example>",
+          "subject": "E-voting reopened: Northwind postal ballot now closes 28 Nov",
+          "at": "2026-11-22T03:00:00Z",
+          "snippet": "Because of a technical fault, e-voting on the postal ballot is reopened and now closes on 28 Nov at 17:00. Votes already",
+          "body": "Because of a technical fault, e-voting on the postal ballot is reopened and now closes on 28 Nov at 17:00. Votes already cast were not recorded.",
+          "thread": "trv1"
+        }
+      ],
+      "script": {
+        "findings": [
+          {
+            "ref": "mail:rv1",
+            "title": "Vote again: Northwind postal ballot — closes 28 Nov",
+            "kind": "reminder",
+            "owner": "you",
+            "due": "2026-11-28T17:00",
+            "remind_at": "2026-11-27T09:00"
+          }
+        ],
+        "answers": [
+          {
+            "f": "F1",
+            "is": "new",
+            "after_ref": "event:uid-vote",
+            "why": "reopened with a new deadline: votes cast were lost"
+          }
+        ]
+      }
+    }
+  ],
+  "expect": {
+    "loops": 2,
+    "reminders": 2,
+    "cards": [
+      "mail:rv1"
+    ]
+  }
+}

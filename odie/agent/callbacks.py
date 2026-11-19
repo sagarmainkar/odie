@@ -157,25 +157,37 @@ def _tool_fields(tool) -> set[str] | None:
     return set(props.keys()) if props else None
 
 
-def _close_skills(result: Any, asked: str) -> Any:
+def _close_skills(result: Any, asked: str, store: Store, session_id: str | None) -> Any:
     """A skill name that doesn't exist (mcp-zapier for mcp-zapier-2): the names like it, so the model loads the right
-    one instead of giving up."""
+    one instead of giving up. Only skills usable in this thread are offered: an app's when it is on for the thread's
+    owner (odie.plugins.access), and Odie's own skills.
+      "tides" in everyday Odie's thread, mcp-tides Mira's and mcp-tides-home his -> "…names like it: mcp-tides-home."
+      the same in Mira's thread                                                -> "…names like it: mcp-tides."
+      a found skill, or nothing like it                                        -> unchanged"""
     if not (isinstance(result, dict) and result.get("error_code") == "SKILL_NOT_FOUND"):
         return result
     import difflib
 
-    from odie.plugins.mcp import TOOL_SKILL
-    names = set(TOOL_SKILL.values())
+    from odie.plugins import access
+    from odie.plugins.mcp import SERVER_SKILL
+    names = {skill for server, skill in SERVER_SKILL.items() if access.allowed_in(store, server, session_id)}
     try:
         from odie.about import hooks
         names |= {e.name for e in (getattr(hooks.get("runner"), "plugins", None) or {}).get("skills", [])}
     except Exception:  # noqa: BLE001 (a hint, never a failure)
         pass
-    close = [n for n in sorted(names) if asked and (n.startswith(asked) or asked.startswith(n))]
+    close = [n for n in sorted(names) if asked and _named_like(n, asked)]
     close += [n for n in difflib.get_close_matches(asked, sorted(names), n=3, cutoff=0.6) if n not in close]
     if not close:
         return result
     return {**result, "error": f"{result.get('error', 'No such skill.')} Skills with names like it: {', '.join(close[:3])}."}
+
+
+def _named_like(name: str, asked: str) -> bool:
+    """Whether a skill's name starts like the one asked for, or the other way round, with or without an app's "mcp-":
+    ("mcp-zapier-2", "mcp-zapier") -> True; ("mcp-tides-home", "tides") -> True; ("trackers", "tides") -> False."""
+    bare = name.removeprefix("mcp-")
+    return name.startswith(asked) or asked.startswith(name) or bare.startswith(asked)
 
 
 SKILL_STAYS = ("These instructions stay in this conversation: use them for questions this skill is for, without loading it "
@@ -241,13 +253,23 @@ class OdiePlugin(BasePlugin):
         if exposed is not None and turn.mark_read(exposed):
             from odie.signin import guard as signin_guard
             signin_guard.remember_read(self.store, session_id, exposed)
-        self.store.audit("agent", "tool_call", tool=tool.name, args=tool_args, result_summary=_summarise(result),
+        from odie.plugins import access
+        server = access.server_of_object(self.store, tool, session_id)  # the connection this very object reached
+        from odie.workers import taint as job_taint
+        job_taint.note_call(self.store, session_id, tool.name, server, tool_args)  # web or app text: later jobs tainted
+        summary = _summarise(result)
+        if server is not None:
+            summary = f"{server}: {summary}"
+        self.store.audit("agent", "tool_call", tool=tool.name, args=tool_args, result_summary=summary,
                          session_id=session_id, invocation_id=inv)
         from odie import addons
         addons.call("after_tool", tool.name, tool_args, result, self.store, session_id, inv)  # e.g. provenance for cards
         out = _drop_duplicate_structured(result)
         if tool.name == "load_skill":
-            out = _close_skills(out, str((tool_args or {}).get("skill_name") or ""))
+            asked = (tool_args or {}).get("skill_name")
+            if not isinstance(asked, str):
+                asked = ""
+            out = _close_skills(out, asked, self.store, session_id)
             out = _skill_stays(out)
         limit = CLAMP.get(tool.name) or addons.clamps().get(tool.name)
         if limit:
@@ -263,20 +285,85 @@ class OdiePlugin(BasePlugin):
     async def on_tool_error_callback(self, *, tool, tool_args: dict[str, Any], tool_context, error: Exception) -> dict | None:
         """An app's tool called before its skill was loaded: say which skill, so the model loads it and goes on (a bare
         "no tool with that name" made it tell the user the app had dropped off)."""
-        from odie.plugins.mcp import TOOL_APP, TOOL_SKILL
-        skill = TOOL_SKILL.get(tool.name)
+        from odie.plugins import access
+        session_id = session_id_of(tool_context)
+        skill = access.skill_of_tool(self.store, tool.name, session_id)  # the skill of this thread's own connection
         if skill is None or "not found" not in str(error).lower():
             return None
-        return {"error": f"{tool.name} is one of {TOOL_APP.get(tool.name, 'a connected app')}'s tools, and they load with "
+        off_here = access.refusal(self.store, tool, tool_args, session_id)
+        if off_here:  # not listed here because it's off for this thread: loading its skill wouldn't help
+            return {"error": off_here}
+        app = access.app_title_of_tool(self.store, tool.name, session_id) or "a connected app"
+        return {"error": f"{tool.name} is one of {app}'s tools, and they load with "
                          f"their skill: call load_skill(\"{skill}\") first, then call {tool.name} again."}
 
     async def before_tool_callback(self, *, tool, tool_args: dict[str, Any], tool_context) -> dict | None:
+        from odie import personalities
+        from odie.plugins import access
+        session_id = session_id_of(tool_context)
+        call_id = getattr(tool_context, "function_call_id", None)
+        elsewhere = self._tap_runs_elsewhere(tool, session_id, call_id, tool_context)
+        if elsewhere:
+            return {"error": elsewhere}
+        server = access.server_called(self.store, tool, tool_args, session_id)
+        off_here = access.refusal(self.store, tool, tool_args, session_id)
+        if off_here:  # a connected app switched off for whoever this thread belongs to: it never runs here
+            self.store.audit("agent", "tool_refused", tool=tool.name, result_summary=f"{server} switched off here",
+                             session_id=session_id)
+            return {"error": off_here}
+        if server is not None and call_id:
+            self._note_server(call_id, server)  # its card, if it asks for a tap, names this server
+        if tool.name in personalities.ODIE_ONLY_TOOLS:
+            session_id = session_id_of(tool_context)
+            in_a_personalitys_thread = personalities.of_session(self.store, session_id) != personalities.ODIE
+            if in_a_personalitys_thread:  # background work is everyday Odie's: the tool doesn't run here
+                self.store.audit("agent", "tool_refused", tool=tool.name, result_summary="everyday Odie's job", session_id=session_id)
+                return {"error": personalities.ODIE_ONLY}
         problem = fix_tool_args(tool, tool_args)
         if problem:
             session_id = session_id_of(tool_context)
             self.store.audit("agent", "tool_args_rejected", tool=tool.name, result_summary=problem[:200], session_id=session_id)
             return {"error": problem}
         return None
+
+    def _note_server(self, call_id: str, server: str) -> None:
+        """Remember which server a call's tool object reaches, for its approval card (server_of_call), the last 200."""
+        servers = self.__dict__.setdefault("_call_servers", {})
+        servers[call_id] = server
+        if len(servers) > 200:
+            servers.pop(next(iter(servers)))
+
+    def server_of_call(self, call_id: str | None) -> str | None:
+        """The server the tool object of this call reaches (noted before it ran), or None for a call that reaches no
+        app: the approval card names it, and a tap is consent for that server alone."""
+        if not call_id:
+            return None
+        return self.__dict__.get("_call_servers", {}).get(call_id)
+
+    def _tap_runs_elsewhere(self, tool, session_id: str | None, call_id: str | None, tool_context) -> str | None:
+        """For a call resumed by a tap: why its tool object may not run, in words, or None when it may. It must reach
+        the server the card named, still on for the thread's owner (access.card_runs_elsewhere); otherwise the card
+        lapses (audited) and nothing runs.
+          a tapped "Send email in Home mail", the object home mail's, mail still on -> None
+          the same, the owner since moved Odie to work mail                       -> "This card was for Home mail, …"
+          a call nobody tapped                                                   -> None"""
+        from odie.plugins import access
+        confirmation = getattr(tool_context, "tool_confirmation", None)
+        tapped_yes = confirmation is not None and bool(getattr(confirmation, "confirmed", False))
+        if not tapped_yes or not call_id:
+            return None
+        card = self.store.one("select * from approvals where session_id=? and call_id=? order by id desc limit 1",
+                              (session_id, call_id))
+        if card is None:
+            return None
+        words = access.card_runs_elsewhere(self.store, card, tool, session_id)
+        if words is None:
+            return None
+        self.store.lapse_approval(card["id"])
+        self.store.set_approval_result(card["id"], words)
+        self.store.audit("agent", "approval_lapsed", tool=tool.name, result_summary=words, session_id=session_id,
+                         approval_id=card["id"])
+        return words
 
     async def after_model_callback(self, *, callback_context, llm_response):
         """Keep each reply's input and cached token counts, whichever provider answered (odie.agent.usage)."""

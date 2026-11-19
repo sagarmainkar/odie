@@ -24,19 +24,19 @@ export function Table({ columns, rows, highlight, caption }: Props) {
   const change = columns.map((_, c) => isChangeColumn(rows, c));
   const largest = columns.map((_, c) => largestChange(rows, c));
   const withBars = rows.length >= MINI_BARS_FROM;
-  const frame = inCard ? "my-2" : "glass glass-solid rounded-[20px] my-2 overflow-hidden";
+  const frame = inCard ? "my-2" : "glass glass-solid rounded-tile my-2 overflow-hidden";
 
   return (
     <div className={frame}>
-      {caption && <div className={`${inCard ? "" : "px-4"} pt-3 text-[13px] font-bold text-muted`}><InlineText text={caption} /></div>}
+      {caption && <div className={`${inCard ? "" : "px-4"} pt-3 text-small font-bold text-muted`}><InlineText text={caption} /></div>}
       <div className="overflow-x-auto overscroll-x-contain [-webkit-overflow-scrolling:touch]">
-        <table className="min-w-full border-collapse text-[14px] leading-[20px] [overflow-wrap:normal]">
+        <table className="min-w-full border-collapse text-ui leading-[20px] [overflow-wrap:normal]">
           <thead>
             <tr>
               {columns.map((name, c) => (
                 <th key={c} aria-sort={ariaSort(sort, c)} className={`p-0 border-b border-line ${c === bestColumn ? "bg-ember-tint" : ""}`}>
                   <button type="button" onClick={() => setSort(nextSort(sort, c))}
-                    className={`w-full flex items-center gap-1 py-2.5 ${cellPadding(c, columns.length, inCard)} text-[12px] font-bold text-muted whitespace-nowrap ${numeric[c] ? "justify-end" : ""}`}>
+                    className={`w-full flex items-center gap-1 py-2.5 ${cellPadding(c, columns.length, inCard)} text-caption font-bold text-muted whitespace-nowrap ${numeric[c] ? "justify-end" : ""}`}>
                     <span>{name}</span>
                     <SortArrow sort={sort} column={c} />
                     {c === bestColumn && <span className="chip chip-inline chip-good">Best</span>}

@@ -1,0 +1,42 @@
+{
+  "id": "promise-from-them",
+  "about": "Someone promises to send something on Monday: waiting on them, no card.",
+  "mails": [
+    {
+      "id": "c1",
+      "from": "Raj Mehta <raj@example.com>",
+      "subject": "Contract",
+      "at": "2026-11-18T05:00:00Z",
+      "snippet": "Thanks for the call. I'll send the signed contract on Monday.",
+      "body": "Thanks for the call. I'll send the signed contract on Monday.",
+      "thread": "tc1"
+    }
+  ],
+  "script": {
+    "findings": [
+      {
+        "ref": "mail:c1",
+        "title": "Raj sends the signed contract",
+        "kind": "waiting on them",
+        "why": "promised for Monday",
+        "owner": "them",
+        "due": "2026-11-23"
+      }
+    ],
+    "answers": [
+      {
+        "f": "F1",
+        "is": "new"
+      }
+    ]
+  },
+  "expect": {
+    "loops": 1,
+    "no_card": [
+      "mail:c1"
+    ],
+    "owner": {
+      "mail:c1": "them"
+    }
+  }
+}

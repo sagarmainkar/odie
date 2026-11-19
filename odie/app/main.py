@@ -28,12 +28,24 @@ async def expire_approvals(store: Store, runner=None) -> None:
     from odie.push import send as push
     from odie.store.db import approval_dict
     before = (datetime.now(UTC) - timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+    from odie import personalities
     for row in store.expire_approvals(before):
         store.audit("job", "approval_expired", tool=row["tool"], approval_id=row["id"])
-        if runner is not None:
-            await runner.post_message(f"I let this lapse after a day without your tap: {row['summary']}. Ask again if you still want it.")
+        # A personality's card lapses in its own thread, and its push says only who: the summary is that thread's.
+        owner_id, owner = personalities.whose_thread(store, row["session_id"])
+        if owner_id != personalities.ODIE and owner is None:
+            continue  # its personality was deleted: the card lapses without a word
+        said = f"I let this lapse after a day without your tap: {row['summary']}. Ask again if you still want it."
+        if runner is not None and owner is None:
+            await runner.post_message(said)
+        if runner is not None and owner is not None:
+            await runner.post_message(said, session_id=row["session_id"])
         try:
-            push.send_to_all(store, f"{persona.get(store)['name']}: approval lapsed", push_body(approval_dict(row)), url="/#chat",
+            if owner is None:
+                title, body = f"{persona.get(store)['name']}: approval lapsed", push_body(approval_dict(row))
+            else:
+                title, body = personalities.quiet_push(owner.name, "lapsed")
+            push.send_to_all(store, title, body, url="/#chat",
                              tag=f"expired-{row['id']}")
         except Exception:  # noqa: BLE001
             logging.getLogger("odie").warning("expiry push failed", exc_info=True)
@@ -138,7 +150,8 @@ class DeviceGate:
         """The odie command's key: only its own calls (devices.terminal_may), never a websocket."""
         if scope["type"] != "http":
             return False
-        return devices.terminal_may(scope["method"], scope["path"])
+        query = scope.get("query_string", b"").decode("latin-1")
+        return devices.terminal_may(scope["method"], scope["path"], query)
 
     @staticmethod
     async def refuse_terminal(scope, receive, send) -> None:
@@ -159,7 +172,7 @@ def scheduler_enabled() -> bool:
 BRIEF_LIMIT = 900  # seconds: the morning round makes the brief and the hello, two model calls, each gathering first
 
 
-def watch_pushed(store: Store, runner, title: str, body: str) -> None:
+def watch_pushed(store: Store, runner, title: str, body: str, owner: str = "") -> None:
     """The watch found something the owner must see (an urgent mail, an app that stopped working): a push to the
     phone, which opens Today's Needs you, and a `watch` event on the bus, so an open app that gets no web push (the
     Mac) hears it too. A push that fails is logged and never keeps the bus quiet.
@@ -167,11 +180,20 @@ def watch_pushed(store: Store, runner, title: str, body: str) -> None:
     import time
 
     from odie.push import send as push
+    url = pulse_url(owner)
     try:
-        push.send_to_all(store, title, body, url="/#today", tag="watch")
+        push.send_to_all(store, title, body, url=url, tag="watch")
     except Exception:  # noqa: BLE001
         logging.getLogger("odie").warning("watch push failed", exc_info=True)
     runner.bus.emit({"type": "watch", "title": title, "body": body, "ts": time.time()})
+
+
+def pulse_url(owner: str) -> str:
+    """Where a push opens: the Pulse of whose it is. Everyday Odie -> "/#today"; Mira -> "/#today?personality=<her id>"
+    (the app picks her on opening it)."""
+    if not owner:
+        return "/#today"
+    return f"/#today?personality={owner}"
 
 
 def background_for(store: Store, runner):
@@ -189,7 +211,9 @@ def background_for(store: Store, runner):
     from datetime import datetime
     from zoneinfo import ZoneInfo
 
+    from odie.loops import clock as loops_clock
     from odie.watch import check as watch
+    from odie.watch import owner as watch_owner
 
     def now():
         return datetime.now(ZoneInfo(config.settings.timezone))
@@ -201,17 +225,98 @@ def background_for(store: Store, runner):
 
         async def turn(prompt, tools, instruction):
             return await runner.background_turn(prompt, timeout=280, tools=tools, instruction=instruction, guard=watch.guard,
-                                                free=watch.MAY_WRITE, skills=watch.calendar_skills(store))
+                                                free=watch.MAY_WRITE, skills=watch.calendar_skills(store),
+                                                keep=watch.stage1_keeps)
 
         def push(title, body):
             watch_pushed(store, runner, title, body)
         memory = getattr(runner, "memory", None)
         index = build_index(memory.load(), max_chars=3000) if memory is not None and memory.exists() else ""
-        await watch.run_check(store, now(), turn, push, memory=memory, memory_index=index)
+        await watch.run_check(store, now(), turn, push, memory=memory, memory_index=index, think=consolidate_for(runner, ""))
     # Each wake-up: the mail and calendar watch when it's due (every 30 minutes), then trackers (then, in 9c, parked tasks).
     # Detection (a minute or two), the turn (280 s), and reads when the model didn't: 10 minutes at most.
     bg.parts.insert(0, Part("watch", watch_part, due=lambda _now: watch.due(store, now()), limit=600))
+
+    async def personality_watch_part() -> None:
+        await personality_watch(store, runner, now())
+    # A personality with Proactive intelligence on checks its own mail the same way, one personality per wake-up.
+    bg.add(Part("watch:personalities", personality_watch_part,
+                due=lambda _now: watch_owner.next_due(store, now()) is not None, limit=600))
+
+    async def loops_part() -> None:
+        await run_loops(store, runner, now())
+    # Then the loops whose time has come (odie.loops.clock): facts, one model call each, within the day's budget.
+    bg.add(Part("loops", loops_part, due=lambda _now: bool(loops_clock.due(store, now())), limit=600))
+
+    async def ladder_part() -> None:
+        run_ladder(store, runner, now())
+    # And the follow-up ladder (odie.loops.ladder): code only, every wake-up (a push the day before, a nudge card).
+    bg.add(Part("ladder", ladder_part, limit=60))
     return bg
+
+
+def run_ladder(store: Store, runner, now) -> list:
+    """The follow-up ladder's tick (odie.loops.ladder): its pushes open the owner's Pulse."""
+    from odie.loops import ladder
+
+    def push_for(pid: str):
+        if runner is None:
+            return None
+
+        def push(title, body):
+            watch_pushed(store, runner, title, body, owner=pid)
+        return push
+    return ladder.run(store, now, push_for)
+
+
+async def run_loops(store: Store, runner, now) -> list:
+    """Stage 4 for the due loops (odie.loops.clock): each thinks with its owner's brain, with no tools at all."""
+    from odie.loops import clock
+    if runner is None or not hasattr(runner, "background_turn"):
+        return []
+
+    def think_for(pid: str):
+        async def think(prompt: str, instruction: str) -> str:
+            return await runner.background_turn(prompt, timeout=120, instruction=instruction, bare=True, owner=pid)
+        return think
+
+    def push_for(pid: str):
+        def push(title, body):
+            watch_pushed(store, runner, title, body, owner=pid)
+        return push
+    return await clock.run(store, now, think_for, push_for)
+
+
+async def personality_watch(store: Store, runner, now) -> str | None:
+    """One personality's own mail and calendar check (odie.watch.owner), the one waiting longest: on its own brain,
+    with its own apps, its own memory and Watch for, its card and threads kept apart. Returns whose check ran, or
+    None when none is due or there is no runner to think with."""
+    from odie.watch import check as watch
+    from odie.watch import owner as watch_owner
+    pid = watch_owner.next_due(store, now)
+    if pid is None or runner is None or not hasattr(runner, "background_turn"):
+        return None
+
+    async def turn(prompt, tools, instruction):
+        return await runner.background_turn(prompt, timeout=280, tools=tools, instruction=instruction, guard=watch.guard,
+                                            free=watch.MAY_WRITE, skills=watch.calendar_skills(store, pid), owner=pid,
+                                            keep=watch.stage1_keeps)
+
+    def push(title, body):
+        watch_pushed(store, runner, title, body, owner=pid)
+    memory = runner.memory_of(pid)
+    index = runner.memory_index(pid)
+    await watch.run_check(store, now, turn, push, memory=memory, memory_index=index, owner=pid,
+                          think=consolidate_for(runner, pid))
+    return pid
+
+
+def consolidate_for(runner, pid: str):
+    """Stage 2's model call for this owner (odie.loops.consolidate): its brain, no tools at all, so it can only
+    answer; code writes the answer to the ledger."""
+    async def think(prompt: str, instruction: str) -> str:
+        return await runner.background_turn(prompt, timeout=120, instruction=instruction, bare=True, owner=pid)
+    return think
 
 
 def start_scheduler(store: Store, runner=None, background=None):
@@ -280,6 +385,15 @@ def start_scheduler(store: Store, runner=None, background=None):
             logging.getLogger("odie").warning("news refresh failed", exc_info=True)
 
     sched.add_job(news_job, CronTrigger(hour="6,10,14,18,22", minute=0, timezone=tz), id="news", misfire_grace_time=1800, coalesce=True)
+
+    async def workers_watchdog_job():
+        from odie.workers import watchdog
+        try:
+            await watchdog.check(store)  # fails a Worker past its budget, silent 10 minutes, or refused 3 times alike
+        except Exception:  # noqa: BLE001
+            logging.getLogger("odie").warning("workers watchdog failed", exc_info=True)
+    sched.add_job(workers_watchdog_job, IntervalTrigger(minutes=1, timezone=tz), id="workers_watchdog",
+                  misfire_grace_time=120, coalesce=True)
     from odie import addons
     for a in addons.active():
         for j in a.jobs:
@@ -304,6 +418,11 @@ def create_app(runner=None, store: Store | None = None) -> FastAPI:
     home.ensure(home.Layout(s.home, s.data_dir, s.config_dir))
     store = store or Store(s.db_path)
     store.init_schema()
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from odie.loops import migrate
+    migrate.run_once(store, datetime.now(ZoneInfo(s.timezone)))  # phase 3: the watch's threads and cards become loops
     devices.hide_pairing_queries_in_access_log()  # the setup link's token never lands in logs/server.log
 
     @asynccontextmanager
@@ -368,7 +487,18 @@ def create_app(runner=None, store: Store | None = None) -> FastAPI:
                 await making_jobs.recover(store)  # a job a restart cut off (a user skill's too) is told, once, in its chat
             except Exception:  # noqa: BLE001 (never decides whether Odie starts)
                 logging.getLogger("odie").warning("telling interrupted background jobs failed", exc_info=True)
+            try:
+                from odie.workers import router as workers_router
+                await workers_router.recover()  # a Worker a restart cut off is told in the chat that started it
+            except Exception:  # noqa: BLE001 (never decides whether Odie starts)
+                logging.getLogger("odie").warning("recovering workers failed", exc_info=True)
         yield
+        if runner is None:
+            try:
+                from odie.workers import router as workers_router
+                await workers_router.stop_all()  # Workers end with Odie; recover() at the next start says so
+            except Exception:  # noqa: BLE001 (never blocks shutdown)
+                logging.getLogger("odie").warning("stopping workers failed", exc_info=True)
         try:
             from odie.making import jobs as making_jobs
             await making_jobs.stop()  # first: a render in progress ends before its browser is closed under it

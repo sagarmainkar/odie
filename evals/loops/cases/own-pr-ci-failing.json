@@ -1,0 +1,51 @@
+{
+  "id": "own-pr-ci-failing",
+  "about": "The user's own pull request: CI failed after their last push.",
+  "mails": [
+    {
+      "id": "of1",
+      "from": "github-actions <notifications@github.com>",
+      "subject": "[example/app] Run failed: tests - offline-sync (PR #61)",
+      "at": "2026-11-18T04:20:00Z",
+      "snippet": "tests: 3 failed",
+      "body": "Run failed for offline-sync. tests: 3 failed, 409 passed.",
+      "thread": "gh-thread-61"
+    }
+  ],
+  "gh": {
+    "pr:example/app#61": {
+      "number": 61,
+      "title": "Offline sync for drafts",
+      "state": "OPEN",
+      "isDraft": false,
+      "mergedAt": null,
+      "closedAt": null,
+      "author": {
+        "login": "you-dev"
+      },
+      "headRefName": "branch-61",
+      "baseRefName": "main",
+      "additions": 41,
+      "deletions": 9,
+      "changedFiles": 3,
+      "isCrossRepository": false,
+      "reviewDecision": "",
+      "reviewRequests": [],
+      "url": "https://github.com/example/app/pull/61",
+      "statusCheckRollup": [
+        {
+          "name": "tests",
+          "status": "COMPLETED",
+          "conclusion": "FAILURE"
+        }
+      ]
+    },
+    "user": "you-dev"
+  },
+  "expect": {
+    "loops": 1,
+    "cards": [
+      "example/app#61"
+    ]
+  }
+}

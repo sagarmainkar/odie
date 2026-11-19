@@ -1,17 +1,19 @@
 import { useEffect, useState } from "react";
 import { getJSON, postJSON, putJSON } from "../api";
-import { ASK_TEXT, afterAllow, currentPosition, geolocationSupported, sendPosition, shouldAsk, shouldRefresh, type LocationInfo } from "../location";
+import { afterAllow, askText, currentPosition, geolocationSupported, sendPosition, shouldAsk, shouldRefresh, type LocationInfo } from "../location";
+import { usePickedPersona } from "../persona";
 import { Tile } from "./Tile";
 
 // The card sits where the composer sits: mx-3 at phone width, and on a desktop the composer's centred column
 // (styles.css gives .chat-aside the same margins as .chat-composer), so it never spans wider than the composer.
-export const ASK_CARD_CLASS = "chat-aside glass rounded-[22px] mx-3 mb-2 px-3.5 py-3 flex items-start gap-3 rise";
+export const ASK_CARD_CLASS = "chat-aside glass rounded-tile mx-3 mb-2 px-3.5 py-3 flex items-start gap-3 rise";
 
 
 /** Under the composer: the one ask for where the user is, shown until answered; afterwards a silent refresh on each open. */
 export function LocationAsk() {
   const [info, setInfo] = useState<LocationInfo | null>(null);
   const [busy, setBusy] = useState(false);
+  const persona = usePickedPersona();  // the ask names whoever the chat is with
   useEffect(() => {
     let live = true;
     getJSON<LocationInfo>("/api/location").then((x) => {
@@ -41,10 +43,10 @@ export function LocationAsk() {
     <div className={ASK_CARD_CLASS}>
       <Tile icon="pin" color="green" small />
       <div className="flex-1 min-w-0">
-        <div className="text-[13px] leading-[18px] text-muted">{ASK_TEXT}</div>
+        <div className="text-small leading-[18px] text-muted">{askText(persona.name)}</div>
         <div className="flex gap-3 mt-1.5">
-          <button type="button" disabled={busy} onClick={() => void allow()} className="h-8 px-1 text-[13px] font-semibold text-ember-text disabled:opacity-50">Allow</button>
-          <button type="button" disabled={busy} onClick={() => void notNow()} className="h-8 px-1 text-[13px] font-medium text-muted disabled:opacity-50">Not now</button>
+          <button type="button" disabled={busy} onClick={() => void allow()} className="h-8 px-1 text-small font-semibold text-ember-text disabled:opacity-50">Allow</button>
+          <button type="button" disabled={busy} onClick={() => void notNow()} className="h-8 px-1 text-small font-medium text-muted disabled:opacity-50">Not now</button>
         </div>
       </div>
     </div>

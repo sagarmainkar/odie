@@ -14,16 +14,23 @@ def plugin(isolated_settings, tmp_path, monkeypatch):
     from odie.store.db import Store
     s = Store(tmp_path / "a.db")
     s.init_schema()
-    monkeypatch.setattr(mcp, "TOOL_APP", {})
-    monkeypatch.setattr(mcp, "TOOL_SKILL", {})
-    mcp._set_tool_apps([("Zapier", "ok", ["inspect_zapier_actions", "execute_zapier_read_action"], "mcp-zapier-2"),
-                        ("Notes", "error", ["read_note"], "mcp-notes")])
+    for registry in ("TOOL_APP", "TOOL_SKILL", "TOOL_SERVERS", "SERVER_TITLE", "SERVER_SKILL"):
+        monkeypatch.setattr(mcp, registry, {})  # this test's own, filled below as a load fills them
+    zapier = ["inspect_zapier_actions", "execute_zapier_read_action"]
+    mcp.remember_loaded([
+        mcp.ServerEntry("zapier-2", "http", "Zapier", "ok", tools=zapier, title="Zapier",
+                        skill=mcp._skill_for("zapier-2", "Zapier", zapier)),
+        mcp.ServerEntry("notes", "stdio", "Notes", "error", tools=["read_note"], title="Notes",
+                        skill=mcp._skill_for("notes", "Notes", ["read_note"])),
+    ])
     return callbacks.OdiePlugin(s)
 
 
 def test_each_working_apps_tools_know_their_skill(plugin):
     assert mcp.TOOL_SKILL == {"inspect_zapier_actions": "mcp-zapier-2", "execute_zapier_read_action": "mcp-zapier-2"}
     assert mcp.TOOL_APP["inspect_zapier_actions"] == "Zapier"
+    assert mcp.SERVER_SKILL == {"zapier-2": "mcp-zapier-2"} and mcp.SERVER_TITLE == {"zapier-2": "Zapier"}
+    assert mcp.servers_with_tool("inspect_zapier_actions") == ["zapier-2"]
 
 
 async def test_an_app_tool_called_before_its_skill_says_which_skill(plugin):

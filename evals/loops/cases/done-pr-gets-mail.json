@@ -1,0 +1,75 @@
+{
+  "id": "done-pr-gets-mail",
+  "about": "The user tapped Done on a pull request's card; two more mails about it arrive. No new loop, no card.",
+  "open_loops": [
+    {
+      "title": "app #63 Rename settings keys",
+      "kind": "pull request",
+      "refs": [
+        "example/app#63",
+        "thread:gh-thread-63"
+      ],
+      "done": true
+    }
+  ],
+  "mails": [
+    {
+      "id": "dp1",
+      "from": "Asha Rao <notifications@github.com>",
+      "subject": "Re: [example/app] Rename settings keys (PR #63)",
+      "at": "2026-11-18T05:30:00Z",
+      "snippet": "Asha pushed 1 commit.",
+      "body": "Asha pushed 1 commit.",
+      "thread": "gh-thread-63"
+    },
+    {
+      "id": "dp2",
+      "from": "Asha Rao <notifications@github.com>",
+      "subject": "Re: [example/app] Rename settings keys (PR #63)",
+      "at": "2026-11-18T05:40:00Z",
+      "snippet": "Priya commented: looks fine",
+      "body": "Priya commented: looks fine",
+      "thread": "gh-thread-63"
+    }
+  ],
+  "gh": {
+    "pr:example/app#63": {
+      "number": 63,
+      "title": "Rename settings keys",
+      "state": "OPEN",
+      "isDraft": false,
+      "mergedAt": null,
+      "closedAt": null,
+      "author": {
+        "login": "asha-dev"
+      },
+      "headRefName": "branch-63",
+      "baseRefName": "main",
+      "additions": 41,
+      "deletions": 9,
+      "changedFiles": 3,
+      "isCrossRepository": false,
+      "reviewDecision": "REVIEW_REQUIRED",
+      "reviewRequests": [
+        {
+          "login": "you-dev"
+        }
+      ],
+      "url": "https://github.com/example/app/pull/63",
+      "statusCheckRollup": [
+        {
+          "name": "tests",
+          "status": "COMPLETED",
+          "conclusion": "SUCCESS"
+        }
+      ]
+    },
+    "user": "you-dev"
+  },
+  "expect": {
+    "loops": 1,
+    "no_card": [
+      "example/app#63"
+    ]
+  }
+}

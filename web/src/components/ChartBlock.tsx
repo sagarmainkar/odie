@@ -111,7 +111,7 @@ function XYChart({ spec }: { spec: ChartSpec }) {
   const legend = spec.type === "combo" || (spec.type === "bar" && spec.series.length > 1) || (severalLines && !namedAtEnds);
   const wide = spec.type === "line" && n >= WIDE_FROM;
   return (
-    <figure className={`chart${wide ? " chart-wide" : ""} glass glass-solid rounded-[26px] px-4 pt-4 pb-3 my-2`}>
+    <figure className={`chart${wide ? " chart-wide" : ""} glass glass-solid rounded-card px-4 pt-4 pb-3 my-2`}>
       <Headline spec={spec} hover={hover} />
       <div ref={plot} className="relative mt-2">
         <svg ref={svg} width="100%" height={layout.H} viewBox={`0 0 ${layout.W} ${layout.H}`} className="chart-svg"
@@ -130,7 +130,7 @@ function XYChart({ spec }: { spec: ChartSpec }) {
       </div>
       {legend && <ChartLegend series={spec.series} />}
       {piled && spec.series.length > 1 && <ChartLegend series={spec.series} at={hover ?? lastIndex(spec)} unit={spec.unit} />}
-      {spec.source && <div className="text-[11px] text-dim text-right">{spec.source}</div>}
+      {spec.source && <div className="text-tiny text-dim text-right">{spec.source}</div>}
     </figure>
   );
 }
@@ -159,13 +159,13 @@ function Headline({ spec, hover }: { spec: ChartSpec; hover: number | null }) {
   return (
     <>
       <figcaption className="flex items-center justify-between gap-2">
-        <span className="text-[13px] font-semibold text-muted truncate">{spec.title ?? spec.series[0].name ?? "Chart"}</span>
+        <span className="text-small font-semibold text-muted truncate">{spec.title ?? spec.series[0].name ?? "Chart"}</span>
         {pct !== null && withFigure && <span className={`chip ${pct >= 0 ? "chip-good" : "chip-warn"}`}>{pct >= 0 ? "▲" : "▼"} {Math.abs(pct).toFixed(1)}%</span>}
       </figcaption>
       {withFigure && (
         <div className="flex items-baseline gap-2 mt-0.5 min-w-0">
-          <span className="text-[30px] leading-tight font-extrabold tracking-[-0.03em] tabular-nums" title={bigFull !== bigText ? bigFull : undefined}>{bigText}</span>
-          <span className="text-[12px] text-muted tabular-nums truncate">
+          <span className="text-display-lg leading-tight font-extrabold tracking-[-0.03em] tabular-nums" title={bigFull !== bigText ? bigFull : undefined}>{bigText}</span>
+          <span className="text-caption text-muted tabular-nums truncate">
             {hover !== null ? spec.x[shown] : ""}
             {listed.map((s, k) => {
               const v = s.data[shown] ?? null;
@@ -201,10 +201,10 @@ function XLabels({ spec, layout }: { spec: ChartSpec; layout: XYLayout }) {
 /** The grey card a chart (or a diagram) shows while its fence is still streaming in. */
 export function ChartPending() {
   return (
-    <div className="glass rounded-[26px] p-4 my-2 flex flex-col gap-2" aria-label="Drawing chart">
+    <div className="glass rounded-card p-4 my-2 flex flex-col gap-2" aria-label="Drawing chart">
       <div className="h-4 w-32 rounded bg-well" />
       <div className="h-7 w-24 rounded bg-well" />
-      <div className="h-[110px] rounded-[14px] bg-well shimmer-bg" />
+      <div className="h-[110px] rounded-control bg-well shimmer-bg" />
     </div>
   );
 }

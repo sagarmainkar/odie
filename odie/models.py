@@ -260,12 +260,16 @@ async def refresh_fallback_at_startup(store: Store, waits: tuple[int, ...] = STA
         picked = await refresh_fallback(store)
 
 
-async def chat_completion(store: Store, slot: str, messages: list[dict], thinking: bool = False, **opts) -> str:
-    """One plain completion on the slot's model (used by the brief, memory review and day summary), through the same
-    litellm call the agent uses (odie.agent.model.complete). opts: temperature, max_tokens; litellm drops what the model
-    refuses (Claude takes no temperature while it thinks)."""
+async def chat_completion(store: Store, slot: str, messages: list[dict], thinking: bool = False,
+                          selection: Selection | None = None, **opts) -> str:
+    """One plain completion (used by the brief, memory review and day summary), through the same litellm call the
+    agent uses (odie.agent.model.complete). selection: the brain to ask, when the words belong to a personality with
+    a brain of its own (odie.brains); None asks everyday Odie's. opts: temperature, max_tokens; litellm drops what the
+    model refuses (Claude takes no temperature while it thinks)."""
     from odie.agent.model import complete
-    sel = resolve_selection(store, slot)
+    sel = selection
+    if sel is None:
+        sel = resolve_selection(store, slot)
     reply = await complete(sel, messages, think_harder=thinking, **opts)
     choice = reply.choices[0]
     text = (choice.message.content or "").strip()

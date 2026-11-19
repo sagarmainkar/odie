@@ -5,7 +5,7 @@ import logging
 from datetime import date
 from typing import TYPE_CHECKING
 
-from google.adk.tools import FunctionTool
+from google.adk.tools import FunctionTool, ToolContext
 
 from odie.memory.search import search
 from odie.memory.store import MemoryFile
@@ -52,32 +52,58 @@ def hit_line(hit: RecallHit) -> str:
     return memory_line(hit.title, hit.day, hit.text)
 
 
-def make_recall_tool(store, memory: MemoryFile) -> FunctionTool:
-    async def recall(query: str, since: str | None = None, until: str | None = None) -> str:
+def own_memory_lines(own: MemoryFile, query: str) -> list[str]:
+    """A personality's own memories that match the question by words, as [memory] lines (its memory is never put in
+    the recall index, so nobody else's search can reach it): "lighthouse plan" with that entry -> its line; no file
+    yet, or nothing matching -> []."""
+    if not own.exists():
+        return []
+    found = search(own.load().entries(), query, limit=5)
+    return [memory_line(h.entry.title, h.entry.date, h.entry.body) for h in found]
+
+
+def make_recall_tool(store, memory: MemoryFile, memory_for=None) -> FunctionTool:
+    """`memory` is the shared memory; `memory_for` gives a chat's own (odie.memory.tools.memory_of_chat). Who may read
+    what goes one way (odie.personalities.hidden_from): an everyday chat, and a turn in no chat at all, never finds a
+    personality's chats or memories; a personality finds its own, and the everyday ones."""
+    async def recall(query: str, since: str | None = None, until: str | None = None,
+                     tool_context: ToolContext | None = None) -> str:
         """Search what you and the user said in past chats, and everything remembered about them, by meaning. Use it
         when they refer to something from before ("what did we decide about…", "like last time"), or when nothing
         listed in What you remember fits. since, until: ISO dates. Lines are tagged [chat <day>] or [memory]. Say when
         something was said."""
+        from odie import personalities
+        from odie.agent.context import session_id_of
+        from odie.memory.tools import is_shared, memory_of_chat
         from odie.recall.fill import recall_index
         from odie.vault.settings import embedder_for
+        asker = personalities.of_session(store, session_id_of(tool_context))
+        hidden = personalities.hidden_from(store, asker)
+        own = memory_of_chat(memory, memory_for, tool_context)
+        own_lines: list[str] = []
+        if not is_shared(own, memory):
+            own_lines = own_memory_lines(own, query)
         try:
             index = recall_index()
-            hits = await index.search(query, k=HITS, embedder=embedder_for(store), since=since, until=until)
-        except Exception:  # the index won't open, or its search breaks: the memory file's words answer
+            hits = await index.search(query, k=HITS, embedder=embedder_for(store), since=since, until=until,
+                                      hidden_sessions=hidden)
+        except Exception:  # the index won't open, or its search breaks: the memory files' words answer
             log.warning("recall: past chats couldn't be searched; answering from the memory file's words", exc_info=True)
-            return memory_words(memory, query)
-        if not hits:
+            return memory_words(memory, query, own_lines)
+        lines = [*own_lines, *(hit_line(h) for h in hits)]
+        if not lines:
             return NOTHING
-        return "\n".join(hit_line(h) for h in hits)
+        return "\n".join(lines)
 
     return FunctionTool(recall)
 
 
-def memory_words(memory: MemoryFile, query: str) -> str:
+def memory_words(memory: MemoryFile, query: str, own_lines: list[str] | None = None) -> str:
     """The fallback when the recall index can't be opened or searched: the memory file searched by words, and a line saying past
     chats aren't there. "rent" with a Rent day memory -> its memory line, then the note; nothing matching -> NOTHING,
-    then the note."""
+    then the note. `own_lines`: a personality's own matching memories (own_memory_lines), which come first."""
     entries = memory.load().entries() if memory.exists() else []
     found = search(entries, query, limit=5)
-    lines = [memory_line(h.entry.title, h.entry.date, h.entry.body) for h in found] or [NOTHING]
+    shared_lines = [memory_line(h.entry.title, h.entry.date, h.entry.body) for h in found]
+    lines = [*(own_lines or []), *shared_lines] or [NOTHING]
     return "\n".join([*lines, NOT_INDEXED])

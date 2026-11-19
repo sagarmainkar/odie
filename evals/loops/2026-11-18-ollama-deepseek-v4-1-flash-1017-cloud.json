@@ -1,0 +1,214 @@
+{
+  "date": "2026-11-18",
+  "odie_commit": "3a71557",
+  "provider": "ollama",
+  "model": "deepseek-v4.1-flash:1017-cloud",
+  "totals": {
+    "right": 27,
+    "of": 27,
+    "wrong": []
+  },
+  "results": [
+    {
+      "id": "a-draft-waits",
+      "error": "",
+      "ran": [
+        [
+          1,
+          "wait"
+        ]
+      ],
+      "score": {
+        "right": 1,
+        "of": 1,
+        "wrong": [],
+        "loops": 1
+      }
+    },
+    {
+      "id": "done-pr-gets-mail",
+      "error": "",
+      "ran": [],
+      "score": {
+        "right": 2,
+        "of": 2,
+        "wrong": [],
+        "loops": 1
+      }
+    },
+    {
+      "id": "fourteen-mails-one-pr",
+      "error": "",
+      "ran": [
+        [
+          3,
+          "ready"
+        ]
+      ],
+      "score": {
+        "right": 2,
+        "of": 2,
+        "wrong": [],
+        "loops": 1
+      }
+    },
+    {
+      "id": "issue-assigned-to-you",
+      "error": "",
+      "ran": [
+        [
+          4,
+          "ready"
+        ]
+      ],
+      "score": {
+        "right": 2,
+        "of": 2,
+        "wrong": [],
+        "loops": 1
+      }
+    },
+    {
+      "id": "issue-not-yours",
+      "error": "",
+      "ran": [
+        [
+          5,
+          "drop"
+        ]
+      ],
+      "score": {
+        "right": 1,
+        "of": 1,
+        "wrong": [],
+        "loops": 1
+      }
+    },
+    {
+      "id": "lone-merged-mail",
+      "error": "",
+      "ran": [],
+      "score": {
+        "right": 1,
+        "of": 1,
+        "wrong": [],
+        "loops": 0
+      }
+    },
+    {
+      "id": "merged-pr-closes",
+      "error": "",
+      "ran": [],
+      "score": {
+        "right": 3,
+        "of": 3,
+        "wrong": [],
+        "loops": 1
+      }
+    },
+    {
+      "id": "own-pr-ci-failing",
+      "error": "",
+      "ran": [
+        [
+          7,
+          "ready"
+        ]
+      ],
+      "score": {
+        "right": 2,
+        "of": 2,
+        "wrong": [],
+        "loops": 1
+      }
+    },
+    {
+      "id": "own-pr-green-tested",
+      "error": "",
+      "ran": [
+        [
+          8,
+          "test"
+        ],
+        [
+          8,
+          "ready"
+        ]
+      ],
+      "score": {
+        "right": 2,
+        "of": 2,
+        "wrong": [],
+        "loops": 1
+      }
+    },
+    {
+      "id": "own-pr-lockfile",
+      "error": "",
+      "ran": [
+        [
+          9,
+          "ready"
+        ]
+      ],
+      "score": {
+        "right": 2,
+        "of": 2,
+        "wrong": [],
+        "loops": 1
+      }
+    },
+    {
+      "id": "own-pr-no-recipe",
+      "error": "",
+      "ran": [
+        [
+          10,
+          "ask"
+        ]
+      ],
+      "score": {
+        "right": 3,
+        "of": 3,
+        "wrong": [],
+        "loops": 1
+      }
+    },
+    {
+      "id": "someone-elses-pr",
+      "error": "",
+      "ran": [
+        [
+          11,
+          "ready"
+        ]
+      ],
+      "score": {
+        "right": 3,
+        "of": 3,
+        "wrong": [],
+        "loops": 1
+      }
+    },
+    {
+      "id": "two-prs-alike",
+      "error": "",
+      "ran": [
+        [
+          12,
+          "wait"
+        ],
+        [
+          13,
+          "wait"
+        ]
+      ],
+      "score": {
+        "right": 3,
+        "of": 3,
+        "wrong": [],
+        "loops": 2
+      }
+    }
+  ]
+}

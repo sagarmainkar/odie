@@ -69,11 +69,11 @@ async def test_brief_lists_open_tasks_with_ids_and_skips_snoozed(tmp_path):
 async def test_the_watchs_threads_are_not_listed_as_needing_the_user(tmp_path):
     """The watch follows orders and replies on its own and shows what needs the user on its card; listing its threads
     as open threads too counted them twice, and an order in transit read as "needs you"."""
-    from odie.watch import threads
     s = Store(tmp_path / "a.db")
     s.init_schema()
     s.add_task("Answer Asha", "todo", due_at="2026-10-03")
-    threads.track(s, "mail:o1", "order", "Order: desk lamp", "shipped", due="2026-10-02")
+    s.add_task("Order: desk lamp", "waiting", due_at="2026-10-02T09:00+05:30", source_kind="watch",
+               source_ref="mail:o1", origin="agent")  # a thread of old: its loop says it, not the tasks list
     inp = await gather_inputs(s, NOW)
     assert "Asha" in inp.tasks
     assert "desk lamp" not in inp.tasks
@@ -117,9 +117,12 @@ async def test_the_morning_ping_counts_what_needs_the_user_and_opens_today(monke
     from odie.watch import report
     s = Store(tmp_path / "a.db")
     s.init_schema()
-    s.set_setting(report.CARD, {"needs_you": [
-        {"ref": "mail:m1", "title": "Workshop invite", "why": "Asks your fee by Friday", "pile": "alerts", "done": False},
-        {"ref": "mail:m2", "title": "Old thing", "why": "x", "done": True}]})
+    from odie.loops import ledger
+    s.set_setting(report.CARD, {"line": ""})
+    ledger.open_loop(s, "", NOW, "Workshop invite", "reply owed", owner="you", state="ready",
+                     result="Asks your fee by Friday")
+    old = ledger.open_loop(s, "", NOW, "Old thing", "reply owed", owner="you", state="ready")
+    ledger.done(s, old, NOW)
     s.add_task("Pay the gas bill", "reminder", due_at="2026-10-01T09:00+05:30")
 
     async def fake_write(prompt, store=None):
@@ -155,8 +158,10 @@ def test_a_missed_morning_round_runs_when_odie_starts_before_noon(tmp_path):
 
 
 def watch_card_with_a_held_item(store):
+    from odie.loops import ledger
     from odie.watch import report
-    store.set_setting(report.CARD, {"needs_you": [{"title": "Invoice due Friday", "why": "from Dev"}], "events": []})
+    store.set_setting(report.CARD, {"line": "", "events": []})
+    ledger.open_loop(store, "", NOW, "Invoice due Friday", "bill", owner="you", state="ready", result="from Dev")
     store.set_setting(report.HELD, [{"ref": "mail:m9", "title": "Passport email came", "why": "at 23:10"}])
 
 

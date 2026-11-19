@@ -81,6 +81,7 @@ class Mail:
     sources: list[str] = field(default_factory=list)  # every source that showed this mail (Gmail and Apple Mail)
     thread: str = ""  # the app's thread id, when its listing gives one
     opened: bool = False  # body is the whole message (open_mail), not the listing's preview
+    to: str = ""  # who it went to, when the listing says (the user's sent mail: odie.watch.sent)
 
     def brief(self) -> dict:
         return {"id": self.id, "from": self.frm, "subject": self.subject, "at": self.at, "snippet": self.snippet,
@@ -153,8 +154,9 @@ def parse_mail(text: str, source: str) -> list[Mail]:
         subject = str(_first(r, "subject", "title"))
         at = str(_first(r, "date", "messageTimestamp", "internalDate", "received_at", "at"))
         thread = str(_first(r, "threadId", "thread_id"))
+        to = _who(_first(r, "to", "recipient", "to_email"))
         out.append(Mail(id=mid, frm=sender, subject=subject, at=at, snippet=body[:SNIPPET], attachments=atts,
-                        source=source, body=body[:BODY], sources=[source], thread=thread))
+                        source=source, body=body[:BODY], sources=[source], thread=thread, to=to))
     return out
 
 
@@ -216,7 +218,19 @@ def fold_mail(mails: list[Mail]) -> list[Mail]:
 ADDRESS = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
 NOT_FOR_APPLE_MAIL = "not available for Apple Mail"
 SEARCH_LIMIT = 10
+MAX_SENT = 25  # a check reads at most this many of the user's own sent mails
 READ_SECONDS = 30  # one read (open, thread, search) may take this long: the whole check has 280 s
+
+
+def reads_sent_mail(src: Source) -> bool:
+    """Whether a check asks this mail app for the user's sent mail (`in:sent after:<time>`): only a Gmail-style app,
+    whose search knows "in:sent". An app that didn't would answer with inbox mail, and someone else's mail in a thread
+    must never close a reply the user owes. Gmail and Calendar (gmail_search) -> True; Apple Mail (its tools read only
+    the inbox) -> False; an Outlook app's search_emails -> False."""
+    if src.kind != "mail" or src.style == "native" or not src.query_param:
+        return False
+    words = f"{src.server} {src.app} {src.tool}".lower()
+    return "gmail" in words or "google" in words
 
 
 def address_of(frm: str) -> str:
@@ -412,10 +426,14 @@ async def _download(url: str) -> bytes:
 
 
 class Fetcher:
-    def __init__(self, store, now: datetime):
-        self.store, self.now = store, now
+    def __init__(self, store, now: datetime, owner: str = ""):
+        """One check's reads for one watch: everyday Odie's (owner "") or a personality's own (odie.watch.owner), each
+        with its own sources and its own place in the mail."""
+        from odie.watch.owner import key
+        self.store, self.now, self.owner = store, now, owner
+        self.state_key = key(STATE, owner)
         self._calendar_ok = False
-        self.state = store.get_setting(STATE) or {"last_check": None, "seen": [], "events": {}, "sources": {}}
+        self.state = store.get_setting(self.state_key) or {"last_check": None, "seen": [], "events": {}, "sources": {}}
         self.caught_up: str = str(self.state.get("caught_up") or "")  # the bills catch-up this watch last ran (bills.CATCH_UP)
         self.catch_up_tries = int(self.state.get("catch_up_tries") or 0)  # its turns that failed so far
         self.statuses: dict[str, dict] = {}
@@ -426,12 +444,20 @@ class Fetcher:
         self._servers = None
 
     def _spec(self, src: Source) -> dict:
+        """The saved spec of a source's server, for a call. A server switched off for this watch's owner (everyday
+        Odie, or the personality: odie.plugins.access) is never called, even when an older save still lists it."""
+        from odie.plugins import access
         if self._servers is None:
             from odie.plugins.mcp import read_config
             self._servers = read_config()[0]
         spec = self._servers.get(src.server)
         if not isinstance(spec, dict):
             raise CallError(f"{src.app} isn't connected any more")
+        if not access.allowed(self.store, src.server, self.owner):
+            whose = "Odie"
+            if self.owner:
+                whose = "this personality"
+            raise CallError(f"{src.app} is switched off for {whose}")
         return spec
 
     async def _call(self, src: Source, tool: str, args: dict, timeout: float | None = None):
@@ -465,7 +491,7 @@ class Fetcher:
     async def new_mail(self) -> list[Mail]:
         seen = set(self.state.get("seen") or [])
         got: list[Mail] = []
-        for src in (s for s in saved(self.store) if s.kind == "mail"):
+        for src in (s for s in saved(self.store, self.owner) if s.kind == "mail"):
             since_dt = self._since(src)
             args = dict(src.fixed)
             query = f"after:{int(since_dt.timestamp())}"
@@ -497,7 +523,7 @@ class Fetcher:
         `query_tail`; Apple Mail: `since` and `limit`). A source that fails is skipped and logged as "`what` couldn't
         read <source>". Nothing is marked seen and no status is recorded: the callers decide what to keep."""
         got: list[Mail] = []
-        for src in (s for s in saved(self.store) if s.kind == "mail"):
+        for src in (s for s in saved(self.store, self.owner) if s.kind == "mail"):
             args = dict(src.fixed)
             query = f"after:{int(since_dt.timestamp())}{query_tail}"
             if src.style == "native":
@@ -515,6 +541,32 @@ class Fetcher:
                 continue
             got += parse_mail(res.text, src.id)
         return got
+
+    async def sent_mail(self) -> list[Mail]:
+        """What the user sent since the last check, newest first, at most MAX_SENT: each Gmail-style app asked for
+        `in:sent after:<its last good read>` (reads_sent_mail; Apple Mail is skipped). Nothing is marked seen and no
+        status is recorded; an app that fails is skipped and logged, so the check goes on without it."""
+        got: list[Mail] = []
+        for src in saved(self.store, self.owner):
+            if not reads_sent_mail(src):
+                continue
+            since_dt = self._since(src)
+            query = f"in:sent after:{int(since_dt.timestamp())}"
+            args = dict(src.fixed)
+            if src.style == "zapier":
+                args["params"] = {**(args.get("params") or {}), src.query_param: query}
+            else:
+                args[src.query_param] = query
+            try:
+                res = await self._call(src, src.tool, args, timeout=READ_SECONDS)
+            except CallError as e:
+                log.info("watch: %s couldn't read the sent mail: %s", src.app, e)
+                continue
+            if res.is_error:
+                log.info("watch: %s couldn't read the sent mail: %s", src.app, res.text[:200])
+                continue
+            got += parse_mail(res.text, src.id)
+        return newest_first(got)[:MAX_SENT]
 
     async def catch_up_mail(self, days: int = bills.CATCH_UP_DAYS) -> list[Mail]:
         """The last `days` of mail whose subject looks like a bill, a payment or an order, seen or not, newest first,
@@ -541,7 +593,7 @@ class Fetcher:
         start, end = self.now, self.now + timedelta(hours=hours)
         got = await self._read_events(start, end)
         before: dict[str, str] = self.state.get("events") or {}
-        cals = [s.id for s in saved(self.store) if s.kind == "calendar"]
+        cals = [s.id for s in saved(self.store, self.owner) if s.kind == "calendar"]
         self._calendar_ok = bool(cals) and all(self.statuses.get(c, {}).get("ok") for c in cals)
         now_ids = {e.id for e in got}
         for e in got:
@@ -561,7 +613,7 @@ class Fetcher:
     async def _read_events(self, start: datetime, end: datetime) -> list[Event]:
         """Every calendar's events between start and end, one row for an event two calendars hold."""
         got: list[Event] = []
-        for src in (s for s in saved(self.store) if s.kind == "calendar"):
+        for src in (s for s in saved(self.store, self.owner) if s.kind == "calendar"):
             args = dict(src.fixed)
             if src.dates:  # whole days (a date_from-style calendar): today to the window's last day
                 window = {src.start_param: start.date().isoformat(), src.end_param: end.date().isoformat()}
@@ -585,6 +637,10 @@ class Fetcher:
                 self._ok(src, False, str(e))
         return fold_events(got)  # one row for an event both calendars hold
 
+    def read_by_check(self, mail_id: str) -> bool:
+        """Whether code read this mail for this check (its new mail, or the bills catch-up), not a search's find."""
+        return mail_id in self._mail
+
     def read_mail(self, mail_id: str) -> Mail | None:
         """A mail this check knows: one of its new mails, or one a search turned up."""
         mail = self._mail.get(mail_id)
@@ -600,7 +656,7 @@ class Fetcher:
 
     def _source_of(self, mail: Mail) -> Source | None:
         """The saved source whose id the mail carries (a mail folded from two apps keeps the connector's id)."""
-        return next((s for s in saved(self.store) if s.id == mail.source), None)
+        return next((s for s in saved(self.store, self.owner) if s.id == mail.source), None)
 
     async def open_mail(self, mail_id: str) -> Mail | None:
         """A mail of this check with its whole body, read once through the app that holds its id and then kept: Apple
@@ -654,7 +710,7 @@ class Fetcher:
         """Older mail matching `query` (the app's own search words, e.g. "from:bills@power.example.com") across the
         connected mail apps that can search, newest first, at most `limit`; found mails can then be opened with
         open_mail. Only Apple Mail connected -> why not."""
-        searchable = [s for s in saved(self.store) if s.kind == "mail" and s.style != "native" and s.query_param]
+        searchable = [s for s in saved(self.store, self.owner) if s.kind == "mail" and s.style != "native" and s.query_param]
         if not searchable:
             return f"Searching older mail is {NOT_FOR_APPLE_MAIL}, and no other connected mail app can search."
         got: list[Mail] = []
@@ -720,7 +776,7 @@ class Fetcher:
         if not SAFE_NAME.match(name) or name in (".", "..") or "/" in name or "\\" in name or ".." in name:
             raise CallError("That isn't a file name.")
         mail = self._mail.get(mail_id)
-        src = next((s for s in saved(self.store) if mail and s.id == mail.source), None)
+        src = next((s for s in saved(self.store, self.owner) if mail and s.id == mail.source), None)
         if src is not None and src.style == "native":
             from odie.mac import mail as mac_mail
             from odie.mac import scripts as mac_scripts
@@ -824,6 +880,6 @@ class Fetcher:
                 last_ok = prev.get("last_ok")
             srcs[sid] = {**st, "fails": fails, "last_ok": last_ok}
 
-        self.store.set_setting(STATE, {"last_check": self.now.isoformat(timespec="seconds"), "seen": seen, "events": events, "sources": srcs,
+        self.store.set_setting(self.state_key, {"last_check": self.now.isoformat(timespec="seconds"), "seen": seen, "events": events, "sources": srcs,
                                        "retries": retries, "caught_up": self.caught_up,
                                        "catch_up_tries": self.catch_up_tries})

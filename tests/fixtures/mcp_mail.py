@@ -172,5 +172,17 @@ elif MODE == "gmailmcp":  # a line-style Gmail and Calendar server: its schema a
         _log("calendar_create_event", {"summary": summary})
         return "created"
 
+    @s.tool()
+    def calendar_update_event(event_id: str, summary: str = "") -> str:
+        """Change an event."""
+        _log("calendar_update_event", {"event_id": event_id})
+        return "updated"
+
+    @s.tool()
+    def gmail_send(to: str, body: str) -> str:
+        """Send a mail."""
+        _log("gmail_send", {"to": to})
+        return "sent"
+
 if __name__ == "__main__":
     s.run()

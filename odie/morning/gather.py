@@ -78,14 +78,16 @@ def newest_within(lines: list[str], cap: int) -> list[str]:
     return kept
 
 
-def recent_chats(now: datetime) -> str:
-    """Every chat's words from local midnight four days back until now (no chats are left out), newest kept."""
+def recent_chats(now: datetime, hidden_sessions: frozenset[str] = frozenset()) -> str:
+    """Every everyday chat's words from local midnight four days back until now, newest kept. No everyday chat is left
+    out, signed-in ones included; the threads in `hidden_sessions` are (gather passes every personality's threads:
+    what is said to a personality is never part of the hello, which is everyday Odie's)."""
     s = config.settings
     tz = user_tz()
     local_today = now.astimezone(tz).date()
     since = midnight(local_today - timedelta(days=DAYS_BACK), tz).timestamp()
     lines = chat_lines(s.sessions_db_path, s.app_name, s.user_id, since, now.timestamp(), tz)
-    texts = [chat_line_text(line) for line in lines]
+    texts = [chat_line_text(line) for line in lines if line.session_id not in hidden_sessions]
     return "\n".join(newest_within(texts, CHAT_CHARS))
 
 
@@ -182,7 +184,8 @@ async def gather(store, now: datetime, brief: BriefInputs) -> MorningInputs:
     empty, and the rest go on. Mail and yesterday's events are read only when a mail or calendar source is saved."""
     chats = ""
     try:
-        chats = recent_chats(now)
+        from odie import personalities
+        chats = recent_chats(now, personalities.owned_sessions(store))
     except Exception:
         log.info("morning: the chats couldn't be read", exc_info=True)
 

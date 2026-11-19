@@ -138,37 +138,45 @@ def test_badges_say_where_an_item_came_from():
     assert [b["kind"] for b in badges_of(["calendar:mac", "calendar:gmail-calendar", "calendar:mac"], statuses)] == ["icloud", "gmail"]
 
 
-def test_the_card_carries_badges_on_items_and_events(store):
+def a_check(store, mails, events, statuses, items):
+    from types import SimpleNamespace
+    known = {m.id: m for m in mails}
+    fetcher = SimpleNamespace(read_mail=known.get, statuses=statuses)
+    return SimpleNamespace(fetcher=fetcher, sent=[], events=events, ahead=[], threads_found=[],
+                           report={"findings": items, "line": "", "done": []})
+
+
+def test_findings_and_the_card_carry_badges(store):
+    from odie.loops import findings
     from odie.watch import report
     statuses = {"mail:mac": {"ok": True, "app": "Apple Mail", "kind": "mail"}, "calendar:gmail-calendar": {"ok": True, "app": "Gmail and Calendar", "kind": "calendar"},
                 "calendar:mac": {"ok": True, "app": "Calendar", "kind": "calendar"}}
     mails = [Mail("mac:5", "Bakliwal <bt@x.in>", "Batch", "2026-10-21T12:50:00+05:30", "Hi", [], "mail:mac", sources=["mail:mac"])]
     events = [Event("e1", "Dentist", "2026-10-22T10:00:00+05:30", "", "", [], "calendar:gmail-calendar", sources=["calendar:gmail-calendar", "calendar:mac"])]
-    report.apply(store, NOW, [{"ref": "mail:mac:5", "title": "Batch choice", "why": "by 25 Oct"}, {"ref": "event:e1", "title": "Dentist", "why": "moved"}],
-                 "two things", mails, events, statuses, first=True)
-    card = store.get_setting(report.CARD)
-    by_ref = {i["ref"]: i for i in card["needs_you"]}
-    assert by_ref["mail:mac:5"]["badges"] == [{"kind": "icloud", "app": "Apple Mail"}]
-    assert [b["kind"] for b in by_ref["event:e1"]["badges"]] == ["gmail", "icloud"]
-    assert [b["kind"] for b in card["events"][0]["badges"]] == ["gmail", "icloud"]
+    got = findings.collect(a_check(store, mails, events, statuses, [
+        {"ref": "mail:mac:5", "title": "Batch choice", "why": "by 25 Oct"}, {"ref": "event:e1", "title": "Dentist", "why": "moved"}]))
+    by_ref = {f["ref"]: f for f in got}
+    assert by_ref["mail:mac:5"]["card"]["badges"] == [{"kind": "icloud", "app": "Apple Mail"}]
+    assert [b["kind"] for b in by_ref["event:e1"]["card"]["badges"]] == ["gmail", "icloud"]
+    report.save_card(store, NOW, "two things", events, statuses)
+    assert [b["kind"] for b in store.get_setting(report.CARD)["events"][0]["badges"]] == ["gmail", "icloud"]
 
 
-def test_a_mail_item_names_the_app_that_holds_its_id(store):
-    # The tap on Today opens the mail by its id, so the item says which app that id belongs to, even when another app
+def test_a_mail_finding_names_the_app_that_holds_its_id(store):
+    # The tap opens the mail by its id, so the loop's card says which app that id belongs to, even when another app
     # had a copy of the same mail too.
-    from odie.watch import report
+    from odie.loops import findings
     statuses = {"mail:mac": {"ok": True, "app": "Apple Mail", "kind": "mail"},
                 "mail:gmail-calendar": {"ok": True, "app": "Gmail and Calendar", "kind": "mail"}}
     both = Mail("g1", "Asha <a@x.in>", "Lease", "2026-10-21T12:50:00+05:30", "Hi", [], "mail:gmail-calendar",
                 sources=["mail:mac", "mail:gmail-calendar"])
     only_mac = Mail("mac:7", "Ravi <r@x.in>", "Hello", "2026-10-21T12:55:00+05:30", "Hi", [], "mail:mac",
                     sources=["mail:mac"])
-    report.apply(store, NOW, [{"ref": "mail:g1", "title": "Lease", "why": "sign"},
-                              {"ref": "mail:mac:7", "title": "Hello", "why": "reply"}], "two", [both, only_mac], [],
-                 statuses, first=True)
-    by_ref = {i["ref"]: i for i in store.get_setting(report.CARD)["needs_you"]}
-    assert by_ref["mail:g1"]["app"] == "Gmail and Calendar"
-    assert by_ref["mail:mac:7"]["app"] == "Apple Mail"
+    got = findings.collect(a_check(store, [both, only_mac], [], statuses, [
+        {"ref": "mail:g1", "title": "Lease", "why": "sign"}, {"ref": "mail:mac:7", "title": "Hello", "why": "reply"}]))
+    by_ref = {f["ref"]: f for f in got}
+    assert by_ref["mail:g1"]["card"]["app"] == "Gmail and Calendar"
+    assert by_ref["mail:mac:7"]["card"]["app"] == "Apple Mail"
 
 
 async def test_up_next_keeps_the_events_badges(store, monkeypatch):

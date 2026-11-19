@@ -228,6 +228,16 @@ def save_request(kwargs: dict[str, Any], folder: Path, keep: int = 10) -> None:
         log.debug("save_request failed", exc_info=True)
 
 
+def forget_saved_requests(folder: Path) -> int:
+    """Remove every saved request (save_request's files); how many went. They carry no thread id, so when one thread's
+    words must go (a personality is deleted) they all go. Example: 10 saved -> 10 removed, the folder stays."""
+    removed = 0
+    for saved in folder.glob("*.json"):
+        saved.unlink(missing_ok=True)
+        removed += 1
+    return removed
+
+
 class SavingClient(LiteLLMClient):
     """ADK's seam to litellm, with every request saved first (save_request), exactly as litellm is handed it."""
 

@@ -26,7 +26,7 @@ export function LocationRowView({ info, now, busy, Row, onTurnOn, onOff, onForge
   return (
     <>
       <Row icon={{ icon: "pin", color: "green" }} ok={row.state === "ok"} title="Location" sub={row.sub} meta={row.meta || undefined} right={right} />
-      <div className="location-note px-4 pb-3 -mt-1 text-[12px] leading-4 text-dim border-b border-line last:border-b-0">{NOTE_TEXT}</div>
+      <div className="location-note px-4 pb-3 -mt-1 text-caption leading-4 text-muted border-b border-line last:border-b-0">{NOTE_TEXT}</div>
     </>
   );
 }

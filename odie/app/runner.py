@@ -12,6 +12,7 @@ import json
 from google.adk.events import Event
 from collections.abc import AsyncIterator, Callable
 from contextlib import aclosing
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -22,10 +23,10 @@ from google.adk.runners import Runner
 from google.adk.sessions.sqlite_session_service import SqliteSessionService
 from google.genai import types
 
-from odie import addons, approvals_mode, config
+from odie import addons, approvals_mode, brains, config
 from odie.agent.agent import build_agent, chat_generate_config, memory_file
 from odie.agent.callbacks import OdiePlugin
-from odie.agent.context import parts_of
+from odie.agent.context import parts_of, session_id_of
 from odie.agent.model import WRITER_REPLY_TOKENS, chat_effort_think_harder, model_for, think_harder_words
 from odie.making.writer import MAX_LLM_CALLS as WRITER_MAX_LLM_CALLS
 from odie.models import chat_completion, context_window, history_limit_for, resolve_selection
@@ -226,13 +227,33 @@ def events_to_history(events: list[Any]) -> list[dict[str, Any]]:
             usage = usage_of(ev)
             if usage:
                 out[-1]["usage"] = usage
-            posted = [m for x in ((getattr(ev, "custom_metadata", None) or {}).get("media") or []) if (m := media_of({"media": x}))]
+            meta = getattr(ev, "custom_metadata", None) or {}
+            if meta.get("shown"):  # a posted message shown as written, while the model reads it fenced (a job's report)
+                out[-1]["text"] = meta["shown"]
+            if meta.get("kind"):
+                out[-1]["kind"] = meta["kind"]
+            posted = [m for x in (meta.get("media") or []) if (m := media_of({"media": x}))]
             if posted:  # a posted message's memo (a spoken reminder)
                 out[-1].setdefault("media", []).extend(posted)
         asks_for_tap = any(p.function_call and p.function_call.name == CONFIRM for p in ev.content.parts)
         if asks_for_tap and out:  # the app pauses here; whatever follows the tap goes below the card
             closed.append(out[-1])
     return out
+
+
+def marked_chat_pass(store: Store, session_id: str, item: dict[str, Any]) -> dict[str, Any]:
+    """A finished shell step that ran under this chat's "don't ask again" pass for its kind says so: its allowed
+    becomes {"by": "chat"}; any other item is returned as it was.
+      tool_done run_shell c7 {"by": "pass"}, c7 ran under a deletes pass -> allowed {"by": "chat"}
+      tool_done run_shell c8 {"by": "pass"}, ran because Smart needs no tap for it -> unchanged
+      tool_done web_search -> unchanged"""
+    from odie.agent import shell_grant
+    allowed = item.get("allowed") or {}
+    if item.get("type") != "tool_done" or item.get("tool") != "run_shell" or allowed.get("by") != "pass":
+        return item
+    if item.get("id") in shell_grant.calls_allowed_for_chat(store, session_id):
+        item["allowed"] = {"by": "chat"}
+    return item
 
 
 def steps_with_allowed(store: Store, session_id: str, lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -244,13 +265,19 @@ def steps_with_allowed(store: Store, session_id: str, lines: list[dict[str, Any]
       c3 card pending, step "wait"          -> stays "wait", allowed None (the card can still be tapped)
       c4 card lapsed, step "wait"           -> state "no" (Not run), allowed {"by": "lapsed", "at": <when>}
       c5 approved, step still "wait"        -> state "no" (Not run), allowed {"by": "you", ...} (the resume never finished)
-      web_search, no row                    -> allowed None"""
+      web_search, no row                    -> allowed None
+      run_shell c7 "pass", ran under this chat's pass for its kind -> allowed {"by": "chat"}"""
     rows = store.approvals_for_calls(session_id)
+    from odie.agent import shell_grant
+    chat_passed = shell_grant.calls_allowed_for_chat(store, session_id)
     for item in lines:
         for step in item.get("steps", []):
             # response None: only a row can answer here; the "pass" rule was already applied when the step was built
             decided = allowed_of(step["name"], step["id"], item.get("inv", ""), step["args"], None, rows)
             if decided is None:
+                ran_on_its_own = (step.get("allowed") or {}).get("by") == "pass"
+                if step["name"] == "run_shell" and ran_on_its_own and step["id"] in chat_passed:
+                    step["allowed"] = {"by": "chat"}
                 continue
             step["allowed"] = decided
             if step["state"] == "wait":
@@ -352,6 +379,8 @@ def chat_run_config() -> RunConfig:
 
 def chat_error(e: Exception) -> str:
     from google.adk.agents.invocation_context import LlmCallsLimitExceededError
+    if isinstance(e, brains.BrainGone):
+        return str(e)  # already words for the user
     if isinstance(e, LlmCallsLimitExceededError):
         return f"I stopped after {MAX_LLM_CALLS} steps without finishing; ask again more narrowly, or I can try a different way."
     return f"{type(e).__name__}: {str(e)[:200]}"
@@ -366,11 +395,13 @@ def _safely(fn, *args):
         return None
 
 
-def approval_from_confirmation(fc: Any, invocation_id: str, session_id: str, store: Store) -> dict[str, Any]:
+def approval_from_confirmation(fc: Any, invocation_id: str, session_id: str, store: Store,
+                               server: str | None = None) -> dict[str, Any]:
     """Code, not the model, writes what the card says: the summary comes from the tool arguments (an add-on writes the
     card for its own tools, from its audit log), provenance from the mail the model has seen recently in this session.
     call_id: the id of the tool call waiting for the tap (ADK wraps it as originalFunctionCall); None when the
-    confirmation does not say."""
+    confirmation does not say. server: the connected app the waiting tool object reaches (OdiePlugin.server_of_call);
+    the card names it and keeps it ("server" in its detail), since a tap is consent for that app alone."""
     from odie.signin import guard as signin_guard
     args = dict(fc.args or {})
     orig = args.get("originalFunctionCall") or {}
@@ -387,9 +418,13 @@ def approval_from_confirmation(fc: Any, invocation_id: str, session_id: str, sto
         same = str(targs.get("version", "")) == builder.staged_version(name)
         risk = "normal" if detail["body"].startswith("──") and same else "unknown"
     elif tool == "run_shell":
+        from odie.agent import shell_grant
         cwd = targs.get("cwd") or "~"
         detail["cwd"] = cwd
         summary = f"Run in {cwd}: {targs.get('command', '')}"
+        # Smart: why it asks, and whether its second button ("don't ask again in this chat") is offered
+        detail.update(shell_grant.card_offer(store, session_id, str(targs.get("command", "")), targs.get("cwd"),
+                                             datetime.now()))
     elif tool in signin_guard.GUARDED:
         summary, extra = signin_guard.card(tool, targs, session_id, store)
         detail.update({k: v for k, v in extra.items() if v})
@@ -400,8 +435,14 @@ def approval_from_confirmation(fc: Any, invocation_id: str, session_id: str, sto
         summary, risk = card.summary, card.risk
         detail.update(card.detail)
     else:
-        from odie.plugins.mcp import TOOL_APP
-        app = TOOL_APP.get(tool)
+        from odie.plugins import access
+        from odie.plugins.mcp import SERVER_TITLE
+        if server is None:  # not noted (an older turn): this thread's own connection, by the tool's name
+            server = access.server_of_tool(store, tool, session_id)
+        app = access.app_title_of_tool(store, tool, session_id)
+        if server is not None:
+            app = SERVER_TITLE.get(server, server)
+            detail["server"] = server
         label = tool.replace("_", " ").capitalize()
         args_text = "; ".join(f"{k}: {str(v)[:60]}" for k, v in targs.items())
         if app:
@@ -577,15 +618,43 @@ def previous_questions(history: list[dict]) -> list[str]:
         said.append(without_form_answers(h["text"]))
     return said[-2:][::-1]
 
+class SessionGone(Exception):
+    """A thread that was erased with its personality (odie.personalities.delete): nothing may be written to it, or made
+    under its id, again."""
+
+
+def files_of(events: list[Any]) -> tuple[list[str], list[str]]:
+    """What a thread's messages carry besides words: the ids of the files made in it (odie.media: a memo, a podcast, a
+    picture) and of the pictures the user uploaded into it. ([made ids], [upload ids])."""
+    made = [m["id"] for line in events_to_history(events) for m in line.get("media", []) if m.get("id")]
+    uploads: list[str] = []
+    for ev in events:
+        for part in parts_of(ev):
+            text = getattr(part, "text", None) or ""
+            uploads += IMAGE_MARK.findall(text)
+    return made, uploads
+
+
+@dataclass
+class SessionPrompt:
+    """One thread's system prompt, built once for that thread and that day (so a provider's cache can reuse it), and
+    what the per-message trailer needs to know about it."""
+    text: str
+    caps: frozenset  # what this install could do when it was built (the trailer's wording follows it)
+    day_summary: str  # the morning's summary it carries ("" when it carries none: the trailer then brings the brief)
+    day: str  # the local day it was built on: a thread that lives for days gets a new one each day
+
+
 class OdieRunner:
     def __init__(self, store: Store):
         s = config.settings
         self.store = store
         self.tz = ZoneInfo(s.timezone)
-        self._current_prompt = ""
-        self._prompt_session = ""
-        self._day_summary = ""  # the summary the current static prompt carries
-        self._model_key: tuple | None = None
+        # Each thread's own prompt. It used to be one slot for the whole app, which the thread that started last set
+        # for every turn then running: harmless with one personality, but with several a turn could have run with
+        # another's instructions and memory titles.
+        self._prompts: dict[str, SessionPrompt] = {}
+        self._chat_models: dict[tuple, Any] = {}  # (effort, model_key) -> the chat model built for it (_chat_model)
         self.gated = True  # approval-gated tools are loaded (send, trash, invites, shell)
         self.memory = memory_file()
         self.memory.ensure()
@@ -593,11 +662,10 @@ class OdieRunner:
         self._locks: dict[str, asyncio.Lock] = {}
         self._history_limits: dict[str, int] = {}  # session -> its history limit in tokens (_history_limit)
         self._recent: dict[str, list[str]] = {}  # previous two user questions per session, for prefetch  # one per session: a reminder never appends mid-turn
-        self.history_limit = history_limit_for(None)  # tokens; until the model's real context size is known
-        self._limit_key: tuple | None = None
-        self._window_unknown = True  # the provider has not said the model's context size yet: ask again next time
+        self._windows: dict[str, int] = {}  # model_key -> the context size its provider said (_window_of)
         self.plugins: dict = {"skills": [], "servers": []}
         self._stop: set[str] = set()  # sessions the user asked to stop
+        self._new_thread_lock = asyncio.Lock()  # one new personality thread at a time (odie.personalities)
         from odie.skills import builder
         builder.hooks.update(store=store, reload=self.load_plugins, reserved=lambda: self._all_tool_names())
         from odie import trackers
@@ -607,6 +675,8 @@ class OdieRunner:
         about.hooks.update(runner=self)
         from odie.making import jobs as making_jobs
         making_jobs.hooks.update(runner=self, store=store)
+        from odie.workers import router as workers_router
+        workers_router.setup(store, self)  # background Workers (odie.workers): post their reports through this runner
         self._plugin_toolsets: list = []  # MCP connections owned by the current plugin set
         self._plugins_lock = asyncio.Lock()  # one reload at a time, each reading the latest config
         self.close_grace = 120.0  # seconds old connections stay open after a reload, for a turn still using them
@@ -614,10 +684,12 @@ class OdieRunner:
         self._retries_left = 8
         self._background: set[asyncio.Task] = set()
         self.review_every = config.settings.review_every_turns
-        self._turns: list[tuple[str, str]] = []   # (user, assistant) pairs since the last review
+        # (user, assistant) pairs since the last review, kept apart for each personality ("" = everyday Odie)
+        self._turns: dict[str, list[tuple[str, str]]] = {}
+        self._review_for = ""  # whose turns the running review reads (so deleting a personality can stop a review of it)
         self._review_task: asyncio.Task | None = None
-        self.agent = build_agent(store, instruction=lambda ctx: self._current_prompt, memory=self.memory,
-                                 on_memory_change=self._memory_changed)
+        self.agent = build_agent(store, instruction=self._prompt_of, memory=self.memory,
+                                 on_memory_change=self._memory_changed, memory_for=self._memory_for_chat)
         self.plugin = OdiePlugin(store)
         from odie.agent.usage import CACHE
         app = App(name=s.app_name, root_agent=self.agent, plugins=[self.plugin],
@@ -631,6 +703,32 @@ class OdieRunner:
         row = self.store.one("select value_json from settings where key=?", (f"segment:{date}",))
         n = int(row["value_json"]) if row else 1
         return f"chat-{date}" if n == 1 else f"chat-{date}-{n}"
+
+    def current_thread(self, personality: str) -> str | None:
+        """A personality's current chat: its latest thread, however old, until the user taps New chat (it has no
+        thread-a-day rhythm, unlike everyday Odie). None when it has no thread yet."""
+        return self.store.get_setting(f"current:{personality}")
+
+    async def session_for(self, personality: str, date: str) -> str:
+        """The thread a message for this personality goes to, with no thread named: everyday Odie -> today's chat
+        (current_session_id); a personality -> its current thread, made now if it has none."""
+        if not personality:
+            return self.current_session_id(date)
+        async with self._new_thread_lock:
+            current = self.current_thread(personality)
+            if current:
+                return current
+            return await self._new_thread(personality, date)
+
+    async def _new_thread(self, personality: str, date: str) -> str:
+        """A new thread for a personality, which becomes its current chat. The thread is claimed for it before its
+        session exists, so there is never a moment when it could be taken for an everyday thread."""
+        from odie import personalities, threads
+        sid = threads.next_free_id(self.store, date)
+        personalities.claim(self.store, sid, personality)
+        await self._ensure_session(sid)
+        self.store.set_setting(f"current:{personality}", sid)
+        return sid
 
     def _set_segment(self, date: str, n: int) -> None:
         self.store.execute("insert into settings(key,value_json) values(?,?) on conflict(key) do update set value_json=excluded.value_json",
@@ -656,19 +754,42 @@ class OdieRunner:
 
     async def _history_limit(self, session_id: str) -> int:
         """This chat's history limit in tokens (odie.models.history_limit_for; odie.agent.compaction cuts past it),
-        from the chosen model's context size, read at the session's first turn and then kept for the session: a limit
-        that moved mid-chat would move the cut and rewrite history the model has already read. While the provider
-        can't say the size, the 'can't say' limit is used but not kept, so the next turn asks again (23 Oct: a chat
-        pinned at 50k all day was trimmed hard, then jumped to 300k after a restart).
+        from the context size of the thread's brain (odie.brains: its personality's own, or Odie's), read at the
+        session's first turn and then kept for the session: a limit that moved mid-chat would move the cut and rewrite
+        history the model has already read. While the provider can't say the size, the 'can't say' limit is used but
+        not kept, so the next turn asks again (23 Oct: a chat pinned at 50k all day was trimmed hard, then jumped to
+        300k after a restart).
           the first turn of chat-2026-10-15 with DeepSeek (1M)  -> 300,000, kept for chat-2026-10-15
           a later turn there, after switching to Gemma (70k)    -> still 300,000 (the next session uses Gemma's)
-          Ollama not saying the size yet                        -> 50,000 this turn; asked again next turn"""
+          Ollama not saying the size yet                        -> 50,000 this turn; asked again next turn
+          a thread of Mira's, her own brain at 70k              -> 52,500, whatever everyday Odie uses
+          a thread whose own brain is gone                      -> 50,000, and no provider is asked"""
         if session_id in self._history_limits:
             return self._history_limits[session_id]
-        limit = await self.refresh_history_limit()
-        if not self._window_unknown:
+        window = await self._window_of_thread(session_id)
+        limit = history_limit_for(window)
+        if window is not None:
             self._history_limits[session_id] = limit
         return limit
+
+    async def _window_of_thread(self, session_id: str) -> int | None:
+        """The context size of this thread's brain (_window_of); None when it isn't known or the brain is gone."""
+        try:
+            selection = brains.for_thread(self.store, session_id)
+        except brains.BrainGone:
+            return None
+        return await self._window_of(selection)
+
+    def _job_nudge(self, session_id: str, text: str) -> str:
+        """The firm line that hands a long job to a Worker (odie.workers.nudge), with a line break before it, when this
+        message looks like a job; "" otherwise.
+          "Write a script that sorts my photos and run it" -> a line break, then "[This is a job for a Worker: …]"
+          "How is the market today?"                       -> """""
+        from odie.workers import nudge
+        if not nudge.looks_like_a_job(text):
+            return ""
+        self.store.audit("agent", "job_nudge", result_summary=text[:200], session_id=session_id)
+        return "\n" + nudge.NUDGE
 
     async def _visual_nudge(self, session_id: str, text: str) -> str:
         """The line that reminds the model to draw (odie.agent.visual_nudge), with a line break before it, when this
@@ -704,34 +825,121 @@ class OdieRunner:
         return self._locks.setdefault(session_id, asyncio.Lock())
 
     async def _ensure_session(self, session_id: str) -> str:
+        """The thread's session, made if it isn't there yet. A thread that was erased with its personality raises
+        SessionGone: a turn or a job that was still finishing can't bring it back."""
+        from odie import personalities
+        if personalities.is_erased(self.store, session_id):
+            raise SessionGone(session_id)
         s = config.settings
         existing = await self.session_service.get_session(app_name=s.app_name, user_id=s.user_id, session_id=session_id)
         if existing is None:
             await self.session_service.create_session(app_name=s.app_name, user_id=s.user_id, session_id=session_id)
         return session_id
 
-    def memory_index(self) -> str:
-        try:
-            return build_index(self.memory.load(), max_chars=5000)
-        except OSError:
-            return ""
+    def forget_sessions(self, session_ids) -> None:
+        """Drop what the runner remembers about threads that were erased: their prompt, their last questions, their
+        history limit, a pending Stop."""
+        for session_id in session_ids:
+            self._prompts.pop(session_id, None)
+            self._recent.pop(session_id, None)
+            self._history_limits.pop(session_id, None)
+            self._stop.discard(session_id)
 
-    def prefetch(self, text: str) -> str:
+    async def erase_thread(self, session_id: str) -> tuple[list[str], list[str]]:
+        """Erase one thread's messages for good (its personality was deleted). A turn still running in it is asked to
+        stop and waited for first. Returns files_of its messages, for the caller to erase too."""
+        s = config.settings
+        self.request_stop(session_id)
+        async with self.lock_for(session_id):
+            sess = await self.session_service.get_session(app_name=s.app_name, user_id=s.user_id, session_id=session_id)
+            carried: tuple[list[str], list[str]] = ([], [])
+            if sess is not None:
+                carried = files_of(sess.events)
+                await self.session_service.delete_session(app_name=s.app_name, user_id=s.user_id, session_id=session_id)
+            self.forget_sessions([session_id])
+        return carried
+
+    async def forget_personality(self, personality: str) -> None:
+        """A personality was deleted: drop its turns waiting for a memory review, and stop a review of its turns that
+        is still running (it would write its memory file back)."""
+        self._turns.pop(personality, None)
+        review = self._review_task
+        reviewing_it = review is not None and not review.done() and self._review_for == personality
+        if reviewing_it:
+            review.cancel()
+            await asyncio.gather(review, return_exceptions=True)
+
+    def memory_of(self, personality: str):
+        """The memory file a personality saves to: everyday Odie -> the shared memories.md; Mira -> her own."""
+        if not personality:
+            return self.memory
+        from odie import personalities
+        found = personalities.get(self.store, personality)
+        if found is None:
+            raise ValueError("no such personality")
+        return personalities.memory_file(found)
+
+    def memory_index(self, personality: str = "") -> str:
+        """The memory titles a prompt lists. Everyday Odie: the shared memory's. A personality: its own first, then the
+        shared ones (it reads both and saves only to its own)."""
         try:
-            hits = prefetch_hits(self.memory.load().entries(), text, limit=4)
+            shared = build_index(self.memory.load(), max_chars=5000)
+        except OSError:
+            shared = ""
+        if not personality:
+            return shared
+        from odie import personalities
+        try:
+            own = build_index(self.memory_of(personality).load(), max_chars=5000)
+        except OSError:
+            own = ""
+        return personalities.joined_index(own, shared)
+
+    def prefetch(self, text: str, personality: str = "") -> str:
+        """The remembered entries that fit this message, for its [memories] block: from the shared memory, and for a
+        personality from its own memory first."""
+        entries: list = []
+        try:
+            if personality:
+                entries += self.memory_of(personality).load().entries()
+            entries += self.memory.load().entries()
         except OSError:
             return ""
+        hits = prefetch_hits(entries, text, limit=4)
         rendered, _ = render_prefetch(hits, max_entries=4, max_chars=2500)
         return rendered
 
-    def _note_turn(self, user: str, assistant: str) -> None:
-        """Every N user turns, review the conversation for things worth remembering (background)."""
-        self._turns.append((user, assistant))
-        if len(self._turns) < self.review_every:
+    def _memory_for_chat(self, tool_context):
+        """The memory file of the chat a tool was called in (ADK's tool_context names the chat): an everyday chat ->
+        the shared memories.md; a personality's thread -> its own. No chat at all (a background turn) -> the shared one."""
+        from odie import personalities
+        personality = personalities.of_session(self.store, session_id_of(tool_context))
+        return self.memory_of(personality)
+
+    def _note_turn(self, session_id: str, user: str, assistant: str) -> None:
+        """Every N user turns, review the conversation for things worth remembering (background). Turns are counted
+        and reviewed apart for each personality, and what a review finds goes into the memory of whoever the thread
+        belongs to: a private thing said to Mira is never reviewed into the shared memory."""
+        from odie import personalities
+        personality = personalities.of_session(self.store, session_id)
+        if personality and personalities.get(self.store, personality) is None:
+            return  # it was deleted while this turn ran: nothing of it is kept
+        pending = self._turns.setdefault(personality, [])
+        pending.append((user, assistant))
+        if len(pending) < self.review_every:
             return
-        turns, self._turns = self._turns, []
-        if self._review_task is None or self._review_task.done():
-            self._review_task = asyncio.create_task(run_review(self.memory, turns, self.memory_index(), on_change=self._memory_changed, store=self.store))
+        self._turns[personality] = []
+        if self._review_task is not None and not self._review_task.done():
+            return  # one review at a time
+        try:
+            brain = brains.for_personality(self.store, personality)  # the review reads the turns with their own brain
+        except brains.BrainGone:
+            return  # its own brain is gone: no other model reads its turns
+        memory = self.memory_of(personality)
+        index_text = self.memory_index(personality)
+        self._review_for = personality
+        self._review_task = asyncio.create_task(run_review(memory, pending, index_text, on_change=self._memory_changed,
+                                                           store=self.store, brain=brain))
 
     def _memory_changed(self) -> None:
         """The memory file changed (update_memory, the review): when it's in the vault, the notes index re-reads it.
@@ -762,14 +970,30 @@ class OdieRunner:
         self.agent.tools = signin_tools(self.store) + tools
         self.invalidate_prompt()
 
-    def invalidate_prompt(self) -> None:
-        """Rebuild the static prompt on the next message (SOUL.md or memory index changed)."""
-        self._prompt_session = ""
+    def invalidate_prompt(self, session_id: str | None = None) -> None:
+        """Rebuild the static prompt on the next message (a SOUL, a name or the memory index changed): one thread's, or
+        every thread's when none is named."""
+        if session_id is None:
+            self._prompts.clear()
+        else:
+            self._prompts.pop(session_id, None)
 
     def apply_model_selection(self) -> None:
-        """Settings changed the chat model: the next message builds the agent's model from the new selection."""
-        self._model_key = None
+        """Settings changed a brain, a provider or a key: the next message builds its model again."""
+        self._chat_models.clear()
         self.invalidate_prompt()
+
+    def _chat_model(self, selection, effort_up: bool):
+        """The chat model for a brain at an effort, built the first time it is needed and then kept, so turns on the
+        same brain share one model object; Settings clears them (apply_model_selection).
+          gemma on LM Studio, low effort, twice        -> the same object both times
+          the same, then Mira's qwen on the work box   -> a second object, kept beside the first"""
+        key = (effort_up, model_key(selection))
+        built = self._chat_models.get(key)
+        if built is None:
+            built = model_for(selection, effort_up)
+            self._chat_models[key] = built
+        return built
 
     def current_model(self) -> dict[str, Any]:
         sel = resolve_selection(self.store, "chat")
@@ -784,28 +1008,61 @@ class OdieRunner:
             return None
         return txt or None
 
-    def _prepare_prompt(self, session_id: str, text: str) -> str:
-        """Static system prompt once per session (cache-friendly); returns the per-turn context trailer."""
+    def _static_prompt(self, session_id: str) -> SessionPrompt:
+        """This thread's system prompt, built on its first message of the day and kept (cache-friendly). It opens with
+        the instructions and name of whoever the thread belongs to (everyday Odie's SOUL.md, or a personality's own);
+        the rules, visual blocks, day and day summary after it are the same for everyone."""
         now = datetime.now(self.tz)
-        if session_id != self._prompt_session:
-            from odie import persona
-            who = self.who()
-            self._caps = who.caps
-            from odie.morning.round import morning_day
-            self._day_summary = self.day_summary(now)
-            static = build_static_prompt(now, self.load_soul(), self.memory_index(), gated=self.gated, who=who,
-                                         day_summary=self._day_summary, summary_day=morning_day(now))
-            self._current_prompt = persona.apply_name(static, persona.get(self.store)["name"])
-            self._prompt_session = session_id
-        rows = self.store.open_tasks(now.isoformat(timespec="minutes"))[:10]
+        today = now.strftime("%Y-%m-%d")
+        built = self._prompts.get(session_id)
+        if built is not None and built.day == today:
+            return built
+        from odie import persona, personalities
+        from odie.morning.round import morning_day
+        personality = personalities.of_session(self.store, session_id)
+        who = self.who(personality)
+        if personality:
+            soul = personalities.load_soul(personality)
+        else:
+            soul = self.load_soul()
+        day_summary = self.day_summary(now)
+        static = build_static_prompt(now, soul, self.memory_index(personality), gated=self.gated, who=who,
+                                     day_summary=day_summary, summary_day=morning_day(now))
+        text = persona.apply_name(static, who.assistant)
+        built = SessionPrompt(text=text, caps=who.caps, day_summary=day_summary, day=today)
+        self._prompts[session_id] = built
+        return built
+
+    def _prompt_of(self, ctx) -> str:
+        """The chat agent's instruction: the prompt of the thread this model call belongs to, read from ADK's context.
+        A turn resumed by a tap, or the first call after a restart, finds nothing built and builds it from the
+        thread's own row, so it still talks as whoever the thread belongs to."""
+        session_id = session_id_of(ctx)
+        if not session_id:  # no chat in the context: today's everyday chat
+            today = datetime.now(self.tz).strftime("%Y-%m-%d")
+            session_id = self.current_session_id(today)
+        return self._static_prompt(session_id).text
+
+    def _prepare_prompt(self, session_id: str, text: str) -> str:
+        """Makes sure this thread's static prompt is built (once per thread and day), and returns the per-turn
+        context trailer."""
+        from odie import personalities
+        now = datetime.now(self.tz)
+        built = self._static_prompt(session_id)
+        personality = personalities.of_session(self.store, session_id)
+        rows = self.store.open_tasks(now.isoformat(timespec="minutes"), personality)[:10]
         # The day summary already carries the brief's news, so a chat that has the summary doesn't get the brief too.
         brief = None
-        if not self._day_summary:
+        if not built.day_summary:
             brief = self.store.one("select text from briefs where date=? order by id desc limit 1", (now.strftime("%Y-%m-%d"),))
         from odie import location
         place, seen, home = location.location_bits(location.get(self.store), now)  # a place name and home, never coordinates
-        return build_turn_context(now, self.prefetch(text), threads_summary(self.store), format_open_threads(rows),
-                                  brief["text"] if brief else "", caps=getattr(self, "_caps", ALL_CAPS), place=place, seen=seen, home=home,
+        if personality:
+            remembered = self.prefetch(text, personality)  # its own memories first, then the shared ones
+        else:
+            remembered = self.prefetch(text)
+        return build_turn_context(now, remembered, threads_summary(self.store, personality), format_open_threads(rows),
+                                  brief["text"] if brief else "", caps=built.caps, place=place, seen=seen, home=home,
                                   approvals=approvals_mode.context_line(self.store))
 
     def day_summary(self, now: datetime) -> str:
@@ -821,13 +1078,20 @@ class OdieRunner:
             return ""
         return hello["summary"]
 
-    def who(self) -> Who:
-        """Who the prompt is for: the profile's name, this computer, the local currency, what this install can do, and
-        the assistant's chosen name."""
-        from odie import capabilities, persona, profile, region
+    def who(self, personality: str = "") -> Who:
+        """Who the prompt is for: the profile's name, this computer, the local currency, what this install can do with
+        the connected apps this one may use (odie.plugins.access), and the assistant's name: the one the user chose for
+        Odie, or a personality's own."""
+        from odie import capabilities, persona, personalities, profile, region
+        from odie.plugins import access
+        assistant = persona.get(self.store)["name"]
+        picked = personalities.get(self.store, personality)
+        if picked is not None:
+            assistant = picked.name
+        its_servers = [e for e in self.plugins.get("servers", []) if access.allowed(self.store, e.name, personality)]
         return Who(user=profile.get(self.store)["user_name"], machine=profile.machine_kind(),
-                   currency=region.currency_symbol(config.settings.currency), caps=capabilities.detect(self.plugins.get("servers", []), self.store),
-                   assistant=persona.get(self.store)["name"])
+                   currency=region.currency_symbol(config.settings.currency), caps=capabilities.detect(its_servers, self.store),
+                   assistant=assistant)
 
     async def chat(self, text: str, thinking: bool | None = None, session_id: str | None = None,
                    images: list[str] | None = None, via: str | None = None) -> AsyncIterator[dict[str, Any]]:
@@ -840,17 +1104,21 @@ class OdieRunner:
         session_id = session_id or self.current_session_id(today)
         lock = self.lock_for(session_id)
         await lock.acquire()
-        turn_token = private_token = read_token = compact_token = None
+        turn_token = private_token = read_token = compact_token = model_token = None
         was_private = False
+        from odie.agent import turns
         try:
             session_id = await self._ensure_session(session_id)
+            if via == "terminal":  # a program typed it: tools that act as him refuse (odie.loops.chat_done)
+                turns.mark(session_id, turns.TERMINAL)
             if thinking is None:
                 from odie import thinking as chat_thinking
                 thinking = chat_thinking.settle(self.store, session_id)
-            selection = resolve_selection(self.store, "chat")  # the chosen model, or the fallback when nothing is chosen
+            selection = brains.for_thread(self.store, session_id)  # its owner's brain; raises BrainGone, with words
             from odie.blocks.answers import without_form_answers
             words = without_form_answers(text)  # a form's answer: lookups use its line, not the fence the model reads
             trailer = self._prepare_prompt(session_id, words) + await self._visual_nudge(session_id, text)
+            trailer += self._job_nudge(session_id, text)
             # Think harder on a local server: words at the very end, after everything its cache holds (the effort stays).
             # They stay in the history as sent, so later turns replay the same text.
             trailer += think_harder_words(selection, thinking)
@@ -883,10 +1151,7 @@ class OdieRunner:
             sent_text = f"{text}{markers}" + (f"\n\n{blocks}" if blocks else "") + f"\n\n{trailer}"
             parts.insert(0, types.Part(text=sent_text))
             effort_up = chat_effort_think_harder(selection, thinking)  # always False on a local server
-            key = (effort_up, model_key(selection))
-            if key != self._model_key:
-                self._model_key = key
-                self.agent.model = model_for(selection, effort_up)
+            model_token = turn_words.MODEL.set(self._chat_model(selection, effort_up))  # this turn's, for all its calls
             self.agent.generate_content_config = chat_generate_config(self.store)  # Creativity, as set right now
             self.store.audit("user", "message", result_summary=text, session_id=session_id)
             final: list[str] = []
@@ -909,6 +1174,7 @@ class OdieRunner:
                                                           run_config=chat_run_config())) as events:
                     async for ev in events:
                         for item in event_to_sse(ev, asked):
+                            item = marked_chat_pass(self.store, session_id, item)
                             if item["type"] in ("token", "text") and not said_private and turn_words.private_sites():
                                 said_private = True
                                 yield {"type": "private"}  # the app holds web images in this reply until a tap
@@ -971,8 +1237,12 @@ class OdieRunner:
                         turn_words.READ.reset(read_token)
                     if compact_token is not None:
                         turn_words.HISTORY_LIMIT.reset(compact_token)
+                    if model_token is not None:
+                        turn_words.MODEL.reset(model_token)
                 except ValueError:  # iterated from another context: it ends with that context
                     pass
+            if via == "terminal":
+                turns.unmark(session_id)
             lock.release()
         self._stop.discard(session_id)
         if stopped:
@@ -983,7 +1253,7 @@ class OdieRunner:
         if unsaved:  # its own stored message, so it's in history too (the false claim stays visible above it)
             await self.post_message(unsaved_note, session_id=session_id)
         if not was_private:  # a turn that read a signed-in page never feeds the memory review
-            self._note_turn(text, "".join(final))
+            self._note_turn(session_id, text, "".join(final))
         yield {"type": "done", "text": "".join(final), "session_id": session_id}  # the thread, also when a card ended it
 
     def request_stop(self, session_id: str) -> None:
@@ -1002,22 +1272,34 @@ class OdieRunner:
         start = max(0, end - limit) if limit else 0
         return {"items": items[start:end], "total": total, "start": start}
 
-    async def history(self, date: str, limit: int | None = None, before: int | None = None) -> dict[str, Any]:
-        """All segments of the day, oldest first, paged: the last `limit` items ending at index `before`."""
+    async def history(self, date: str, limit: int | None = None, before: int | None = None,
+                      personality: str = "") -> dict[str, Any]:
+        """Everyday Odie: all its segments of the day, oldest first, paged: the last `limit` items ending at index
+        `before`. A personality's threads and imported threads are never part of the day (their numbers are simply
+        skipped). A personality:
+        its current thread, with "thread" saying which one (None, and no items, when it has no thread yet)."""
+        from odie import personalities, threads
+        if personality:
+            current = self.current_thread(personality)
+            if current is None:
+                return {"items": [], "total": 0, "start": 0, "thread": None}
+            shown = await self.session_history(current, limit=limit, before=before)
+            shown["thread"] = current
+            return shown
         s = config.settings
         items: list[dict[str, Any]] = []
         sids: list[str] = []
-        n = 1
-        while True:
-            sid = f"chat-{date}" if n == 1 else f"chat-{date}-{n}"
+        not_odies = personalities.owned_sessions(self.store)
+        for sid in threads.session_ids_on(date):
+            if sid in not_odies or threads.is_imported(sid):  # an imported thread stands alone, as it always has
+                continue
             sess = await self.session_service.get_session(app_name=s.app_name, user_id=s.user_id, session_id=sid)
             if sess is None:
-                break
+                continue
             lines = events_to_history(sess.events)
             lines = steps_with_allowed(self.store, sid, self._marked(sid, lines))
             items += with_session(sid, lines)
             sids.append(sid)
-            n += 1
         items = merge_approvals(items, self.store.approvals_in_sessions(sids))
         total = len(items)
         end = min(before, total) if before is not None else total
@@ -1043,17 +1325,27 @@ class OdieRunner:
             if not fc or fc.name != CONFIRM:
                 continue
             inv = getattr(ev, "invocation_id", "") or ""
-            a = approval_from_confirmation(fc, inv, session_id, self.store)
+            orig = (fc.args or {}).get("originalFunctionCall") or {}
+            server = self.plugin.server_of_call(orig.get("id"))  # the app the waiting tool object reaches
+            a = approval_from_confirmation(fc, inv, session_id, self.store, server=server)
             aid = self.store.create_approval(session_id, inv, a["request_id"], a["tool"], a["args"], a["summary"], a["detail"], a["provenance"], a["risk"],
                                              call_id=a["call_id"])
             self.store.audit("agent", "approval_requested", tool=a["tool"], args=a["args"], result_summary=a["summary"], session_id=session_id, invocation_id=inv, approval_id=aid)
+            # session_id: the live stream sends a card only where its thread's personality is picked (odie.personalities)
             card = {"type": "approval", "id": aid, "tool": a["tool"], "summary": a["summary"], "detail": a["detail"],
-                    "provenance": a["provenance"], "risk": a["risk"], "status": "pending"}
+                    "provenance": a["provenance"], "risk": a["risk"], "status": "pending", "session_id": session_id}
             cards.append(card)
             try:
-                body = push_body(a)  # nothing sensitive on the lock screen
-                from odie import persona
-                send_to_all(self.store, f"{persona.get(self.store)['name']} needs your tap", body, url="/#chat", tag=f"approval-{aid}")
+                from odie import persona, personalities
+                owner_id, owner = personalities.whose_thread(self.store, session_id)
+                if owner_id == personalities.ODIE:
+                    title = f"{persona.get(self.store)['name']} needs your tap"
+                    body = push_body(a)  # nothing sensitive on the lock screen
+                    send_to_all(self.store, title, body, url="/#chat", tag=f"approval-{aid}")
+                elif owner is not None:  # a personality's card: who, and not even what kind of thing
+                    title, body = personalities.quiet_push(owner.name, "needs you")
+                    send_to_all(self.store, title, body, url="/#chat", tag=f"approval-{aid}")
+                # else: its personality was deleted while the turn ran: no push at all
             except Exception:  # noqa: BLE001
                 log.warning("approval push failed", exc_info=True)
         return cards
@@ -1064,18 +1356,34 @@ class OdieRunner:
         row = self.store.get_approval(approval_id)
         if row is None:
             return {"error": "no such approval"}
+        if approve:
+            from odie.plugins import access
+            moved = access.card_moved(self.store, row)
+            if moved:  # a tap is consent for the app the card named: it lapses instead of running elsewhere
+                await self.lapse_card(row, moved)
+                return {"error": moved}
+        try:
+            selection = brains.for_thread(self.store, row["session_id"])  # the paused turn goes on with its own brain
+        except brains.BrainGone as gone:
+            if approve:
+                return {"error": str(gone)}  # checked before the tap counts: the card stays waiting until the brain is back
+            return await self._declined_without_a_turn(row)  # a No needs no model: it is recorded, nothing runs
         if not self.store.decide_approval(approval_id, approve):
             return {"error": f"already {self.store.get_approval(approval_id)['status']}"}
         row = self.store.get_approval(approval_id)  # again, so it carries decided_at
         self.store.audit("user", "approval_" + ("approved" if approve else "rejected"), tool=row["tool"], session_id=row["session_id"],
                          invocation_id=row["invocation_id"], approval_id=approval_id)
-        await self.bus.publish({"type": "approval", "id": approval_id, "status": "approved" if approve else "rejected", "summary": row["summary"], "tool": row["tool"]})
+        await self.bus.publish({"type": "approval", "id": approval_id, "status": "approved" if approve else "rejected", "summary": row["summary"], "tool": row["tool"],
+                                "session_id": row["session_id"]})
         msg = types.Content(role="user", parts=[types.Part(function_response=types.FunctionResponse(
             id=row["request_id"], name=CONFIRM, response={"confirmed": bool(approve)}))])
         final: list[str] = []  # each reply the model wrote after the tap (one event's text parts make one reply)
         asked = {row["call_id"]} if row["call_id"] else set()  # the tapped call was asked: its result is no pass
+        from odie import thinking as chat_thinking
         from odie.agent import turn
+        effort_up = chat_effort_think_harder(selection, chat_thinking.get(self.store, row["session_id"]))
         async with self.lock_for(row["session_id"]):
+            brain = turn.MODEL.set(self._chat_model(selection, effort_up))
             words = turn.USER_TEXT.set(await self._words_of(row["session_id"], row["invocation_id"]))  # the paused turn, resumed
             from odie.signin import guard as signin_guard
             private = turn.PRIVATE.set(set(json.loads(row["detail_json"] or "{}").get("private") or ())
@@ -1086,7 +1394,7 @@ class OdieRunner:
             try:
                 async for ev in self.runner.run_async(user_id=s.user_id, session_id=row["session_id"], invocation_id=row["invocation_id"],
                                                       new_message=msg, run_config=chat_run_config()):
-                    items = event_to_sse(ev, asked)
+                    items = [marked_chat_pass(self.store, row["session_id"], item) for item in event_to_sse(ev, asked)]
                     reply = "".join(item["text"] for item in items if item["type"] == "text")
                     if reply:
                         final.append(reply)
@@ -1105,23 +1413,55 @@ class OdieRunner:
                 log.exception("resume failed")
                 text = f"I couldn't finish that: {type(e).__name__}: {str(e)[:160]}"
                 self.store.set_approval_result(approval_id, text)
-                await self.bus.publish({"type": "approval_done", "id": approval_id, "status": "approved" if approve else "rejected", "error": text})
+                await self.bus.publish({"type": "approval_done", "id": approval_id, "status": "approved" if approve else "rejected", "error": text,
+                                        "session_id": row["session_id"]})
                 return {"error": text}
             finally:
                 turn.USER_TEXT.reset(words)
                 turn.PRIVATE.reset(private)
                 turn.READ.reset(read)
                 turn.HISTORY_LIMIT.reset(compact)
+                turn.MODEL.reset(brain)
         # The model's own words after the tool, its replies a paragraph each as the history folds them on reload, or ""
         # when it said nothing: no filler is made up.
+        lapsed = self.store.get_approval(approval_id)
+        if lapsed["status"] == "expired":  # the last guard lapsed it as the call was about to run: nothing ran
+            words = lapsed["result_text"] or ""
+            await self.bus.publish({"type": "approval_done", "id": approval_id, "status": "expired", "text": words,
+                                    "session_id": row["session_id"]})
+            return {"error": words}
         text = "\n\n".join(final)
         self.store.set_approval_result(approval_id, text)  # "" still marks the card finished (never None)
         if text.strip():
             from odie.signin import guard as signin_guard
             await self.bus.publish({"type": "message", "kind": "reply", "text": text, "ts": time.time(), "session_id": row["session_id"],
                                     "inv": row["invocation_id"], **({"private": True} if signin_guard.private_of(self.store, row["session_id"]) else {})})
-        await self.bus.publish({"type": "approval_done", "id": approval_id, "status": "approved" if approve else "rejected", "text": text})
+        await self.bus.publish({"type": "approval_done", "id": approval_id, "status": "approved" if approve else "rejected", "text": text,
+                                "session_id": row["session_id"]})
         return {"text": text}
+
+    async def _declined_without_a_turn(self, row) -> dict[str, Any]:
+        """A No on a card whose thread can't think right now (its brain is gone): the No is recorded and every open
+        app hears it; the paused turn is not resumed, since nothing would run anyway."""
+        if not self.store.decide_approval(row["id"], False):
+            return {"error": f"already {self.store.get_approval(row['id'])['status']}"}
+        self.store.set_approval_result(row["id"], "Declined.")
+        self.store.audit("user", "approval_rejected", tool=row["tool"], session_id=row["session_id"],
+                         invocation_id=row["invocation_id"], approval_id=row["id"])
+        await self.bus.publish({"type": "approval_done", "id": row["id"], "status": "rejected", "text": "",
+                                "session_id": row["session_id"]})
+        return {"text": ""}
+
+    async def lapse_card(self, row, words: str) -> None:
+        """A tapped card that can't run as it was asked (its app is now off for the thread's owner): it lapses with
+        these words, audited, and every open app hears it; nothing runs."""
+        if not self.store.lapse_approval(row["id"]):
+            return
+        self.store.set_approval_result(row["id"], words)
+        self.store.audit("user", "approval_lapsed", tool=row["tool"], result_summary=words, session_id=row["session_id"],
+                         approval_id=row["id"])
+        await self.bus.publish({"type": "approval_done", "id": row["id"], "status": "expired", "text": words,
+                                "session_id": row["session_id"]})
 
     async def reconcile_approvals(self) -> int:
         """Decided approvals whose replay never finished (restart or crash between the tap and the tool): say so, once."""
@@ -1139,24 +1479,39 @@ class OdieRunner:
                 self.store.set_approval_result(row["id"], "Declined.")
         return n
 
+    def stage_tools(self, tools: list, free: frozenset[str] = frozenset(), keep=None) -> list:
+        """The tool list a background turn's agent gets: Odie's chat tools (signing in left out: it is the user's, in
+        chat) and `tools`, with `free` unlocked. keep(name): when given (the watch's allow-list), only the tools it
+        keeps — a toolset is wrapped so it lists only those, never dropped whole (the calendar app's writes live in
+        one) — and the same holds for `tools`."""
+        from odie.agent.free import free_tools, kept_tools
+        chat_only = [t for t in self.agent.tools if not getattr(t, "_odie_signin", False)]
+        return free_tools(kept_tools([*chat_only, *tools], keep), free)
+
     async def background_turn(self, prompt: str, timeout: float = 300, tools: list | None = None,
                               instruction: str | None = None, guard=None, bare: bool = False,
-                              free: frozenset[str] = frozenset(), skills: tuple[str, ...] | list[str] = ()) -> str:
+                              free: frozenset[str] = frozenset(), skills: tuple[str, ...] | list[str] = (),
+                              owner: str = "", keep=None) -> str:
         """One agent turn nobody watches (a tracker check, a watch check): the model, Odie's current tools (plus
         `tools`), a fresh in-memory session, and a guard that refuses anything needing the user's tap. Returns the reply.
         bare: no tools at all (a signed-in tracker's check reads text only). free: tool names that run without the
         tap in this turn (odie.agent.free; the watch's calendar_create_event). skills: skills already loaded when the
-        turn starts, so their apps' tools are there at once (the watch's calendar app: it never calls load_skill)."""
+        turn starts, so their apps' tools are there at once (the watch's calendar app: it never calls load_skill).
+        owner: a personality the turn runs for (its own mail watch): its brain thinks (odie.brains; BrainGone when it
+        can't), and the turn's session is its own while it runs, so only its apps are listed and may run. "" is
+        everyday Odie, as always. keep(name): when given, only Odie's tools it keeps are handed to the model (the watch's
+        allow-list, odie.watch.check.stage1_keeps); the guard stays the second lock."""
         from google.adk.agents import LlmAgent
         from google.adk.sessions import InMemorySessionService
 
+        from odie import personalities
         from odie.trackers import guard as trackers_guard
         from odie.agent.callbacks import background_after_tool
         s = config.settings
         sel = resolve_selection(self.store, "chat")
+        if owner:
+            sel = brains.for_personality(self.store, owner)
         now = datetime.now(self.tz).strftime("%A %d %B %Y, %H:%M")
-        from odie.agent.free import free_tools
-        chat_only = [t for t in self.agent.tools if not getattr(t, "_odie_signin", False)]  # signing in is the user's, in chat
         whole_instruction = (f"{instruction}\n\n" if instruction else "") + BACKGROUND_INSTRUCTION
 
         def as_written(_context) -> str:
@@ -1164,14 +1519,19 @@ class OdieRunner:
             # Watch for notes and memory, and a "{name}" there would be read as a session-state value and fail the turn.
             return whole_instruction
 
-        agent = LlmAgent(name="odie_tracker", model=model_for(sel, False), tools=[] if bare else free_tools([*chat_only, *(tools or [])], free),
-                         before_tool_callback=guard or trackers_guard, after_tool_callback=background_after_tool(self.plugin),
+        agent = LlmAgent(name="odie_tracker", model=model_for(sel, False), tools=[] if bare else self.stage_tools(tools or [], free, keep),
+                         before_tool_callback=[self._apps_stop, guard or trackers_guard],
+                         after_tool_callback=background_after_tool(self.plugin),
                          instruction=as_written,
                          generate_content_config=types.GenerateContentConfig(temperature=BACKGROUND_TEMPERATURE))
         sessions = InMemorySessionService()
         from odie.skills import loaded_skills_state
         state = loaded_skills_state(agent.name, skills)
         sess = await sessions.create_session(app_name="odie_tracker", user_id=s.user_id, state=state)
+        from odie.agent import turns
+        turns.mark(sess.id, turns.BACKGROUND)  # nobody is there to tap: tools that act as him refuse (odie.loops.chat_done)
+        if owner:
+            personalities.running_for(sess.id, owner)
         from odie.agent.usage import CACHE
         runner = Runner(app=App(name="odie_tracker", root_agent=agent, context_cache_config=CACHE), session_service=sessions)
         out: list[str] = []
@@ -1184,6 +1544,8 @@ class OdieRunner:
         try:
             await asyncio.wait_for(go(), timeout)
         finally:
+            personalities.done_running(sess.id)
+            turns.unmark(sess.id)
             import odie.browser as ob
             if ob._shared is not None:  # browser_open's tab is the session id: close its cookie-free context
                 try:
@@ -1194,7 +1556,7 @@ class OdieRunner:
 
     async def focused_turn(self, prompt: str, instruction: str, tools: list, timeout: float = 600,
                            follow_up: Callable[[], str | None] | None = None,
-                           max_llm_calls: int = WRITER_MAX_LLM_CALLS) -> str:
+                           max_llm_calls: int = WRITER_MAX_LLM_CALLS, session_id: str | None = None) -> str:
         """One agent turn that sees only what it is handed: the chat's model, `instruction` as its whole system prompt
         (no Odie prompt, no memory, no chat history), exactly the `tools` given (none of Odie's own), and a fresh
         in-memory session. Returns the reply text, thoughts left out; a turn over `timeout` seconds (follow-up
@@ -1203,13 +1565,15 @@ class OdieRunner:
         follow_up: asked once, after the turn; a text it returns is sent as one more message in the same session (the
         video writer's nudge when it stopped without submitting), None sends nothing.
         max_llm_calls: the model calls each message may lead to (the writer's 10 by default, research 60); one more
-        raises ADK's LlmCallsLimitExceededError, as a model looping on a tool would."""
+        raises ADK's LlmCallsLimitExceededError, as a model looping on a tool would.
+        session_id: the thread the work was asked for in (a making job's); the turn thinks with that thread's brain
+        (odie.brains), and raises BrainGone when that brain can't be used. None: everyday Odie's brain."""
         from google.adk.agents import LlmAgent
         from google.adk.sessions import InMemorySessionService
 
         from odie.agent.usage import CACHE
         s = config.settings
-        model = model_for(resolve_selection(self.store, "chat"), False, room=WRITER_REPLY_TOKENS)
+        model = model_for(brains.for_thread(self.store, session_id), False, room=WRITER_REPLY_TOKENS)
         now = datetime.now(self.tz).strftime("%A %d %B %Y, %H:%M")
 
         def as_written(_context) -> str:
@@ -1269,25 +1633,35 @@ class OdieRunner:
         await self.bus.publish({"type": "reminder", "id": task_id, "text": text, "ts": time.time(), **({"media": media} if media else {})})
 
     async def post_message(self, text: str, session_id: str | None = None, media: list[dict] | None = None,
-                           kind: str = "system") -> Event:
+                           kind: str = "system", shown: str | None = None) -> Event:
         """A message from Odie that did not come from a user turn (reminder, 'done as you asked', summary). `media`
         (a spoken reminder's memo) rides in the event's metadata: shown in the chat, never seen by the model. `kind`
         rides on the bus event and says what the message is, for an app that shows them differently (the Mac's
         banners): reply (a reply that came late, after an approval), reminder (the repost after Act), tracker, job (a
         made thing is ready), talk (a call's transcript), or system (housekeeping: "Stopped.", the new-chat marker, a
-        lapsed approval), which gets no banner."""
+        lapsed approval), which gets no banner. shown: what the app shows when it differs from what the model reads (a
+        job's report: the model reads it fenced as untrusted, the user sees it as written); kept in the event's
+        metadata with the kind, so the history shows it the same way after a reload."""
         s = config.settings
         today = datetime.now(self.tz).strftime("%Y-%m-%d")
         sid = session_id or self.current_session_id(today)
         async with self.lock_for(sid):
             sid = await self._ensure_session(sid)
             sess = await self.session_service.get_session(app_name=s.app_name, user_id=s.user_id, session_id=sid)
+            meta: dict[str, Any] = {}
+            if media:
+                meta["media"] = media
+            if shown is not None:
+                meta.update(shown=shown, kind=kind)
             ev = Event(author="odie", invocation_id=f"odie-{uuid.uuid4().hex[:8]}",
                        content=types.Content(role="model", parts=[types.Part(text=text)]), timestamp=time.time(),
-                       custom_metadata={"media": media} if media else None)
+                       custom_metadata=meta or None)
             await self.session_service.append_event(session=sess, event=ev)
-        self.store.audit("agent", "message", result_summary=text, session_id=sid)
-        await self.bus.publish({"type": "message", "kind": kind, "text": text, "ts": ev.timestamp, "session_id": sid,
+        on_screen = text
+        if shown is not None:
+            on_screen = shown
+        self.store.audit("agent", "message", result_summary=on_screen, session_id=sid)
+        await self.bus.publish({"type": "message", "kind": kind, "text": on_screen, "ts": ev.timestamp, "session_id": sid,
                                 **({"media": media} if media else {})})
         return ev
 
@@ -1303,36 +1677,74 @@ class OdieRunner:
         from odie.agent import compaction
         return compaction.read_tokens(events)
 
-    async def refresh_history_limit(self) -> int:
-        """Re-read the chosen model's context size and the history limit that follows from it (3/4, capped). Read
-        again when the model changes, every time for LM Studio (local, quick), whose loaded size can differ from its
-        maximum, and while the provider has not said the size (then the limit is the 'can't say' 50k)."""
-        sel = resolve_selection(self.store, "chat")
-        key = model_key(sel)
-        if key != self._limit_key or sel.provider.id == "lmstudio" or self._window_unknown:
-            self._limit_key = key
-            window = await context_window(sel)
-            self._window_unknown = window is None
-            self.history_limit = history_limit_for(window)
-        return self.history_limit
+    async def _window_of(self, selection) -> int | None:
+        """A brain's context size, as its provider reports it (odie.models.context_window), kept for each brain: asked
+        the first time, again every time for LM Studio (local, quick), whose loaded size can differ from its maximum,
+        and again while the provider has not said it. None while it is not known.
+          DeepSeek on Ollama, said 1M once           -> 1,048,576 from then on, not asked again
+          Gemma on LM Studio                         -> asked every time (it may have been loaded with less)
+          a provider that didn't answer the last time -> asked again"""
+        key = model_key(selection)
+        ask_now = key not in self._windows or selection.provider.id == "lmstudio"
+        if ask_now:
+            window = await context_window(selection)
+            if window is None:
+                self._windows.pop(key, None)
+            else:
+                self._windows[key] = window
+        return self._windows.get(key)
 
-    async def context_usage(self, date: str) -> dict[str, int]:
-        """How full today's current segment is: the tokens the model read last time (after any cut) against the
-        history limit, past which older turns go as words only."""
+    async def refresh_history_limit(self, selection=None) -> int:
+        """The history limit that follows from a brain's context size (3/4, capped): everyday Odie's when no brain is
+        given. Read again as _window_of says."""
+        if selection is None:
+            selection = resolve_selection(self.store, "chat")
+        return history_limit_for(await self._window_of(selection))
+
+    async def context_usage(self, date: str, personality: str = "") -> dict[str, int]:
+        """How full the current chat is: the tokens the model read last time (after any cut) against the history
+        limit, past which older turns go as words only. Everyday Odie: today's current segment. A personality: its
+        current thread (nothing used when it has no thread yet), against its own brain's limit."""
         s = config.settings
-        sid = self.current_session_id(date)
-        limit = self._history_limits.get(sid) or await self.refresh_history_limit()  # this chat's, once pinned
+        if personality:
+            sid = self.current_thread(personality)
+            if sid is None:
+                return {"used": 0, "limit": await self._limit_of_personality(personality)}
+        else:
+            sid = self.current_session_id(date)
+        limit = self._history_limits.get(sid)  # this chat's, once pinned
+        if limit is None:
+            limit = history_limit_for(await self._window_of_thread(sid))  # not pinned here: the first turn does that
         sess = await self.session_service.get_session(app_name=s.app_name, user_id=s.user_id, session_id=sid)
         return {"used": self.context_tokens(sess.events) if sess else 0, "limit": limit}
 
-    async def new_chat(self, date: str) -> str:
-        """The user asked for a clean slate: continue in a new segment with nothing carried over."""
+    async def _limit_of_personality(self, personality: str) -> int:
+        """The history limit a personality's next chat would get: its brain's ('can't say' when its brain is gone)."""
+        try:
+            selection = brains.for_personality(self.store, personality)
+        except brains.BrainGone:
+            return history_limit_for(None)
+        return await self.refresh_history_limit(selection)
+
+    async def new_chat(self, date: str, personality: str = "") -> str:
+        """The user asked for a clean slate: continue in a new segment with nothing carried over. For a personality it
+        is a new thread of its own, which becomes its current chat (no "(New chat.)" divider: each of its threads
+        stands alone)."""
+        from odie import threads
+        if personality:
+            async with self._new_thread_lock:
+                before = self.current_thread(personality)
+                new_thread = await self._new_thread(personality, date)
+            self.store.audit("user", "new_chat", result_summary=f"{before or '-'} -> {new_thread}", session_id=new_thread)
+            return new_thread
         sid = self.current_session_id(date)
-        async with self.lock_for(sid):
-            n = (int(sid.rsplit("-", 1)[1]) if sid.count("-") == 4 else 1) + 1
-            new_sid = f"chat-{date}-{n}"
-            self._set_segment(date, n)
-        await self._ensure_session(new_sid)
+        # The number is taken and its session made under the same lock a personality's new thread takes, so the two can
+        # never be handed the same id (a personality's thread would otherwise become Odie's current chat).
+        async with self._new_thread_lock:
+            async with self.lock_for(sid):
+                new_sid = threads.next_free_id(self.store, date)  # above every number in use that day, a personality's too
+                self._set_segment(date, threads.segment_of(new_sid))
+            await self._ensure_session(new_sid)
         self.invalidate_prompt()
         await self.post_message(NEW_CHAT, session_id=new_sid)
         self.store.audit("user", "new_chat", result_summary=f"{sid} -> {new_sid}")
@@ -1391,10 +1803,12 @@ class OdieRunner:
                 for e in skills:
                     if e.status == "ok":
                         reserved.update({t: f"the {e.name} skill" for t in e.tools})
-                servers = await load_servers(reserved=reserved, smart=lambda session_id: approvals_mode.runs_free(self.store, session_id))
+                servers = await load_servers(reserved=reserved, smart=lambda session_id: approvals_mode.runs_free(self.store, session_id),
+                                             allowed=self._app_allowed, may_share=self._apps_may_share,
+                                             could_clash=self._apps_could_clash, advice=self._clash_advice())
                 ok = [e for e in servers if e.status == "ok"]
                 skill_ts = build_skill_toolset(skills, extra_skills=[e.skill for e in ok if e.skill],
-                                               extra_tools=[e.toolset for e in ok if e.skill])
+                                               extra_tools=[e.toolset for e in ok if e.skill], left_out_in=self._skills_off)
             except Exception:  # noqa: BLE001
                 log.warning("loading plugins failed", exc_info=True)
                 return self.plugins
@@ -1407,12 +1821,71 @@ class OdieRunner:
             self._plugin_toolsets = [e.toolset for e in ok]
             self._spawn(self._close_later([*old, *old_connections], self.close_grace))
             self.plugins = {"skills": skills, "servers": servers}
+            from odie.plugins import access
+            access.remember_tools(self.store, {e.name: list(e.tools) for e in servers})  # kept if one fails later
             self.invalidate_prompt()
             failed = any(e.status == "failed" for e in servers)
             self._retries_left = self._retries_left - 1 if failed else 8
             if failed and self._retries_left > 0:
                 self._spawn(self._retry_later())
             return self.plugins
+
+    def _apps_stop(self, tool, args, tool_context) -> dict | None:
+        """A background turn's first check before a tool runs: a connected app switched off for whoever the turn runs
+        for (everyday Odie, or the personality whose watch it is) never runs (odie.plugins.access.refusal); anything
+        else goes on to the turn's guard.
+          echo, its server on for Mira alone -> {"error": "tester is switched off for Odie, …"}
+          now, or an app on for Odie         -> None"""
+        from odie.plugins import access
+        off_here = access.refusal(self.store, tool, args, session_id_of(tool_context))
+        if off_here is None:
+            return None
+        self.store.audit("agent", "tool_refused", tool=tool.name, result_summary="app switched off for Odie")
+        return {"error": off_here}
+
+    def _app_allowed(self, server: str, session_id: str | None) -> bool:
+        """Whether a chat may use a connected app: the switch of whoever the thread belongs to (odie.plugins.access).
+          ("work-mail", a thread of Mira's), on for her alone -> True
+          ("work-mail", an everyday thread)                  -> False
+          ("home-mail", None: a listing outside any chat)     -> everyday Odie's switch"""
+        from odie.plugins import access
+        return access.allowed_in(self.store, server, session_id)
+
+    def _apps_may_share(self, first: str, second: str) -> bool:
+        """Whether two connected apps may both load with the same tool names: no one has both switched on
+        (odie.plugins.access.no_one_has_both).
+          ("mail", "mail-2"), mail Odie's alone and mail-2 Mira's alone -> True
+          ("mail", "mail-2"), both on for Odie                         -> False"""
+        from odie.plugins import access
+        return access.no_one_has_both(self.store, first, second)
+
+    def _clash_advice(self) -> str:
+        """What a clash's words say to do: with personalities, a server can also be switched off for one of them;
+        with none, only the whole server's switch is there.
+          Mira exists      -> "Only one of them can be on for each one: switch one of the two off, or off for whoever…"
+          no personalities -> "Only one of them can be on: switch one of the two off." """
+        from odie import personalities
+        from odie.plugins.mcp import ONE_OF_TWO, ONLY_ONE
+        if personalities.list_all(self.store):
+            return ONE_OF_TWO
+        return ONLY_ONE
+
+    def _apps_could_clash(self, first: str, second: str) -> bool:
+        """Whether two connected apps could list the same tool names, from what is known of them beyond this load: the
+        names each listed last time, else whether they look like one service (odie.plugins.access.could_clash).
+          ("mail", "mail-2"), both listed send_email before -> True
+          ("mail", "notes"), nothing in common              -> False"""
+        from odie.plugins import access
+        from odie.plugins.mcp import read_config
+        configured, _ = read_config()
+        return access.could_clash(first, second, configured, access.known_tools(self.store))
+
+    def _skills_off(self, session_id: str | None) -> frozenset[str]:
+        """The apps' skills a chat's catalog leaves out: those of the apps off for its owner (odie.plugins.access).
+          a thread of Mira's, home-mail off for her -> {"mcp-home-mail"}
+          an everyday thread, nothing off for Odie  -> {}"""
+        from odie.plugins import access
+        return access.skills_off_in(self.store, session_id)
 
     async def reload_addon_tools(self, name: str) -> None:
         """Rebuild one add-on's tools (after its login changed, say), swap them in, and close the old ones so a

@@ -1,8 +1,10 @@
+import { everyday, getPick, pickFromHash, setPick } from "./pick";
 import { useCallback, useEffect, useState } from "react";
 import type { OrbState } from "./components/Orb";
 import { Chat } from "./screens/Chat";
 import { Settings } from "./screens/Settings";
 import { Brain } from "./screens/Brain";
+import { Voice } from "./screens/Voice";
 import { SampleChat } from "./screens/SampleChat";
 import { Money } from "./screens/Money";
 import { Today } from "./screens/Today";
@@ -18,15 +20,12 @@ import { useProfile } from "./profile";
 import { usePersona } from "./persona";
 import { has, tabFor, useCaps } from "./capabilities";
 import { useUpdate } from "./update";
+import { startFreshness } from "./freshness";
+import { NewVersionPill } from "./components/NewVersionPill";
 import { PRIVATE_EVENT, codeFromHash, needsPairing, type PairStatus } from "./devices";
-import { columnWidth, showsRail } from "./layout";
+import { columnWidth, opensDuringSetup, showsRail, tabFromHash } from "./layout";
 
-export type Tab = "chat" | "today" | "settings" | "brain" | "sample" | "money" | "setup";
-
-function tabFromHash(): Tab {
-  const h = location.hash.replace("#", "").split("?")[0];
-  return h === "chat" || h === "settings" || h === "brain" || h === "sample" || h === "money" || h === "setup" ? (h as Tab) : "today";
-}
+export type Tab = "chat" | "today" | "settings" | "brain" | "voice" | "sample" | "money" | "setup";
 
 /** While pairing is on, a browser that isn't paired sees only the Private screen (nothing else mounts, so nothing
  * else asks the server). An API that answers "private" later (this browser was removed) brings it back. A pairing
@@ -34,6 +33,7 @@ function tabFromHash(): Tab {
 export default function App() {
   const [status, setStatus] = useState<PairStatus | null | undefined>(undefined);  // undefined: not asked yet
   const [locked, setLocked] = useState(false);
+  useEffect(() => startFreshness(), []);  // picks up a new version of the app by itself
   useEffect(() => {
     getJSON<PairStatus>("/api/pair/status").then((s) => { setStatus(s); setLocked(needsPairing(s) || (!s.paired && !!codeFromHash(location.hash))); }).catch(() => setStatus(null));
     const on = () => setLocked(true);
@@ -46,12 +46,12 @@ export default function App() {
 }
 
 function Main() {
-  const [hashTab, setTab] = useState<Tab>(tabFromHash());
+  const [hashTab, setTab] = useState<Tab>(tabFromHash(location.hash));
   const caps = useCaps();
   const [setupDone, setSetupDone] = useState(true);
   useEffect(() => { getJSON<{ done: boolean }>("/api/setup").then((s) => setSetupDone(s.done)).catch(() => {}); }, []);
-  // A new install opens on Setup (Settings and Brain stay reachable, to do a step by hand).
-  const wanted = !setupDone && hashTab !== "settings" && hashTab !== "brain" ? "setup" : hashTab;
+  // A new install opens on Setup (Settings, Brain and Voice stay reachable, to do a step by hand).
+  const wanted = !setupDone && !opensDuringSetup(hashTab) ? "setup" : hashTab;
   const tab = tabFor(wanted, caps);  // a tab for something this install doesn't have opens Today
   const [orb, setOrb] = useState<OrbState>("idle");
   const [pending, setPending] = useState(0);
@@ -61,10 +61,16 @@ function Main() {
   // Once an hour, and on coming back to the app: is a newer Odie on origin? (Only the installed copy can update.)
   const update = useUpdate(has(caps, "update") && caps !== null);
   const loadPending = useCallback(() => {
-    getJSON<unknown[]>("/api/approvals").then((a) => setPending(a.length)).catch(() => {});
+    getJSON<unknown[]>(everyday("/api/approvals")).then((a) => setPending(a.length)).catch(() => {});
   }, []);
   useEffect(() => {
-    const on = () => setTab(tabFromHash());
+    // A push for a personality opens its Pulse: "#today?personality=<id>" picks it on this device.
+    const follow = () => {
+      const asked = pickFromHash(location.hash);
+      if (asked !== null && asked !== getPick()) setPick(asked);
+    };
+    follow();
+    const on = () => { follow(); setTab(tabFromHash(location.hash)); };
     window.addEventListener("hashchange", on);
     loadPending();
     return () => window.removeEventListener("hashchange", on);
@@ -79,10 +85,11 @@ function Main() {
       <div className={`h-full flex flex-col mx-auto w-full lg:flex-1 lg:min-w-0 ${columnWidth(tab)}`}>
         <div className="flex-1 min-h-0">
           {/* Chat stays mounted so a streaming answer survives a trip to Today. */}
-          <div className={tab === "chat" ? "h-full" : "hidden"}><Chat orb={orb} setOrb={setOrb} /></div>
+          <div className={tab === "chat" ? "h-full" : "hidden"}><Chat orb={orb} setOrb={setOrb} showing={tab === "chat"} /></div>
           {tab === "today" && <Today />}
           {tab === "settings" && <Settings />}
           {tab === "brain" && <Brain />}
+          {tab === "voice" && <Voice />}
           {tab === "sample" && <SampleChat />}
           {tab === "money" && <Money />}
           {tab === "setup" && <Setup />}
@@ -90,6 +97,7 @@ function Main() {
       </div>
       {tab === "today" && <AskBar pending={pending} />}
       <ReminderCurtain />
+      <NewVersionPill />
     </div>
   );
 }

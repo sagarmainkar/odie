@@ -1,0 +1,188 @@
+{
+  "id": "fourteen-mails-one-pr",
+  "about": "Fourteen GitHub mails about one pull request (review asked, commits, CI, comments), two promotions among them.",
+  "mails": [
+    {
+      "id": "p00",
+      "from": "Asha Rao <notifications@github.com>",
+      "subject": "[example/app] Threads list newest first (PR #49)",
+      "at": "2026-11-18T00:00:00Z",
+      "snippet": "@asha-dev requested your review on this pull request.",
+      "body": "@asha-dev requested your review on this pull request.\n\nReply to this email directly or view it on GitHub.",
+      "thread": "gh-thread-49"
+    },
+    {
+      "id": "p01",
+      "from": "Asha Rao <notifications@github.com>",
+      "subject": "Re: [example/app] Threads list newest first (PR #49)",
+      "at": "2026-11-18T00:09:00Z",
+      "snippet": "@asha-dev pushed 1 commit. 3f2a1c9 sort by last activity",
+      "body": "@asha-dev pushed 1 commit. 3f2a1c9 sort by last activity\n\nReply to this email directly or view it on GitHub.",
+      "thread": "gh-thread-49"
+    },
+    {
+      "id": "p02",
+      "from": "Asha Rao <notifications@github.com>",
+      "subject": "Re: [example/app] Threads list newest first (PR #49)",
+      "at": "2026-11-18T00:18:00Z",
+      "snippet": "github-actions: All checks have passed",
+      "body": "github-actions: All checks have passed\n\nReply to this email directly or view it on GitHub.",
+      "thread": "gh-thread-49"
+    },
+    {
+      "id": "ad1",
+      "from": "Deals <news@shop.example.com>",
+      "subject": "48 hours only: 40% off",
+      "at": "2026-11-18T01:00:00Z",
+      "snippet": "Our biggest sale",
+      "body": "Our biggest sale. Unsubscribe."
+    },
+    {
+      "id": "p03",
+      "from": "Asha Rao <notifications@github.com>",
+      "subject": "Re: [example/app] Threads list newest first (PR #49)",
+      "at": "2026-11-18T00:27:00Z",
+      "snippet": "Priya commented: nit, rename `newest` to `latest`?",
+      "body": "Priya commented: nit, rename `newest` to `latest`?\n\nReply to this email directly or view it on GitHub.",
+      "thread": "gh-thread-49"
+    },
+    {
+      "id": "p04",
+      "from": "Asha Rao <notifications@github.com>",
+      "subject": "Re: [example/app] Threads list newest first (PR #49)",
+      "at": "2026-11-18T00:36:00Z",
+      "snippet": "@asha-dev pushed 2 commits.",
+      "body": "@asha-dev pushed 2 commits.\n\nReply to this email directly or view it on GitHub.",
+      "thread": "gh-thread-49"
+    },
+    {
+      "id": "p05",
+      "from": "Asha Rao <notifications@github.com>",
+      "subject": "Re: [example/app] Threads list newest first (PR #49)",
+      "at": "2026-11-18T00:45:00Z",
+      "snippet": "Asha commented: done, renamed.",
+      "body": "Asha commented: done, renamed.\n\nReply to this email directly or view it on GitHub.",
+      "thread": "gh-thread-49"
+    },
+    {
+      "id": "p06",
+      "from": "Asha Rao <notifications@github.com>",
+      "subject": "Re: [example/app] Threads list newest first (PR #49)",
+      "at": "2026-11-18T01:00:00Z",
+      "snippet": "github-actions: Some checks were not successful",
+      "body": "github-actions: Some checks were not successful\n\nReply to this email directly or view it on GitHub.",
+      "thread": "gh-thread-49"
+    },
+    {
+      "id": "p07",
+      "from": "Asha Rao <notifications@github.com>",
+      "subject": "Re: [example/app] Threads list newest first (PR #49)",
+      "at": "2026-11-18T01:09:00Z",
+      "snippet": "@asha-dev pushed 1 commit. fix flaky test",
+      "body": "@asha-dev pushed 1 commit. fix flaky test\n\nReply to this email directly or view it on GitHub.",
+      "thread": "gh-thread-49"
+    },
+    {
+      "id": "ad2",
+      "from": "Newsletter <hello@weekly.example.org>",
+      "subject": "This week in tools",
+      "at": "2026-11-18T02:00:00Z",
+      "snippet": "Ten links",
+      "body": "Ten links you missed."
+    },
+    {
+      "id": "p08",
+      "from": "Asha Rao <notifications@github.com>",
+      "subject": "Re: [example/app] Threads list newest first (PR #49)",
+      "at": "2026-11-18T01:18:00Z",
+      "snippet": "github-actions: All checks have passed",
+      "body": "github-actions: All checks have passed\n\nReply to this email directly or view it on GitHub.",
+      "thread": "gh-thread-49"
+    },
+    {
+      "id": "p09",
+      "from": "Asha Rao <notifications@github.com>",
+      "subject": "Re: [example/app] Threads list newest first (PR #49)",
+      "at": "2026-11-18T01:27:00Z",
+      "snippet": "Priya approved these changes.",
+      "body": "Priya approved these changes.\n\nReply to this email directly or view it on GitHub.",
+      "thread": "gh-thread-49"
+    },
+    {
+      "id": "p10",
+      "from": "Asha Rao <notifications@github.com>",
+      "subject": "Re: [example/app] Threads list newest first (PR #49)",
+      "at": "2026-11-18T01:36:00Z",
+      "snippet": "dependabot mentioned this pull request",
+      "body": "dependabot mentioned this pull request\n\nReply to this email directly or view it on GitHub.",
+      "thread": "gh-thread-49"
+    },
+    {
+      "id": "p11",
+      "from": "Asha Rao <notifications@github.com>",
+      "subject": "Re: [example/app] Threads list newest first (PR #49)",
+      "at": "2026-11-18T01:45:00Z",
+      "snippet": "@asha-dev re-requested your review.",
+      "body": "@asha-dev re-requested your review.\n\nReply to this email directly or view it on GitHub.",
+      "thread": "gh-thread-49"
+    },
+    {
+      "id": "p12",
+      "from": "Asha Rao <notifications@github.com>",
+      "subject": "Re: [example/app] Threads list newest first (PR #49)",
+      "at": "2026-11-18T02:00:00Z",
+      "snippet": "Asha commented: ready when you are",
+      "body": "Asha commented: ready when you are\n\nReply to this email directly or view it on GitHub.",
+      "thread": "gh-thread-49"
+    },
+    {
+      "id": "p13",
+      "from": "Asha Rao <notifications@github.com>",
+      "subject": "Re: [example/app] Threads list newest first (PR #49)",
+      "at": "2026-11-18T02:09:00Z",
+      "snippet": "Priya commented: LGTM, waiting on you",
+      "body": "Priya commented: LGTM, waiting on you\n\nReply to this email directly or view it on GitHub.",
+      "thread": "gh-thread-49"
+    }
+  ],
+  "gh": {
+    "pr:example/app#49": {
+      "number": 49,
+      "title": "Threads list newest first",
+      "state": "OPEN",
+      "isDraft": false,
+      "mergedAt": null,
+      "closedAt": null,
+      "author": {
+        "login": "asha-dev"
+      },
+      "headRefName": "branch-49",
+      "baseRefName": "main",
+      "additions": 41,
+      "deletions": 9,
+      "changedFiles": 3,
+      "isCrossRepository": false,
+      "reviewDecision": "REVIEW_REQUIRED",
+      "url": "https://github.com/example/app/pull/49",
+      "statusCheckRollup": [
+        {
+          "name": "tests",
+          "status": "COMPLETED",
+          "conclusion": "SUCCESS"
+        }
+      ],
+      "reviewRequests": [
+        {
+          "login": "you-dev"
+        }
+      ]
+    },
+    "user": "you-dev"
+  },
+  "expect": {
+    "loops": 1,
+    "cards": [
+      "example/app#49"
+    ]
+  }
+}

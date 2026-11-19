@@ -1,7 +1,9 @@
 import { useEffect } from "react";
+import { onPickChange, withPick } from "./pick";
 
-export type LiveEvent = { type: "ping" } | { type: "message"; text: string; ts: number; session_id: string } | { type: "task"; id: number; status: string; until?: string }
-  | { type: "thinking"; session_id: string; on: boolean };  // a chat's Think harder changed, in any app
+export type LiveEvent = { type: "ping" } | { type: "message"; text: string; ts: number; session_id: string; personality?: string } | { type: "task"; id: number; status: string; until?: string }
+  | { type: "thinking"; session_id: string; on: boolean }  // a chat's Think harder changed, in any app
+  | { type: "elsewhere"; personality: string; what: "reply" | "card" };  // something waits in a personality that isn't on screen (no words)
 
 /** One live connection to /api/events that reconnects after errors. Returns stop(). */
 export function connectLive(make: () => EventSource, onEvent: (e: LiveEvent) => void, onReconnect?: () => void): () => void {
@@ -31,19 +33,30 @@ type Listener = { onEvent: (e: LiveEvent) => void; onReconnect?: () => void };
 export function shareLive(make: () => EventSource) {
   const listeners = new Set<Listener>();
   let stop: (() => void) | null = null;
-  return function subscribe(listener: Listener): () => void {
+  const connect = () => connectLive(make, (e) => listeners.forEach((l) => l.onEvent(e)), () => listeners.forEach((l) => l.onReconnect?.()));
+  function subscribe(listener: Listener): () => void {
     listeners.add(listener);
-    if (stop === null) {
-      stop = connectLive(make, (e) => listeners.forEach((l) => l.onEvent(e)), () => listeners.forEach((l) => l.onReconnect?.()));
-    }
+    if (stop === null) stop = connect();
     return () => {
       listeners.delete(listener);
       if (listeners.size === 0 && stop !== null) { stop(); stop = null; }
     };
+  }
+  /** Close the stream and open it again with the same listeners: `make` is called afresh, so a stream whose address
+   *  says who the app is talking to follows a change of pick. Nobody listening -> nothing is opened. */
+  subscribe.reopen = (): void => {
+    if (stop === null) return;
+    stop();
+    stop = connect();
+    listeners.forEach((l) => l.onReconnect?.());  // what happened between the two streams is read again
   };
+  return subscribe;
 }
 
-const subscribeLive = shareLive(() => new EventSource("/api/events"));
+// The stream always says who the app is talking to, even everyday Odie: an app that says nothing (the Mac app, the
+// terminal) gets no personality's events at all, and one that says so hears when another personality has something.
+const subscribeLive = shareLive(() => new EventSource(withPick("/api/events", true)));
+onPickChange(() => subscribeLive.reopen());
 
 /** Subscribe to /api/events (SSE), on the app's one shared stream. Reconnects automatically; the handler sees every
  * non-ping event. */
@@ -54,4 +67,11 @@ export function useLive(onEvent: (e: LiveEvent) => void, onReconnect?: () => voi
     document.addEventListener("visibilitychange", onVisible);
     return () => { stop(); document.removeEventListener("visibilitychange", onVisible); };
   }, [onEvent, onReconnect]);
+}
+
+/** The word after Odie's name on a message that didn't answer a question: what kind of message it is.
+ *    "job" -> "job"; "tracker" -> "tracker"; "talk" -> "call"; anything else -> "reminder" */
+export function liveLabel(kind: string | undefined): string {
+  const words: Record<string, string> = { job: "job", tracker: "tracker", talk: "call" };
+  return words[kind ?? ""] ?? "reminder";
 }

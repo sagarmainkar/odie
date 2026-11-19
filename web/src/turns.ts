@@ -15,6 +15,7 @@ export type HistoryItem = {
   key?: string; sid?: string; inv?: string; role: "user" | "odie" | "approval"; text: string; tools: string[];
   steps?: HistoryStep[]; ts?: number; images?: string[]; approval?: Approval; media?: Media[]; private?: boolean;
   usage?: ReplyUsage; via?: "terminal";  // via: a message the odie command sent (an agent or a script), not typed here
+  kind?: string;  // a message Odie posted on its own ("job"): its label after Odie's name, as when it arrived live
 };
 
 /** What a message needs for a turn's live events to join it (Chat's Msg has these and more). */

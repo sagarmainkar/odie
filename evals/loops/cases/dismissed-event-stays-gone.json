@@ -1,0 +1,73 @@
+{
+  "id": "dismissed-event-stays-gone",
+  "about": "A moved dentist appointment became a card; he tapped Done; the next check sees the same event.",
+  "checks": [
+    {
+      "at": "2026-11-19T09:00:00+05:30",
+      "events": [
+        {
+          "id": "e5",
+          "title": "Dentist",
+          "start": "2026-11-19T16:00:00+05:30",
+          "end": "2026-11-19T16:30:00+05:30",
+          "change": "moved"
+        }
+      ],
+      "script": {
+        "findings": [
+          {
+            "ref": "event:e5",
+            "title": "Dentist moved to 16:00",
+            "kind": "event",
+            "why": "moved from 11:00",
+            "owner": "you",
+            "pile": "events"
+          }
+        ],
+        "answers": [
+          {
+            "f": "F1",
+            "is": "new"
+          }
+        ]
+      },
+      "then": {
+        "done": [
+          "event:e5"
+        ]
+      }
+    },
+    {
+      "at": "2026-11-19T09:30:00+05:30",
+      "events": [
+        {
+          "id": "e5",
+          "title": "Dentist",
+          "start": "2026-11-19T16:00:00+05:30",
+          "end": "2026-11-19T16:30:00+05:30",
+          "change": "moved"
+        }
+      ],
+      "script": {
+        "findings": [
+          {
+            "ref": "event:e5",
+            "title": "Dentist moved to 16:00",
+            "kind": "event",
+            "owner": "you"
+          }
+        ],
+        "answers": []
+      }
+    }
+  ],
+  "expect": {
+    "loops": 1,
+    "closed": [
+      "event:e5"
+    ],
+    "no_card": [
+      "event:e5"
+    ]
+  }
+}

@@ -38,3 +38,14 @@ def load_image(iid: str, directory: Path | None = None) -> tuple[bytes, str] | N
         return None
     p = (directory or uploads_dir()) / f"{iid}.jpg"
     return (p.read_bytes(), "image/jpeg") if p.exists() else None
+
+
+def delete_upload(iid: str, directory: Path | None = None) -> bool:
+    """Remove an uploaded picture for good. True when there was one; a malformed or unknown id -> False."""
+    if not ID_RE.match(iid or ""):
+        return False
+    path = (directory or uploads_dir()) / f"{iid}.jpg"
+    if not path.exists():
+        return False
+    path.unlink()
+    return True

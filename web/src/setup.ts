@@ -24,7 +24,7 @@ export const LABEL: Record<Step, string> = {
 };
 // Where each step is done by hand.
 export const BY_HAND: Partial<Record<Step, string>> = {
-  brain: "#brain", vault: "#settings", embeddings: "#settings", photos: "#settings", search: "#settings", voice: "#settings", apps: "#settings", phone: "#settings",
+  brain: "#brain", vault: "#settings", embeddings: "#settings", photos: "#settings", search: "#settings", voice: "#voice", apps: "#settings", phone: "#settings",
 };
 
 export function chipState(step: Step, s: SetupState): "done" | "skipped" | "current" | "todo" {

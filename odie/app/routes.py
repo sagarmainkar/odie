@@ -82,7 +82,8 @@ async def health(request: Request) -> dict[str, Any]:
     hearing = await voice.hearing_available()  # the Mac listens through /api/talk/listen when this is true
     return {"status": "ok", "name": "Odie", "version": update.version(), "model": chosen["model"], "provider": chosen["provider"],
             "leaves_mini": chosen["leaves_mini"], "lm_studio": lm, "connections": connections,
-            "brain_chosen": brain_chosen(request.app.state.store), "brain_reachable": brain_reachable, "hearing": hearing}
+            "brain_chosen": brain_chosen(request.app.state.store), "brain_reachable": brain_reachable, "hearing": hearing,
+            "build": update.web_build(config.settings.web_dist)}
 
 
 @router.get("/update")
@@ -116,26 +117,52 @@ def reply_preview(text: str, limit: int = 140) -> str:
     return plain if len(plain) <= limit else plain[: limit - 1].rstrip() + "…"
 
 
+def say_answered_while_away(store, bus, session_id: str | None, text: str) -> None:
+    """A reply finished after the app had gone away: a push. An everyday reply: its first words, as before. A reply
+    in a personality's thread: who, never the words (odie.personalities.quiet_push), and a wordless "answered" notice
+    on the live stream, so a chat with someone else can show that she has something new."""
+    from odie import personalities
+    from odie.push.send import send_to_all
+    owner_id, owner = personalities.whose_thread(store, session_id)
+    if owner_id == personalities.ODIE:
+        send_to_all(store, f"{persona.get(store)['name']} answered", reply_preview(text) or "Your answer is ready.",
+                    url="/#chat", tag="reply")
+        return
+    if owner is None:  # its personality was deleted while the turn finished: nothing is said
+        return
+    title, body = personalities.quiet_push(owner.name, "replied")
+    send_to_all(store, title, body, url="/#chat", tag="reply")
+    if bus is not None:
+        bus.emit({"type": "answered", "session_id": session_id})
+
+
 @router.post("/chat")
 async def chat(body: ChatIn, request: Request):
     from odie.app.detached import detached
-    from odie.push.send import send_to_all
     store = request.app.state.store
 
     def answered_while_away(text: str) -> None:
-        send_to_all(store, f"{persona.get(store)['name']} answered", reply_preview(text) or "Your answer is ready.",
-                    url="/#chat", tag="reply")
+        say_answered_while_away(store, getattr(request.app.state, "bus", None), session_id, text)
 
     from odie import threads
     if body.session_id is not None and not threads.valid_id(body.session_id):
         raise HTTPException(422, "not a chat thread")
+    pick = _personality(request)  # who the app is talking to: everyday Odie, or a personality
+    session_id = body.session_id
+    if session_id is not None:
+        _own_thread(request, session_id)  # a thread named with someone else's pick is "not found"
+    elif pick:
+        session_id = await request.app.state.runner.session_for(pick, _today())  # its current thread, made if none
     if body.thinking is not None:  # an app that still sends it: the same as choosing it in the menu, then the turn
-        await _set_chat_thinking(request, _chat_meant(request, body.session_id), body.thinking)
+        await _set_chat_thinking(request, session_id or _chat_meant(request, None), body.thinking)
     kw: dict[str, Any] = {}
-    if body.session_id:
-        kw["session_id"] = body.session_id
+    if session_id:
+        kw["session_id"] = session_id
     if body.via:
         kw["via"] = body.via
+    device = devices.device_for(store, request.cookies.get(devices.COOKIE))
+    if devices.is_terminal(device):  # the odie command's key: a terminal turn, whatever the body says
+        kw["via"] = "terminal"
     turn = request.app.state.runner.chat(body.text, thinking=body.thinking, images=body.images or None, **kw)
     return _sse(detached(turn, on_orphaned_done=answered_while_away))
 
@@ -184,6 +211,10 @@ async def media_file(mid: str):
 
 @router.get("/history")
 async def history(date: str, request: Request, limit: int | None = None, before: int | None = None):
+    """The chat as it opens: everyday Odie's day, or (with a pick) that personality's current thread."""
+    pick = _personality(request)
+    if pick:
+        return await request.app.state.runner.history(date, limit=limit, before=before, personality=pick)
     return await request.app.state.runner.history(date, limit=limit, before=before)
 
 
@@ -196,35 +227,75 @@ class TitleIn(BaseModel):
     title: str
 
 
-def _thread_id(sid: str) -> str:
-    from odie import threads
+def _today() -> str:
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    return datetime.now(ZoneInfo(config.settings.timezone)).strftime("%Y-%m-%d")
+
+
+def _personality(request: Request) -> str:
+    """Which personality a request is for (odie.personalities): its `personality` query parameter. The web app sends
+    the one picked on that device; the Mac app, the terminal and an older web app send none.
+      ?personality=ab12cd (Mira's id) -> "ab12cd";  none, or empty -> "" (everyday Odie);  an id nobody has -> 404"""
+    from odie import personalities
+    pick = request.query_params.get("personality", "")
+    if not pick:
+        return personalities.ODIE
+    if personalities.get(request.app.state.store, pick) is None:
+        raise HTTPException(404, "no such personality")
+    return pick
+
+
+def _own_thread(request: Request, sid: str) -> str:
+    """A thread id the request may use: a chat thread that belongs to the request's personality. Anything else is "no
+    such thread", so a thread can't be reached by naming it with another pick, or with none. Whose thread it is comes
+    from the thread's own row, never from the request.
+      Mira's thread with Mira's pick -> the id;  Mira's thread with no pick (the terminal, the Mac app) -> 404;
+      an everyday thread with Mira's pick -> 404;  "voice-2026-11-17" -> 404"""
+    from odie import personalities, threads
     if not threads.valid_id(sid):
         raise HTTPException(404, "no such thread")
+    owner = personalities.of_session(request.app.state.store, sid)
+    if owner != _personality(request):
+        raise HTTPException(404, "no such thread")
     return sid
+
+
+def _own_approval(request: Request, approval_id: int):
+    """The approval card with this id, when its thread belongs to the request's personality; otherwise "no such
+    approval": a personality's card is seen and answered only from that personality's chat."""
+    from odie import personalities
+    store = request.app.state.store
+    row = store.get_approval(approval_id)
+    if row is None:
+        raise HTTPException(404, "no such approval")
+    if personalities.of_session(store, row["session_id"]) != _personality(request):
+        raise HTTPException(404, "no such approval")
+    return row
 
 
 @router.get("/threads")
 async def threads_list(request: Request, q: str | None = None):
     from odie import threads
-    return {"threads": await asyncio.to_thread(threads.list_threads, request.app.state.store, q)}
+    return {"threads": await asyncio.to_thread(threads.list_threads, request.app.state.store, q, _personality(request))}
 
 
 @router.get("/threads/{sid}/history")
 async def thread_history(sid: str, request: Request, limit: int | None = None, before: int | None = None):
-    return await request.app.state.runner.session_history(_thread_id(sid), limit=limit, before=before)
+    return await request.app.state.runner.session_history(_own_thread(request, sid), limit=limit, before=before)
 
 
 @router.post("/threads/{sid}/pin")
 async def thread_pin(sid: str, body: PinIn, request: Request):
     from odie import threads
-    threads.set_pinned(request.app.state.store, _thread_id(sid), body.pinned)
+    threads.set_pinned(request.app.state.store, _own_thread(request, sid), body.pinned)
     return {"ok": True, "pinned": body.pinned}
 
 
 @router.post("/threads/{sid}/rename")
 async def thread_rename(sid: str, body: TitleIn, request: Request):
     from odie import threads
-    threads.rename(request.app.state.store, _thread_id(sid), body.title)
+    threads.rename(request.app.state.store, _own_thread(request, sid), body.title)
     return {"ok": True, "title": " ".join(body.title.split())[:threads.TITLE_MAX]}
 
 
@@ -237,14 +308,18 @@ class ThinkingIn(BaseModel):
     session_id: str | None = None  # a chat thread; None = today's current chat
 
 
-def _chat_meant(request: Request, session_id: str | None) -> str:
-    """The chat a request means: the session it names, else today's current one (as /api/chat picks it)."""
-    from datetime import datetime
-    from zoneinfo import ZoneInfo
+def _chat_meant(request: Request, session_id: str | None) -> str | None:
+    """The chat a request means: the thread it names (which must belong to its personality: _own_thread), else the
+    current chat of whoever it is for: everyday Odie's chat of today (as /api/chat picks it), or a personality's
+    current thread, which is None while it has no thread yet."""
     if session_id:
-        return session_id
-    today = datetime.now(ZoneInfo(config.settings.timezone)).strftime("%Y-%m-%d")
-    current = getattr(request.app.state.runner, "current_session_id", None)
+        return _own_thread(request, session_id)
+    runner = request.app.state.runner
+    pick = _personality(request)
+    if pick:
+        return runner.current_thread(pick)
+    today = _today()
+    current = getattr(runner, "current_session_id", None)
     if current is None:
         return f"chat-{today}"
     return current(today)
@@ -268,6 +343,8 @@ async def chat_thinking_get(request: Request, session_id: str | None = None):
     if session_id is not None and not threads.valid_id(session_id):
         raise HTTPException(422, "not a chat thread")
     sid = _chat_meant(request, session_id)
+    if sid is None:  # a personality with no thread yet: what its first thread will start with
+        return {"session_id": None, "on": thinking.default(request.app.state.store)}
     return {"session_id": sid, "on": thinking.get(request.app.state.store, sid)}
 
 
@@ -277,22 +354,22 @@ async def chat_thinking_put(body: ThinkingIn, request: Request):
     from odie import threads
     if body.session_id is not None and not threads.valid_id(body.session_id):
         raise HTTPException(422, "not a chat thread")
-    return await _set_chat_thinking(request, _chat_meant(request, body.session_id), body.on)
+    sid = _chat_meant(request, body.session_id)
+    if sid is None:  # a personality with no thread yet: the choice is made on its first thread
+        sid = await request.app.state.runner.session_for(_personality(request), _today())
+    return await _set_chat_thinking(request, sid, body.on)
 
 
 @router.post("/chat/stop")
 async def chat_stop(body: StopIn, request: Request):
     """The user tapped Stop: the running turn in this chat (today's, or the open thread) ends at its next safe step."""
-    from datetime import datetime
-    from zoneinfo import ZoneInfo
-
     from odie import threads
     runner = request.app.state.runner
     if body.session_id is not None and not threads.valid_id(body.session_id):
         raise HTTPException(422, "not a chat thread")
-    today = datetime.now(ZoneInfo(config.settings.timezone)).strftime("%Y-%m-%d")
-    current = getattr(runner, "current_session_id", None)
-    sid = body.session_id or (current(today) if current else f"chat-{today}")
+    sid = _chat_meant(request, body.session_id)
+    if sid is None:  # a personality with no thread yet: nothing is running there
+        return {"ok": True, "session_id": None}
     stop = getattr(runner, "request_stop", None)
     if stop:
         stop(sid)
@@ -304,6 +381,9 @@ async def chat_context(request: Request):
     from datetime import datetime
     from zoneinfo import ZoneInfo
     today = datetime.now(ZoneInfo(config.settings.timezone)).strftime("%Y-%m-%d")
+    pick = _personality(request)
+    if pick:
+        return await request.app.state.runner.context_usage(today, personality=pick)
     return await request.app.state.runner.context_usage(today)
 
 
@@ -312,6 +392,9 @@ async def chat_new(request: Request):
     from datetime import datetime
     from zoneinfo import ZoneInfo
     today = datetime.now(ZoneInfo(config.settings.timezone)).strftime("%Y-%m-%d")
+    pick = _personality(request)
+    if pick:
+        return {"session_id": await request.app.state.runner.new_chat(today, pick)}
     return {"session_id": await request.app.state.runner.new_chat(today)}
 
 
@@ -379,7 +462,13 @@ async def skills_enabled(name: str, body: EnabledIn, request: Request):
 
 @router.get("/mcp")
 async def mcp_list(request: Request):
+    """The connected apps, each with its whole-server switches, `canUse`: whether whoever the request picked (a
+    personality, or everyday Odie with none) may use it (odie.plugins.access), and `onlyPick`: whether no one else may
+    (connecting the same service again then replaces it, mcp_connect)."""
+    from odie.plugins import access
     from odie.plugins.mcp import masked, read_config
+    pick = _personality(request)
+    store = request.app.state.store
     servers, err = read_config()
     live = {e.name: e for e in request.app.state.runner.plugins.get("servers", [])}
     out = []
@@ -387,7 +476,8 @@ async def mcp_list(request: Request):
         e = live.get(name)
         out.append({"name": name, "spec": masked(spec), "status": e.status if e else "not loaded", "tools": e.tools if e else [],
                     "reason": e.reason if e else "", "alwaysOn": bool(spec.get("alwaysOn")), "enabled": spec.get("enabled", True) is not False,
-                    "readsFree": bool(spec.get("readsFree"))})
+                    "readsFree": bool(spec.get("readsFree")), "canUse": access.allowed(store, name, pick),
+                    "onlyPick": access.only_one_using(store, name, pick)})
     return {"servers": out, "error": err}
 
 
@@ -406,11 +496,33 @@ async def mcp_save(body: ServerIn, request: Request):
     problem = command_problem(edit)
     if problem:
         raise HTTPException(422, problem)
+    pick = _personality(request)
+    is_new = body.name not in servers
     keep = {k: v for k, v in old.items() if k not in (("command", "args", "env") if edit.get("url") else ("url", "headers"))}
     servers[body.name] = {**keep, **edit}  # switches (enabled, alwaysOn) and hand-written keys stay
     write_config(servers)
-    await request.app.state.runner.load_plugins()
-    return {"ok": True}
+    if is_new:
+        _app_added(request, body.name, pick)
+    runner = request.app.state.runner
+    await runner.load_plugins()  # its tool names are known from here on, even when it was refused for a clash
+    out: dict[str, Any] = {"ok": True, "switched_off": [], "note": ""}
+    if is_new:
+        from odie.plugins import access
+        before = access.off_for(request.app.state.store, pick)
+        note = access.make_room_for(request.app.state.store, body.name, pick, servers)
+        if note:  # the picked one's other connection of the service was in the way: off for it now, and loaded again
+            out["switched_off"] = sorted(access.off_for(request.app.state.store, pick) - before)
+            out["note"] = note
+            await runner.load_plugins()
+    return out
+
+
+def _app_added(request: Request, name: str, pick: str) -> None:
+    """A connected app was just added: it is for whoever is picked alone (odie.plugins.access.added)."""
+    from odie.plugins import access
+    store = request.app.state.store
+    access.added(store, name, pick)
+    store.audit("user", "app_added", result_summary=f"{name} for {pick or 'everyday Odie'}")
 
 
 class CheckIn(BaseModel):
@@ -463,8 +575,13 @@ async def mcp_check(body: CheckIn, request: Request) -> dict[str, Any]:
 @router.post("/mcp/connect")
 async def mcp_connect(body: ConnectIn, request: Request) -> dict[str, Any]:
     """Zapier or Composio from the link (and key) the user pasted: checked, then saved and loaded. Connecting the same
-    service again replaces its connection (a new link, a new code), keeping its switches; add=True adds another."""
-    from odie.plugins import presets
+    service again replaces its connection (a new link, a new code), keeping its switches; add=True adds another.
+    A connection is replaced only when whoever is picked is the only one who can use it; otherwise the picked one gets
+    a connection of its own and the old one is left as it is, switched off for the picked one (odie.plugins.access):
+      Odie's zapier, on for everyone; Mira connects     -> zapier-2, on for Mira alone; zapier unchanged, off for her
+      Mira connects again (zapier-2 is hers alone)      -> zapier-2 replaced in place
+      no personalities; Odie connects again             -> zapier replaced in place, as before personalities"""
+    from odie.plugins import access, presets
     from odie.plugins.mcp import read_config, write_config
     try:
         spec = presets.spec_for(body.preset, body.url, body.key)
@@ -476,22 +593,49 @@ async def mcp_connect(body: ConnectIn, request: Request) -> dict[str, Any]:
         raise HTTPException(422, said if said != checked["reason"] else f"{presets.PRESETS[body.preset]['title']} didn't answer: {said}")
     if body.check_only:
         return {"ok": True, "name": None, "tools": checked["tools"]}
+    store = request.app.state.store
+    pick = _personality(request)
     servers, _ = read_config()
-    name = next((n for n, sp in servers.items() if isinstance(sp, dict) and sp.get("url") == spec["url"]), None)
+    name = _same_link(servers, spec["url"], store, pick)
     if name is None and not body.add:
         same = [n for n, sp in servers.items() if isinstance(sp, dict) and presets.preset_of(str(sp.get("url") or "")) == body.preset]
-        if len(same) > 1:
+        usable = [n for n in same if access.allowed(store, n, pick)]  # the picked one's own; another's is never a candidate
+        if len(usable) > 1:
             title = presets.PRESETS[body.preset]["title"]
-            raise HTTPException(409, f"You have two {title} connections ({', '.join(same)}): remove the one you don't use in "
+            raise HTTPException(409, f"You have two {title} connections ({', '.join(usable)}): remove the one you don't use in "
                                      "Settings → Connected apps, then connect again.")
-        name = same[0] if same else None
+        name = usable[0] if usable else None
+    shared = None  # a connection someone else uses too: left as it is, and switched off for the picked one
+    if name is not None and not access.only_one_using(store, name, pick):
+        shared = name
+        name = None
     replaced = name is not None
     name = name or next(n for n in (body.preset, *(f"{body.preset}-{i}" for i in range(2, 100))) if n not in servers)
     old = servers.get(name) or {}
     servers[name] = {**{k: v for k, v in old.items() if k in ("enabled", "alwaysOn", "readsFree")}, **spec}
     write_config(servers)
+    if not replaced:
+        _app_added(request, name, pick)
+    if shared is not None:
+        access.set_allowed(store, shared, pick, False)
     await request.app.state.runner.load_plugins()
     return {"ok": True, "name": name, "tools": checked["tools"], "replaced": replaced}
+
+
+def _same_link(servers: dict, url: str, store, pick: str) -> str | None:
+    """The connection a link is for: one with that very link, preferring those the picked one can use, since one link
+    can serve several accounts (Zapier's, with a code each).
+      Mira's zapier and Odie's zapier-2, the same link; Odie connects it again -> "zapier-2"
+      only Mira's has the link; Odie connects it                          -> "zapier" (then left as it is: not his alone)
+      no connection has the link                                          -> None"""
+    from odie.plugins import access
+    with_link = [n for n, sp in servers.items() if isinstance(sp, dict) and sp.get("url") == url]
+    usable = [n for n in with_link if access.allowed(store, n, pick)]
+    if usable:
+        return usable[0]
+    if with_link:
+        return with_link[0]
+    return None
 
 
 @router.post("/mcp/{name}/reads_free")
@@ -521,13 +665,48 @@ async def _mcp_flag(request: Request, name: str, key: str, value: bool):
     return {"ok": True}
 
 
+@router.post("/mcp/{name}/access")
+async def mcp_access(name: str, body: OnIn, request: Request):
+    """Whether whoever the request picked (a personality, or everyday Odie with none) may use this app: "Mira can use
+    this" in Settings (odie.plugins.access). Read live: no reload is needed."""
+    from odie.plugins import access
+    from odie.plugins.mcp import read_config
+    pick = _personality(request)
+    servers, _ = read_config()
+    if name not in servers:
+        raise HTTPException(404, "no such server")
+    store = request.app.state.store
+    if body.on:  # one connection of a service at a time for each owner: its tools' names would be listed twice
+        taken = access.clash_for(store, name, pick, servers)
+        if taken:
+            raise HTTPException(409, taken)
+    access.set_allowed(store, name, pick, body.on)
+    store.audit("user", "app_access", result_summary=f"{name} {'on' if body.on else 'off'} for {pick or 'everyday Odie'}")
+    _forget_prompts(request)  # the prompt's capabilities (mail, the vault) follow the apps it may use
+    runner = request.app.state.runner
+    if _refused_for_a_clash(runner):  # this switch may have cleared it: load again, so it works without a restart
+        await runner.load_plugins()
+    return {"ok": True}
+
+
+def _refused_for_a_clash(runner) -> bool:
+    """Whether a loaded server was refused because its tool names clash with another server's, which a switch can
+    clear: "tool names clash with send_email (mail). Only one of them can be on…" -> True; every server loaded, or one
+    that failed to start -> False."""
+    from odie.plugins.mcp import CLASH_ADVICE
+    return any(e.status == "error" and any(words in e.reason for words in CLASH_ADVICE)
+               for e in runner.plugins.get("servers", []))
+
+
 @router.delete("/mcp/{name}")
 async def mcp_delete(name: str, request: Request):
+    from odie.plugins import access
     from odie.plugins.mcp import read_config, write_config
     servers, _ = read_config()
     if servers.pop(name, None) is None:
         raise HTTPException(404, "no such server")
     write_config(servers)
+    access.forget_server(request.app.state.store, name)
     await request.app.state.runner.load_plugins()
     return {"ok": True}
 
@@ -607,6 +786,11 @@ async def task_done(task_id: int, request: Request):
     if row is None:
         raise HTTPException(404, "no such task")
     store.update_task(task_id, status="done")
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from odie.loops import ledger
+    ledger.reminder_done(store, task_id, datetime.now(ZoneInfo(config.settings.timezone)))  # its loop: Done, remembered
     note = ""
     if row["source_kind"]:
         from odie.agent.agent import source_done
@@ -625,7 +809,7 @@ async def tasks_closed_by_watch(request: Request):
 
     from odie.watch import bills
     since = datetime.now(ZoneInfo(config.settings.timezone)) - timedelta(days=3)
-    return bills.closed_by_watch(request.app.state.store, since)
+    return bills.closed_by_watch(request.app.state.store, since, _personality(request))
 
 
 @router.post("/tasks/{task_id}/reopen")
@@ -661,12 +845,30 @@ async def task_snooze(task_id: int, body: SnoozeIn, request: Request):
 PING_EVERY = 25  # seconds between pings on the live stream
 
 
+def _stream_pick(request: Request) -> str | None:
+    """Who the app that opened a live stream is talking to, for odie.personalities.event_for_stream:
+      no `personality` parameter at all (the Mac app, the terminal, an older web app) -> None
+      ?personality=        (a web app that knows of personalities, on everyday Odie) -> ""
+      ?personality=ab12cd  (Mira's id)                                                -> "ab12cd"
+      ?personality=<one that was deleted>                                             -> "" (it hears as Odie's does)"""
+    from odie import personalities
+    if "personality" not in request.query_params:
+        return None
+    pick = request.query_params.get("personality") or ""
+    if pick and personalities.get(request.app.state.store, pick) is None:
+        return ""
+    return pick
+
+
 @router.get("/events")
 async def events(request: Request):
     """Live stream: pings, Odie-originated messages, task changes. A device removed while its stream is open loses it
-    at the next event or ping."""
+    at the next event or ping. Each stream gets what its app may see (odie.personalities.event_for_stream): a
+    personality's events go only to an app that picked it."""
+    from odie import personalities
     bus = getattr(request.app.state, "bus", None)
     store, key = request.app.state.store, request.cookies.get(devices.COOKIE)
+    pick = _stream_pick(request)
 
     def still_in() -> bool:
         return not devices.pairing_on(store) or devices.device_for(store, key) is not None
@@ -682,7 +884,10 @@ async def events(request: Request):
             while still_in() and not await request.is_disconnected():
                 try:
                     e = await asyncio.wait_for(q.get(), PING_EVERY)
-                    yield {"data": json.dumps(e, default=str)}
+                    seen = personalities.stream_view(store, e, pick)
+                    if seen is None:  # another personality's: not for this app
+                        continue
+                    yield {"data": json.dumps(seen, default=str)}
                 except asyncio.TimeoutError:
                     yield {"data": json.dumps({"type": "ping"})}
         finally:
@@ -1909,40 +2114,171 @@ def _persona_out(p: dict) -> dict:
     return {"name": p["name"], "avatar_url": f"/api/persona/avatar/{p['avatar']}" if p.get("avatar") else None}
 
 
+def _personality_out(p) -> dict:
+    """A personality's name and picture, in the shape /persona gives for everyday Odie."""
+    return _persona_out({"name": p.name, "avatar": p.avatar})
+
+
+def _picked(request: Request):
+    """The personality a request picked (odie.personalities.Personality), or None when it is for everyday Odie."""
+    from odie import personalities
+    return personalities.get(request.app.state.store, _personality(request))
+
+
+def _forget_prompts(request: Request) -> None:
+    """A name or a SOUL changed: every thread builds its prompt again on its next message."""
+    inv = getattr(request.app.state.runner, "invalidate_prompt", None)
+    if inv:
+        inv()
+
+
+# The name, picture and SOUL routes below serve whoever the app is talking to: everyday Odie, or (with a pick) that
+# personality. Settings shows and edits the picked one with the same boxes.
 @router.get("/persona")
 async def persona_get(request: Request):
     from odie import persona
+    picked = _picked(request)
+    if picked is not None:
+        return _personality_out(picked)
     return _persona_out(persona.get(request.app.state.store))
 
 
 @router.put("/persona")
 async def persona_put(body: PersonaIn, request: Request):
-    from odie import persona
-    p = persona.set_name(request.app.state.store, body.name)
-    inv = getattr(request.app.state.runner, "invalidate_prompt", None)
-    if inv:
-        inv()
-    request.app.state.store.audit("user", "persona_renamed", result_summary=p["name"])
+    from odie import persona, personalities
+    store = request.app.state.store
+    picked = _picked(request)
+    if picked is not None:
+        try:
+            renamed = personalities.rename(store, picked.id, body.name)
+        except ValueError as problem:  # empty, Odie's own name, or one another personality has
+            raise HTTPException(422, str(problem))
+        _forget_prompts(request)
+        store.audit("user", "personality_renamed", result_summary=renamed.name)
+        return _personality_out(renamed)
+    p = persona.set_name(store, body.name)
+    _forget_prompts(request)
+    store.audit("user", "persona_renamed", result_summary=p["name"])
     return _persona_out(p)
 
 
 @router.post("/persona/avatar")
 async def persona_avatar(request: Request, file: UploadFile = File(...)):
-    from odie import persona
+    from odie import persona, personalities
+    store = request.app.state.store
+    picked = _picked(request)
     data = await file.read()
     if len(data) > 15 * 1024 * 1024:
         raise HTTPException(413, "Photo too large (15 MB max)")
     try:
-        p = persona.save_avatar(request.app.state.store, data)
+        if picked is None:
+            return _persona_out(persona.save_avatar(store, data))
+        picture = persona.store_picture(data)
     except Exception as e:  # noqa: BLE001
         raise HTTPException(400, f"Not an image I can read: {type(e).__name__}")
-    return _persona_out(p)
+    with_picture = personalities.set_avatar(store, picked.id, picture)
+    persona.delete_picture(picked.avatar)  # the picture it had before
+    return _personality_out(with_picture)
 
 
 @router.delete("/persona/avatar")
 async def persona_avatar_clear(request: Request):
-    from odie import persona
-    return _persona_out(persona.clear_avatar(request.app.state.store))
+    from odie import persona, personalities
+    store = request.app.state.store
+    picked = _picked(request)
+    if picked is None:
+        return _persona_out(persona.clear_avatar(store))
+    with_the_orb = personalities.set_avatar(store, picked.id, None)
+    persona.delete_picture(picked.avatar)
+    return _personality_out(with_the_orb)
+
+
+# --- Personalities: other ways for the assistant to be (odie.personalities) ---
+class PersonalityIn(BaseModel):
+    name: str
+
+
+def _personality_row(store, p) -> dict:
+    """One personality for the switcher: its name and picture, how many threads it has, and how many of its cards are
+    waiting for a tap (the switcher says "needs you")."""
+    from odie import personalities
+    its_threads = set(personalities.sessions_of(store, p.id))
+    waiting = [a for a in store.pending_approvals() if a["session_id"] in its_threads]
+    return {"id": p.id, **_personality_out(p), "threads": len(its_threads), "waiting": len(waiting)}
+
+
+@router.get("/personalities")
+async def personalities_list(request: Request):
+    from odie import personalities
+    store = request.app.state.store
+    # everyday_waiting: everyday Odie's own cards, so a chat with a personality can show that Odie needs a tap
+    everyday_cards = [a for a in store.pending_approvals() if personalities.of_session(store, a["session_id"]) == personalities.ODIE]
+    return {"personalities": [_personality_row(store, p) for p in personalities.list_all(store)],
+            "everyday_waiting": len(everyday_cards)}
+
+
+@router.post("/personalities")
+async def personalities_create(body: PersonalityIn, request: Request):
+    """A new personality, with the orb and the default instructions; the app then switches to it."""
+    from odie import personalities
+    store = request.app.state.store
+    try:
+        made = personalities.create(store, body.name)
+    except ValueError as problem:
+        raise HTTPException(422, str(problem))
+    store.audit("user", "personality_made", result_summary=made.name)
+    return _personality_row(store, made)
+
+
+@router.delete("/personalities/{pid}")
+async def personalities_delete(pid: str, request: Request):
+    """Erase a personality with its threads, memory, instructions and picture, for good (odie.personalities.delete).
+    The activity log keeps only that one was deleted, not which."""
+    from odie import personalities
+    store = request.app.state.store
+    if personalities.get(store, pid) is None:
+        raise HTTPException(404, "no such personality")
+    erased = await personalities.delete(store, request.app.state.runner, pid)
+    store.audit("user", "personality_deleted", result_summary=f"{erased['threads']} thread(s)")
+    return {"ok": True, **erased}
+
+
+class ProactiveIn(BaseModel):
+    on: bool
+
+
+def _proactive_out(store, pid: str) -> dict:
+    """The picked personality's Proactive intelligence switch: offered only with a mail or calendar app of its own
+    (odie.watch.owner.own_inbox_apps), and whether it is on. Everyday Odie: never offered (its watch keeps its own
+    setting)."""
+    from odie.plugins.mcp import read_config
+    from odie.watch import owner
+    servers, _ = read_config()
+    apps = owner.own_inbox_apps(store, servers, pid)
+    return {"offered": bool(apps), "on": owner.is_proactive(store, pid), "apps": apps}
+
+
+@router.get("/proactive")
+async def proactive_get(request: Request):
+    return _proactive_out(request.app.state.store, _personality(request))
+
+
+@router.put("/proactive")
+async def proactive_put(body: ProactiveIn, request: Request):
+    """Switches the picked personality's own background mail and calendar check on or off. 409 when it has no mail or
+    calendar app of its own to check (and for everyday Odie, which has no such switch)."""
+    from odie.watch import owner
+    store = request.app.state.store
+    pid = _personality(request)
+    if body.on and not _proactive_out(store, pid)["offered"]:
+        raise HTTPException(409, "It has no mail or calendar app of its own to check.")
+    if pid:
+        owner.set_proactive(store, pid, body.on)
+        said = "off"
+        if body.on:
+            said = "on"
+        store.audit("user", "proactive", result_summary=said)
+    return _proactive_out(store, pid)
 
 
 @router.get("/persona/avatar/{aid}")
@@ -1985,7 +2321,13 @@ class SoulIn(BaseModel):
 @router.get("/soul")
 async def soul_get(request: Request):
     """The user's SOUL.md, or (none yet) the default personality with their name and the assistant's filled in."""
-    from odie import profile
+    from odie import personalities, profile
+    picked = _picked(request)
+    if picked is not None:  # a personality's own instructions, or the default personality under its name
+        own = personalities.load_soul(picked.id)
+        text = own or identity(Who(user=profile.get(request.app.state.store)["user_name"], assistant=picked.name))
+        path = personalities.folder(picked.id) / "SOUL.md"
+        return {"text": text, "custom": own is not None, "path": str(path)}
     custom = SOUL_PATH.exists() and SOUL_PATH.read_text().strip() != ""
     if custom:
         text = SOUL_PATH.read_text()
@@ -1997,6 +2339,13 @@ async def soul_get(request: Request):
 
 @router.put("/soul")
 async def soul_put(body: SoulIn, request: Request):
+    from odie import personalities
+    picked = _picked(request)
+    if picked is not None:
+        custom = personalities.save_soul(picked.id, body.text)
+        _forget_prompts(request)
+        request.app.state.store.audit("user", "soul_updated", result_summary=f"a personality's ({picked.name})")
+        return {"ok": True, "custom": custom}
     text = body.text.strip()
     if text:
         SOUL_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -2031,54 +2380,363 @@ class WatchDoneIn(BaseModel):
 
 @router.get("/watch")
 async def watch_get(request: Request) -> dict[str, Any]:
-    """The watch's card for Today: the last check's line, the needs-you items, the next events, each source's status,
-    and how many needs-you items are new since Today was last opened."""
+    """The watch's card for Pulse: the last check's line, the next events, each source's status, and how many cards
+    are new since Pulse was last opened (loops made cards since then; one put off with Later isn't counted). needs_you
+    is always empty now: what needs the user is a loop (GET /api/needs_you)."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from odie.loops import cards as loop_cards
     from odie.watch import report
+    from odie.watch.owner import key
     store = request.app.state.store
-    card = store.get_setting(report.CARD)
+    pid = _personality(request)
+    card = store.get_setting(key(report.CARD, pid))  # the picked one's own watch
     if not card:
         return {"off": "The first check runs a minute after Odie starts.", "needs_you": [], "events": [], "unseen": 0}
-    return {**card, "unseen": sum(1 for i in card.get("needs_you", []) if not i.get("done") and not i.get("seen"))}
+    now = datetime.now(ZoneInfo(config.settings.timezone))
+    seen_at = card.get("seen_at") or ""
+    unseen = [lp for lp in loop_cards.ready_loops(store, pid, now) if (lp.get("shown_at") or "") > seen_at]
+    shown = {k: v for k, v in card.items() if k != "needs_you"}
+    return {**shown, "needs_you": [], "unseen": len(unseen)}
 
 
 @router.get("/needs_you")
 async def needs_you_get(request: Request) -> dict[str, Any]:
-    """Today's "Needs you" cards (odie.watch.needs), and the watch's last check for the line under them: when it
-    checked, through what, or what isn't working."""
+    """A Pulse's cards (odie.watch.needs), for whoever is picked: everyday Odie's (as Today always was) or a
+    personality's own. With them: the watch's last check for the line under them, what the watch did, what Odie is
+    still on (loops it is working on) and the loops it closed today (each with Reopen). Odie's Pulse also lists the
+    others as a count only ("Mira: 2 waiting"); a personality's says whether its Proactive intelligence is on."""
     from datetime import datetime
     from zoneinfo import ZoneInfo
 
+    from odie import personalities
+    from odie.loops import cards as loop_cards
     from odie.watch import needs, report
+    from odie.watch.owner import key
+    store = request.app.state.store
+    pid = _personality(request)
+    now = datetime.now(ZoneInfo(config.settings.timezone))
+    card = store.get_setting(key(report.CARD, pid)) or {}
+    watch = {k: card.get(k) for k in ("checked_at", "line", "off", "sources", "events") if k in card}
+    if not card and not pid:
+        watch = {"off": "The first check runs a minute after Odie starts."}
+    items = needs.cards(store, now, pid)
+    from odie.workers import cards as job_cards
+    on_it = [*job_cards.on_it(store, pid), *loop_cards.on_it(store, pid)]  # running jobs (with Stop), then loops
+    out = {"items": items, "counts": needs.counts(items), "watch": watch, "notes": needs.recent_notes(store, now, pid),
+           "on_it": on_it, "loops_done": loop_cards.done_today(store, pid, now),
+           "jobs_done": job_cards.done_today(store, pid, now)}
+    if pid:
+        out["proactive"] = _proactive_out(store, pid)
+        return out
+    others = []
+    for p in personalities.list_all(store):
+        waiting = len(needs.cards(store, now, p.id))
+        if waiting:
+            others.append({"id": p.id, "name": p.name, "waiting": waiting})
+    out["others"] = others
+    return out
+
+
+@router.post("/loops/{loop_id}/done")
+async def loop_done(loop_id: int, request: Request) -> dict[str, Any]:
+    """A loop card's Done: off the list and no longer followed. Only the picked one's own loop (else 404)."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from odie.loops import ledger
+    store = request.app.state.store
+    loop = ledger.get(store, loop_id)
+    if loop is None or loop["personality"] != _personality(request) or loop["state"] not in ledger.OPEN:
+        raise HTTPException(404, "That card isn't there any more.")
+    ledger.done(store, loop_id, datetime.now(ZoneInfo(config.settings.timezone)))
+    ledger.update(store, loop_id, datetime.now(ZoneInfo(config.settings.timezone)), tapped="done")
+    return {"ok": True}
+
+
+@router.post("/loops/{loop_id}/reopen")
+async def loop_reopen(loop_id: int, request: Request) -> dict[str, Any]:
+    """Reopen: a loop closed wrongly (by Odie's evidence, or his Done) opens again and is looked at once more; for
+    REOPEN_DAYS after its close (odie.loops.ledger.may_reopen)."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from odie.loops import ledger
     store = request.app.state.store
     now = datetime.now(ZoneInfo(config.settings.timezone))
-    card = store.get_setting(report.CARD) or {}
-    watch = {k: card.get(k) for k in ("checked_at", "line", "off", "sources") if k in card}
-    if not card:
-        watch = {"off": "The first check runs a minute after Odie starts."}
-    items = needs.cards(store, now)
-    return {"items": items, "counts": needs.counts(items), "watch": watch, "notes": needs.recent_notes(store, now)}
+    loop = ledger.get(store, loop_id)
+    if loop is None or loop["personality"] != _personality(request) or not ledger.may_reopen(loop, now):
+        raise HTTPException(404, "Nothing to reopen.")
+    ledger.reopen(store, loop_id, now)
+    store.audit("user", "loop_reopen", result_summary=loop["title"])
+    return {"ok": True}
+
+
+@router.get("/loops/{loop_id}")
+async def loop_get(loop_id: int, request: Request) -> dict[str, Any]:
+    """One of the picked one's loops with all its evidence (each line with its id), for Split's chooser."""
+    from odie.loops import ledger
+    store = request.app.state.store
+    loop = ledger.get(store, loop_id)
+    if loop is None or loop["personality"] != _personality(request):
+        raise HTTPException(404, "That card isn't there any more.")
+    lines = [{"id": e["id"], "at": e["at"], "source": e["source"], "fact": e["fact"]}
+             for e in ledger.events(store, loop_id) if e["ref"] not in ("later", "split", "pushed")]
+    return {"id": loop["id"], "title": loop["title"], "kind": loop["kind"], "state": loop["state"], "evidence": lines}
+
+
+class SplitIn(BaseModel):
+    events: list[int]
+
+
+@router.post("/loops/{loop_id}/split")
+async def loop_split(loop_id: int, body: SplitIn, request: Request) -> dict[str, Any]:
+    """Split: a merge was wrong; the evidence he picked becomes a loop of its own (odie.loops.ledger.split)."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from odie.loops import ledger
+    store = request.app.state.store
+    loop = ledger.get(store, loop_id)
+    if loop is None or loop["personality"] != _personality(request) or loop["state"] not in ledger.OPEN:
+        raise HTTPException(404, "That card isn't there any more.")
+    now = datetime.now(ZoneInfo(config.settings.timezone))
+    try:
+        new_id = ledger.split(store, loop_id, body.events, now)
+    except ValueError as e:
+        raise HTTPException(409, str(e)) from e
+    ledger.update(store, loop_id, now, tapped="split")
+    store.audit("user", "loop_split", args={"events": body.events}, result_summary=f"#{loop_id} -> #{new_id}")
+    return {"ok": True, "id": new_id}
+
+
+@router.post("/loops/{loop_id}/merge")
+async def loop_merge(loop_id: int, request: Request) -> dict[str, Any]:
+    """A tested card's [Merge]: his tap is the approval (proactive design §16). The command is code's, pinned to the
+    tested commit (odie.loops.merge); the terminal's key can't reach this route, and no model has a tool for it."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from odie.loops import ledger, merge
+    store = request.app.state.store
+    loop = ledger.get(store, loop_id)
+    if loop is None or loop["personality"] != _personality(request):
+        raise HTTPException(404, "That card isn't there any more.")
+    try:
+        why = await merge.merge(store, loop_id, datetime.now(ZoneInfo(config.settings.timezone)))
+    except merge.MergeRefused as e:
+        raise HTTPException(409, str(e)) from e
+    return {"ok": True, "closed": why}
+
+
+class RecipeIn(BaseModel):
+    repo: str
+
+
+def _offer_of(request: Request, repo: str) -> None:
+    """A "Use this" card waiting on the picked one's Pulse for this repo; anything else is "no such card"."""
+    from odie.loops import recipes
+    found = recipes.offered(request.app.state.store, repo)
+    if found is None or (found.get("owner") or "") != _personality(request):
+        raise HTTPException(404, "That card isn't there any more.")
+
+
+@router.post("/recipes/use")
+async def recipe_use(body: RecipeIn, request: Request) -> dict[str, Any]:
+    """"Use this": the test command Odie proposed for a repo (kept with the offer, never sent by the app) is approved,
+    once, for that repo; its pull request is looked at again at once."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from odie.loops import recipes
+    _offer_of(request, body.repo)
+    recipes.use(request.app.state.store, body.repo, datetime.now(ZoneInfo(config.settings.timezone)))
+    return {"ok": True}
+
+
+@router.post("/recipes/no")
+async def recipe_no(body: RecipeIn, request: Request) -> dict[str, Any]:
+    """No: Odie won't test this repo nor ask again; its pull requests are briefed from GitHub's CI."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from odie.loops import recipes
+    _offer_of(request, body.repo)
+    recipes.decline(request.app.state.store, body.repo, datetime.now(ZoneInfo(config.settings.timezone)))
+    request.app.state.store.audit("user", "test_recipe_declined", result_summary=body.repo)
+    return {"ok": True}
+
+
+# --- Workers (odie.workers): the picked one's own jobs. Every move here is a tap in the app: the terminal's key can't
+# reach these routes (odie.devices.terminal_may), and the model has no tool for "allow".
+
+def _own_job(request: Request, job_id: str) -> dict:
+    """The job when it is the picked one's own; anyone else's (or none) is "no such job"."""
+    from odie.workers import store as jobs_store
+    row = jobs_store.get(request.app.state.store, job_id)
+    if row is None or (row["personality"] or "") != _personality(request):
+        raise HTTPException(404, "no such job")
+    return row
+
+
+def _job_view(j: dict) -> dict:
+    """A job row for the app: the columns Pulse shows, the report cut short."""
+    from odie.workers import allow as job_allow
+    from odie.workers import store as jobs_store
+    keys = ("id", "kind", "title", "status", "runs", "outcome", "error", "started_by", "created_at", "started_at",
+            "ended_at")
+    out = {k: j.get(k) for k in keys}
+    out["report"] = (j.get("report") or "")[:300]
+    out["needed"] = [job_allow.line(n) for n in jobs_store.needed(j)]
+    out["taint"] = j.get("taint") or ""
+    out["may_read"] = jobs_store.loads(j.get("read_dirs_json"))
+    return out
+
+
+@router.get("/jobs")
+async def jobs_list(request: Request) -> dict[str, Any]:
+    """The picked one's jobs: going now (queued, running) and the last few that ended."""
+    from odie.workers import store as jobs_store
+    mine = jobs_store.of_owner(request.app.state.store, _personality(request), 20)
+    running = [_job_view(j) for j in mine if j["status"] in jobs_store.GOING]
+    recent = [_job_view(j) for j in mine if j["status"] not in jobs_store.GOING][:8]
+    return {"running": running, "recent": recent}
+
+
+@router.get("/jobs/{job_id}")
+async def job_get(job_id: str, request: Request) -> dict[str, Any]:
+    """One job with its log: every call its Worker made, with what, and how it went."""
+    from odie.workers import store as jobs_store
+    row = _own_job(request, job_id)
+    acts = [{"ts": a["ts"], "tool": a["tool"], "args": (a.get("args_json") or "")[:200],
+             "result_chars": a.get("result_chars"), "refused": a.get("refused"), "error": a.get("error")}
+            for a in jobs_store.actions(request.app.state.store, job_id)]
+    return {**_job_view(row), "report": row.get("report") or "", "brief": row.get("brief") or "", "actions": acts}
+
+
+@router.post("/jobs/{job_id}/stop")
+async def job_stop(job_id: str, request: Request) -> dict[str, Any]:
+    from odie.workers import router as workers_router
+    _own_job(request, job_id)
+    if not workers_router.stop(job_id):
+        raise HTTPException(409, "It isn't running.")
+    request.app.state.store.audit("user", "job_stopped", result_summary=job_id)
+    return {"ok": True}
+
+
+@router.post("/jobs/{job_id}/retry")
+async def job_retry(job_id: str, request: Request) -> dict[str, Any]:
+    """Pulse's Retry: the job again, with nothing extra allowed."""
+    from odie.workers import router as workers_router
+    _own_job(request, job_id)
+    if workers_router.retry(job_id) is None:
+        raise HTTPException(409, "It's still going, or it is Odie's own test of a pull request.")
+    request.app.state.store.audit("user", "job_retried", result_summary=job_id)
+    return {"ok": True}
+
+
+class AllowIn(BaseModel):
+    hash: str = ""
+
+
+@router.post("/jobs/{job_id}/allow")
+async def job_allow_and_retry(job_id: str, request: Request, body: AllowIn | None = None) -> dict[str, Any]:
+    """Pulse's "Allow it and run again": the job again, and exactly the steps it was refused (as its card showed them)
+    may run on that run only (odie.workers.allow). What is allowed comes from the job's own record, never the request."""
+    from odie.workers import cards as job_cards
+    from odie.workers import router as workers_router
+    from odie.workers import store as jobs_store
+    row = _own_job(request, job_id)
+    from pathlib import Path
+
+    from odie.workers import allow as job_allow
+    allowed = job_cards.allowable(row)  # exactly the steps the card offered, never one only he may do in chat
+    if row["status"] in jobs_store.GOING:
+        raise HTTPException(409, "It's still going.")
+    if not allowed:
+        raise HTTPException(409, "There's nothing a tap here can allow.")
+    shown = ""
+    if body is not None:
+        shown = body.hash
+    if shown != job_allow.needs_hash(allowed):
+        raise HTTPException(409, "Its steps changed since this card was shown: look at them again.")
+    allowed = job_allow.bind_files(allowed, Path(row["folder"]))  # the files they run, as they are now
+    if workers_router.retry(job_id, allowed=allowed) is None:
+        raise HTTPException(409, "This one can't run again from here.")
+    request.app.state.store.audit("user", "job_allowed", args={"allowed": allowed}, result_summary=job_id)
+    return {"ok": True}
+
+
+@router.post("/jobs/{job_id}/clear")
+async def job_clear(job_id: str, request: Request) -> dict[str, Any]:
+    """A job card's Done: off Pulse."""
+    from odie.workers import store as jobs_store
+    _own_job(request, job_id)
+    jobs_store.clear(request.app.state.store, job_id)
+    return {"ok": True}
 
 
 @router.post("/watch/done")
 async def watch_done(body: WatchDoneIn, request: Request) -> dict[str, Any]:
-    from odie.watch import report
+    """A card's "dismiss", on the picked one's Pulse: Sunday's "Still care?" card drops the loops in it; a loop's ref
+    ("loop:3"), or the mail or event an open loop holds (an older app's card), is that loop's Done (remembered)."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from odie.loops import cards as loop_cards
+    from odie.loops import ledger
     store = request.app.state.store
-    card = store.get_setting(report.CARD) or {}
-    card["needs_you"] = [i for i in card.get("needs_you", []) if i.get("ref") != body.ref]
-    store.set_setting(report.CARD, card)
-    from odie.watch import threads
-    threads.close(store, body.ref, "dismissed on Today", by_user=True)  # the watch stops following it too
+    pid = _personality(request)
+    now = datetime.now(ZoneInfo(config.settings.timezone))
+    if body.ref == loop_cards.BATCH:
+        return {"ok": True, "dropped": loop_cards.drop_batch(store, pid, now)}
+    loop = None
+    if body.ref.startswith("loop:") and body.ref[len("loop:"):].isdigit():
+        loop = ledger.get(store, int(body.ref[len("loop:"):]))
+    elif body.ref:
+        loop = ledger.find_by_refs(store, pid, [body.ref])
+    if loop is not None and loop["personality"] == pid and loop["state"] in ledger.OPEN:
+        ledger.done(store, loop["id"], now)
+        ledger.update(store, loop["id"], now, tapped="done")
     return {"ok": True}
+
+
+class LaterIn(BaseModel):
+    ref: str
+
+
+@router.post("/needs_you/later")
+async def needs_you_later(body: LaterIn, request: Request) -> dict[str, Any]:
+    """A card's Later: hidden until 09:00 tomorrow, then back (odie.watch.needs.later). A loop ("loop:3"; its third
+    Later: till Sunday), Sunday's batch, or a task ("task:12"); a card that isn't there -> 404."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from odie.watch import needs
+    store = request.app.state.store
+    now = datetime.now(ZoneInfo(config.settings.timezone))
+    until = needs.later(store, body.ref, now, _personality(request))
+    if until is None:
+        raise HTTPException(404, "That card isn't there any more.")
+    if body.ref.startswith("task:"):
+        await _publish(request, {"type": "task", "id": int(body.ref[len("task:"):])})
+    return {"ok": True, "until": until}
 
 
 @router.post("/watch/seen")
 async def watch_seen(request: Request) -> dict[str, Any]:
-    """Today was opened: everything on the card now has been seen (the count on chat's Back to Today goes)."""
+    """A Pulse was opened: every card on it now has been seen (the count on chat's Back to Pulse goes)."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
     from odie.watch import report
+    from odie.watch.owner import key
     store = request.app.state.store
-    card = store.get_setting(report.CARD) or {}
-    card["needs_you"] = [{**i, "seen": True} for i in card.get("needs_you", [])]
-    store.set_setting(report.CARD, card)
+    card_key = key(report.CARD, _personality(request))
+    card = store.get_setting(card_key) or {}
+    card["seen_at"] = datetime.now(ZoneInfo(config.settings.timezone)).isoformat(timespec="seconds")
+    store.set_setting(card_key, card)
     return {"ok": True}
 
 
@@ -2194,42 +2852,91 @@ async def morning_get(request: Request):
 class DecideIn(BaseModel):
     approve: bool
     allow_minutes: int | None = None  # run_shell only: also allow this conversation's commands for this long
+    allow_chat: bool = False  # Smart, run_shell only: don't ask again in this chat for this card's kind (30 min)
 
 
 
 
 @router.get("/approvals")
 async def approvals_pending(request: Request):
-    return [_approval_dict(r) for r in request.app.state.store.pending_approvals()]
+    from odie import personalities
+    store = request.app.state.store
+    pick = _personality(request)
+    waiting = store.pending_approvals()
+    return [_approval_dict(r) for r in waiting if personalities.of_session(store, r["session_id"]) == pick]
 
 
 @router.get("/approvals/{approval_id}")
 async def approval_get(approval_id: int, request: Request):
-    r = request.app.state.store.get_approval(approval_id)
-    if r is None:
-        raise HTTPException(404, "no such approval")
-    return _approval_dict(r)
+    return _approval_dict(_own_approval(request, approval_id))
 
 
 _resuming: set[asyncio.Task] = set()  # strong refs to turns resuming after a tap
+
+
+def chat_pass_kind(store, row) -> str | None:
+    """The kind a tap on "don't ask again in this chat" may pass for this card, or None when the card doesn't offer it.
+    Offered only on a shell card that Odie itself marked as offering it (its detail, written when the card was made),
+    for a kind that may have a pass, while the mode is Smart, and never on a card raised just after Odie read mail (the
+    mail may have asked for it; Careful's 30-minute pass isn't offered there either).
+      Smart, run_shell card {"asks_because": "deletes or stops something", "chat_pass": true} -> that kind;
+      the same card in Careful -> None;  a card that says "reads secrets" -> None;  a mail card -> None;
+      the same shell card with risk "from_email" -> None."""
+    from odie import approvals_mode
+    from odie.agent import shell_grant
+    if row["tool"] != "run_shell" or not approvals_mode.is_smart(store):
+        return None
+    if row["risk"] in ("from_email", "unknown"):
+        return None
+    try:
+        detail = json.loads(row["detail_json"] or "{}")
+    except ValueError:
+        return None
+    if not isinstance(detail, dict) or detail.get("chat_pass") is not True:
+        return None
+    kind = detail.get("asks_because")
+    if not shell_grant.may_pass(kind):
+        return None
+    return kind
 
 
 @router.post("/approvals/{approval_id}/decide")
 async def approval_decide(approval_id: int, body: DecideIn, request: Request):
     """Answer at once so the card collapses; the paused turn resumes in its own task (it can take minutes) and
     reports through the live stream (approval, message, approval_done)."""
-    row = request.app.state.store.get_approval(approval_id)
-    if row is None:
-        raise HTTPException(404, "no such approval")
+    from odie import brains
+    from odie.plugins import access
+    row = _own_approval(request, approval_id)
     if row["status"] != "pending":
         raise HTTPException(409, f"already {row['status']}")
+    if body.approve:  # a No needs no model and no app: it is recorded whatever has changed
+        moved = access.card_moved(request.app.state.store, row)
+        if moved:  # a tap is consent for the app the card named; that app is now off here: the card lapses
+            await request.app.state.runner.lapse_card(row, moved)
+            return {"status": "expired", "text": moved}
+        try:
+            brains.for_thread(request.app.state.store, row["session_id"])
+        except brains.BrainGone as gone:  # the turn couldn't go on: the card keeps waiting, and the words say why
+            raise HTTPException(409, str(gone))
     out: dict[str, Any] = {"status": "approved" if body.approve else "rejected"}
+    if body.approve and body.allow_chat:
+        kind = chat_pass_kind(request.app.state.store, row)
+        if kind is None:
+            raise HTTPException(400, "This card doesn't offer that.")  # nothing approved: the card stays to tap
+        from datetime import datetime
+
+        from odie.agent import shell_grant
+        until = shell_grant.grant_kind(row["session_id"], kind, datetime.now())
+        request.app.state.store.audit("user", "shell_allowed_for_chat", tool="run_shell",
+                                      result_summary=f"{kind} until {until:%H:%M}", session_id=row["session_id"],
+                                      approval_id=approval_id)
+        out["chat_pass"] = {"kind": kind, "until": until.isoformat()}
     if body.approve and body.allow_minutes and row["tool"] == "run_shell":
         from datetime import datetime
 
         from odie.agent import shell_grant
         minutes = max(1, min(body.allow_minutes, shell_grant.GRANT_MINUTES))
-        until = shell_grant.grant(request.app.state.store, row["session_id"], datetime.now(), minutes)
+        until = shell_grant.grant(row["session_id"], datetime.now(), minutes)
         request.app.state.store.audit("user", "shell_allowed", tool="run_shell", result_summary=f"until {until:%H:%M}",
                                       session_id=row["session_id"], approval_id=approval_id)
         out["allowed_until"] = until.isoformat()
@@ -2266,15 +2973,43 @@ def _creativity(store) -> dict:
 
 @router.get("/models")
 async def models_get(request: Request):
+    """Settings → Brain: every provider's models and the brain of whoever the request picked. With a personality
+    picked, the brain says whether it is "Same as Odie" (same_as_odie) or one of its own that is no longer set up
+    (gone), and `odie` is everyday Odie's, for the "Same as Odie" choice."""
     store = request.app.state.store
+    pick = _personality(request)
     providers = all_providers(store)
     listed = await list_models(providers)
     r = resolve_selection(store, "chat")
-    row = next((p for p in listed if p["id"] == r.provider.id), None)
-    reachable = row is not None and row["error"] is None
     chat = {"provider": r.provider.id, "model": r.model, "leaves_mini": r.leaves_mini,
-            "chosen": brain_chosen(store), "reachable": reachable}
-    return {"providers": listed, "selection": {"chat": chat}, "creativity": _creativity(store)}
+            "chosen": brain_chosen(store), "reachable": _answers(listed, r.provider.id)}
+    out = {"providers": listed, "selection": {"chat": chat}, "creativity": _creativity(store)}
+    if pick:
+        out["selection"]["chat"] = _its_brain(store, pick, chat, listed)
+        out["odie"] = {"provider": r.provider.id, "model": r.model, "leaves_mini": r.leaves_mini}
+    return out
+
+
+def _answers(listed: list[dict], provider_id: str) -> bool:
+    """Whether a provider answered the model listing: listed without an error -> True; failed, or not listed -> False."""
+    row = next((p for p in listed if p["id"] == provider_id), None)
+    return row is not None and row["error"] is None
+
+
+def _its_brain(store, pick: str, odies: dict, listed: list[dict]) -> dict:
+    """A personality's brain as Settings → Brain shows it: everyday Odie's with same_as_odie when it has none of its
+    own; its own otherwise, and `gone` (never reachable) when that one's provider is no longer set up."""
+    from odie import brains
+    own = brains.own_pick(store, pick)
+    if own is None:
+        return {**odies, "same_as_odie": True, "gone": False}
+    try:
+        sel = brains.for_personality(store, pick)
+    except brains.BrainGone:
+        return {"provider": own["provider"], "model": own["model"], "leaves_mini": True, "chosen": True,
+                "reachable": False, "same_as_odie": False, "gone": True}
+    return {"provider": sel.provider.id, "model": sel.model, "leaves_mini": sel.leaves_mini, "chosen": True,
+            "reachable": _answers(listed, sel.provider.id), "same_as_odie": False, "gone": False}
 
 
 class CreativityIn(BaseModel):
@@ -2301,11 +3036,21 @@ async def models_usage(request: Request):
 
 @router.put("/models/selection")
 async def models_select(body: SelectionIn, request: Request):
+    """Choose the brain of whoever the request picked: everyday Odie's (model.chat), or with a personality picked, a
+    brain of its own (odie.brains), which leaves Odie's as it is."""
+    from odie import brains
     store = request.app.state.store
+    pick = _personality(request)
     if body.slot != "chat":
         raise HTTPException(422, "There's one model now: slot is chat.")
     if body.provider not in {p.id for p in all_providers(store)}:
         raise HTTPException(404, "unknown provider")
+    if pick:
+        brains.choose(store, pick, body.provider, body.model)
+        store.audit("user", "model_selected", result_summary=f"{pick}: {body.provider}/{body.model}")
+        _apply_models(request)
+        sel = brains.for_personality(store, pick)
+        return {"ok": True, "slot": "chat", "provider": sel.provider.id, "model": sel.model, "leaves_mini": sel.leaves_mini}
     store.set_setting(f"model.{body.slot}", {"provider": body.provider, "model": body.model})
     store.audit("user", "model_selected", result_summary=f"{body.slot}: {body.provider}/{body.model}")
     apply = getattr(request.app.state.runner, "apply_model_selection", None)
@@ -2313,6 +3058,27 @@ async def models_select(body: SelectionIn, request: Request):
         apply()
     sel = resolve_selection(store, body.slot)
     return {"ok": True, "slot": body.slot, "provider": sel.provider.id, "model": sel.model, "leaves_mini": sel.leaves_mini}
+
+
+@router.delete("/models/selection")
+async def models_same_as_odie(request: Request):
+    """A personality's brain back to "Same as Odie". Everyday Odie's own can't be: it is the one the others follow."""
+    from odie import brains
+    store = request.app.state.store
+    pick = _personality(request)
+    if not pick:
+        raise HTTPException(422, "Everyday Odie's brain is chosen, not followed.")
+    brains.same_as_odie(store, pick)
+    store.audit("user", "model_selected", result_summary=f"{pick}: same as Odie")
+    _apply_models(request)
+    return {"ok": True}
+
+
+def _apply_models(request: Request) -> None:
+    """A brain changed: the runner builds its models again from the next message."""
+    apply = getattr(request.app.state.runner, "apply_model_selection", None)
+    if apply:
+        apply()
 
 
 @router.post("/models/providers")

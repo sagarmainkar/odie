@@ -19,7 +19,9 @@ class Chat:
     def __init__(self):
         self.posts = []
         self.kinds = []
-        self.focused_turn = "the runner's focused turn"
+
+    async def focused_turn(self, prompt, instruction, tools, timeout=600, session_id=None, **more):
+        return ""
 
     async def post_message(self, text, session_id=None, media=None, kind="system"):
         self.posts.append((text, session_id, media))
@@ -121,7 +123,10 @@ async def test_a_second_kind_runs_through_the_queue_end_to_end(world, statuses, 
     await wait_until_idle()
 
     assert statuses == ["queued", "writing", "making", "done"]
-    assert notes.written == [("tides", "For Asha: the moon first.", "the runner's focused turn", browser)]
+    assert len(notes.written) == 1
+    topic, brief, turn, handed_browser = notes.written[0]
+    assert (topic, brief, handed_browser) == ("tides", "For Asha: the moon first.", browser)
+    assert turn.func == chat.focused_turn and turn.keywords == {"session_id": "chat-1"}  # on the job's thread's brain
     assert notes.made == [("tides", browser, None)]
     assert chat.posts == [("The note about A note on tides is ready.", "chat-1",
                            [{"kind": "note", "url": "/files/note.txt"}])]

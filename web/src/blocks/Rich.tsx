@@ -22,17 +22,17 @@ export function Tiles({ items }: { items: TileItem[] }) {
         const act = t.run ? () => send(t.run!) : t.ask ? () => fill(t.ask!) : undefined;
         return (
           <button key={i} type="button" onClick={act} disabled={!act || (!!t.run && busy)}
-            className="relative aspect-[1/1.08] rounded-[24px] overflow-hidden text-left text-white active:scale-[.98] transition-transform disabled:active:scale-100"
+            className="relative aspect-[1/1.08] rounded-card overflow-hidden text-left text-white active:scale-[.98] transition-transform disabled:active:scale-100"
             style={{ background: t.image && !held ? `center/cover no-repeat url("${t.image}"), ${WASH[i % WASH.length]}` : WASH[i % WASH.length] }}>
             <span className="absolute inset-0" style={{ background: "linear-gradient(180deg,rgba(0,0,0,0) 35%,rgba(20,10,30,.62) 100%)" }} />
             {t.icon && (
-              <span className="absolute top-3 left-3 w-10 h-10 rounded-[14px] grid place-items-center bg-white/25 backdrop-blur-md border border-white/35">
+              <span className="absolute top-3 left-3 w-10 h-10 rounded-control grid place-items-center bg-white/25 backdrop-blur-md border border-white/35">
                 <Icon name={t.icon} size={19} stroke={2.2} />
               </span>
             )}
             <span className="absolute left-3.5 right-3 bottom-3">
-              <b className="block text-[16px] leading-5 font-bold tracking-[-0.01em] [text-shadow:0_1px_8px_rgba(0,0,0,.25)]">{t.title}</b>
-              {t.subtitle && <span className="block text-[12.5px] leading-4 mt-1 text-white/85 line-clamp-2">{t.subtitle}</span>}
+              <b className="block text-body leading-5 font-bold tracking-[-0.01em] [text-shadow:0_1px_8px_rgba(0,0,0,.25)]">{t.title}</b>
+              {t.subtitle && <span className="block text-small leading-4 mt-1 text-white/85 line-clamp-2">{t.subtitle}</span>}
             </span>
           </button>
         );
@@ -55,11 +55,11 @@ export function Progress({ title, value, goal, unit, steps }: { title: string; v
     return 1;
   })();
   return (
-    <div className="rounded-[24px] px-4 py-3.5 my-2 border border-white/60" style={{ background: "color-mix(in srgb, var(--t-good) 14%, var(--t-surface-2))" }}>
+    <div className="rounded-card px-4 py-3.5 my-2 border border-white/60" style={{ background: "color-mix(in srgb, var(--t-good) 14%, var(--t-surface-2))" }}>
       <div className="flex items-center gap-2">
         <span className="text-good"><Icon name="trophy" size={19} stroke={2.2} /></span>
-        <b className="text-[17px] font-bold tracking-[-0.01em]">{title}</b>
-        <span className="ml-auto flex items-center gap-1 text-[14px] font-semibold tabular-nums text-ink-2">
+        <b className="text-title font-bold tracking-[-0.01em]">{title}</b>
+        <span className="ml-auto flex items-center gap-1 text-ui font-semibold tabular-nums text-ink-2">
           <span className="text-good"><Icon name="flame" size={15} stroke={2.2} /></span>{value.toLocaleString()}/{goal.toLocaleString()}{u}
         </span>
       </div>
@@ -89,7 +89,7 @@ export function Progress({ title, value, goal, unit, steps }: { title: string; v
           </div>
           <div className="grid mt-2" style={{ gridTemplateColumns: `repeat(${nodes.length}, minmax(0, 1fr))` }}>
             {nodes.map((n, k) => (
-              <span key={k} className="px-0.5 text-center text-[11.5px] leading-[14px] font-medium text-muted line-clamp-2 [overflow-wrap:anywhere]">{n.label}</span>
+              <span key={k} className="px-0.5 text-center text-caption leading-[14px] font-medium text-muted line-clamp-2 [overflow-wrap:anywhere]">{n.label}</span>
             ))}
           </div>
         </>
@@ -102,10 +102,10 @@ export function Progress({ title, value, goal, unit, steps }: { title: string; v
 export function Streak({ count, label, unit, days }: { count: number; label: string; unit: string; days: Day[] }) {
   const one = count === 1 && unit.endsWith("s") ? unit.slice(0, -1) : unit;
   return (
-    <div className="glass glass-solid rounded-[24px] my-2 overflow-hidden">
+    <div className="glass glass-solid rounded-card my-2 overflow-hidden">
       <div className="flex items-center px-4 pt-3.5 pb-3">
         <div>
-          <div className="text-[12px] font-semibold tracking-[.06em] uppercase text-ember-text">{label}</div>
+          <div className="text-caption font-semibold tracking-[.06em] uppercase text-ember-text">{label}</div>
           <div className="text-[34px] leading-[40px] font-extrabold tracking-[-0.03em] tabular-nums">{count} <span className="capitalize">{one}</span></div>
         </div>
         <span className="ml-auto w-14 h-14 rounded-full grid place-items-center text-white shadow-[0_8px_20px_-8px_rgba(240,150,40,.7)]"
@@ -117,11 +117,11 @@ export function Streak({ count, label, unit, days }: { count: number; label: str
         <div className="grid border-t border-line px-2 py-3" style={{ gridTemplateColumns: `repeat(${days.length}, minmax(0, 1fr))` }}>
           {days.map((d, k) => (
             <div key={k} className="flex flex-col items-center gap-1.5">
-              <span className={`text-[12.5px] ${d.today ? "font-bold text-ink" : "text-muted"}`}>{d.label}</span>
+              <span className={`text-small ${d.today ? "font-bold text-ink" : "text-muted"}`}>{d.label}</span>
               {d.done ? (
                 <span className="w-8 h-8 rounded-full grid place-items-center bg-ember-tint text-ember-text"><Icon name="check" size={15} stroke={2.6} /></span>
               ) : (
-                <span className={`w-8 h-8 grid place-items-center text-[17px] tabular-nums ${d.today ? "font-bold text-ink" : "text-dim"}`}>{d.date ?? "·"}</span>
+                <span className={`w-8 h-8 grid place-items-center text-title tabular-nums ${d.today ? "font-bold text-ink" : "text-dim"}`}>{d.date ?? "·"}</span>
               )}
               <span className={`w-1 h-1 rounded-full ${d.today ? "bg-ink-2" : "bg-transparent"}`} />
             </div>
@@ -135,14 +135,14 @@ export function Streak({ count, label, unit, days }: { count: number; label: str
 /** A plan, day by day: times down the side, each stop with its place and a note. */
 export function Timeline({ title, groups }: { title?: string; groups: { label: string; items: Stop[] }[] }) {
   return (
-    <div className="glass glass-solid rounded-[24px] px-4 py-3.5 my-2 flex flex-col gap-3">
-      {title && <b className="text-[17px] font-bold tracking-[-0.01em]">{title}</b>}
+    <div className="glass glass-solid rounded-card px-4 py-3.5 my-2 flex flex-col gap-3">
+      {title && <b className="text-title font-bold tracking-[-0.01em]">{title}</b>}
       {groups.map((g, gi) => (
         <div key={gi} className="flex flex-col">
           {g.label && <span className="chip chip-soft self-start mb-2">{g.label}</span>}
           {g.items.map((s, k) => (
             <div key={k} className="grid grid-cols-[46px_22px_1fr] gap-x-1.5">
-              <span className="text-[12.5px] font-semibold tabular-nums text-muted pt-[3px] text-right">{s.time ?? ""}</span>
+              <span className="text-small font-semibold tabular-nums text-muted pt-[3px] text-right">{s.time ?? ""}</span>
               <span className="flex flex-col items-center">
                 <span className="w-[22px] h-[22px] rounded-full grid place-items-center bg-ember-tint text-ember-text shrink-0">
                   {s.icon ? <Icon name={s.icon} size={12} stroke={2.4} /> : <span className="w-1.5 h-1.5 rounded-full bg-brand" />}
@@ -150,9 +150,9 @@ export function Timeline({ title, groups }: { title?: string; groups: { label: s
                 {k < g.items.length - 1 && <span className="w-px flex-1 bg-line-2 my-1" />}
               </span>
               <div className={`min-w-0 ${k < g.items.length - 1 ? "pb-3" : ""}`}>
-                <div className="text-[15px] leading-[21px] font-semibold">{s.title}</div>
-                {s.place && <div className="flex items-center gap-1 text-[12.5px] text-muted mt-0.5"><Icon name="pin" size={12} stroke={2.2} />{s.place}</div>}
-                {s.note && <div className="text-[13px] leading-[18px] text-ink-2 mt-1">{s.note}</div>}
+                <div className="text-body leading-[21px] font-semibold">{s.title}</div>
+                {s.place && <div className="flex items-center gap-1 text-small text-muted mt-0.5"><Icon name="pin" size={12} stroke={2.2} />{s.place}</div>}
+                {s.note && <div className="text-small leading-[18px] text-ink-2 mt-1">{s.note}</div>}
               </div>
             </div>
           ))}
