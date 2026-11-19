@@ -204,13 +204,13 @@ def test_chat_done_is_refused_from_the_terminal_and_background_runs(store):
     assert ledger.get(store, lid)["state"] == "ready"
 
 
-def test_chat_done_needs_a_tap_once_the_chat_read_outside_text(store):
+def test_chat_done_always_needs_his_tap(store):
     from odie.workers import taint
     lid = ledger.open_loop(store, "", NOW, "Reply to Asha", "reply owed", owner="you", state="ready", fact="x")
     tool = watch_close_tool(store)
     asks = tool._require_confirmation
     assert callable(asks)
-    assert asks(ref=f"loop:{lid}", why="done", tool_context=chat_ctx("clean-1")) is False
+    assert asks(ref=f"loop:{lid}", why="done", tool_context=chat_ctx("clean-1")) is True  # every chat (third pass)
     taint.note(store, "dirty-1", taint.WEB)
     assert asks(ref=f"loop:{lid}", why="done", tool_context=chat_ctx("dirty-1")) is True
 

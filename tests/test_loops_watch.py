@@ -93,5 +93,6 @@ async def test_findings_are_checked_before_they_reach_the_ledger(store, tmp_path
     await check.run_check(store, NOW, turn, lambda t, b: None, think=says_hers)
     assert ledger.get(store, hers)["state"] == "new"  # another owner's loop: never touched from Odie's watch
     [mine] = ledger.open_loops(store, "")
-    assert "app 49; rm -rf ~" not in mine["refs"] and {"example/app#49", "example/app#7"} <= set(mine["refs"])
+    assert "app 49; rm -rf ~" not in mine["refs"] and "example/app#49" in mine["refs"]
+    assert "example/app#7" not in mine["refs"]  # a PR name only as code reads it from GitHub's own mail
     assert store.one("select count(*) n from loops where title='made up'")["n"] == 0  # a mail this check never saw

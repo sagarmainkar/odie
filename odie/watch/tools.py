@@ -42,7 +42,8 @@ class Check:
         self.sent: list[Mail] = []  # the user's sent mail that closed nothing in code (odie.watch.sent)
         self.report: dict | None = None
         self.ahead: list[Event] = []  # the events bills_and_orders read (45 days), which a finding may name
-        self.threads_found: list[dict] = []  # track_thread's findings, in the order written (odie.loops.findings)
+        self.threads_found: list[dict] = []
+        self.bill_ids: set[int] = set()  # the reminders bills_and_orders listed: the only ones close_reminder closes  # track_thread's findings, in the order written (odie.loops.findings)
         self.loop_of: dict[str, int] = {}  # mails code already attached to an open loop (odie.loops.shortcut)
         self.read = False  # the check has read the mail or the events
         self.mail_read = False  # the check has read its new mail (run_check reads it before the turn)
@@ -186,7 +187,12 @@ def watch_tools(check: Check) -> list[FunctionTool]:
         reminders = bills.open_bills_and_orders(store, check.fetcher.owner)
         ahead = await check.fetcher.events_ahead(BILLS_DAYS)
         check.ahead = ahead
-        events = [e.brief() for e in ahead if bills.is_bill_or_order(e.title)]
+        listed = [e for e in ahead if bills.is_bill_or_order(e.title)]
+        events = [e.brief() for e in listed]
+        # What this check may change: only these reminders (close_reminder) and these events (calendar_update_event).
+        check.bill_ids = {int(r["id"]) for r in reminders}
+        from odie.watch import check as watch_check
+        watch_check.STAGE1.events = {e.id for e in listed}
         return {"result": json.dumps({"reminders": reminders, "events": events}, ensure_ascii=False)}
 
     def track_thread(ref: str, kind: str, title: str, stage: str, due: str = "", why: str = "") -> dict:
@@ -210,7 +216,10 @@ def watch_tools(check: Check) -> list[FunctionTool]:
     def close_reminder(task_id: int, why: str) -> dict:
         """Close an open bill or order reminder because a mail shows it's done: a payment confirmation for the same
         biller and amount, or a delivery. why: which mail showed it, e.g. "paid: MSEDCL confirmation mail 21 Oct". The
-        user sees why on Today and can reopen it."""
+        user sees why on Today and can reopen it. Only a reminder bills_and_orders listed in this check."""
+        if int(task_id) not in check.bill_ids:
+            return {"result": f"Not reminder #{task_id}: only a bill or order reminder bills_and_orders listed in this "
+                              "check can be closed. Call bills_and_orders first."}
         said = bills.close(check.fetcher.store, task_id, why, check.fetcher.owner)
         if said.startswith("Closed"):
             closed_its_loop(task_id, why)

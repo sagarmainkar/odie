@@ -1479,6 +1479,15 @@ class OdieRunner:
                 self.store.set_approval_result(row["id"], "Declined.")
         return n
 
+    def stage_tools(self, tools: list, free: frozenset[str] = frozenset(), keep=None) -> list:
+        """The tool list a background turn's agent gets: Odie's chat tools (signing in left out: it is the user's, in
+        chat) and `tools`, with `free` unlocked. keep(name): when given (the watch's allow-list), only the tools it
+        keeps — a toolset is wrapped so it lists only those, never dropped whole (the calendar app's writes live in
+        one) — and the same holds for `tools`."""
+        from odie.agent.free import free_tools, kept_tools
+        chat_only = [t for t in self.agent.tools if not getattr(t, "_odie_signin", False)]
+        return free_tools(kept_tools([*chat_only, *tools], keep), free)
+
     async def background_turn(self, prompt: str, timeout: float = 300, tools: list | None = None,
                               instruction: str | None = None, guard=None, bare: bool = False,
                               free: frozenset[str] = frozenset(), skills: tuple[str, ...] | list[str] = (),
@@ -1503,10 +1512,6 @@ class OdieRunner:
         if owner:
             sel = brains.for_personality(self.store, owner)
         now = datetime.now(self.tz).strftime("%A %d %B %Y, %H:%M")
-        from odie.agent.free import free_tools
-        chat_only = [t for t in self.agent.tools if not getattr(t, "_odie_signin", False)]  # signing in is the user's, in chat
-        if keep is not None:  # the watch's turn reads strangers' mail: only the tools it may call are handed over
-            chat_only = [t for t in chat_only if keep(getattr(t, "name", ""))]
         whole_instruction = (f"{instruction}\n\n" if instruction else "") + BACKGROUND_INSTRUCTION
 
         def as_written(_context) -> str:
@@ -1514,7 +1519,7 @@ class OdieRunner:
             # Watch for notes and memory, and a "{name}" there would be read as a session-state value and fail the turn.
             return whole_instruction
 
-        agent = LlmAgent(name="odie_tracker", model=model_for(sel, False), tools=[] if bare else free_tools([*chat_only, *(tools or [])], free),
+        agent = LlmAgent(name="odie_tracker", model=model_for(sel, False), tools=[] if bare else self.stage_tools(tools or [], free, keep),
                          before_tool_callback=[self._apps_stop, guard or trackers_guard],
                          after_tool_callback=background_after_tool(self.plugin),
                          instruction=as_written,

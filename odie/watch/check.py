@@ -82,10 +82,10 @@ WATCH_TOOLS = frozenset({"what_you_sent", "new_mail", "upcoming_events", "read_m
 MAYBE = frozenset({"read_note",  # a note or folder a Watch for entry names (note_allowed)
                    "web_fetch",  # an address a Watch for entry names (fetch_allowed_after_mail)
                    "load_skill"})  # only to reach the connected calendar app it writes to (calendar_skills)
-# Fields of a calendar write that would send someone an invitation or an email: never from the watch.
-INVITES = re.compile(r"attend|guest|invit|particip|notif|send_?updates|organi[sz]er|email", re.I)
-_NOTE_TOKEN = re.compile(r"[\w.~-][\w./~-]*/")  # no spaces: "relay Inbox/ and" names Inbox/
-_NOTE_FILE = re.compile(r"[\w.~-][\w./~-]*\.md")
+# Fields of a calendar write, at any depth, that would invite, email or show someone else: never from the watch.
+INVITES = re.compile(r"attend|guest|people|recipient|invit|particip|notif|send_?updates|organi[sz]er|email|visibility|"
+                     r"conferenc", re.I)
+EVENT_ID = ("event_id", "eventId", "id", "event")  # where a calendar update names the event it changes
 
 
 class Stage1:
@@ -98,6 +98,7 @@ class Stage1:
         self.notes: set[str] = set()
         self.vault: Path | None = None
         self.loadable: set[str] = set()
+        self.events: set[str] = set()  # bill and order events bills_and_orders listed: the only ones it may update
 
     def reset(self, store, owner: str, watch: str = "") -> None:
         from odie.vault import settings as vault_settings
@@ -107,30 +108,43 @@ class Stage1:
         self.vault = Path(folder).expanduser() if folder else None
         self.notes = notes_named(watch, self.vault)
         self.loadable = set(calendar_skills(store, owner))
+        self.events = set()
+
+
+def path_words(watch: str) -> list[str]:
+    """The words of his Watch for that could be paths: each whitespace-separated word (trailing punctuation off), and
+    whatever he put in backticks or double quotes (so a path with spaces can be written). Web addresses aren't.
+    'relay "2-Areas/My Money/" and People/Asha.md.' -> ["2-Areas/My Money/", "relay", …, "People/Asha.md"]"""
+    text = _ADDRESS.sub(" ", watch or "")
+    quoted = re.findall(r"`([^`]+)`|\"([^\"]+)\"", text)
+    out = [a or b for a, b in quoted]
+    bare = re.sub(r"`[^`]*`|\"[^\"]*\"", " ", text)
+    out += [w.rstrip(".,;:)!?") for w in bare.split()]
+    return [w.strip() for w in out if w.strip()]
 
 
 def notes_named(watch: str, vault: Path | None) -> set[str]:
-    """The notes and folders a Watch for entry names that are really there in his vault: a path to a .md file that
-    exists, or a path ending in "/" that is a folder there. No vault -> nothing.
-      "- Digests: relay Inbox/ and Daily/digest.md" with Inbox/ a folder and no Daily/ -> {"Inbox/"}
-      "and/or", "24/7", "./" -> nothing (no such folder, or not a path)"""
+    """The notes and folders his Watch for names, exactly as he wrote them: a whole word, or quoted text, that is a
+    folder in his vault (with or without its "/") grants that folder ("Inbox" -> "Inbox/"); one that is a .md file
+    there grants that file alone. Nothing else grants anything: never a part of a word, never the folder a named file
+    sits in. No vault -> nothing.
+      "watch 2-Areas/My Money/ weekly" -> nothing ("2-Areas/My" and "Money/" aren't folders);
+      'watch "2-Areas/My Money/"' -> {"2-Areas/My Money/"};  "notes under 0-Inbox/iCloud" -> {"0-Inbox/iCloud/"};
+      "who is People/Asha.md" -> {"People/Asha.md"} (not People/);  "and/or", "24/7", "./" -> nothing"""
     if vault is None:
         return set()
-    text = _ADDRESS.sub(" ", watch or "")  # a web address is not a note
-    candidates = {t.strip().rstrip(".,;") for t in _NOTE_FILE.findall(text)}
-    candidates |= {t.strip() for t in _NOTE_TOKEN.findall(text)}
     root = vault.resolve()
     out = set()
-    for token in candidates:
-        if not token or token.startswith(("/", "~", ".")) or ".." in token.split("/"):
+    for word in path_words(watch):
+        if word.startswith(("/", "~", ".")) or ".." in word.split("/"):
             continue
-        where = (vault / token).resolve()
-        if root not in where.parents:
+        where = (vault / word).resolve()
+        if where == root or root not in where.parents:
             continue
-        is_folder = token.endswith("/") and where.is_dir()
-        is_note = token.endswith(".md") and where.is_file()
-        if is_folder or is_note:
-            out.add(token)
+        if where.is_dir() and not (vault / word).is_symlink():
+            out.add(word.rstrip("/") + "/")
+        elif word.endswith(".md") and where.is_file():
+            out.add(word)
     return out
 
 
@@ -159,10 +173,31 @@ def note_allowed(args: dict) -> bool:
     return False
 
 
-def invites(args: dict) -> list[str]:
-    """The fields of a calendar write that would invite or email someone, with a value: {"summary": "Pay bill",
-    "attendees": ["x@y"]} -> ["attendees"]; {"summary": "Pay bill"} -> []; {"attendees": []} -> []."""
-    return [name for name, value in (args or {}).items() if INVITES.search(name) and value not in (None, "", [], {})]
+def invites(args, found: list[str] | None = None) -> list[str]:
+    """The fields of a calendar write, at any depth (nested objects and lists too), that would invite, email or show
+    someone else, with a value: {"attendees": ["x@y"]} -> ["attendees"]; {"event": {"guests": ["x@y"]}} ->
+    ["guests"]; {"visibility": "public"} -> ["visibility"]; {"summary": "Pay bill"} -> []; {"attendees": []} -> []."""
+    out = [] if found is None else found
+    if isinstance(args, dict):
+        for name, value in args.items():
+            if INVITES.search(str(name)) and value not in (None, "", [], {}):
+                out.append(str(name))
+            invites(value, out)
+    elif isinstance(args, list):
+        for value in args:
+            invites(value, out)
+    return out
+
+
+def updates_a_listed_event(args: dict) -> bool:
+    """Whether a calendar update names an event bills_and_orders listed in this check (a bill's or an order's), so
+    mail words can never be written into a meeting other people see. {"event_id": "bill-ev-1"} with it listed ->
+    True; {"event_id": "team-meeting"} -> False; no event id -> False."""
+    for name in EVENT_ID:
+        value = (args or {}).get(name)
+        if isinstance(value, str) and value in STAGE1.events:
+            return True
+    return False
 
 
 def stage1_keeps(name: str) -> bool:
@@ -188,8 +223,10 @@ def guard(tool, args, tool_context) -> dict | None:
     if name in MAY_WRITE:
         found = invites(args)
         if found:
-            return {"error": f"Not from the watch: {', '.join(found)} would invite or email someone. Add the event "
-                             "without guests."}
+            return {"error": f"Not from the watch: {', '.join(found)} would invite, email or show someone. Add the "
+                             "event without guests."}
+        if "update" in name and not updates_a_listed_event(args):
+            return {"error": "Only an event bills_and_orders listed in this check can be changed from the watch."}
         return None
     if name == "read_note" and note_allowed(args):
         return None

@@ -45,11 +45,18 @@ def cards(store, now: datetime, owner: str = ODIE) -> list[dict]:
 
 
 def loops_reminders(store, owner: str) -> set[int]:
-    """The reminders open loops point at: their cards are the loops'."""
+    """The reminders Odie made that open loops point at: their cards are the loops'. Only Odie's own (made for a loop,
+    a watch thread of old, a reminder the watch added): his own task is never hidden behind a loop, whatever points at
+    it. The vote loop's reminder -> hidden (the loop is the card); his "Renew passport" -> always its own card."""
     from odie.loops import ledger
-    out = set()
+    pointed = set()
     for loop in ledger.open_loops(store, owner):
-        out.update(ledger.reminders_of(loop))
+        pointed.update(ledger.reminders_of(loop))
+    out = set()
+    for task_id in pointed:
+        row = store.one("select source_kind from tasks where id=?", (task_id,))
+        if row is not None and row["source_kind"] in ledger.ODIES_TASKS:
+            out.add(task_id)
     return out
 
 
@@ -121,8 +128,8 @@ def counts(cards: list[dict]) -> dict[str, int]:
 
 
 def shows_as_task(task, loops_reminders: set[int]) -> bool:
-    """Whether an open task gets its own card: the user's own always do; a reminder a loop points at, or one of the
-    watch's threads of old, never (its loop is the card). "Pay rent" (his) -> True; the vote's reminder Odie made for
+    """Whether an open task gets its own card: the user's own always do; a reminder Odie made that a loop points at,
+    or one of the watch's threads of old, never (its loop is the card). "Pay rent" (his) -> True; the vote's reminder Odie made for
     its loop -> False; the watch's old "Gas bill" thread -> False."""
     if task["id"] in loops_reminders:
         return False

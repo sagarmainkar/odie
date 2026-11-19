@@ -103,17 +103,16 @@ def make_local_tools(store: Store, tz: str, source_done=None) -> list[FunctionTo
         if not fields and not snooze_until:
             return "Nothing to update."
         from odie.loops import chat_done, ledger
-        loop = None
-        if status == "done":
-            loop = ledger.pointing_at(store, int(task_id))
-        if loop is not None and loop["state"] in ledger.OPEN:  # a loop's reminder: ticking it is the loop's Done
+        loop = loop_of_reminder(task_id)
+        changes_the_loop = loop is not None and changes_a_loop(status, next_check, snooze_until)
+        if changes_the_loop:  # a loop's reminder: changing it changes the loop (approved by his tap already)
             verdict, words = chat_done.decide(store, loop, tool_context)
             if verdict == chat_done.REFUSE:
                 return words
         if fields:
             store.update_task(int(task_id), **fields)
-        if loop is not None and loop["state"] in ledger.OPEN:
-            chat_done.close(store, loop, datetime.now(zone), notes or "ticked its reminder")
+        if changes_the_loop and status in ("done", "dropped"):
+            chat_done.close(store, loop, datetime.now(zone), notes or f"its reminder {status}")
         msg = f"Task #{task_id} '{row['title']}': " + ", ".join(f"{k}={v}" for k, v in fields.items() if k != "delivered_at")
         if snooze_until:
             msg += f" snoozed until {parse_when(snooze_until, zone)}"
@@ -138,15 +137,31 @@ def make_local_tools(store: Store, tz: str, source_done=None) -> list[FunctionTo
         """Current date and time in the user's timezone."""
         return datetime.now(zone).strftime(f"%A %-d %B %Y, %H:%M ({tz})")
 
-    def update_needs_tap(task_id: int = 0, status: str | None = None, tool_context=None, **_) -> bool:
-        """Does this task_update need his tap? Only when it ticks off a reminder an open loop points at, in a chat that
-        has read outside text (odie.loops.chat_done.decide: TAP). "done" on his own "Pay rent" -> no; on the vote
-        loop's reminder in a clean chat -> no (his words); the same after the chat read a mail -> the approval card."""
-        from odie.loops import chat_done, ledger
-        if status != "done":
-            return False
+    def loop_of_reminder(task_id) -> dict | None:
+        """The open loop this task is Odie's reminder for, or None (his own task, or a loop that is closed)."""
+        from odie.loops import ledger
         loop = ledger.pointing_at(store, int(task_id))
         if loop is None or loop["state"] not in ledger.OPEN:
+            return None
+        row = store.one("select source_kind from tasks where id=?", (int(task_id),))
+        if row is None or row["source_kind"] not in ledger.ODIES_TASKS:
+            return None
+        return loop
+
+    def changes_a_loop(status, next_check, snooze_until) -> bool:
+        """Whether a task_update changes what its loop is: ticked or dropped (the loop's Done), or moved (next check,
+        snooze). Notes alone change nothing of the loop. status "done" -> True; snooze_until -> True; notes -> False."""
+        return status in ("done", "dropped") or bool(next_check) or bool(snooze_until)
+
+    def update_needs_tap(task_id: int = 0, status: str | None = None, next_check: str | None = None,
+                         snooze_until: str | None = None, tool_context=None, **_) -> bool:
+        """Does this task_update need his tap? Every time it ticks, drops or moves a reminder Odie made for an open
+        loop (odie.loops.chat_done.decide: TAP); a refused one needs none (it doesn't run). His own tasks never ask.
+        "done" on the vote loop's reminder -> the approval card; "snooze" on it -> the card; "done" on his own
+        "Pay rent" -> no card; notes on the vote's reminder -> no card."""
+        from odie.loops import chat_done
+        loop = loop_of_reminder(task_id)
+        if loop is None or not changes_a_loop(status, next_check, snooze_until):
             return False
         verdict, _words = chat_done.decide(store, loop, tool_context)
         return verdict == chat_done.TAP

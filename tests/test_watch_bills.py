@@ -133,7 +133,10 @@ async def test_the_card_reads_two_weeks_of_events_without_touching_the_checks_li
 # ── the watch's tools, its permission, its catch-up and its card ──
 
 def test_the_watch_may_update_a_calendar_event_but_still_never_edit_a_task():
-    assert check.guard(SimpleNamespace(name="calendar_update_event", _require_confirmation=True), {}, None) is None
+    check.STAGE1.events = {"bill-ev-1"}  # what bills_and_orders listed this check: only those may change
+    assert check.guard(SimpleNamespace(name="calendar_update_event", _require_confirmation=True),
+                       {"event_id": "bill-ev-1"}, None) is None
+    check.STAGE1.events = set()
     assert check.guard(SimpleNamespace(name="task_update", _require_confirmation=False), {}, None) is not None
 
 

@@ -141,9 +141,9 @@ def test_next_months_reminder_and_a_heads_up_only_sibling_stay_open(store):
 
 
 def test_the_vote_thread_and_its_reminder_loop_are_one_when_both_are_closed(store):
-    task(store, "Vote: Northwind postal ballot", "mail:v1", status="done", source_kind="watch",
-         notes='Closed by the user: done\nKept for a reopen: {"thread": "tv", "kind": "deadline"}', kind="reminder",
-         created=2, closed=1)
+    task(store, "Vote: Northwind postal ballot", "mail:v1", status="done", source_kind="watch", due=DUE,
+         notes='Closed by the user: done\nKept for a reopen: {"thread": "tv", "kind": "deadline", "due": "%s"}' % DUE,
+         kind="reminder", created=2, closed=1)  # joined only because the due times agree (third pass)
     task(store, VOTE, "event:uid-vote", status="done", due=DUE, created=0.9, closed=0.5)
     migrate.run(store, NOW)
     assert len(loops(store)) == 1 and loops(store)[0]["closed_by"] == "you"

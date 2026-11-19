@@ -70,19 +70,17 @@ def read_by_this_check(check) -> set[str]:
 
 
 def named_refs(values, check, mail_from_github: bool) -> list[str]:
-    """The refs a finding names that code keeps: a mail, a thread or an event only when this check read it; a GitHub
-    name only from GitHub's own notification mail; a note, order or invoice name as it is (never a strong ID).
-      ["mail:m1"] (read this check) -> kept;  ["mail:bill77"] (never read) -> dropped;
-      ["example/app#49"] from GitHub's mail -> kept, from a stranger's -> dropped;  ["order:A-1"] -> kept"""
+    """The refs a finding names that code keeps: a mail, a thread or an event only when this check read it; a note,
+    order or invoice name as it is (never a strong ID). Never a task, and never a GitHub name the model wrote: code
+    reads a pull request's name from GitHub's own mail itself (shortcut.refs_of).
+      ["mail:m1"] (read this check) -> kept;  ["mail:bill77"] (never read) -> dropped;  ["task:12"] -> dropped;
+      ["example/app#46"] (even in GitHub's mail) -> dropped;  ["order:A-1"] -> kept"""
     out = []
     read = read_by_this_check(check)
     for value in values or []:
         text = str(value).strip()
-        parsed = github.parse(text)
-        if parsed is not None:
-            if mail_from_github:
-                out.append(str(parsed))
-            continue
+        if github.parse(text) is not None:
+            continue  # a pull request's name only as code reads it from GitHub's own mail (shortcut.refs_of)
         if not NAMED_REF.match(text):
             continue
         kind = text.split(":", 1)[0]
@@ -123,17 +121,34 @@ def mail_fields(mail, statuses: dict) -> dict:
     return fields
 
 
+def own_ref_ok(ref: str, check) -> bool:
+    """Whether a finding's own ref (what it is about) may stand: a mail or an event this check read, one of the notes
+    his Watch for names ("note:…", never a strong ID), or none at all. A task, a thread, a mail or an event it didn't
+    read, or anything else, can't: such a finding is refused.
+      "mail:m1" (read) -> True;  "task:12" -> False;  "thread:tAsha" -> False;  "event:e9" (not read) -> False;
+      "note:Inbox/digest.md" -> True;  "" -> True"""
+    if not ref:
+        return True
+    kind = ref.split(":", 1)[0]
+    if kind == "mail":
+        mail_id = ref[len("mail:"):]
+        return check.fetcher.read_mail(mail_id) is not None or any(m.id == mail_id for m in check.sent)
+    if kind == "event":
+        return ref in read_by_this_check(check)
+    return kind == "note"
+
+
 def one(item: dict, check) -> dict | None:
     """One finding as the model wrote it, read into the ledger's shape; None when it names a mail this check doesn't
     know (made up, or misread). See this module's notes."""
     ref = str(item.get("ref") or "").strip()
+    if not own_ref_ok(ref, check):
+        return None
     mail = None
     if ref.startswith("mail:"):
         mail = check.fetcher.read_mail(ref[len("mail:"):])
         if mail is None:
             mail = next((m for m in check.sent if f"mail:{m.id}" == ref), None)
-        if mail is None:
-            return None
     title = str(item.get("title") or "").strip()[:TITLE_MOST]
     if not title and mail is not None:
         title = mail.subject[:TITLE_MOST]
@@ -189,14 +204,26 @@ def merged(first: dict, second: dict) -> dict:
     return out
 
 
+def kinds_agree(a: str, b: str) -> bool:
+    """Whether two kinds, in the model's words, name the same kind of thing: "bill" and "electricity bill" -> True;
+    "order" and "order" -> True; "bill" and "event" -> False; a missing kind agrees with nothing."""
+    first, second = same_words(a), same_words(b)
+    if not first or not second:
+        return False
+    return first == second or first in second.split() or second in first.split()
+
+
 def one_thing(first: dict, second: dict) -> bool:
-    """Whether two findings about the same mail or event are one thing: the same title written the same way, or one of
-    them is track_thread's note on the other (a stage, a due date). A mail asking two things gives two findings, and
-    both stay. "School PTM Saturday" and "Pay school term fee" from one mail -> False; track_thread's "Order: desk
-    lamp (shipped)" and the report's "Order: lamp" for that mail -> True."""
+    """Whether two findings about the same mail or event are one thing: the same title written the same way, or one
+    is track_thread's note on the other (a stage, a due date) AND their kinds agree. A mail asking two things gives
+    two findings, and both stay.
+      "School PTM Saturday" and "Pay school term fee" (report) -> False
+      track_thread's "Pay term fee" (bill) and the report's "PTM on Saturday" (event) -> False
+      track_thread's "Order: desk lamp (shipped)" (order) and the report's "Order: lamp" (order) -> True"""
     if same_words(first["title"]) == same_words(second["title"]):
         return True
-    return first["from_thread"] != second["from_thread"]
+    one_is_a_thread_note = first["from_thread"] != second["from_thread"]
+    return one_is_a_thread_note and kinds_agree(first["kind"], second["kind"])
 
 
 def collect(check) -> list[dict]:

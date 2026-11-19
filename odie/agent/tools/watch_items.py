@@ -102,9 +102,9 @@ def make_watch_item_tools(store: Store) -> list[FunctionTool]:
         return f"Closed loop #{loop['id']}: {reason}."
 
     def close_needs_tap(ref: str = "", why: str = "", tool_context=None, **_) -> bool:
-        """Does closing this card in chat need his tap? Yes when the chat has read outside text (mail, web pages, a
-        job's report: odie.loops.chat_done.decide says TAP). "close the venue card" in a clean chat -> no card;
-        the same after the chat read a mail -> the approval card. A refused close needs no tap (it doesn't run)."""
+        """Does closing this card in chat need his tap? Always (odie.loops.chat_done.decide: TAP), but for a close
+        that is refused anyway (a pull request, the terminal, a background run: it doesn't run, so nothing to tap) or
+        a card that isn't there. "close the venue card" -> the approval card."""
         from odie.loops import chat_done
         loop = find(ref, personality_of(store, tool_context))
         if loop is None or loop["state"] not in ledger.OPEN:

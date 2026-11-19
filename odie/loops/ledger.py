@@ -15,6 +15,7 @@ PRIORITIES = ("high", "normal", "low")
 CLOSED_BY_USER = "you"
 CLOSED_IN_CHAT = "you in chat"  # his Done said in chat (odie.loops.chat_done): his, and shown in Done today
 BY_HIM = (CLOSED_BY_USER, CLOSED_IN_CHAT)
+PUT_ASIDE = "rollback"  # closed for a rollback (odie.loops.migrate.before_rollback): nobody's Done, never remembered
 REMEMBER_DAYS = 30  # a closed loop is remembered this long after its close, or until its due time, whichever is later
 FINISHED_DAYS = REMEMBER_DAYS  # (the name stage 2's prompt uses)
 REOPEN_DAYS = 7  # a closed loop may be reopened this long after its close
@@ -145,7 +146,7 @@ def remembered(loop: dict, now: datetime) -> bool:
     whichever is later. Ticked yesterday -> True; ticked 40 days ago for a concert next month -> True; ticked 40 days
     ago, nothing ahead -> False; a birthday's loop a year on -> False (its event id shows again)."""
     closed_at = loop.get("closed_at")
-    if not closed_at:
+    if not closed_at or loop.get("closed_by") == PUT_ASIDE:
         return False
     until = datetime.fromisoformat(closed_at) + timedelta(days=REMEMBER_DAYS)
     due = loop.get("due_at")
@@ -399,8 +400,8 @@ def closed_since(store, pid: str, since: datetime) -> list[dict]:
     """The owner's loops Odie closed since then, newest first: what Pulse lists under Done today, each with Reopen.
     The ones the user closed with Done are left out (he knows)."""
     mine, values = _whose(pid)
-    rows = store.query(f"select * from loops where state in ('closed','dropped') and closed_by != ? and {mine} "
-                       "order by closed_at desc", (CLOSED_BY_USER, *values))  # his tap on a card he knows; a chat close shows
+    rows = store.query(f"select * from loops where state in ('closed','dropped') and closed_by not in (?, ?) and "
+                       f"{mine} order by closed_at desc", (CLOSED_BY_USER, PUT_ASIDE, *values))  # his tap he knows
     return [_row(r) for r in rows if datetime.fromisoformat(r["closed_at"]) >= since]
 
 
