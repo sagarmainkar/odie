@@ -72,8 +72,9 @@ def facts(store, pid: str, now: datetime, since: datetime | None = None) -> dict
     new = [lp for lp in ready if (lp.get("shown_at") or "") and datetime.fromisoformat(lp["shown_at"]) >= since]
     odie_closed = ledger.closed_since(store, pid, since)
     mine, values = ledger._whose(pid)
-    his = store.query(f"select closed_at from loops where closed_by in (?, ?) and {mine}",
-                      (*ledger.BY_HIM, *values))
+    early = (since - timedelta(days=1)).isoformat(timespec="seconds")  # a day early: offsets differ; checked below
+    his = store.query(f"select closed_at from loops where closed_by in (?, ?) and closed_at >= ? and {mine}",
+                      (*ledger.BY_HIM, early, *values))
     by_him = [r for r in his if r["closed_at"] and datetime.fromisoformat(r["closed_at"]) >= since]
     return {"needs": [lp["title"] for lp in ready], "new": [lp["title"] for lp in new],
             "odie_closed": [{"title": lp["title"], "why": lp["closed_why"] or ""} for lp in odie_closed],

@@ -482,10 +482,14 @@ def merge(store, keep_id: int, gone_id: int, now: datetime, why: str) -> list[in
                   (json.dumps([*keep["refs"], *new_refs]), _at(now), keep["id"]))
     if not keep.get("due_at") and gone.get("due_at"):
         update(store, keep["id"], now, due_at=gone["due_at"])
+    if gone["state"] == "ready" and keep["state"] != "ready":
+        update(store, keep["id"], now, state="ready", owner="you", shown_at=_at(now))  # his card stays his card
     note = f"Evening review: merged #{gone['id']} ({gone['title'][:80]}) into this. {why}".strip()
     add_event(store, keep["id"], now, "odie", "review", note)
     merge_card(store, gone["id"], now, {"merged_into": keep["id"], "moved": moved, "refs_moved": new_refs,
-                                        "refs_before": gone["refs"]})
+                                        "refs_before": gone["refs"],
+                                        "kept_before": {"state": keep["state"], "owner": keep["owner"],
+                                                        "due_at": keep.get("due_at")}})
     store.execute("update loops set refs_json='[]' where id=?", (gone["id"],))  # its reminders are the kept loop's now
     close(store, gone["id"], now, "odie", f"Evening review: merged into #{keep['id']} ({keep['title'][:80]})")
     return moved
@@ -505,8 +509,12 @@ def unmerge(store, loop_id: int, now: datetime) -> bool:
         brought = set(loop["card"].get("refs_moved") or [])
         kept = [r for r in into["refs"] if r not in brought]
         store.execute("update loops set refs_json=?, updated_at=? where id=?", (json.dumps(kept), _at(now), into["id"]))
+        before = loop["card"].get("kept_before") or {}
+        if into["state"] in OPEN and before.get("state"):  # the kept loop as it was before the merge
+            update(store, into["id"], now, state=before["state"], owner=before["owner"], due_at=before.get("due_at"))
         add_event(store, into["id"], now, CLOSED_BY_USER, "", f"Put back by you: #{loop_id} is a thing of its own")
-    card = {k: v for k, v in loop["card"].items() if k not in ("merged_into", "moved", "refs_moved", "refs_before")}
+    card = {k: v for k, v in loop["card"].items()
+            if k not in ("merged_into", "moved", "refs_moved", "refs_before", "kept_before")}
     at = _at(now)
     store.execute("update loops set state=?, closed_by=null, closed_why=null, closed_at=null, refs_json=?, card_json=?, "
                   "hidden_until=null, shown_at=?, updated_at=? where id=?",

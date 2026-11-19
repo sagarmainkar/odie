@@ -62,6 +62,17 @@ def test_merge_moves_evidence_and_refs_and_reopen_puts_it_back(store):
     assert "merged_into" not in back["card"]
 
 
+def test_merging_his_card_into_a_followed_loop_keeps_it_his_card_and_undo_restores_both(store):
+    order = loop(store, "Order: standing desk", kind="order", owner="them")
+    reply = loop(store, "Reply to the desk shop about delivery", ref="mail:d1")
+    ledger.merge(store, order, reply, NOW, "same desk")
+    kept = ledger.get(store, order)
+    assert kept["state"] == "ready" and kept["owner"] == "you"  # his move: still a card
+    ledger.unmerge(store, reply, NOW)
+    kept, back = ledger.get(store, order), ledger.get(store, reply)
+    assert (kept["state"], kept["owner"]) == ("waiting", "them") and back["state"] == "ready"
+
+
 def test_merge_refuses_a_pull_request_and_a_closed_loop(store):
     a = loop(store, "Reply to Asha")
     with pytest.raises(ValueError):
