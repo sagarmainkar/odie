@@ -321,21 +321,33 @@ async def run_loops(store: Store, runner, now) -> list:
                                                 guard=guard)
         return act
 
-    async def tell(session_id: str, text: str) -> None:
-        await promise_follow_up(store, runner, session_id, text)
+    async def tell(session_id: str, text: str) -> bool:
+        return await promise_follow_up(store, runner, session_id, text, now)
     return await clock.run(store, now, think_for, push_for, act_for=act_for, tell=tell)
 
 
-async def promise_follow_up(store: Store, runner, session_id: str, text: str) -> None:
+async def promise_follow_up(store: Store, runner, session_id: str, text: str, now=None) -> bool:
     """A promise Odie kept (odie.loops.promise_run): its follow-up in the chat the promise was made in. The model reads
-    it fenced, since it may hold what the turn read (mail, a page); the app shows it as written. A thread erased since
-    (its personality deleted) -> today's everyday chat."""
+    it fenced, since it may hold what the turn read (mail, a page); the app shows it as written. Like a job's report,
+    it taints the chat for Workers (odie.workers.taint). At night it is posted as a quiet message (no banner on the
+    Mac). Returns False, posting nothing, when the chat's personality was deleted meanwhile."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
     from odie import personalities
     from odie.agent.callbacks import wrap_untrusted
-    sid = session_id or None
-    if sid is not None and personalities.is_erased(store, sid):
-        sid = None
-    await runner.post_message(wrap_untrusted(text), session_id=sid, kind="reply", shown=text)
+    from odie.loops import promise_run
+    from odie.workers import taint as job_taint
+    if now is None:
+        now = datetime.now(ZoneInfo(config.settings.timezone))
+    if not session_id or personalities.is_erased(store, session_id):
+        return False
+    kind = "reply"
+    if promise_run.night(now):
+        kind = "system"  # quiet: the Mac shows no banner for it
+    await runner.post_message(wrap_untrusted(text), session_id=session_id, kind=kind, shown=text)
+    job_taint.note(store, session_id, job_taint.JOB)  # its words came from a run: later jobs from here are tainted
+    return True
 
 
 async def personality_watch(store: Store, runner, now) -> str | None:

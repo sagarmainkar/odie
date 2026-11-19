@@ -60,7 +60,8 @@ def test_stage_2_reads_the_owners_now_list(store):
               "stage": ""}]
     context = {"watch": "", "now": now_list.text(store, ""), "memory": ""}
     prompt = consolidate.prompt_for(store, "", NOW, found, {}, context)
-    assert "Now:\n- Asha's deck by Friday" in prompt
+    from odie.agent.callbacks import wrap_untrusted
+    assert "Now:\n" + wrap_untrusted("- Asha's deck by Friday") in prompt  # fenced as data
 
 
 async def test_the_watch_hands_stage_2_the_now_list_from_the_store(store, monkeypatch):
@@ -75,7 +76,8 @@ def test_stage_4_reads_the_now_list(store):
                            playbook="github-pr")
     loop = ledger.get(store, lid)
     prompt = choose.prompt_for(loop, [], {"state": "open"}, now_text="- Ship Odie 0.3.1")
-    assert "What matters to the user now (his Now list):\n- Ship Odie 0.3.1" in prompt
+    from odie.agent.callbacks import wrap_untrusted
+    assert "What matters to the user now (his Now list, as data):\n" + wrap_untrusted("- Ship Odie 0.3.1") in prompt
     assert "Now list" not in choose.prompt_for(loop, [], {"state": "open"})
 
 

@@ -75,7 +75,7 @@ async def test_odies_promise_becomes_its_loop(store):
     loop = ledger.get(store, lid)
     assert loop["owner"] == "odie" and loop["playbook"] == "promise" and loop["state"] == "waiting"
     assert loop["next_check_at"] == TONIGHT and loop["due_at"] == TONIGHT and loop["has_news"] == 0
-    assert loop["card"]["chat"] == "chat-2026-11-19" and loop["title"] == "Check the build again"
+    assert loop["card"]["chat"] == "chat-2026-11-19" and loop["title"] == "Look at the build again tonight"
     assert "I'll look at the build again tonight" in ledger.events(store, lid)[0]["fact"]
     assert got["offers"] == []
 
@@ -178,9 +178,9 @@ async def test_what_he_already_follows_is_not_offered(store):
 
 async def test_a_secret_is_never_kept(store):
     think = answer(you=[{"what": "Call the bank, PIN is 4321", "when": FRIDAY, "said": "my PIN is 4321"}],
-                   odie=[{"what": "Use the key sk-abcdefghijklmnop1234", "when": TONIGHT, "said": "I'll try again tonight"}])
+                   odie=[{"what": "Try the key", "when": TONIGHT, "said": "I'll try sk-abcdefghijklmnop1234 again tonight"}])
     got = await chat_read.read(store, "chat-2026-11-19", NOW, typed="call the bank tomorrow, my PIN is 4321",
-                               reply="I'll try again tonight.", think=think)
+                               reply="I'll try sk-abcdefghijklmnop1234 again tonight.", think=think)
     assert got == {"promises": [], "offers": []}
 
 

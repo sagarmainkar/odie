@@ -7,6 +7,7 @@ new loop (odie.loops.consolidate.make_reminder). No forgets the offer. An offer 
 or once its time has passed."""
 from __future__ import annotations
 
+import threading
 from datetime import datetime, timedelta
 
 from odie.loops import ledger
@@ -16,6 +17,7 @@ KEEP_DAYS = 7
 KEPT_MOST = 30  # answered and faded offers kept, newest last, so the list never grows
 REF = "offer:"
 OPEN, TRACKED, DECLINED = "open", "tracked", "declined"
+WRITING = threading.Lock()  # every read-change-write of the offers list holds it, so two taps never lose one
 
 
 def _key(pid: str) -> str:
@@ -30,13 +32,14 @@ def _saved(store, pid: str) -> dict:
 
 def add(store, pid: str, now: datetime, what: str, due: str | None, said: str, chat: str) -> int:
     """A new offer on this owner's Pulse. Returns its number."""
-    saved = _saved(store, pid)
-    offer_id = saved["next"]
-    saved["items"].append({"id": offer_id, "what": what, "due": due, "said": said, "chat": chat,
-                           "at": now.isoformat(timespec="seconds"), "state": OPEN})
-    saved["items"] = saved["items"][-KEPT_MOST:]
-    saved["next"] = offer_id + 1
-    store.set_setting(_key(pid), saved)
+    with WRITING:
+        saved = _saved(store, pid)
+        offer_id = saved["next"]
+        saved["items"].append({"id": offer_id, "what": what, "due": due, "said": said, "chat": chat,
+                               "at": now.isoformat(timespec="seconds"), "state": OPEN})
+        saved["items"] = saved["items"][-KEPT_MOST:]
+        saved["next"] = offer_id + 1
+        store.set_setting(_key(pid), saved)
     return offer_id
 
 
@@ -97,9 +100,11 @@ def track(store, pid: str, offer_id: int, now: datetime) -> int | None:
     """His Track: a loop of his own, a card at once ("you", ready), due when he said, with a reminder that rings then
     (when he gave a time). Returns the loop's id; None when the offer isn't this owner's or isn't waiting any more."""
     from odie.loops import consolidate
-    offer = get(store, pid, offer_id)
-    if offer is None or offer["state"] != OPEN or faded(offer, now):
-        return None
+    with WRITING:  # one Track per offer, even from two taps at once
+        offer = get(store, pid, offer_id)
+        if offer is None or offer["state"] != OPEN or faded(offer, now):
+            return None
+        _mark(store, pid, offer_id, TRACKED)
     lid = ledger.open_loop(store, pid, now, offer["what"], "commitment", owner="you", state="ready",
                            due_at=offer.get("due"), source="you", ref=f"chat:{offer['chat']}",
                            fact=f"You said in chat: “{offer['said']}” (tracked on your tap)",
@@ -107,16 +112,16 @@ def track(store, pid: str, offer_id: int, now: datetime) -> int | None:
     ledger.update(store, lid, now, has_news=0, tapped="track")
     if offer.get("due"):
         consolidate.make_reminder(store, pid, now, lid, offer["what"], offer["due"])
-    _mark(store, pid, offer_id, TRACKED)
     return lid
 
 
 def decline(store, pid: str, offer_id: int) -> bool:
     """His No: the offer goes and nothing is tracked. False when it isn't this owner's waiting offer."""
-    offer = get(store, pid, offer_id)
-    if offer is None or offer["state"] != OPEN:
-        return False
-    _mark(store, pid, offer_id, DECLINED)
+    with WRITING:
+        offer = get(store, pid, offer_id)
+        if offer is None or offer["state"] != OPEN:
+            return False
+        _mark(store, pid, offer_id, DECLINED)
     return True
 
 

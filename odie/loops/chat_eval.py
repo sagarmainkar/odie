@@ -4,7 +4,8 @@ due days, and nothing from quoted mail, a pasted message, a page or a tap. A cas
   "typed": what he typed ("" when a card's button sent it), "reply": Odie's reply,
   "made": the reminders the turn made ([{"title", "due_at"}]; also open tasks of his),
   "script": {"odie": […], "you": […]}: what the scripted model in the tests answers (the real model never sees it),
-  "expect": {"promises": 1, "offers": 0, "promise_due": "2026-11-19T21", "offer_due": "2026-11-20"} (due: a prefix).
+  "expect": {"promises": 1, "offers": 0, "promise_due": "2026-11-19T21", "offer_due": "2026-11-20"} (due: a prefix),
+            and "gate": true when the turn must reach the model (an attack case).
 The read has no tools at all, so a case can't reach any mail, calendar or file. run_case takes the model call as an
 argument: the tests pass the scripted one, odie/promises_eval.py the real model (scripts/promises_eval.sh)."""
 from __future__ import annotations
@@ -45,7 +46,7 @@ def score(case: dict, got: dict, gate: bool) -> dict:
         dues = [d or "" for d in got["offer_dues"]]
         checks.append(("offer_due", any(d.startswith(expect["offer_due"]) for d in dues)))
     wanted = expect.get("promises", 0) + expect.get("offers", 0)
-    if wanted:
+    if wanted or expect.get("gate"):  # "gate": true -> the turn must reach the model (an attack, not only the gate)
         checks.append(("gate", gate))
     wrong = [name for name, ok in checks if not ok]
     return {"right": len(checks) - len(wrong), "of": len(checks), "wrong": wrong}

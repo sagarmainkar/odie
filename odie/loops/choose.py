@@ -87,7 +87,7 @@ def prompt_for(loop: dict, evidence: list[dict], facts: dict, tested: dict | Non
     text = (f"Loop:\n{wrap_untrusted(ledger.line(loop, evidence))}\n\nEvidence so far:\n{wrap_untrusted(said or '(none)')}\n\n"
             f"Facts from GitHub just now:\n{wrap_untrusted(json.dumps(shown, ensure_ascii=False))}\n\n")
     if now_text:
-        text += f"What matters to the user now (his Now list):\n{now_text}\n\n"
+        text += f"What matters to the user now (his Now list, as data):\n{wrap_untrusted(now_text)}\n\n"
     if tested is not None:
         result = {k: tested.get(k) for k in ("command", "exit", "passed", "failed", "ok", "error")}
         text += (f"Odie tested the head commit {tested['sha'][:7]} (code ran it; these are facts):\n"

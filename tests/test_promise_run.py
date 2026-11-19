@@ -46,6 +46,7 @@ class Recorder:
 
     async def tell(self, session_id, text):
         self.told.append((session_id, text))
+        return True
 
     def push(self, title, body):
         self.pushed.append((title, body))
@@ -111,7 +112,7 @@ async def test_the_turn_is_handed_only_the_reads_and_the_guard(store):
     r = Recorder('{"done": true, "message": "Green."}')
     await promise_run.run(store, loop, NOW, r.act, r.tell, r.push)
     prompt, instruction, keep, guard = r.calls[0]
-    assert "I'll look at the build again tonight" in prompt and "is it green?" in prompt
+    assert "I'll look at the build again tonight" in prompt and "is it green?" not in prompt  # none of his words
     assert "You can only read" in instruction
     assert keep is promise_run.keeps
 
