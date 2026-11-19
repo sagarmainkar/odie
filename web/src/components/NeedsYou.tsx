@@ -113,7 +113,7 @@ export function NeedsYou({ items, footer, closed, notes = [], loopsDone = [], jo
   const doneCount = closed.length + notes.length + loopsDone.length + jobsDone.length;
   return (
     <section className="flex flex-col gap-2.5" aria-label="Needs you">
-      <div className="flex items-baseline gap-2 px-1">
+      <div className="section-head flex items-baseline gap-2 px-1">
         <div className="text-heading font-bold tracking-[-0.015em] flex-1">Needs you</div>
         {footer && <div className="text-caption text-dim truncate max-w-[65%]">{footer}</div>}
       </div>

@@ -62,3 +62,22 @@ describe("secondary text is readable in the light themes", () => {
     expect(token("--t-dim", night)).toBe("#6F6B80");
   });
 });
+
+// Newspaper (data-style="paper"): ink, muted text and the red reach 4.5:1 and dim text 3:1 on both papers (the page and
+// the raised sheet), by day and in the dark edition.
+describe("Newspaper's text is readable on its paper", () => {
+  const editions = { day: ruleBody(':root[data-style="paper"]'), night: ruleBody(':root[data-style="paper"][data-tod="night"]') };
+  for (const [edition, body] of Object.entries(editions)) {
+    for (const paper of ["--t-ground", "--t-surface-2"]) {
+      const background = token(paper, body);
+      it(`ink, muted and red reach 4.5:1 on the ${edition} ${paper}`, () => {
+        for (const ink of ["--t-ink", "--t-ink-2", "--t-muted", "--t-warn-ink"]) {
+          expect(contrast(token(ink, body), background)).toBeGreaterThanOrEqual(4.5);
+        }
+      });
+      it(`dim text reaches 3:1 on the ${edition} ${paper}`, () => {
+        expect(contrast(token("--t-dim", body), background)).toBeGreaterThanOrEqual(3);
+      });
+    }
+  }
+});

@@ -4,7 +4,7 @@ import { brainState } from "../brain";
 import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { deleteJSON, getJSON, postJSON, putJSON, urlBase64ToUint8Array } from "../api";
-import { applyLook, getLook, type Look } from "../theme";
+import { applyLook, applyStyle, getLook, lookNote, shownStyle, type Look, type Style } from "../theme";
 import { Icon, Tile, type IconName, type TileColor } from "../components/Tile";
 import { Avatar } from "../components/Avatar";
 import { PluginsSection } from "../components/PluginsSection";
@@ -70,7 +70,7 @@ function Row({ ok, title, sub, meta, right, chevron, icon }: { ok?: Dot; title: 
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
     <section className="flex flex-col gap-2">
-      <div className="text-small leading-5 font-bold text-muted px-1.5">{title}</div>
+      <div className="section-label text-small leading-5 font-bold text-muted px-1.5">{title}</div>
       <div className="glass rounded-card overflow-hidden">{children}</div>
     </section>
   );
@@ -494,6 +494,7 @@ export function Settings() {
   const [skipped, setSkipped] = useState<Step[]>([]);  // setup's skipped steps: what "setup again" will do
   useEffect(() => { getJSON<{ skipped?: Step[] }>("/api/setup").then((x) => setSkipped(x.skipped ?? [])).catch(() => {}); }, []);
   const [look, setLook] = useState<Look>(getLook());
+  const [style, setStyle] = useState<Style>(shownStyle());
   const [soul, setSoul] = useState<{ text: string; custom: boolean; path?: string } | null>(null);
   const [soulDraft, setSoulDraft] = useState("");
   const [soulOpen, setSoulOpen] = useState(false);
@@ -517,6 +518,7 @@ export function Settings() {
   }, [pushSupported]);
 
   function pickLook(l: Look) { setLook(l); applyLook(l); }
+  function pickStyle(st: Style) { setStyle(st); applyStyle(st); }
   async function saveSoul(text: string) {
     const r = await fetch(soulUrl(pick), { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }) });
     const j = await r.json();
@@ -639,13 +641,20 @@ export function Settings() {
             </Section>
 
             <Section title="Look">
-              <div className="p-1 m-3 mb-2 rounded-full bg-well flex gap-1" role="radiogroup" aria-label="Look">
+              {/* The style first (Glass or Newspaper), then day or night, which applies to either. */}
+              <div className="p-1 m-3 mb-2 rounded-full bg-well flex gap-1" role="radiogroup" aria-label="Style">
+                {([["glass", "Glass"], ["paper", "Newspaper"]] as const).map(([k, l]) => (
+                  <button key={k} role="radio" aria-checked={style === k} onClick={() => pickStyle(k)}
+                    className={`flex-1 h-9 rounded-full text-small font-semibold transition-colors ${style === k ? "glass-solid text-ink shadow-[0_4px_12px_-6px_rgba(0,0,0,.25)]" : "text-muted"}`}>{l}</button>
+                ))}
+              </div>
+              <div className="p-1 m-3 mt-0 mb-2 rounded-full bg-well flex gap-1" role="radiogroup" aria-label="Look">
                 {([["auto", "Auto"], ["light", "Light"], ["dark", "Dark"]] as const).map(([k, l]) => (
                   <button key={k} role="radio" aria-checked={look === k} onClick={() => pickLook(k)}
                     className={`flex-1 h-9 rounded-full text-small font-semibold transition-colors ${look === k ? "glass-solid text-ink shadow-[0_4px_12px_-6px_rgba(0,0,0,.25)]" : "text-muted"}`}>{l}</button>
                 ))}
               </div>
-              <div className="px-4 pb-3 text-small text-muted">Auto follows your phone: dark in dark mode; in light mode the colour follows the time of day, warm in the morning, sky at noon, rose in the evening.</div>
+              <div className="px-4 pb-3 text-small text-muted">{lookNote(style)}</div>
             </Section>
 
             <Section title="Notifications">

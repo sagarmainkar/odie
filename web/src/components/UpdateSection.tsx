@@ -35,7 +35,7 @@ export function UpdateSection({ version }: { version: string | undefined }) {
 
   return (
     <section className="flex flex-col gap-2">
-      <div className="text-small leading-5 font-bold text-muted px-1.5">Odie</div>
+      <div className="section-label text-small leading-5 font-bold text-muted px-1.5">Odie</div>
       <div className="glass rounded-card overflow-hidden">
         <div className="flex items-center gap-3 px-4 py-3 min-h-14">
           <span className="relative shrink-0"><Tile icon="spark" color="ink" small /><span className="absolute -right-0.5 -bottom-0.5 rounded-full bg-[var(--t-surface-2)] p-[2px] flex"><span className={`w-2 h-2 rounded-full ring-2 shrink-0 ${dot}`} /></span></span>

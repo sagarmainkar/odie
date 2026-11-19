@@ -60,7 +60,7 @@ export function DevicesSection() {
 
   return (
     <section className="flex flex-col gap-2">
-      <div className="text-small leading-5 font-bold text-muted px-1.5">Devices</div>
+      <div className="section-label text-small leading-5 font-bold text-muted px-1.5">Devices</div>
       {status && !status.on && (
         <div className="glass rounded-card px-4 py-3.5 flex flex-col gap-2.5">
           <div className="text-body font-semibold">Turn on device pairing</div>

@@ -91,7 +91,7 @@ function ThreadsPanel({ threads, current, pickThread, onOpen, actions }: { threa
         {list !== null && listed.length === 0 && <div className="px-3 py-4 text-ui text-muted">{q ? "Nothing matches." : "No earlier chats yet."}</div>}
         {groups.map((g) => (
           <div key={g.label} className="mt-3">
-            <div className="px-3 pb-1 text-small leading-5 font-bold text-muted">{g.label}</div>
+            <div className="section-label px-3 pb-1 text-small leading-5 font-bold text-muted">{g.label}</div>
             {g.items.map((t) => (
               <div key={t.id} className={`flex items-center gap-1 rounded-control ${current === t.id ? "bg-well" : ""}`}>
                 <button onClick={() => onOpen(t)} className="flex-1 min-w-0 text-left px-3 py-2.5">
