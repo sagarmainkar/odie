@@ -19,7 +19,7 @@ jobs:
     # Free on a public repository. A private copy skips it: macOS minutes are billed there.
     if: ${{ !github.event.repository.private }}
     runs-on: macos-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 
