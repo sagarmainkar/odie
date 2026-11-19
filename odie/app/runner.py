@@ -1153,7 +1153,10 @@ class OdieRunner:
             effort_up = chat_effort_think_harder(selection, thinking)  # always False on a local server
             model_token = turn_words.MODEL.set(self._chat_model(selection, effort_up))  # this turn's, for all its calls
             self.agent.generate_content_config = chat_generate_config(self.store)  # Creativity, as set right now
-            self.store.audit("user", "message", result_summary=text, session_id=session_id)
+            sent_by = None
+            if via == "terminal":
+                sent_by = {"via": "terminal"}  # not his typing: a Worker's brief never takes it (odie.workers.tools)
+            self.store.audit("user", "message", args=sent_by, result_summary=text, session_id=session_id)
             final: list[str] = []
             called: set[str] = set()
             unsaved = False

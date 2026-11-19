@@ -38,6 +38,7 @@ function button(host: HTMLElement, label: string): HTMLButtonElement {
 describe("a button from a newer server", () => {
   it("knows the actions this app handles, and not others", () => {
     expect(knowsAction("job_allow")).toBe(true);
+    expect(knowsAction("job_keep")).toBe(true);
     expect(knowsAction("show_output")).toBe(true);
     expect(knowsAction("job_pause")).toBe(false);
   });

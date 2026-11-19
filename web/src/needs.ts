@@ -3,15 +3,16 @@ import type { Media } from "./media";
 
 /** What a card's button does, decided by the server (odie/watch/needs.py, odie/loops/cards.py). "later": put the card
  *  off until 09:00 tomorrow (POST /api/needs_you/later with its ref); "open": open the page the server built (a pull
- *  request); "loop_done": a loop's Done (POST /api/loops/<id>/done). */
+ *  request); "loop_done": a loop's Done (POST /api/loops/<id>/done); "job_keep": a finished job's "Keep it in
+ *  <folder>" (POST /api/jobs/<id>/keep: the server copies the result into the folder he named). */
 export type NeedAction = { label: string; action: "chat" | "dismiss" | "done_task" | "snooze_task" | "later" | "open" | "loop_done"
-  | "job_retry" | "job_allow" | "job_clear" | "merge" | "recipe_use" | "recipe_no" | "show_output" | "split"; value: string | number };
+  | "job_retry" | "job_allow" | "job_clear" | "job_keep" | "merge" | "recipe_use" | "recipe_no" | "show_output" | "split"; value: string | number };
 
 /** Every button action this app handles; a newer server may send one it doesn't know yet. "split" only ever comes in
  *  a card's small menu ("more"), never as one of its three buttons, so an app that doesn't know it shows nothing. */
 const KNOWN_ACTIONS: ReadonlySet<string> = new Set<NeedAction["action"]>([
   "chat", "dismiss", "done_task", "snooze_task", "later", "open", "loop_done",
-  "job_retry", "job_allow", "job_clear", "merge", "recipe_use", "recipe_no", "show_output", "split",
+  "job_retry", "job_allow", "job_clear", "job_keep", "merge", "recipe_use", "recipe_no", "show_output", "split",
 ]);
 
 /** Whether this app knows what a card's button does: "job_allow" -> true; "job_pause" (from a newer server) -> false,
@@ -21,10 +22,11 @@ export function knowsAction(action: string): boolean {
 }
 
 /** What a card says while its button's call runs, for the moves that must keep the card in place until the server
- *  answers: "merge" -> "Merging…"; "recipe_use", "job_allow", "job_retry" -> "Working…"; anything else (Done,
- *  Later: harmless, their card goes at once) -> "". */
+ *  answers: "merge" -> "Merging…"; "job_keep" -> "Copying…"; "recipe_use", "job_allow", "job_retry" -> "Working…";
+ *  anything else (Done, Later: harmless, their card goes at once) -> "". */
 export function busyWord(action: string): string {
   if (action === "merge") return "Merging…";
+  if (action === "job_keep") return "Copying…";
   if (action === "recipe_use" || action === "job_allow" || action === "job_retry") return "Working…";
   return "";
 }

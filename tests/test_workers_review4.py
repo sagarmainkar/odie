@@ -112,5 +112,5 @@ def test_an_apps_job_gets_only_the_server_his_words_asked_for(world, tmp_path):
 
 def test_a_named_app_is_its_own_use():
     from odie.workers.tools import uses_for, uses_words
-    assert uses_for("Use notion to list my open pages", [], "", ["notion"]) == "app:notion"
-    assert uses_words("app:notion") == "notion, no web"
+    assert uses_for("Use notion to list my open pages", ["notion"]) == "app:notion"
+    assert uses_words("app:notion") == "the web and notion"  # the web too since 19 Nov (simpler Workers)

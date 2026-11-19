@@ -122,10 +122,13 @@ create index if not exists loop_events_loop on loop_events(loop_id);
 -- kind: task (a Worker the user started from chat) or pr_test (code runs a pull request's tests for a loop).
 -- personality NULL = everyday Odie's. needed_json: what the Worker was refused (would need a tap); allowed_json: what
 -- the user's tap in the app allowed for the job's next run only. taint: the outside text the chat had read when it
--- started the job ("mail", "web pages"): such a Worker gets no web and no apps. version: rows this code wrote are 2;
--- an older install's rows (the bots experiment's jobs table, upgraded by Store.init_schema) stay 0 and are never shown,
--- told, recovered or retried. uses: what the job may reach besides its folder, ONE of: web (the web), apps:mail /
--- apps:calendar / apps (the personality's apps, no web), folder (named folders, no web), none (tainted: nothing).
+-- started the job ("mail", "web pages"): its brief is then his own typed words only. version: rows this code wrote
+-- are 2; an older install's rows (the bots experiment's jobs table, upgraded by Store.init_schema) stay 0 and are
+-- never shown, told, recovered or retried. uses: what the job may reach besides its folder and the folders he named:
+-- web (the web), apps:mail / apps:calendar / app:<name> (the web and those apps); an older row may say folder or
+-- none (started before 19 Nov 2026 without the web: kept so on a retry). keep: what the Worker said is worth keeping
+-- (a path inside its folder); keep_to: the folder of his he named for it, found by code in his words; kept_json:
+-- where his tap copied it ({} until then).
 create table if not exists jobs (
   id text primary key,
   kind text not null,
@@ -148,6 +151,9 @@ create table if not exists jobs (
   taint text not null default '',
   read_dirs_json text not null default '[]',
   uses text not null default 'web',
+  keep text not null default '',
+  keep_to text not null default '',
+  kept_json text not null default '{}',
   version integer not null default 0,
   created_at text not null,
   started_at text,

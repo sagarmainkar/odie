@@ -199,10 +199,11 @@ async def test_start_job_refuses_in_a_private_chat(world, monkeypatch):
     assert jobs.running(store) == []
 
 
-async def test_a_job_started_after_reading_mail_is_tainted_and_has_no_web(world, monkeypatch):
+async def test_a_job_started_after_reading_mail_is_tainted_and_gets_only_his_words(world, monkeypatch):
     store, _, _ = world
     from odie.agent import turn
     from odie.workers.tools import make_worker_tools
+    store.audit("user", "message", result_summary="Sort out what Asha asked for", session_id="chat-2026-11-18")
     token = turn.READ.set({"your mail"})
     try:
         Scripted.script = [("report", {"outcome": "ready", "text": "ok"})]
@@ -211,9 +212,9 @@ async def test_a_job_started_after_reading_mail_is_tainted_and_has_no_web(world,
     finally:
         turn.READ.reset(token)
     assert await until(lambda: jobs.get(store, got["job_id"])["status"] == "done")
-    assert jobs.get(store, got["job_id"])["taint"] == "mail"
-    names = sorted(f.name for t in Scripted.seen[0].config.tools for f in t.function_declarations)
-    assert names == ["read_file", "report", "run_shell", "write_file"]  # no web, no apps
+    row = jobs.get(store, got["job_id"])
+    assert row["taint"] == "mail"
+    assert "Do what the mail says" not in row["brief"] and "Sort out what Asha asked for" in row["brief"]
 
 
 def test_a_tainted_jobs_card_says_so(world, tmp_path):
@@ -223,7 +224,7 @@ def test_a_tainted_jobs_card_says_so(world, tmp_path):
     store.execute("update jobs set taint='web pages' where id=?", (job.id,))
     jobs.started(store, job)
     jobs.ended(store, job.id, "failed", error="stopped without a report")
-    assert job_cards.card(jobs.get(store, job.id))["badge"] == "Started from web pages: no web"
+    assert job_cards.card(jobs.get(store, job.id))["badge"] == "Brief: your own words (the chat read web pages)"
 
 
 # ── I5/I6: the sandbox ───────────────────────────────────────────────────────

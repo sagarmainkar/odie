@@ -48,6 +48,8 @@ class Store:
                    "needed_json": "TEXT NOT NULL DEFAULT '[]'", "allowed_json": "TEXT NOT NULL DEFAULT '[]'",
                    "cleared": "INTEGER NOT NULL DEFAULT 0", "taint": "TEXT NOT NULL DEFAULT ''",
                    "read_dirs_json": "TEXT NOT NULL DEFAULT '[]'", "uses": "TEXT NOT NULL DEFAULT 'web'",
+                   "keep": "TEXT NOT NULL DEFAULT ''", "keep_to": "TEXT NOT NULL DEFAULT ''",
+                   "kept_json": "TEXT NOT NULL DEFAULT '{}'",
                    "version": "INTEGER NOT NULL DEFAULT 0"}
 
     def init_schema(self) -> None:

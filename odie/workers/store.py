@@ -33,9 +33,10 @@ class Job:
     status: str = "queued"
     runs: int = 0
     allowed: list = None  # what the user's tap allowed for this run (odie.workers.allow)
-    taint: str = ""  # outside text the chat had read when it started ("mail", "web pages"): no web, no apps
+    taint: str = ""  # outside text the chat had read when it started ("mail", "web pages"): its brief is his words
     read_dirs: list = None  # folders of his the owner named for this job: its sandbox may read them, nothing else of his
-    uses: str = "web"  # what it may reach besides its folder, one of: web, apps[:mail|:calendar], folder, none
+    uses: str = "web"  # what it may reach besides its folder: web, or apps:mail / apps:calendar / app:<name> with it
+    keep_to: str = ""  # the folder of his he named for the result ("Keep it in …" on its card), or "" for none
 
     @property
     def odies_own(self) -> bool:
@@ -50,16 +51,18 @@ def new_id() -> str:
 
 def create(store: Store, kind: str, title: str, brief: str, session_id: str | None, folder: Path,
            budget_seconds: int, personality: str = "", started_by: str = "you", loop_id: int | None = None,
-           job_id: str = "", taint: str = "", read_dirs: list | None = None, uses: str = "web") -> Job:
+           job_id: str = "", taint: str = "", read_dirs: list | None = None, uses: str = "web",
+           keep_to: str = "") -> Job:
     """A new row, queued. job_id: one made beforehand (the router names the folder after it); else a new one."""
     if not job_id:
         job_id = new_id()
     job = Job(job_id, kind, title, brief, session_id, folder, budget_seconds, personality, started_by, loop_id,
-              allowed=[], taint=taint, read_dirs=list(read_dirs or []), uses=uses)
+              allowed=[], taint=taint, read_dirs=list(read_dirs or []), uses=uses, keep_to=keep_to)
     store.execute("insert into jobs(id,kind,title,brief,personality,started_by,loop_id,status,session_id,folder,"
-                  "budget_seconds,taint,read_dirs_json,uses,version,created_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                  "budget_seconds,taint,read_dirs_json,uses,keep_to,version,created_at) "
+                  "values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                   (job.id, kind, title, brief, personality or None, started_by, loop_id, "queued", session_id,
-                   str(folder), budget_seconds, taint, json.dumps(job.read_dirs), uses, CURRENT, now_iso()))
+                   str(folder), budget_seconds, taint, json.dumps(job.read_dirs), uses, keep_to, CURRENT, now_iso()))
     return job
 
 
@@ -68,7 +71,7 @@ def from_row(row: dict) -> Job:
     return Job(row["id"], row["kind"], row["title"], row["brief"], row["session_id"], Path(row["folder"]),
                row["budget_seconds"], row["personality"] or "", row["started_by"], row["loop_id"], row["status"],
                row["runs"], loads(row["allowed_json"]), row["taint"] or "", loads(row.get("read_dirs_json")),
-               row.get("uses") or "web")
+               row.get("uses") or "web", row.get("keep_to") or "")
 
 
 def loads(text: str | None) -> list:
@@ -99,9 +102,10 @@ def ended(store: Store, job_id: str, status: str, outcome: str | None = None, re
 
 
 def queued_again(store: Store, job_id: str, allowed: list) -> None:
-    """A retry: queued again with what the user's tap allowed for this run ([] for none), and no needs yet."""
+    """A retry: queued again with what the user's tap allowed for this run ([] for none), no needs yet, and nothing
+    to keep until the new run says so."""
     store.execute("update jobs set status='queued', outcome=null, error=null, ended_at=null, cleared=0, "
-                  "needed_json='[]', allowed_json=? where id=?", (json.dumps(allowed), job_id))
+                  "needed_json='[]', keep='', kept_json='{}', allowed_json=? where id=?", (json.dumps(allowed), job_id))
 
 
 def record_action(store: Store, job_id: str, tool: str, args: Any = None, result_chars: int | None = None,
@@ -128,6 +132,27 @@ def note_needed(store: Store, job_id: str, need: dict) -> None:
 
 def needed(row: dict) -> list[dict]:
     return loads(row.get("needed_json"))
+
+
+def set_keep(store: Store, job_id: str, keep: str) -> None:
+    """What the Worker said is worth keeping: a path inside its folder (odie.workers.keep checks it again at the tap)."""
+    store.execute("update jobs set keep=? where id=?", (keep, job_id))
+
+
+def set_kept(store: Store, job_id: str, kept: dict) -> None:
+    """Where his tap copied it: {"path", "links_left_out", "others_left_out", "git_reset", "at"}."""
+    store.execute("update jobs set kept_json=? where id=?", (json.dumps(kept), job_id))
+
+
+def kept_of(row: dict) -> dict:
+    """Where his tap copied a job's result, or {} when it hasn't: '{"path": "/x"}' -> {"path": "/x"}; None -> {}."""
+    try:
+        value = json.loads(row.get("kept_json") or "{}")
+    except ValueError:
+        return {}
+    if not isinstance(value, dict):
+        return {}
+    return value
 
 
 def set_allowed(store: Store, job_id: str, allowed: list) -> None:
