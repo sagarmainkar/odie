@@ -17,14 +17,15 @@ owes them. A check just read their mail and calendar and wrote findings. For eac
 - **new**: not here yet. Unsure whether two things are one? New: a duplicate beats a wrong merge. Two invoices from one
   biller, or two orders from one shop, are two things.
 - **nothing**: needs nobody (a newsletter, a receipt with nothing due, a notice that asks nothing). A pull request or
-  an issue is never nothing: Odie reads GitHub itself and decides.
+  an issue is never nothing: Odie reads GitHub itself and decides. A CI run mail about the user's own pull request is
+  news for that pull request (same as its loop), not a task for Odie.
 
 Done is remembered. Later news about a thing the user finished is **same** as that loop: it stays finished, quietly.
 Only a genuinely new ask about it (reopened with a new deadline, a new request) is **new**, with `"after": N` and why
 in one line.
 
 With same or new you may set: `title` (short, the user's words), `kind` (your words), `owner` (you: only the user can
-move it; them: waiting on someone; odie: Odie can follow it alone), `due` (2026-11-21 or 2026-11-21T15:00; a call or
+move it; them: waiting on someone; odie: only a pull request or issue, which Odie reads on GitHub), `due` (2026-11-21 or 2026-11-21T15:00; a call or
 meeting about it moves it), `priority` (high only when it needs the user soon). Watch for, Now and what you remember
 say what matters to the user.
 

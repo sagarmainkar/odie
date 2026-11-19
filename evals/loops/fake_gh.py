@@ -9,6 +9,7 @@ FAKE_GH_DATA and appends each call's arguments to FAKE_GH_LOG, one JSON list per
   "collaborators:example/app": ["asha-dev"]   gh api repos/example/app/collaborators … (the logins with push)
   "keys:example/app": ["ci-deploy"]           gh api repos/example/app/keys … (deploy keys that can write; "error")
   "commits:example/app#49": [{sha, verified, login}]  gh api repos/example/app/pulls/49/commits …
+  "prs:example/app@ledger": [{number, headRefOid, state, isCrossRepository}]  gh pr list --repo … --head ledger …
 gh pr merge <n> --repo <r> --squash --match-head-commit <sha> merges only when <sha> is the pull request's
 headRefOid; it then marks it MERGED in the data file, as GitHub would."""
 import json
@@ -62,6 +63,13 @@ if args[:2] == ["repo", "clone"]:
     done = subprocess.run(["git", "clone", "-q", origin, args[3]], capture_output=True, text=True)
     sys.stderr.write(done.stderr)
     sys.exit(done.returncode)
+if args[:2] == ["pr", "list"]:  # gh pr list --repo R --head B …: the list under "prs:R@B" ("error": gh fails)
+    prs = data.get(f"prs:{value_after('--repo')}@{value_after('--head')}", [])
+    if prs == "error":
+        print("HTTP 502: Bad Gateway", file=sys.stderr)
+        sys.exit(1)
+    print(json.dumps(prs))
+    sys.exit(0)
 kind = {"pr": "pr", "issue": "issue"}.get(args[0])
 if kind is None or "--repo" not in args or len(args) < 3:
     print("unknown command", file=sys.stderr)

@@ -280,11 +280,14 @@ def open_from(store, pid: str, now: datetime, found: dict, answer: dict, done: A
         if found["push"]:
             priority = "high"
     good = [r for r in found["refs"] if github.parse(r) is not None]
+    if found.get("ci_pr"):
+        kind = "pull request"  # code found the pull request of a CI run mail: it is that PR's news
     playbook = ""
     book = playbooks.for_kind(kind)
     if book is not None and good:  # a playbook needs a name it can look up
         playbook = book.name
         owner = "odie"
+    owner = ledger.owner_for(owner, playbook)  # never Odie's with nothing for Odie to do
     fact = evidence_of(found)
     if after is not None:
         fact = f"New since you finished #{after['id']} ({after['title'][:60]}): {answer.get('why') or fact}"
@@ -330,7 +333,7 @@ def add_to(store, now: datetime, loop: dict, found: dict, answer: dict, done: Ap
     due = found["due"]
     if due and due != loop["due_at"]:
         fields["due_at"] = due
-    owner = findings.owner_of(answer.get("owner"), loop["owner"])
+    owner = ledger.owner_for(findings.owner_of(answer.get("owner"), loop["owner"]), loop["playbook"])
     if owner != loop["owner"]:
         fields["owner"] = owner
     if found["why"]:

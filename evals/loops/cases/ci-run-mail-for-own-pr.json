@@ -1,0 +1,94 @@
+{
+  "id": "ci-run-mail-for-own-pr",
+  "about": "GitHub Actions mails 'Run failed' for the user's own pull request: it names the branch and commit, not the PR. Code finds PR #50 with gh, so both mails are that PR's news, one loop, and stage 4 shows its card.",
+  "checks": [
+    {
+      "at": "2026-11-18T10:00:00+05:30",
+      "mails": [
+        {
+          "id": "ci1",
+          "from": "Your Name <notifications@github.com>",
+          "subject": "[example/app] Run failed: checks - ledger (d0aa897)",
+          "at": "2026-11-18T04:20:00Z",
+          "snippet": "checks: 2 failed",
+          "body": "Run failed for ledger (d0aa897). checks: 2 failed, 410 passed.",
+          "thread": "gh-run-ci1"
+        },
+        {
+          "id": "ci2",
+          "from": "Your Name <notifications@github.com>",
+          "subject": "[example/app] Run failed: checks - ledger (d0aa897)",
+          "at": "2026-11-18T04:22:00Z",
+          "snippet": "checks: 2 failed",
+          "body": "Run failed for ledger (d0aa897). Re-run: checks: 2 failed.",
+          "thread": "gh-run-ci2"
+        }
+      ],
+      "script": {
+        "findings": [
+          {
+            "ref": "mail:ci1",
+            "title": "Fix CI on PR: Personalities, Pulse",
+            "kind": "pull request",
+            "owner": "odie",
+            "why": "checks failed on ledger"
+          }
+        ],
+        "answers": [
+          {
+            "f": "F1",
+            "is": "new",
+            "title": "Fix CI on PR: Personalities, Pulse",
+            "kind": "ci failure",
+            "owner": "odie"
+          }
+        ]
+      }
+    }
+  ],
+  "gh": {
+    "prs:example/app@ledger": [
+      {
+        "number": 50,
+        "headRefOid": "d0aa8970000000000000000000000000000000ab",
+        "state": "OPEN",
+        "isCrossRepository": false
+      }
+    ],
+    "pr:example/app#50": {
+      "number": 50,
+      "title": "Personalities, Pulse",
+      "state": "OPEN",
+      "isDraft": false,
+      "mergedAt": null,
+      "closedAt": null,
+      "author": {
+        "login": "you-dev"
+      },
+      "headRefName": "ledger",
+      "headRefOid": "d0aa8970000000000000000000000000000000ab",
+      "baseRefName": "main",
+      "additions": 120,
+      "deletions": 30,
+      "changedFiles": 9,
+      "isCrossRepository": false,
+      "reviewDecision": "",
+      "reviewRequests": [],
+      "url": "https://github.com/example/app/pull/50",
+      "statusCheckRollup": [
+        {
+          "name": "checks",
+          "status": "COMPLETED",
+          "conclusion": "FAILURE"
+        }
+      ]
+    },
+    "user": "you-dev"
+  },
+  "expect": {
+    "loops": 1,
+    "cards": [
+      "example/app#50"
+    ]
+  }
+}

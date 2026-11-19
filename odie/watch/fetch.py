@@ -82,6 +82,7 @@ class Mail:
     thread: str = ""  # the app's thread id, when its listing gives one
     opened: bool = False  # body is the whole message (open_mail), not the listing's preview
     to: str = ""  # who it went to, when the listing says (the user's sent mail: odie.watch.sent)
+    pr: str = ""  # the pull request code found for a GitHub Actions run mail ("example/app#50": odie.loops.ci_runs)
 
     def brief(self) -> dict:
         return {"id": self.id, "from": self.frm, "subject": self.subject, "at": self.at, "snippet": self.snippet,

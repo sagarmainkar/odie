@@ -247,6 +247,7 @@ def make_loop(store, pid: str, run: Run, title: str, kind: str, owner: str, refs
               fact: str, fact_ref: str, card: dict | None = None, due: str | None = None) -> int:
     """A loop made by the upgrade: open and shown now (the follow-up ladder, nudges included, starts at the upgrade,
     not at the old item's day), with its first evidence at the time the old thing was made."""
+    owner = ledger.owner_for(owner, "")  # the upgrade makes no playbook loops: never Odie's
     state = findings_state(owner)
     lid = ledger.open_loop(store, pid, created, title, kind, owner=owner, refs=refs, due_at=zoned(due, run.now),
                            source="upgrade", ref=fact_ref, fact=fact, card=card, state=state)
@@ -694,6 +695,34 @@ def run_once(store, now: datetime) -> list[str] | None:
         log.warning("loops: the upgrade failed; it runs again at the next start", exc_info=True)
         return None
     log.info("loops: upgraded the watch's threads and cards to loops (%d steps)", len(lines))
+    return lines
+
+
+NO_ORPHANS = "loops.no_orphans"  # {"version": 1, "at": "…", "loops": n}: the pass below ran
+NO_ORPHANS_VERSION = 1
+
+
+def no_orphans_once(store, now: datetime) -> list[str] | None:
+    """At startup, once (NO_ORPHANS below NO_ORPHANS_VERSION): every open loop Odie owned with nothing for Odie to do
+    (owner "odie", no playbook: ledger.owner_for) becomes his card ("you", ready, shown now), so it leaves "Odie is on
+    it" for a card with Done. A pull request's loop, a closed loop and anyone else's are untouched. Returns what it
+    did, line by line; None when it ran before.
+      an open "Fix CI on PR" (odie, no playbook) -> his card;  a second start -> None, nothing changes"""
+    done = store.get_setting(NO_ORPHANS) or {}
+    if int(done.get("version") or 0) >= NO_ORPHANS_VERSION:
+        return None
+    at = now.isoformat(timespec="seconds")
+    lines = []
+    rows = store.query("select id, title from loops where owner='odie' and playbook='' and "
+                       "state in ('new','working','ready','waiting') order by id")
+    for row in rows:
+        store.execute("update loops set owner='you', state='ready', shown_at=?, updated_at=? where id=?",
+                      (at, at, row["id"]))
+        ledger.add_event(store, row["id"], now, "upgrade", "", "Odie had nothing to do for it: now yours, with Done")
+        lines.append(f"give loop #{row['id']} {row['title']!r} to you (Odie had no work for it)")
+    store.set_setting(NO_ORPHANS, {"version": NO_ORPHANS_VERSION, "at": at, "loops": len(lines)})
+    if lines:
+        log.info("loops: %d loop(s) Odie had no work for are now cards", len(lines))
     return lines
 
 

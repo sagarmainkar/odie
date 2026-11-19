@@ -77,12 +77,16 @@ def is_from_github(frm: str) -> bool:
 def refs_in_notification(mail) -> list[str]:
     """The pull request or issue a GitHub notification mail is about, from its subject, for the same-ID shortcut
     (design §3): "[example/app] Threads newest first (PR #49)" from notifications@github.com -> ["example/app#49"];
+    a run mail ("Run failed: checks - ledger (d0aa897)") whose pull request code found (Mail.pr) -> ["example/app#50"];
     any other sender, or a subject that doesn't check out -> []."""
     if not is_from_github(getattr(mail, "frm", "")):
         return []
     found = NOTIFICATION_RE.search(getattr(mail, "subject", "") or "")
     if found is None:
-        return []
+        resolved = parse(getattr(mail, "pr", "") or "")  # a CI run mail: code asked gh (odie.loops.ci_runs)
+        if resolved is None:
+            return []
+        return [str(resolved)]
     ref = parse(f"{found.group(1)}#{found.group(2)}")
     if ref is None:
         return []

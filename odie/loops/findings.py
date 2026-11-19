@@ -195,7 +195,9 @@ def one(item: dict, check) -> dict | None:
     refs += named_refs(named, check, github_mail)
     refs = list(dict.fromkeys(refs))[:REFS_MOST]
     weak = mail is not None and not read_new(check, mail)
+    ci_pr = github_mail and bool(getattr(mail, "pr", ""))  # a CI run mail code tied to its pull request
     return {"ref": ref, "title": title, "from_github": github_mail, "from_thread": bool(item.get("from_thread")),
+            "ci_pr": ci_pr,
             "weak": weak, "kind": str(item.get("kind") or "").strip()[:40],
             "why": str(item.get("why") or "").strip()[:rep.WHY_MAX], "owner": owner_of(item.get("owner")),
             "due": when_of(item.get("due")), "remind_at": when_of(item.get("remind_at")),
