@@ -193,8 +193,25 @@ def shell_reasons(store: Store, job: Job, command: str, cwd: str | None) -> list
     smart = shell_grant.reasons_to_ask(command, safe_dirs=(*shell_grant.safe_places(store), folder), cwd=cwd,
                                        scratch_dirs=(*shell_grant.scratch_places(), folder), smart=True,
                                        own_port=shell_grant._own_port(), odie_dirs=shell_grant.odie_places())
-    own = allow.worker_reasons(command)
+    own = allow.worker_reasons(command, job.folder)
+    smart = shell_grant_reasons_outside_own_folder(smart, command, job)
     return [*own, *(why for why in smart if why not in own)]
+
+
+def shell_grant_reasons_outside_own_folder(smart: list[str], command: str, job: Job) -> list[str]:
+    """The shared rules' "touches Odie's own files" doesn't count when the only part of Odie's the command names is
+    the job's own folder (masked: the Worker rules then judge the rest)."""
+    if allow.ODIE_FILES not in smart:
+        return smart
+    masked = allow.without_own_folder(command, job.folder)
+    if masked == command:
+        return smart
+    from odie.agent import shell_grant
+    folder = str(job.folder)
+    again = shell_grant.reasons_to_ask(masked, safe_dirs=(folder,), cwd=folder, smart=True)
+    if allow.ODIE_FILES in again:
+        return smart
+    return [why for why in smart if why != allow.ODIE_FILES]
 
 
 def refusal_words(why: str) -> str:
@@ -371,10 +388,20 @@ def message_for(job: Job, status: str, got: Report, error: str, needed: list[dic
         text = f"➖ {job.title}: nothing to do ({job.id})\n\n{got.text}"
     else:
         text = f"✅ Done: {job.title} ({job.id})\n\n{got.text}"
-    more = needed_words(needed)
-    if more:
-        text = f"{text}\n\n{more}"
+    if needs_shown(status, got.outcome):
+        more = needed_words(needed)
+        if more:
+            text = f"{text}\n\n{more}"
     return text
+
+
+def needs_shown(status: str, outcome: str | None) -> bool:
+    """Whether a run's report (and its card) say what it was refused: only when the job didn't get there, so the
+    refusals may be why (found live, 19 Nov 2026: a job that ran `cd <its folder> && …`, was refused, and then did it
+    without the cd still ended with "I needed to…").
+      failed -> True;  done, blocked -> True;  done, ready (finished) -> False;  done, dropped -> False
+    The refusals stay in the job's own log either way."""
+    return status == "failed" or outcome == "blocked"
 
 
 def fenced_for_the_model(text: str) -> str:

@@ -42,8 +42,9 @@ def on_it(store, pid: str) -> list[dict]:
 
 def needs_a_card(row: dict, now: datetime) -> bool:
     """Whether a job is a card on Pulse: the user started it, it ended in the last CARD_DAYS, wasn't cleared, and
-    failed, got stuck or needed something.
-      failed yesterday -> True;  done, a step refused -> True;  done, blocked -> True;  done cleanly -> False
+    failed or got stuck (blocked). One that finished isn't, even if a step was refused on the way (it did it another
+    way: worker.needs_shown).
+      failed yesterday -> True;  done, blocked -> True;  done, a step refused but finished -> False;  done cleanly -> False
       cleared -> False;  failed 4 days ago -> False;  Odie's own (a PR test) -> False;  still running -> False"""
     if row["started_by"] != "you" or row["cleared"] or row["status"] in jobs.GOING:
         return False
@@ -51,7 +52,7 @@ def needs_a_card(row: dict, now: datetime) -> bool:
     if ended is None or ended < now - timedelta(days=CARD_DAYS):
         return False
     went_wrong = row["status"] == "failed" or row["outcome"] == "blocked"
-    return went_wrong or bool(jobs.needed(row))
+    return went_wrong  # a job that finished isn't a card, whatever it was refused on the way (worker.needs_shown)
 
 
 def allowable(row: dict) -> list[dict]:

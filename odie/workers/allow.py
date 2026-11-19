@@ -86,11 +86,63 @@ _WORKER_RULES = (
     (OUTSIDE_RUN, re.compile(_STARTS + r"(?:\S*/)?(open|launchctl|crontab|at|batch|security|defaults|tmux|screen|"
                              r"nohup\s+open)(?:\s|$)")),
     (LOCAL_SERVICES, re.compile(r"\b(localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])\b|::1\b")),
-    (HIDDEN_HOME, re.compile(r"(~|\$HOME|\$\{HOME\}|/Users/[^/\s]+)/\.")),
 )
 
 
-def worker_reasons(command: str) -> list[str]:
+ODIE_FILES = "touches Odie's own files"
+_PATH_END = r"(?=$|[\s'\";&|)`]|/)"
+
+
+def path_forms(path: Path) -> list[str]:
+    """The ways a command may write a path: in full, and with ~, $HOME or ${HOME} for the home."""
+    full = str(path)
+    forms = [full]
+    home = str(Path.home())
+    if full.startswith(home + "/"):
+        rest = full[len(home):]
+        forms += ["~" + rest, "$HOME" + rest, "${HOME}" + rest]
+    return forms
+
+
+def without_own_folder(command: str, folder: Path | None) -> str:
+    """The command with the job's own folder (exactly it, or a path inside it with no "..") written as JOBDIR, so the
+    rules about the home's hidden places and Odie's folders never read the Worker naming its own folder (found live,
+    19 Nov 2026: on a real install it sits at ~/.odie/data/workspace/jobs/<name>).
+      `cd /Users/me/.odie/data/workspace/jobs/primes-7180b6 && python3 x.py` -> `cd JOBDIR && python3 x.py`
+      `ls /Users/me/.odie/data/workspace/jobs/primes-7180b6/..` -> unchanged (it leaves the folder)
+      `ls /Users/me/.odie/data/workspace/jobs/other-job` -> unchanged (another job's)"""
+    if folder is None:
+        return command
+    out = command
+    for form in sorted(set(path_forms(Path(folder)) + path_forms(Path(folder).resolve())), key=len, reverse=True):
+        pattern = re.compile(re.escape(form) + _PATH_END + r"(/[^\s'\";&|)`]*)?")
+
+        def masked(match: re.Match) -> str:
+            rest = match.group(1) or ""
+            if ".." in rest.split("/"):
+                return match.group(0)
+            return "JOBDIR" + rest
+        out = pattern.sub(masked, out)
+    return out
+
+
+def odie_places_rule() -> re.Pattern | None:
+    """A rule matching any path inside Odie's own folders (its home, data and settings, in every form)."""
+    from odie.workers.sandbox import odie_places
+    forms = [f for place in odie_places() for f in path_forms(Path(place))]
+    forms += ["~/.odie", "$HOME/.odie", "${HOME}/.odie"]
+    if not forms:
+        return None
+    return re.compile("|".join(re.escape(f) + _PATH_END for f in sorted(set(forms), key=len, reverse=True)))
+
+
+def hidden_home_rule() -> re.Pattern:
+    """A rule matching a hidden place in the home, written in any form (the real home, ~, $HOME, /Users/<name>)."""
+    home = re.escape(str(Path.home()))
+    return re.compile(rf"(~|\$HOME|\$\{{HOME\}}|/Users/[^/\s]+|{home})/\.")
+
+
+def worker_reasons(command: str, own_folder: Path | None = None) -> list[str]:
     """What a Worker refuses on top of the Smart rules, read from the command as written and with quotes squeezed out:
       `odie chat hi`, `~/.local/bin/odie show x`, `python -m odie.cli chat`, `echo && odie chat` -> [ODIE_ITSELF]
       `gh pr merge 3`, `gh auth token`, `/opt/homebrew/bin/gh api …`                           -> [GITHUB]
@@ -106,7 +158,15 @@ def worker_reasons(command: str) -> list[str]:
       `python3 fib.py`, `git log`, `ls ~/odie-notes`                                            -> []"""
     from odie.agent.shell_grant import squeezed
     out = []
+    command = without_own_folder(command, own_folder)
+    path_rules = [(HIDDEN_HOME, hidden_home_rule())]
+    odie_rule = odie_places_rule()
+    if odie_rule is not None:
+        path_rules.append((ODIE_FILES, odie_rule))
     for text in (command, squeezed(command)):
+        for why, rule in path_rules:
+            if rule.search(text) and why not in out:
+                out.append(why)
         if _ODIE.search(text) and ODIE_ITSELF not in out:
             out.append(ODIE_ITSELF)
         if (_GH.search(text) or _GIT_OUT.search(text)) and GITHUB not in out:
