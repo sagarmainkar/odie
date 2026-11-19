@@ -214,6 +214,12 @@ async def propose(store, pid: str, now: datetime, think, memory_index: str) -> d
     if got is None:
         return None
     proposed, why = got
+    return offer(store, pid, now, proposed, why)
+
+
+def offer(store, pid: str, now: datetime, proposed: list[str], why: str) -> dict | None:
+    """Odie's proposed lines become the proposal card (the weekly one, or the evening review's), waiting for his tap;
+    nothing changes his list until then. None when nothing would change. A waiting proposal is replaced."""
     current = lines(store, pid)
     if not proposed or proposed == current:
         return None

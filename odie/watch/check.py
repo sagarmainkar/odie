@@ -340,12 +340,19 @@ def _instruction(watch: str) -> str:
 
 def context_for(store, owner: str, memory, memory_index: str) -> dict:
     """What stage 2 reads besides the findings: his Watch for (from the shared memory), his Now list (the owner's own,
-    kept in the store: odie.loops.now) and what Odie remembers of him."""
+    kept in the store: odie.loops.now), what Odie remembers of him, his taps on cards today (odie.loops.learn) and
+    his Quiet rules (odie.loops.quiet)."""
+    from zoneinfo import ZoneInfo
+
+    from odie import config
+    from odie.loops import learn, quiet
     from odie.loops import now as now_list
     watch = ""
     if memory is not None:
         watch = watch_for(memory)
-    return {"watch": watch, "now": now_list.text(store, owner), "memory": memory_index}
+    today = datetime.now(ZoneInfo(config.settings.timezone))
+    return {"watch": watch, "now": now_list.text(store, owner), "memory": memory_index,
+            "taps": learn.today_text(store, owner, today), "quiet": quiet.text_for_model(store, owner)}
 
 
 def nudge_text(check) -> str:
@@ -508,15 +515,15 @@ async def place(store, owner: str, now: datetime, found: list[dict], think, cont
 def push_new_cards(store, now: datetime, applied, first: bool, owner: str, ping) -> None:
     """A push for each loop this check made a card and the model marked to push, within the push rules
     (report.to_push) and the day's shared budget (odie.watch.pushes)."""
-    from odie.loops import ledger
+    from odie.loops import ledger, quiet
     from odie.watch import pushes
     if applied is None:
         return
     items = []
     for lid in applied.to_push:
         loop = ledger.get(store, lid)
-        if loop is None or loop["state"] != "ready":
-            continue
+        if loop is None or loop["state"] != "ready" or quiet.digest_only(store, loop):
+            continue  # a digest line (a kind he quieted or rarely acts on) never pushes
         items.append({"ref": f"loop:{lid}", "title": loop["title"], "why": loop["result"]})
     for it in rep.to_push(store, now, items, first, owner):
         if pushes.started_by_odie(store, now, owner, it["title"], it["why"], ping, ref=it["ref"]):

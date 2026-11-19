@@ -2532,6 +2532,131 @@ async def loop_merge(loop_id: int, request: Request) -> dict[str, Any]:
     return {"ok": True, "closed": why}
 
 
+def _own_open_loop(request: Request, loop_id: int) -> dict:
+    """The picked one's own open loop by its number, or 404 "That card isn't there any more."."""
+    from odie.loops import ledger
+    loop = ledger.get(request.app.state.store, loop_id)
+    if loop is None or loop["personality"] != _personality(request) or loop["state"] not in ledger.OPEN:
+        raise HTTPException(404, "That card isn't there any more.")
+    return loop
+
+
+class TapIn(BaseModel):
+    tap: str
+
+
+@router.post("/loops/{loop_id}/tap")
+async def loop_tap(loop_id: int, body: TapIn, request: Request) -> dict[str, Any]:
+    """The app tapped a loop card's own move (its chat request, its page): logged for learning (odie.loops.learn). Only
+    "move"; it does nothing else (the move itself runs in the app)."""
+    from odie.loops import ledger
+    if body.tap != "move":
+        raise HTTPException(422, "Only a card's move is noted here.")
+    _own_open_loop(request, loop_id)
+    ledger.update(request.app.state.store, loop_id, _local_now(), tapped="move")
+    return {"ok": True}
+
+
+@router.post("/loops/{loop_id}/less")
+async def loop_less(loop_id: int, request: Request) -> dict[str, Any]:
+    """"Less like this" in a card's menu: his Quiet rule, in plain words he sees on Pulse and can delete
+    (odie.loops.quiet). Only his tap writes one: the terminal's key can't reach this route, and no model has a tool
+    for it. A pull request or a promise is never quieted (409)."""
+    from odie.loops import quiet
+    loop = _own_open_loop(request, loop_id)
+    try:
+        rule = quiet.less_like_this(request.app.state.store, loop, _local_now())
+    except ValueError as e:
+        raise HTTPException(409, str(e)) from e
+    request.app.state.store.audit("user", "quiet_rule", result_summary=rule["text"])
+    return {"ok": True, "rule": rule}
+
+
+@router.post("/loops/{loop_id}/forget")
+async def loop_forget(loop_id: int, request: Request) -> dict[str, Any]:
+    """"Forget this" in a card's menu: the loop and its evidence are deleted (odie.loops.ledger.forget); nothing of it
+    is remembered."""
+    from odie.loops import ledger
+    loop = _own_open_loop(request, loop_id)
+    ledger.forget(request.app.state.store, loop_id)
+    request.app.state.store.audit("user", "loop_forget", result_summary=f"#{loop_id}")
+    return {"ok": True, "forgot": loop["id"]}
+
+
+@router.get("/quiet")
+async def quiet_get(request: Request) -> dict[str, Any]:
+    """The picked one's Quiet rules (his, each deletable) and the kinds Odie learned to put in the digest (each with
+    Undo)."""
+    from odie.loops import learn, quiet
+    store = request.app.state.store
+    pid = _personality(request)
+    return {"rules": quiet.rules(store, pid), "learned": learn.learned_list(store, pid)}
+
+
+@router.delete("/quiet/{rule_id}")
+async def quiet_delete(rule_id: int, request: Request) -> dict[str, Any]:
+    """His delete on a Quiet rule: cards like that come back."""
+    from odie.loops import quiet
+    if not quiet.delete(request.app.state.store, _personality(request), rule_id):
+        raise HTTPException(404, "That rule isn't there any more.")
+    return {"ok": True}
+
+
+@router.post("/quiet/{proposal_id}/accept")
+async def quiet_accept(proposal_id: int, request: Request) -> dict[str, Any]:
+    """"Add the rule" on a rule the evening review proposed: the rule as the card showed it (kept with the proposal,
+    never sent by the app) is written. Only the picked one's own waiting proposal (else 404)."""
+    from odie.loops import quiet
+    rule = quiet.accept(request.app.state.store, _personality(request), proposal_id, _local_now())
+    if rule is None:
+        raise HTTPException(404, "That card isn't there any more.")
+    request.app.state.store.audit("user", "quiet_rule", result_summary=rule["text"])
+    return {"ok": True, "rule": rule}
+
+
+@router.post("/learned/{entry_id}/undo")
+async def learned_undo(entry_id: int, request: Request) -> dict[str, Any]:
+    """Undo on "Fewer cards for X" (the notice, or Pulse's Quiet list): that kind is cards again, for good."""
+    from odie.loops import learn
+    if not learn.undo(request.app.state.store, _personality(request), entry_id):
+        raise HTTPException(404, "That card isn't there any more.")
+    return {"ok": True}
+
+
+@router.get("/digest")
+async def digest_get(request: Request) -> dict[str, Any]:
+    """What Pulse shows on opening (odie.loops.digest.for_pulse): today's evening digest (with the review's changes,
+    each with Undo) until Got it, or "while you were away" after 3+ hours away; {"digest": null} otherwise."""
+    from odie.loops import digest, review
+    store = request.app.state.store
+    pid = _personality(request)
+    now = _local_now()
+    changes = [{"id": c["id"], "words": c["words"]} for c in review.changes_of(store, pid, now.date().isoformat())]
+    return {"digest": digest.for_pulse(store, pid, now, changes)}
+
+
+class DigestSeenIn(BaseModel):
+    dismiss: bool = False
+
+
+@router.post("/digest/seen")
+async def digest_seen(body: DigestSeenIn, request: Request) -> dict[str, Any]:
+    """Pulse was opened (the 3-hour "away" counts from now); dismiss: his Got it on the evening digest."""
+    from odie.loops import digest
+    digest.seen(request.app.state.store, _personality(request), _local_now(), dismiss=body.dismiss)
+    return {"ok": True}
+
+
+@router.post("/review/{change_id}/undo")
+async def review_undo(change_id: int, request: Request) -> dict[str, Any]:
+    """Undo on one of the evening review's changes (odie.loops.review.undo): the picked one's own, once."""
+    from odie.loops import review
+    if not review.undo(request.app.state.store, _personality(request), change_id, _local_now()):
+        raise HTTPException(404, "That can't be undone any more.")
+    request.app.state.store.audit("user", "review_undo", result_summary=f"change {change_id}")
+    return {"ok": True}
+
+
 @router.post("/offers/{offer_id}/track")
 async def offer_track(offer_id: int, request: Request) -> dict[str, Any]:
     """A "Track this?" card's Track: his tap makes the loop (his, with its due time and a reminder at that time,
@@ -2795,13 +2920,14 @@ async def job_clear(job_id: str, request: Request) -> dict[str, Any]:
 @router.post("/watch/done")
 async def watch_done(body: WatchDoneIn, request: Request) -> dict[str, Any]:
     """A card's "dismiss", on the picked one's Pulse: Sunday's "Still care?" card drops the loops in it; a "Track
-    this?" offer's No forgets it ("offer:3"); No on Odie's proposed Now list ("now:2") keeps the list; a loop's ref ("loop:3"), or the mail or event an open loop holds (an older
-    app's card), is that loop's Done (remembered)."""
+    this?" offer's No forgets it ("offer:3"); No on Odie's proposed Now list ("now:2") keeps the list; OK on "Fewer
+    cards for X" ("learn:1") says it; No on a proposed Quiet rule ("quiet:2"); a loop's ref ("loop:3"), or the mail or
+    event an open loop holds (an older app's card), is that loop's Done (remembered)."""
     from datetime import datetime
     from zoneinfo import ZoneInfo
 
     from odie.loops import cards as loop_cards
-    from odie.loops import ledger, offers
+    from odie.loops import learn, ledger, offers, quiet
     from odie.loops import now as now_list
     store = request.app.state.store
     pid = _personality(request)
@@ -2815,6 +2941,14 @@ async def watch_done(body: WatchDoneIn, request: Request) -> dict[str, Any]:
     proposal_id = now_list.number_of(body.ref)
     if proposal_id is not None:  # No on Odie's proposed Now list: it stays as it is
         now_list.decline(store, pid, proposal_id)
+        return {"ok": True}
+    notice_id = learn.number_of(body.ref)
+    if notice_id is not None:  # OK on "Fewer cards for X": said; the kind stays in the digest
+        learn.said(store, pid, notice_id)
+        return {"ok": True}
+    quiet_id = quiet.number_of(body.ref)
+    if quiet_id is not None:  # No on a Quiet rule the evening review proposed
+        quiet.decline(store, pid, quiet_id)
         return {"ok": True}
     loop = None
     if body.ref.startswith("loop:") and body.ref[len("loop:"):].isdigit():
@@ -2959,7 +3093,9 @@ async def morning_get(request: Request):
 
     hello = hello_for(store, day)
     if hello is not None:
+        from odie.loops import ladder
         card = {key: value for key, value in hello["card"].items() if key != "summary"}
+        card["ledger"] = ladder.ledger_lines(store, "", now)  # two lines from the ledger, by code, read now
         return {"state": "ready", "day": day, "card": card}
 
     if not hello_due(store, now) or not brain_chosen(store):

@@ -132,7 +132,7 @@ def test_every_ready_loop_is_one_card_with_why_and_the_three_buttons(store):
     assert card["other"]["action"] == "loop_done" and card["later"] == {"label": "Later", "action": "later",
                                                                          "value": f"loop:{lid}"}
     assert card["evidence"][0]["fact"] == "Send the deck by Friday" and card["evidence"][0]["id"]
-    assert card["more"] == [{"label": "Split", "action": "split", "value": lid}]
+    assert card["more"][0] == {"label": "Split", "action": "split", "value": lid}  # then Less like this, Forget this
     for name in ("main", "other", "later", "pile", "since", "decide", "ref", "title", "why", "icon", "badge", "ask"):
         assert name in card  # the fields the Mac app reads
 

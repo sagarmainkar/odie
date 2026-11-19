@@ -137,6 +137,18 @@ def why_lines(evidence: list[dict]) -> list[dict]:
     return [{"id": e["id"], "at": e["at"], "source": e["source"], "fact": e["fact"]} for e in shown]
 
 
+def menu_of(loop: dict) -> list[dict]:
+    """A loop card's small menu ("more"): Split (a merge was wrong), Less like this (his Quiet rule; never for a pull
+    request or a promise) and Forget this (the loop and its evidence deleted). The Mac app reads only main, other and
+    later, so it shows none of these until it learns them."""
+    lid = loop["id"]
+    out = [{"label": "Split", "action": "split", "value": lid}]
+    if not loop["playbook"]:
+        out.append({"label": "Less like this", "action": "less_like_this", "value": lid})
+    out.append({"label": "Forget this", "action": "forget", "value": lid})
+    return out
+
+
 def card(loop: dict, tested: dict | None = None, evidence: list[dict] | None = None,
          now: datetime | None = None) -> dict:
     """A ready loop as a Pulse card, in the shape odie.watch.needs gives every card (the Mac app reads the same
@@ -157,7 +169,7 @@ def card(loop: dict, tested: dict | None = None, evidence: list[dict] | None = N
            "other": {"label": "Done", "action": "loop_done", "value": loop["id"]},
            "later": {"label": "Later", "action": "later", "value": ref}, "pile": pile_of(loop),
            "since": loop.get("shown_at") or loop["updated_at"], "decide": decide,
-           "evidence": why_lines(evidence or []), "more": [{"label": "Split", "action": "split", "value": loop["id"]}]}
+           "evidence": why_lines(evidence or []), "more": menu_of(loop)}
     if output:
         out["output"] = output
     return out
@@ -192,8 +204,11 @@ def batch_card(loops: list[dict]) -> dict:
 
 
 def ready_loops(store, pid: str, now: datetime) -> list[dict]:
-    """This owner's ready loops, not put off with Later, newest first."""
-    ready = [lp for lp in ledger.open_loops(store, pid) if lp["state"] == "ready" and not hidden(lp, now)]
+    """This owner's ready loops that are cards: not put off with Later, and not digest lines (a kind he quieted or
+    rarely acts on: odie.loops.quiet.digest_only), newest first."""
+    from odie.loops import quiet
+    ready = [lp for lp in ledger.open_loops(store, pid)
+             if lp["state"] == "ready" and not hidden(lp, now) and not quiet.digest_only(store, lp)]
     ready.sort(key=lambda lp: lp["id"], reverse=True)
     return ready
 

@@ -144,8 +144,8 @@ def his_tasks(store, pid: str) -> list:
 
 def prompt_for(store, pid: str, now: datetime, found: list[dict], shortcut: dict[str, dict], context: dict) -> str:
     """What stage 2 reads. Everything that carries other people's words (findings, loop titles and evidence, his
-    reminders' titles, which may have come from mail) is fenced, and so is his Now list (data: an accepted proposal
-    may hold a loop's title); his Watch for and memory are his own."""
+    reminders' titles, which may have come from mail) is fenced, and so are his Now list (data: an accepted proposal
+    may hold a loop's title) and his taps on cards today (a card's title); his Watch for and memory are his own."""
     finding_lines = [findings.line(f, hint_words(shortcut.get(f["id"], {}))) for f in found]
     open_lines = [ledger.line(lp, ledger.events(store, lp["id"])) for lp in ledger.open_loops(store, pid)[-OPEN_SHOWN:]]
     done_lines = [ledger.finished_line(lp) for lp in ledger.finished(store, pid, now)[:FINISHED_SHOWN]]
@@ -163,6 +163,10 @@ def prompt_for(store, pid: str, now: datetime, found: list[dict], shortcut: dict
              f"Watch for:\n{context.get('watch') or '(nothing)'}",
              f"Now:\n{wrap_untrusted(context.get('now') or '(nothing)')}",  # his tap wrote it, but from proposals
              f"What you remember about the user:\n{context.get('memory') or '(nothing)'}"]
+    if context.get("quiet"):  # his Quiet rules (odie.loops.quiet): written on his tap, but name kinds from mail
+        parts.append(f"Quiet rules (the user wants fewer cards like these):\n{wrap_untrusted(context['quiet'])}")
+    if context.get("taps"):  # his taps on cards today (odie.loops.learn): titles may come from mail
+        parts.append(f"His taps on cards today (data):\n{wrap_untrusted(context['taps'])}")
     return "\n\n".join(parts)
 
 
