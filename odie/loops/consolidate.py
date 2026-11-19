@@ -291,6 +291,7 @@ def open_from(store, pid: str, now: datetime, found: dict, answer: dict, done: A
     lid = ledger.open_loop(store, pid, now, title, kind, owner=owner, refs=found["refs"], priority=priority,
                            due_at=due, playbook=playbook, state=state_for(owner, playbook), source=source_of(found),
                            ref=found["ref"], fact=fact, card=found["card"], result=found["why"])
+    ledger.note_seen(store, lid, now, found["ref"], event_time(found))
     if found["remind_at"]:
         make_reminder(store, pid, now, lid, title, found["remind_at"])
         done.reminders += 1
@@ -341,6 +342,7 @@ def add_to(store, now: datetime, loop: dict, found: dict, answer: dict, done: Ap
     if fields:
         ledger.update(store, lid, now, **fields)
     ledger.merge_card(store, lid, now, found["card"])
+    ledger.note_seen(store, lid, now, found["ref"], event_time(found))
     if found["remind_at"] and not move_reminder(store, loop, found["remind_at"]):
         make_reminder(store, loop["personality"], now, lid, loop["title"], found["remind_at"])
         done.reminders += 1
@@ -356,6 +358,7 @@ def attach_quietly(store, now: datetime, loop: dict, found: dict, done: Applied)
     if not found["ref"] or found["ref"] not in already:
         ledger.attach(store, loop["id"], now, source_of(found), found["ref"], evidence_of(found), refs=found["refs"],
                       news=False)
+    ledger.note_seen(store, loop["id"], now, found["ref"], event_time(found), keep_first=True)
     done.quiet.append(loop["id"])
     if found["remind_at"]:
         done.reminder_to_finished = True
@@ -392,6 +395,77 @@ def closed_hint(hint: dict) -> int | None:
     return hint.get("finished") or hint.get("odie_closed")
 
 
+def same_minute(first: str | None, second: str | None) -> bool:
+    """Whether two times are the same minute: "2026-11-21T17:00+05:30" and "2026-11-21T11:30:00+00:00" -> True;
+    16:00 and 17:00 -> False; either missing or unreadable -> False."""
+    try:
+        one = datetime.fromisoformat(first or "")
+        two = datetime.fromisoformat(second or "")
+    except ValueError:
+        return False
+    if (one.tzinfo is None) != (two.tzinfo is None):
+        return False
+    return one.replace(second=0, microsecond=0) == two.replace(second=0, microsecond=0)
+
+
+def same_day(first: str | None, second: str | None) -> bool:
+    """Whether two due times fall on the same day: 21 Nov 17:00 and 21 Nov 09:00 -> True; 30 Oct and 29 Nov -> False;
+    either missing -> False (no due is not the same due: next month's "Pay the maid's salary" has none either)."""
+    if not first or not second:
+        return False
+    try:
+        return datetime.fromisoformat(first or "").date() == datetime.fromisoformat(second or "").date()
+    except ValueError:
+        return False
+
+
+def event_time(found: dict) -> str | None:
+    """The time of the thing a finding is about, to tell whether an event moved: the calendar's own start when the
+    finding came from an event (its card's "when", set by code), else the finding's due. A deadline the model read
+    ("RSVP by the 22nd") is not the event's time."""
+    return found["card"].get("when") or found["due"]
+
+
+def brings_news(found: dict, finished: dict) -> bool:
+    """Whether a finding brings something a closed loop doesn't already know, so that a "new, after it" answer may
+    open a new loop. A calendar shows an event at every check, so without this the model is asked about a thing he
+    finished again and again, and one sloppy "new" would bring its card back.
+      a mail or event the loop doesn't hold ("the clinic asks you to confirm") -> True
+      the event it holds, at another time than the loop last saw (it moved; a repeating event's next day) -> True
+      the event it holds, at the same time -> False
+      the event it holds, and the loop never saw a time for it (carried by the upgrade) -> False; attach_quietly then
+        keeps this sight as the time it knows
+      the mail it holds -> False, whatever due time the model reads from it this time (a mail never changes)"""
+    for ref in strong_refs(found):
+        if ref not in finished["refs"]:
+            return True
+    if not found["ref"].startswith("event:"):
+        return False
+    known = ledger.seen_due(finished, found["ref"])
+    now_at = event_time(found)
+    if not known or not now_at:
+        return False
+    return not same_minute(known, now_at)
+
+
+def finished_twin(store, pid: str, now: datetime, found: dict) -> dict | None:
+    """A loop he finished that a finding with no ID of its own says again: the same title words and the same due
+    day. A digest note's line has no mail or event to match on, so only its words and its day can tell.
+      "Vote: Northwind ballot — closes 21 Nov" from the digest, he finished that vote's loop, both due 21 Nov -> it
+      "Pay electricity bill" due 29 Nov, he finished "Pay electricity bill" due 30 Oct -> None (next month's bill)
+      a finding with its own mail or event -> None (its ID decides, see hint_for)"""
+    if strong_refs(found):
+        return None
+    words = findings.same_words(found["title"])
+    for loop in ledger.finished(store, pid, now):
+        by_him = loop["closed_by"] in ledger.BY_HIM
+        if not by_him or loop["playbook"]:
+            continue
+        if findings.same_words(loop["title"]) == words and same_day(loop["due_at"], found["due"]):
+            return loop
+    return None
+
+
 def verdict_for(store, pid: str, now: datetime, found: dict, answer: dict | None,
                 hint: dict) -> tuple[str, dict | None, dict]:
     """What code does with one finding, from the model's answer and the shortcut's hint, with the rails (this
@@ -400,8 +474,11 @@ def verdict_for(store, pid: str, now: datetime, found: dict, answer: dict | None
       "same as his own task" -> ("skip", None)
       "same"/"closes" an open loop it may reach -> ("add" / "close", that loop)
       "same"/"closes" a closed loop still remembered -> ("quiet", that loop)
-      "new" while the hint names a closed loop -> ("new", that loop) only when "after" names that very loop, else
-          ("quiet", that loop): a sloppy "new" can't bring back what he finished
+      "new" while the hint names a closed loop -> ("new", that loop) only when "after" names that very loop and the
+          finding brings something that loop doesn't know (brings_news), else ("quiet", that loop): a sloppy "new"
+          can't bring back what he finished
+      "new" (or no answer) for a finding with no ID of its own that says again a thing he finished (finished_twin)
+          -> ("quiet", that loop)
       "new" (or an answer naming a loop it can't reach) while an open loop holds its pull request -> ("add", that
           loop): one loop per pull request
       no answer (or a loop it can't reach) -> by the hint: open -> add (close, when the finding says it's done);
@@ -430,9 +507,13 @@ def verdict_for(store, pid: str, now: datetime, found: dict, answer: dict | None
     if verdict == "new":
         hinted = closed_hint(hint)
         if hinted is not None:
-            if number(answer.get("after")) == hinted:
-                return "new", ledger.get(store, hinted), answer
-            return "quiet", ledger.get(store, hinted), answer
+            finished = ledger.get(store, hinted)
+            if number(answer.get("after")) == hinted and brings_news(found, finished):
+                return "new", finished, answer
+            return "quiet", finished, answer
+        twin = finished_twin(store, pid, now, found)
+        if twin is not None:
+            return "quiet", twin, answer
         after = mine(store, pid, answer.get("after"), found, now)
         if after is not None and after["state"] not in ledger.OPEN:
             return "new", after, answer
@@ -447,6 +528,9 @@ def verdict_for(store, pid: str, now: datetime, found: dict, answer: dict | None
         return "add", ledger.get(store, hint["open"]), {}
     if closed_hint(hint) is not None:
         return "quiet", ledger.get(store, closed_hint(hint)), {}
+    twin = finished_twin(store, pid, now, found)
+    if twin is not None:
+        return "quiet", twin, {}
     return "new", None, {}
 
 

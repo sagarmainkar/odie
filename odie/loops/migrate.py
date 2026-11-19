@@ -177,12 +177,40 @@ def pr_loop_holding(store, pid: str, thread: str) -> dict | None:
     return None
 
 
-def same_thing_loop(store, pid: str, ref: str, is_open: bool) -> dict | None:
-    """The loop the upgrade made from another old thing about the same exact mail or event, when both are open or both
-    are closed; None when their states differ (then each keeps its own loop and its own state).
-      an open card item and an open watch thread on mail:r1 -> the thread's loop
-      a ticked card item ("PTM") and an open thread ("Pay term fee") on one mail -> None: two loops
-      an open card item and a closed thread on one mail -> None: the item is a card of its own"""
+def needs_you_of(store, pid: str) -> list[dict]:
+    """The Needs-you items of an owner's old watch card, whatever shape the setting has: the dicts of its
+    "needs_you" list. A card that is a list, a text or a number, or a "needs_you" that is no list -> []."""
+    from odie.watch.owner import key
+    card = store.get_setting(key("watch.card", pid))
+    if not isinstance(card, dict):
+        return []
+    items = card.get("needs_you")
+    if not isinstance(items, list):
+        return []
+    return [item for item in items if isinstance(item, dict)]
+
+
+def says_the_same(first: str, second: str) -> bool:
+    """Whether two titles name one thing: every word of one is in the other. "Cloudbase invoice #A-11 — $58.58" and
+    "Pay Cloudbase invoice #A-11 — $58.58" -> True; "PTM on Saturday" and "Pay term fee Rs 12,000" -> False; an
+    empty title -> False."""
+    one = set(same_words(first).split())
+    two = set(same_words(second).split())
+    if not one or not two:
+        return False
+    return one <= two or two <= one
+
+
+def same_thing_loop(store, pid: str, ref: str, is_open: bool, title: str) -> dict | None:
+    """The loop the upgrade made from another old thing about the same exact mail or event, for a card item to join.
+    Two closed things on one mail are one. An open item joins an open loop only when that loop shows a card (ready)
+    and their titles name one thing (says_the_same): otherwise the item's card would be lost. Different states never
+    join (each keeps its own loop and its own state).
+      an open item "Cloudbase invoice" and the open thread "Pay Cloudbase invoice" on mail:b1 -> the thread's loop
+      an open item "PTM on Saturday" and the open thread "Pay term fee" on one mail -> None: two cards
+      an open item "Delivery failed" on the mail of an order Odie follows (waiting, no card) -> None: its own card
+      a ticked item ("PTM") and an open thread ("Pay term fee") on one mail -> None: two loops
+      an open item and a closed thread on one mail -> None: the item is a card of its own"""
     if not ref.startswith(("mail:", "event:")):
         return None
     for loop in all_loops(store, pid):
@@ -191,8 +219,12 @@ def same_thing_loop(store, pid: str, ref: str, is_open: bool) -> dict | None:
         made = store.one("select 1 from loop_events where loop_id=? and source=?", (loop["id"], UPGRADE))
         if made is None:
             continue
-        if (loop["state"] in ledger.OPEN) == is_open:
-            return loop
+        loop_open = loop["state"] in ledger.OPEN
+        if loop_open != is_open:
+            continue
+        if is_open and not (loop["state"] == "ready" and says_the_same(loop["title"], title)):
+            continue
+        return loop
     return None
 
 
@@ -410,7 +442,7 @@ def closed_twin(store, pid: str, title: str, due: str | None) -> dict | None:
         theirs = same_words(loop["title"])
         if not theirs or not (words.startswith(theirs) or theirs.startswith(words)):
             continue
-        if not due or not loop["due_at"]:
+        if not due or not loop["due_at"] or not loop["closed_at"]:
             continue  # with no due time to agree on, a prefix title alone ("Pay electricity bill [for the shop]")
         if zoned(due, datetime.fromisoformat(loop["closed_at"])) != loop["due_at"]:
             continue
@@ -506,9 +538,7 @@ def carry_items(store, pid: str, run: Run) -> None:
     """The Needs-you items of the owner's watch card (step 2 of this module's notes, and THE RULE above): each makes
     its own loop in its own state, or joins the loop of the same thing in the same state (same_thing_loop), or a pull
     request's open loop holding its thread (evidence only). Only a loop an item made takes its Done or its Later."""
-    from odie.watch.owner import key
-    card = store.get_setting(key("watch.card", pid)) or {}
-    for item in card.get("needs_you") or []:
+    for item in needs_you_of(store, pid):
         ref = str(item.get("ref") or "")
         if not ref:
             continue
@@ -530,7 +560,7 @@ def carry_items(store, pid: str, run: Run) -> None:
         if found is None:
             target = pr_loop_holding(store, pid, str(item.get("thread") or "") or ref.removeprefix("mail:"))
             if target is None:
-                target = same_thing_loop(store, pid, ref, is_open)
+                target = same_thing_loop(store, pid, ref, is_open, title)
             if target is not None:
                 join_evidence(store, target, run, at, ref, fact, refs)
                 if not target["playbook"]:
@@ -590,15 +620,20 @@ def finished_meanwhile(store, pid: str, loop: dict, kept: dict) -> bool:
     put aside is now ticked or dropped, or one of its card items that were not done then is done now. What was
     already done before the rollback (a reminder that rang and he acted on, a Done he then reopened) never counts.
       the rent reminder, open at the rollback, ticked under the old code -> True
+      a card item open at the rollback and gone from the older Odie's list now (he tapped Done there) -> True
       a reminder already done before the rollback, the loop still open -> False"""
     for task_id in kept.get("reminders") or []:
         row = store.one("select status from tasks where id=?", (int(task_id),))
         if row is not None and row["status"] in ("done", "dropped"):
             return True
-    from odie.watch.owner import key
-    card = store.get_setting(key("watch.card", pid)) or {}
     still_open_then = set(kept.get("items") or [])
-    return any(item.get("done") and item.get("ref") in still_open_then for item in card.get("needs_you") or [])
+    items = needs_you_of(store, pid)
+    if any(item.get("done") and item.get("ref") in still_open_then for item in items):
+        return True
+    # The older Odie's Done (on Pulse, in chat, or "you replied") takes the item out of the list. A full list also
+    # drops its oldest item unfinished, so a missing item counts only while the list is under its cap.
+    listed = {item.get("ref") for item in items}
+    return len(items) < OLD_CARD_CAP and any(ref not in listed for ref in still_open_then)
 
 
 def bring_back(store, pid: str, run: Run) -> None:
@@ -662,6 +697,7 @@ def run_once(store, now: datetime) -> list[str] | None:
     return lines
 
 
+OLD_CARD_CAP = 30  # the older Odie keeps at most this many Needs-you items (odie.watch.report: items[-30:])
 ROLLBACK = "loops.rollback"  # {loop id: the state it had} for the loops before_rollback put aside
 ROLLBACK_CLOSER = ledger.PUT_ASIDE
 
@@ -681,10 +717,8 @@ def open_reminders(store, loop: dict) -> list[int]:
 
 def open_items(store, pid: str, loop: dict) -> list[str]:
     """The old card items this loop carried that are not done now."""
-    from odie.watch.owner import key
-    card = store.get_setting(key("watch.card", pid)) or {}
     carried = {e["ref"] for e in ledger.events(store, loop["id"]) if e["ref"] and e["source"] in (UPGRADE, JOINED)}
-    return [str(i.get("ref")) for i in card.get("needs_you") or [] if not i.get("done") and i.get("ref") in carried]
+    return [str(i.get("ref")) for i in needs_you_of(store, pid) if not i.get("done") and i.get("ref") in carried]
 
 
 def before_rollback(store, now: datetime) -> list[str]:
@@ -720,10 +754,12 @@ def before_rollback(store, now: datetime) -> list[str]:
         for pid in owners(store):
             from odie.watch.owner import key
             card_key = key("watch.card", pid)
-            card = store.get_setting(card_key) or {}
+            card = store.get_setting(card_key)
+            if not isinstance(card, dict) or not isinstance(card.get("needs_you"), list):
+                continue
             changed = False
-            for item in card.get("needs_you") or []:
-                if item.get("done"):
+            for item in card["needs_you"]:
+                if not isinstance(item, dict) or item.get("done"):
                     continue
                 loop = carried_into(store, pid, str(item.get("ref") or ""))
                 if loop is None or loop["state"] in ledger.OPEN or loop["closed_by"] == ROLLBACK_CLOSER:

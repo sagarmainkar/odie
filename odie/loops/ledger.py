@@ -213,6 +213,33 @@ def merge_card(store, loop_id: int, now: datetime, fields: dict) -> None:
                   (json.dumps(card, ensure_ascii=False), _at(now), int(loop_id)))
 
 
+SEEN = "seen_due"  # in a loop's card fields, never shown: {"event:uid1": "2026-11-21T17:00+05:30"}
+
+
+def seen_due(loop: dict, ref: str) -> str:
+    """The time a mail's or event's thing had when this loop last took it in, or "": {"seen_due": {"event:uid1":
+    "2026-11-21T17:00+05:30"}} and "event:uid1" -> that time; a ref it never saw a time for -> ""."""
+    seen = loop["card"].get(SEEN)
+    if not isinstance(seen, dict):
+        return ""
+    return str(seen.get(ref) or "")
+
+
+def note_seen(store, loop_id: int, now: datetime, ref: str, due: str | None, keep_first: bool = False) -> None:
+    """Remembers the time a finding gave for its mail or event, so a later "this is new" about the same event can be
+    checked against it (odie.loops.consolidate.brings_news). An open loop follows its event (the newest time wins); a
+    closed loop keeps the first time it saw (keep_first), which is the time the thing had when he finished it."""
+    loop = get(store, loop_id)
+    if loop is None or not ref or not due:
+        return
+    seen = loop["card"].get(SEEN)
+    if not isinstance(seen, dict):
+        seen = {}
+    if keep_first and seen.get(ref):
+        return
+    merge_card(store, loop_id, now, {SEEN: {**seen, ref: due}})
+
+
 def add_refs(store, loop_id: int, now: datetime, refs: list[str]) -> None:
     """Adds refs to a loop (none twice), with no evidence and no news: a reminder made for it, say."""
     loop = get(store, loop_id)
