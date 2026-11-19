@@ -2681,13 +2681,18 @@ async def job_keep(job_id: str, request: Request) -> dict[str, Any]:
     from odie.workers import keep as job_keep_copy
     from odie.workers import store as jobs_store
     row = _own_job(request, job_id)
+    store = request.app.state.store
     try:
         kept = await asyncio.to_thread(job_keep_copy.keep_job, row)
+    except job_keep_copy.KeepStopped as e:  # what it copied stays; the card says so and offers Keep it again
+        stopped = {"path": str(e.path), "partial": True, "stopped": e.reason, "at": now_iso()}
+        jobs_store.set_kept(store, job_id, stopped)
+        store.audit("user", "job_kept_partly", args=stopped, result_summary=job_id)
+        raise HTTPException(409, f"Not kept: {e}.") from e
     except job_keep_copy.KeepRefused as e:
         raise HTTPException(409, f"Not kept: {e}.") from e
     record = {"path": str(kept.path), "links_left_out": kept.links_left_out, "others_left_out": kept.others_left_out,
-              "git_reset": kept.git_reset, "at": now_iso()}
-    store = request.app.state.store
+              "git_reset": kept.git_reset, "venvs_left_out": kept.venvs_left_out, "at": now_iso()}
     jobs_store.set_kept(store, job_id, record)
     store.audit("user", "job_kept", args=record, result_summary=job_id)
     return {"ok": True, "kept": job_cards.home_form(str(kept.path)), "line": kept.line(job_cards.home_form)}

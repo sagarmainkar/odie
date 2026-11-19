@@ -138,22 +138,35 @@ def typed_words(store: Store, session_id: str) -> list[str]:
     return list(reversed(newest_first))
 
 
-def brief_for(model_brief: str, typed: list[str], taint: str) -> str | None:
+def newest_message(store: Store, session_id: str) -> str:
+    """The message that started this turn, as the runner recorded it (the audit log's newest "user" row), whoever
+    sent it: typed in the app or sent from the terminal (a clean chat's brief may say what the terminal asked; a
+    tainted chat's never takes it: typed_words). "" when there is none. Cut to TYPED_CHARS; a form's answer as its line.
+      "an older app message", then the terminal's "try example/app" -> "try example/app";  a new chat -> """""
+    from odie.blocks.answers import without_form_answers
+    row = store.one("select result_summary from audit_log where session_id=? and actor='user' and event='message' "
+                    "order by id desc limit 1", (session_id,))
+    if row is None:
+        return ""
+    return without_form_answers(row["result_summary"] or "")[:TYPED_CHARS]
+
+
+def brief_for(model_brief: str, typed: list[str], taint: str, asked: str = "") -> str | None:
     """The brief the Worker gets. When the chat has read outside text (taint), only his own typed words, built here by
     code, so nothing a mail or a page said can ride along in it; the model's brief is dropped. A clean chat: the
-    model's brief, with his newest message first so the Worker sees what he actually asked. None when the chat is
-    tainted and nothing he typed is there to hand over (the job isn't started).
+    model's brief, with the message that started this turn first (asked: newest_message) so the Worker sees what was
+    actually asked. None when the chat is tainted and nothing he typed is there to hand over (the job isn't started).
       tainted, typed ["read Asha's mail", "now research it"]  -> "The user asked:\nread Asha's mail\n\nnow research it\n\n(…)"
-      clean, typed ["older", "try example/app"], brief "Clone it…" -> "The user asked:\ntry example/app\n\nClone it…"
-      clean, nothing typed found, brief "Clone it…"           -> "Clone it…"
+      clean, asked "try example/app", brief "Clone it…"       -> "The user asked:\ntry example/app\n\nClone it…"
+      clean, nothing asked found, brief "Clone it…"           -> "Clone it…"
       tainted, nothing typed found                            -> None"""
     if taint:
         if not typed:
             return None
         return f"{ASKED}\n" + "\n\n".join(typed) + f"\n\n{OWN_WORDS_ONLY}"
-    if not typed:
+    if not asked:
         return model_brief
-    return f"{ASKED}\n{typed[-1]}\n\n{model_brief}"
+    return f"{ASKED}\n{asked}\n\n{model_brief}"
 
 
 READ_DIRS_MOST = 3
@@ -362,7 +375,7 @@ def make_worker_tools(store: Store) -> list[FunctionTool]:
             folders.append(folder)
         taint = taint_of(store, tool_context)
         typed = typed_words(store, session_id)
-        job_brief = brief_for(brief.strip(), typed, taint)
+        job_brief = brief_for(brief.strip(), typed, taint, newest_message(store, session_id))
         if job_brief is None:
             return {"error": "Not started: this chat has read outside text, so a job gets only the user's own words "
                              "as its brief, and there are none here to hand over. Ask them to say what they want."}

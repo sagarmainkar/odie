@@ -55,11 +55,14 @@ answers questions, so decide for yourself and keep going.
 
 - Work in your own folder, {folder}; run_shell starts there. Write every file with write_file and read with \
 read_file; the shell is for running things. Your commands run in a sandbox: they read the system, the toolchains, your \
-folder{read_dirs}, and write only inside your folder; the shell has no network (use web_search, web_fetch and \
-clone_repo). Once you have read the user's folders or apps, the web is closed for the rest of the job, so do web work \
-first. For anything else, say in your report what the user should do.
-- Nobody can approve anything while you work. A step the rules refuse (deleting or stopping things, installing, \
-secrets, sending data out, changing Odie) is not run, and the answer says why. Don't try it in another form: find \
+folder{read_dirs}, and write only inside your folder; {network} Clone a repo with clone_repo, never git clone in the \
+shell. Once you have read the user's folders or apps, the web is closed for the rest of the job, so do web work first. \
+Nothing you start keeps running after a command returns, so never leave a server running: say in your report how the \
+user can run it. For anything else, say in your report what the user should do.
+- Installing and building inside your folder (npm install, pip install into a venv there, uv, make, cargo build) needs \
+nobody's OK. Nobody can approve anything else while you work. A step the rules refuse (deleting or stopping things \
+outside your folder, secrets, sending data out, pushing or publishing, changing Odie) is not run, and the answer says \
+why. Don't try it in another form: find \
 another way, or finish and say in your report exactly what you needed. The user can allow it and run the job again.
 - Verify before you say something works: run it, read the output.
 - Finish by calling report, once, with what you did and what you found. Keep it short, in plain words: a result the \
@@ -194,12 +197,32 @@ def tools_for(store: Store, job: Job, runner) -> list:
     return tools
 
 
+INTERNET_WORDS = "your commands can reach the internet (never this computer), so install and build in your folder."
+OFFLINE_WORDS = ("your commands have no network, because this job may read the user's folders or apps: use "
+                 "web_search, web_fetch and clone_repo.")
+
+
+def network_words(job: Job) -> str:
+    """What the Worker's instruction says about its shell's network (odie.workers.shell.network_of)."""
+    from odie.workers import sandbox, shell
+    if shell.network_of(job) == sandbox.INTERNET:
+        return INTERNET_WORDS
+    return OFFLINE_WORDS
+
+
+# What the sandbox confines whatever the command is: an install or a build writes only in the job's folder (its HOME,
+# caches and temp are there) and its scripts run in the same sandbox, so it installs nothing on his Mac. A global
+# install (npm -g, brew) is refused by the kernel instead (pass 2 of simpler Workers, 19 Nov 2026).
+CONFINED = frozenset({"installs software (runs its install scripts)"})
+
+
 def shell_reasons(store: Store, job: Job, command: str, cwd: str | None) -> list[str]:
     """Why a Worker may not just run this command: the Worker's own rules first (Odie itself, GitHub:
     odie.workers.allow.worker_reasons), then why the Smart rules would put it on a card, read as in Smart mode
     whatever the user's mode, with the job's folder as safe as the workspace:
       `echo hi > notes.txt` in the folder -> [];  `rm ~/old.txt` -> ["deletes or stops something"];
-      `gh auth token` -> [GITHUB];  `odie chat hi` -> [ODIE_ITSELF]"""
+      `npm install`, `pip install -r requirements.txt`, `uv sync` -> [] (CONFINED: the sandbox holds it);
+      `npm publish` -> ["sends data out"];  `gh auth token` -> [GITHUB];  `odie chat hi` -> [ODIE_ITSELF]"""
     from odie.agent import shell_grant
     folder = str(job.folder)
     smart = shell_grant.reasons_to_ask(command, safe_dirs=(*shell_grant.safe_places(store), folder), cwd=cwd,
@@ -207,6 +230,7 @@ def shell_reasons(store: Store, job: Job, command: str, cwd: str | None) -> list
                                        own_port=shell_grant._own_port(), odie_dirs=shell_grant.odie_places())
     own = allow.worker_reasons(command, job.folder)
     smart = shell_grant_reasons_outside_own_folder(smart, command, job)
+    smart = [why for why in smart if why not in CONFINED]
     return [*own, *(why for why in smart if why not in own)]
 
 
@@ -513,7 +537,7 @@ async def _work(job: Job, store: Store, runner, model, got: Report) -> str:
     named = ""
     if job.read_dirs:
         named = " and, read-only, " + ", ".join(job.read_dirs)
-    instruction = INSTRUCTION.format(folder=job.folder, read_dirs=named)
+    instruction = INSTRUCTION.format(folder=job.folder, read_dirs=named, network=network_words(job))
 
     def as_written(_context) -> str:
         return instruction  # a function, so ADK passes the text on untouched (a brace in a path is not state)

@@ -35,7 +35,7 @@ def on_it(store, pid: str) -> list[dict]:
         if row["status"] not in jobs.GOING:
             continue
         may_read = [home_form(d) for d in jobs.loads(row.get("read_dirs_json"))]
-        next_words = uses_line(row).replace("Uses:", "uses")
+        next_words = "uses " + uses_words_of(row)
         if may_read:
             next_words += "; may read " + ", ".join(may_read)
         out.append({"id": row["id"], "title": row["title"], "state": STATE_OF[row["status"]], "next": next_words,
@@ -116,8 +116,10 @@ def card(row: dict) -> dict:
     main = {"label": "Retry", "action": "job_retry", "value": row["id"]}
     if allowable(row):
         main = {"label": "Allow it and run again", "action": "job_allow", "value": row["id"]}
+    why = why_of(row)
     if job_keep.offered(row):  # a new action: an app that doesn't know it says to update, never a dead button
         main = {"label": f"Keep it in {home_form(row['keep_to'])}", "action": "job_keep", "value": row["id"]}
+        why = partly_kept_words(jobs.kept_of(row)) or why
     brief = ""
     if row["report"]:
         brief = row["report"][:BRIEF_MOST]
@@ -125,7 +127,7 @@ def card(row: dict) -> dict:
     if row.get("taint"):
         badge = f"Brief: your own words (the chat read {row['taint']})"
     read_dirs = jobs.loads(row.get("read_dirs_json"))
-    return {"ref": f"job:{row['id']}", "title": row["title"], "why": why_of(row), "brief": brief, "icon": "terminal",
+    return {"ref": f"job:{row['id']}", "title": row["title"], "why": why, "brief": brief, "icon": "terminal",
             "badge": badge, "ask": f"What happened with job {row['id']} ({row['title']})?", "main": main,
             "other": {"label": "Done", "action": "job_clear", "value": row["id"]}, "pile": "alerts",
             "since": row["ended_at"] or "", "decide": False, "steps": steps_of(row),
@@ -133,12 +135,40 @@ def card(row: dict) -> dict:
             "uses": uses_line(row)}
 
 
-def uses_line(row: dict) -> str:
-    """What the card says the job may reach besides the folders it may read (its "May read" line): "Uses: the web";
-    "Uses: the web and your mail"; an older row started without the web: "Uses: nothing outside its folder"."""
+def partly_kept_words(kept: dict) -> str:
+    """The card's line after a Keep it that stopped part way, or "" for any other: {"partial": True, "path":
+    "<home>/code/demos/app", "stopped": "No space left on device"} -> "Copied only part of it to ~/code/demos/app before
+    it stopped: No space left on device. Keep it again makes a new copy."; {} or a whole keep -> ""."""
+    if not kept.get("partial"):
+        return ""
+    return (f"Copied only part of it to {home_form(kept.get('path') or '')} before it stopped: "
+            f"{kept.get('stopped') or 'an error'}. Keep it again makes a new copy.")
+
+
+def uses_words_of(row: dict) -> str:
+    """What a job's row says it uses, in words: "the web", "the web and your mail" (odie.workers.tools.uses_words)."""
     from odie.workers.tools import uses_words
+    return uses_words(row.get("uses") or "web")
+
+
+def uses_line(row: dict) -> str:
+    """What the card says the job may reach besides the folders it may read (its "May read" line), and whether its
+    commands reach the internet (odie.workers.shell.network_for):
+      the web only                -> "Uses: the web, and its commands can reach the internet"
+      the web and a named folder  -> "Uses: the web; its commands stay offline (it may read your folders)"
+      the web and his mail        -> "Uses: the web and your mail; its commands stay offline (it may read your apps)"
+      an older row's "folder" -> "Uses: the folders you named, no web" (as it was started)"""
+    from odie.workers import sandbox, shell
     uses = row.get("uses") or "web"
-    return f"Uses: {uses_words(uses)}"
+    read_dirs = jobs.loads(row.get("read_dirs_json"))
+    words = f"Uses: {uses_words_of(row)}"
+    if uses in ("folder", "none"):
+        return words
+    if shell.network_for(uses, read_dirs) == sandbox.INTERNET:
+        return f"{words}, and its commands can reach the internet"
+    if uses.startswith("app"):
+        return f"{words}; its commands stay offline (it may read your apps)"
+    return f"{words}; its commands stay offline (it may read your folders)"
 
 
 def home_form(path: str) -> str:
@@ -166,7 +196,7 @@ def done_today(store, pid: str, now: datetime) -> list[dict]:
         if row["started_by"] != "you":
             continue
         kept = jobs.kept_of(row)
-        if kept.get("at"):
+        if kept.get("at") and not kept.get("partial"):
             kept_at = datetime.fromisoformat(kept["at"].replace("Z", "+00:00"))
             if kept_at >= start:
                 at = kept_at.astimezone(now.tzinfo).strftime("%H:%M")
@@ -193,5 +223,6 @@ def kept_line(kept: dict) -> str:
     where.links_left_out = int(kept.get("links_left_out") or 0)
     where.others_left_out = int(kept.get("others_left_out") or 0)
     where.git_reset = bool(kept.get("git_reset"))
+    where.venvs_left_out = [str(v) for v in kept.get("venvs_left_out") or []]
     line = where.line(home_form)
     return line[0].lower() + line[1:]

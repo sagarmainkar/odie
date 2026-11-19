@@ -20,7 +20,7 @@ import os
 import re
 import shutil
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 KEEP_MOST_BYTES = 2 * 1024 ** 3
@@ -36,6 +36,16 @@ class KeepRefused(Exception):
     """Why a keep didn't happen, in words for the card."""
 
 
+class KeepStopped(KeepRefused):
+    """The copy started and stopped part way (a full disk, a file that went): what was copied stays where it is, in
+    path, never deleted from his folder; reason says why, in the system's words."""
+
+    def __init__(self, path: Path, reason: str):
+        self.path = path
+        self.reason = reason
+        super().__init__(f"the copy stopped part way ({reason}); the part already copied is in {path}")
+
+
 @dataclass
 class Kept:
     """Where a keep went and what it left out."""
@@ -43,10 +53,12 @@ class Kept:
     links_left_out: int = 0
     others_left_out: int = 0
     git_reset: bool = False
+    venvs_left_out: list[str] = field(default_factory=list)  # Python environments, by their path inside the copy
 
     def line(self, home_form) -> str:
         """The card's line: "Kept in ~/code/demos/app" and, when anything was left out, what: "Kept in
-        ~/code/demos/app; left out 3 links that point outside it; its git hooks and settings stayed behind"."""
+        ~/code/demos/app; left out 3 links that point outside it; its git hooks and settings stayed behind; left out
+        its Python environment .venv (make it again with python3 -m venv)"."""
         words = f"Kept in {home_form(str(self.path))}"
         if self.links_left_out == 1:
             words += "; left out 1 link that points outside it"
@@ -56,6 +68,8 @@ class Kept:
             words += f"; left out {self.others_left_out} special files"
         if self.git_reset:
             words += "; its git hooks and settings stayed behind"
+        for venv in self.venvs_left_out:
+            words += f"; left out its Python environment {venv} (make it again with python3 -m venv)"
         return words
 
 
@@ -184,6 +198,8 @@ def copy_tree(src_dir: Path, dst_dir: Path, root: Path, kept: Kept) -> None:
         elif entry.is_dir(follow_symlinks=False):
             if entry.name == ".git":
                 copy_git(src, dst, root, kept)
+            elif is_python_env(src):
+                kept.venvs_left_out.append(str(src.relative_to(root)))
             else:
                 os.mkdir(dst, 0o755)
                 copy_tree(src, dst, root, kept)
@@ -194,6 +210,15 @@ def copy_tree(src_dir: Path, dst_dir: Path, root: Path, kept: Kept) -> None:
             copy_file(src, dst, create=True)
         else:
             kept.others_left_out += 1
+
+
+def is_python_env(folder: Path) -> bool:
+    """Whether a folder is a Python environment (a venv: it holds pyvenv.cfg). Its interpreter links and its scripts'
+    first lines name the job's folder by absolute path, so a copy would run nothing: it is left out, and the line says
+    to make it again. node_modules is not one: its links are relative and come along.
+      app/.venv with pyvenv.cfg -> True;  app/node_modules -> False;  app/src -> False"""
+    config = folder / "pyvenv.cfg"
+    return config.is_file() and not config.is_symlink()
 
 
 def copy_git(src: Path, dst: Path, root: Path, kept: Kept) -> None:
@@ -263,24 +288,29 @@ def copy_into(source: Path, dest_dir: Path) -> Kept:
     is_dir = source.is_dir()
     target = claim(dest_dir, source.name, is_dir)
     kept = Kept(target)
-    if is_dir:
-        copy_tree(source, target, source, kept)
-    else:
-        copy_file(source, target, create=False)
+    try:
+        if is_dir:
+            copy_tree(source, target, source, kept)
+        else:
+            copy_file(source, target, create=False)
+    except OSError as e:
+        raise KeepStopped(target, e.strerror or str(e)) from e  # what was copied stays: never a delete in his folder
     return kept
 
 
 def offered(row: dict) -> bool:
     """Whether a job's card offers Keep it: it finished with its result ready, its Worker named something to keep, he
-    named a folder for it, and it hasn't been kept yet.
+    named a folder for it, and it hasn't been kept yet (a copy that stopped part way counts as not kept).
       done, ready, keep "app", keep_to "~/code/demos", not kept -> True
+      the same after a copy that stopped part way -> True (Keep it again: a new copy under a new name)
       no keep_to (he named no folder) -> False;  kept already -> False;  blocked or failed -> False"""
     from odie.workers import store as jobs
     if row["status"] != "done" or row["outcome"] != "ready":
         return False
     if not row.get("keep") or not row.get("keep_to"):
         return False
-    return not jobs.kept_of(row)
+    kept = jobs.kept_of(row)
+    return not kept or bool(kept.get("partial"))
 
 
 def destination_now(keep_to: str) -> Path:

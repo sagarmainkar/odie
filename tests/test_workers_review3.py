@@ -72,8 +72,11 @@ def test_the_guard_never_mixes_the_web_with_his_apps_or_folders(world, tmp_path)
 
 def test_the_card_says_what_a_job_uses(world, tmp_path):
     store, _, _ = world
-    for uses, words in (("web", "Uses: the web"), ("apps:mail", "Uses: the web and your mail"),
-                        ("apps:calendar", "Uses: the web and your calendar"), ("apps", "Uses: the web and your apps")):
+    offline = "; its commands stay offline (it may read your apps)"
+    for uses, words in (("web", "Uses: the web, and its commands can reach the internet"),
+                        ("apps:mail", "Uses: the web and your mail" + offline),
+                        ("apps:calendar", "Uses: the web and your calendar" + offline),
+                        ("apps", "Uses: the web and your apps" + offline)):
         job = a_job(store, tmp_path, title=f"T {uses}")
         store.execute("update jobs set uses=? where id=?", (uses, job.id))
         jobs.started(store, job)

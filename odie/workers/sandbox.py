@@ -16,8 +16,9 @@ else:
     tmux, screen, sudo); signals only to its own; system services (mach-lookup) only MACH_ALLOWED (name lookup,
     network settings, certificate trust, user names, logging): LaunchServices, AppleEvents, the pasteboard, the
     Keychain and every other app are unreachable, so nothing it starts can run outside the sandbox;
-  - network: none for a Worker; for a pull request's test, the internet (packages install) but never this computer:
-    no localhost (Odie, Ollama, other agents), no unix sockets (tmux, the SSH agent) but the DNS resolver's.
+  - network: none for a Worker that may read his folders or apps; for a Worker that can read nothing of his
+    (odie.workers.shell.network_for) and for a pull request's test, the internet (packages install) but never this
+    computer: no localhost (Odie, Ollama, other agents), no unix sockets (tmux, the SSH agent) but the DNS resolver's.
 What it doesn't stop: reading file metadata, and, for a test, talking to the internet (it can read nothing secret)."""
 from __future__ import annotations
 
@@ -183,7 +184,10 @@ def env(folder: Path) -> dict[str, str]:
     base = Path(folder)
     places = {"HOME": base / ".home", "TMPDIR": base / ".tmp", "XDG_CACHE_HOME": base / ".cache",
               "UV_CACHE_DIR": base / ".cache" / "uv", "PIP_CACHE_DIR": base / ".cache" / "pip",
-              "npm_config_cache": base / ".cache" / "npm", "UV_PYTHON_INSTALL_DIR": base / ".cache" / "uv-python"}
+              "npm_config_cache": base / ".cache" / "npm", "UV_PYTHON_INSTALL_DIR": base / ".cache" / "uv-python",
+              "CARGO_HOME": base / ".cache" / "cargo", "GOPATH": base / ".cache" / "go",
+              "GOCACHE": base / ".cache" / "go-build", "GOMODCACHE": base / ".cache" / "go" / "mod",
+              "BUNDLE_USER_HOME": base / ".cache" / "bundle"}  # named, so no tool looks for its own under his home
     for name, place in places.items():
         place.mkdir(parents=True, exist_ok=True)
         out[name] = str(place)

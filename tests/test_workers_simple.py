@@ -175,11 +175,12 @@ def test_the_brief_from_a_tainted_chat_is_only_his_words():
 
 def test_the_brief_from_a_clean_chat_is_the_models_with_his_request_first():
     from odie.workers.tools import brief_for
-    got = brief_for("Clone it into your folder, run its tests, report.", ["older ask", "try example/app please"], "")
+    got = brief_for("Clone it into your folder, run its tests, report.", ["older ask", "try example/app please"], "",
+                    "try example/app please")
     assert got.startswith("The user asked:\ntry example/app please")
     assert "older ask" not in got
     assert got.endswith("Clone it into your folder, run its tests, report.")
-    assert brief_for("Just the brief.", [], "") == "Just the brief."  # no typed words found: as before
+    assert brief_for("Just the brief.", [], "") == "Just the brief."  # nothing asked found: as before
 
 
 async def test_start_job_in_a_tainted_chat_hands_over_his_words_not_the_models(world):
@@ -563,5 +564,5 @@ def test_the_cards_say_what_a_job_reaches_now(world, tmp_path):
     assert line["next"] == "uses the web; may read /x/work/app"
     jobs.ended(store, job.id, "failed", error="x")
     card = job_cards.card(jobs.get(store, job.id))
-    assert card["uses"] == "Uses: the web"
+    assert card["uses"] == "Uses: the web; its commands stay offline (it may read your folders)"
     assert card["badge"] == "Brief: your own words (the chat read web pages)"
