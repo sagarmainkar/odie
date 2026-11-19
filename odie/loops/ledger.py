@@ -436,8 +436,11 @@ def split(store, loop_id: int, event_ids: list[int], now: datetime, by: str = CL
         add_event(store, loop_id, now, CLOSED_BY_USER, "split", f"Split off into #{new_id}: {title}")
         add_event(store, new_id, now, CLOSED_BY_USER, "split", f"Split off from #{loop_id} by you")
     else:
-        add_event(store, loop_id, now, by, "split", f"Evening review: split off into #{new_id}: {title}. {why}".strip())
-        add_event(store, new_id, now, by, "split", f"Evening review: split off from #{loop_id}. {why}".strip())
+        reason = ""
+        if why:
+            reason = f" ({why})"
+        add_event(store, loop_id, now, by, "split", f"Evening review: split off into #{new_id}: {title}{reason}")
+        add_event(store, new_id, now, by, "split", f"Evening review: split off from #{loop_id}{reason}")
     return new_id
 
 
@@ -484,7 +487,9 @@ def merge(store, keep_id: int, gone_id: int, now: datetime, why: str) -> list[in
         update(store, keep["id"], now, due_at=gone["due_at"])
     if gone["state"] == "ready" and keep["state"] != "ready":
         update(store, keep["id"], now, state="ready", owner="you", shown_at=_at(now))  # his card stays his card
-    note = f"Evening review: merged #{gone['id']} ({gone['title'][:80]}) into this. {why}".strip()
+    note = f"Evening review: merged #{gone['id']} ({gone['title'][:80]}) into this"
+    if why:
+        note += f": {why}"
     add_event(store, keep["id"], now, "odie", "review", note)
     merge_card(store, gone["id"], now, {"merged_into": keep["id"], "moved": moved, "refs_moved": new_refs,
                                         "refs_before": gone["refs"],

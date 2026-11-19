@@ -152,8 +152,8 @@ def test_two_loops_that_are_one_thing_are_merged_visibly(store):
 
 
 def test_two_bills_are_never_merged(store):
-    a = loop(store, "Electricity bill October", kind="bill", card={"amount": "2100"})
-    b = loop(store, "Electricity bill November", kind="bill", card={"amount": "2100"})
+    a = loop(store, "Electricity bill October", kind="bill", card={"amount": {"value": 2100, "currency": "INR"}})
+    b = loop(store, "Electricity bill November", kind="bill", card={"amount": {"value": 2100, "currency": "INR"}})
     done = review.apply(store, "", NOW, answer(merge=[{"loops": [a, b], "why": "same biller"}]))
     assert done.changes == [] and ledger.get(store, b)["state"] == "ready"
     assert "two amounts" in done.refused[0]

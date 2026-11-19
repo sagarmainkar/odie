@@ -93,14 +93,16 @@ def worth_a_call(store, pid: str, now: datetime) -> bool:
 
 def loop_line(loop: dict, evidence: list[dict], now: datetime) -> str:
     """One open loop for the review, with what the rails care about: "#3 Send the deck · reply owed · owner you ·
-    ready · priority normal · due 2026-11-21 · amount 2100 · shown 2 days ago · playbook github-pr", then its last
+    ready · priority normal · due 2026-11-21 · amount ₹2,100 · shown 2 days ago · playbook github-pr", then its last
     EVIDENCE_SHOWN lines, each with its id: "  e12 18 Nov 10:02 mail: Asha asks for the deck"."""
     bits = [f"#{loop['id']} {loop['title']}", loop["kind"] or "?", f"owner {loop['owner']}", loop["state"],
             f"priority {loop['priority']}"]
     if loop.get("due_at"):
         bits.append(f"due {loop['due_at'][:16]}")
-    if loop["card"].get("amount"):
-        bits.append(f"amount {loop['card']['amount']}")
+    amount = loop["card"].get("amount")
+    if isinstance(amount, dict):
+        from odie.watch import cards as card_text
+        bits.append(f"amount {card_text.money(amount)}")
     if loop["card"].get("sender"):
         bits.append(f"from {loop['card']['sender']}")
     if loop.get("shown_at"):
@@ -327,7 +329,10 @@ def do_priority(store, pid: str, now: datetime, item: dict, done: Applied) -> No
         return
     ledger.update(store, loop["id"], now, priority=to)
     why = why_of(item)
-    note(store, loop["id"], now, f"priority {to}. {why}".strip())
+    words = f"priority {to}"
+    if why:
+        words += f": {why}"
+    note(store, loop["id"], now, words)
     done.touched.add(loop["id"])
     done.changes.append(record(store, pid, now, "priority", f"“{loop['title'][:60]}”: priority {to}",
                                {"loop": loop["id"], "priority": loop["priority"]}))
