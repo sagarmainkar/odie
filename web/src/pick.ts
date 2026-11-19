@@ -42,11 +42,13 @@ export function usePick(): string {
 }
 
 /** The server paths that mean something else for each personality: the chat, its history, the threads, the cards, the
- *  live stream, and its Pulse (its Needs you, its loops, its jobs, its watch's card and what it closed, its Now list and
- *  its "Track this?" offers). Everything else (tasks,
+ *  live stream, and its Pulse (its Needs you, its loops, its jobs, its watch's card and what it closed, its Now list,
+ *  its "Track this?" offers, its Quiet rules and learned kinds, its digest and its evening review's Undo). Everything
+ *  else (tasks,
  *  the watch's count, Odie's own name and picture) is the same whoever is picked. */
 const FOLLOWS = ["/api/chat", "/api/history", "/api/threads", "/api/approvals", "/api/events", "/api/needs_you", "/api/loops",
-  "/api/watch", "/api/tasks/closed_by_watch", "/api/jobs", "/api/recipes", "/api/now", "/api/offers"];
+  "/api/watch", "/api/tasks/closed_by_watch", "/api/jobs", "/api/recipes", "/api/now", "/api/offers", "/api/quiet",
+  "/api/learned", "/api/digest", "/api/review"];
 
 /** Whether a call is one of those: "/api/threads?q=x" -> true; "/api/approvals/7/decide" -> true;
  *  "/api/tasks" -> false; "/api/chats" -> false (only the path itself, or what is under it). */

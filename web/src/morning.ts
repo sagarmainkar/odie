@@ -23,6 +23,7 @@ export type MorningCard = {
   day: string;
   made_at: string;
   fallback: boolean;  // a plain card built by code: no say, no recent, no chips
+  ledger?: string[];  // 0-2 lines written by code from the ledger, read when the card is asked for: "Waiting on you: …", "Due today: …"
 };
 
 export type MorningReply = { state: MorningState; day: string; card: MorningCard | null };

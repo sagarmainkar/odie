@@ -17,6 +17,10 @@ describe("withPickOf", () => {
     expect(withPickOf("/api/now/2/accept", "abc")).toBe("/api/now/2/accept?personality=abc");
     expect(withPickOf("/api/now/draft", "abc")).toBe("/api/now/draft?personality=abc");
     expect(withPickOf("/api/offers/3/track", "abc")).toBe("/api/offers/3/track?personality=abc");
+    expect(withPickOf("/api/quiet/2", "abc")).toBe("/api/quiet/2?personality=abc");
+    expect(withPickOf("/api/learned/1/undo", "abc")).toBe("/api/learned/1/undo?personality=abc");
+    expect(withPickOf("/api/digest/seen", "abc")).toBe("/api/digest/seen?personality=abc");
+    expect(withPickOf("/api/review/4/undo", "abc")).toBe("/api/review/4/undo?personality=abc");
     expect(followsPick("/api/nowhere")).toBe(false);
   });
 

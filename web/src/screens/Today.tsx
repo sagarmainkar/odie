@@ -3,6 +3,9 @@ import { usePickedPersona } from "../persona";
 import { lightOf } from "../light";
 import { OnIt } from "../components/OnIt";
 import { NowList, type NowEdit } from "../components/NowList";
+import { DigestCard } from "../components/DigestCard";
+import { QuietList } from "../components/QuietList";
+import { loopOf } from "../digest";
 import { asksToTurnOn, otherLine, pulseKicker, stillPicked, type JobDone, type LoopDone, type OnIt as OnItItem, type Other } from "../pulse";
 import type { Proactive } from "../proactive";
 import { AnimatePresence, motion } from "framer-motion";
@@ -103,6 +106,7 @@ export function Today() {
   const [notes, setNotes] = useState<WatchNote[]>([]);  // what the watch told the user in the last day
   const [nowEdit, setNowEdit] = useState<NowEdit | null>(null);  // the Now list opened with Odie's proposed lines
   const [nowRead, setNowRead] = useState(0);  // bumped when the Now list changed elsewhere (Accept on its card)
+  const [quietRead, setQuietRead] = useState(0);  // bumped when a Quiet rule was added or a kind undone on a card
   const loadNeeds = useCallback((): Promise<void> => {
     const askedFor = getPick();
     void postJSON("/api/watch/seen", {}).catch(() => {});
@@ -157,6 +161,10 @@ export function Today() {
   // Merge, Use this, Allow, Retry and Keep it leave it in place, busy (NeedsYou), until the server answers and the
   // list is re-read, so nothing slides up under the finger.
   async function act(need: Need, a: NeedAction): Promise<void> {
+    const loopId = loopOf(need.ref);
+    if (loopId !== null && a === need.main && (a.action === "chat" || a.action === "open")) {
+      void postJSON(`/api/loops/${loopId}/tap`, { tap: "move" }).catch(() => {});  // noted for learning from taps
+    }
     if (a.action === "chat") { location.hash = chatRunHash(String(a.value)); return; }
     if (a.action === "open") {
       if (opensSafely(String(a.value))) window.open(String(a.value), "_blank", "noopener");
@@ -180,6 +188,18 @@ export function Today() {
       if (a.action === "recipe_no") await postJSON("/api/recipes/no", { repo: a.value });
       if (a.action === "track") await postJSON(`/api/offers/${a.value}/track`, {});
       if (a.action === "now_accept") { await postJSON(`/api/now/${a.value}/accept`, {}); setNowRead((n) => n + 1); }
+      if (a.action === "quiet_accept") { await postJSON(`/api/quiet/${a.value}/accept`, {}); setQuietRead((n) => n + 1); }
+      if (a.action === "learn_undo") { await postJSON(`/api/learned/${a.value}/undo`, {}); setQuietRead((n) => n + 1); }
+    } catch (e) { setFailed(e instanceof Error ? e.message : String(e)); }
+    await loadTasks();
+  }
+  // A loop card's small menu: Less like this (his Quiet rule, then listed under Quiet) and Forget this (asked first by
+  // NeedsYou). The list is read again after.
+  async function menu(_need: Need, a: NeedAction): Promise<void> {
+    setFailed("");
+    try {
+      if (a.action === "less_like_this") { await postJSON(`/api/loops/${a.value}/less`, {}); setQuietRead((n) => n + 1); }
+      if (a.action === "forget") await postJSON(`/api/loops/${a.value}/forget`, {});
     } catch (e) { setFailed(e instanceof Error ? e.message : String(e)); }
     await loadTasks();
   }
@@ -202,9 +222,10 @@ export function Today() {
 
   const needsYou = (
     <>
+    <div className="mb-2.5 empty:mb-0"><DigestCard key={pick} onChanged={() => void loadTasks()} /></div>
     {failed && <div role="alert" className="glass rounded-tile px-3.5 py-3 mb-2.5 text-ui text-warn-ink bg-warn-tint">{failed}</div>}
     <NeedsYou items={needs} footer={checked} closed={watchClosed} notes={notes} loopsDone={loopsDone} jobsDone={jobsDone}
-      onAct={(n, a) => act(n, a)} onReopen={(id) => void reopen(id)} onReopenLoop={(id) => void reopenLoop(id)} onSplit={splitLoop}
+      onAct={(n, a) => act(n, a)} onReopen={(id) => void reopen(id)} onReopenLoop={(id) => void reopenLoop(id)} onSplit={splitLoop} onMenu={menu}
       empty={pick && !proactive?.on ? "Nothing waiting. Its own reminders and cards show here." : undefined} />
     </>
   );
@@ -240,6 +261,7 @@ export function Today() {
           <div className="contents lg:flex lg:flex-col lg:gap-[18px]">
             <div className="rise" style={delay(0.1)}><OnIt items={onIt} who={picked.name} onStop={(id) => stopJob(id)} /></div>
             <div className="rise" style={delay(0.11)}>{nowList}</div>
+            <div className="rise empty:hidden" style={delay(0.115)}><QuietList key={pick} reload={quietRead} /></div>
             {itsEvents.length > 0 && (
               <section className="glass rounded-card px-4 py-3 rise" style={delay(0.12)} aria-label="Coming up">
                 <div className="text-ui font-bold text-ink-2 mb-1">Coming up</div>
@@ -299,6 +321,8 @@ export function Today() {
           <div className="rise" style={delay(0.09)}><OnIt items={onIt} who={picked.name} onStop={(id) => stopJob(id)} /></div>
 
           <div className="rise" style={delay(0.095)}>{nowList}</div>
+
+          <div className="rise empty:hidden" style={delay(0.097)}><QuietList key={pick} reload={quietRead} /></div>
 
           <div className="rise" style={delay(0.1)}><UpNext items={up?.items ?? null} loading={upLoading} /></div>
 

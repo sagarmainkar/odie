@@ -81,6 +81,37 @@ describe("a loop's card: Why? and Split", () => {
   });
 });
 
+describe("a loop's card: Less like this and Forget this (phase 5)", () => {
+  const menu = { ...invoices, more: [{ label: "Split", action: "split" as const, value: 7 },
+    { label: "Less like this", action: "less_like_this" as const, value: 7 }, { label: "Forget this", action: "forget" as const, value: 7 }] };
+
+  it("Less like this goes at once, through onMenu", async () => {
+    const onMenu = vi.fn(async () => {});
+    await act(async () => root!.render(<NeedsYou items={[menu]} footer="" closed={[]} onAct={() => {}} onReopen={() => {}} onMenu={onMenu} />));
+    await settle();
+    await act(async () => byText("More").click());
+    await act(async () => { byText("Less like this").click(); });
+    expect(onMenu).toHaveBeenCalledTimes(1);
+    expect((onMenu.mock.calls[0] as unknown[])[1]).toMatchObject({ action: "less_like_this", value: 7 });
+  });
+
+  it("Forget this asks first, and Cancel forgets nothing", async () => {
+    const onMenu = vi.fn(async () => {});
+    await act(async () => root!.render(<NeedsYou items={[menu]} footer="" closed={[]} onAct={() => {}} onReopen={() => {}} onMenu={onMenu} />));
+    await settle();
+    await act(async () => byText("More").click());
+    await act(async () => byText("Forget this…").click());
+    expect(host.textContent).toContain("can't be brought back");
+    await act(async () => byText("Cancel").click());
+    expect(onMenu).not.toHaveBeenCalled();
+    await act(async () => byText("More").click());
+    await act(async () => byText("Forget this…").click());
+    await act(async () => { byText("Forget it").click(); });
+    expect(onMenu).toHaveBeenCalledTimes(1);
+    expect((onMenu.mock.calls[0] as unknown[])[1]).toMatchObject({ action: "forget", value: 7 });
+  });
+});
+
 describe("splitReady", () => {
   it("needs at least one line picked and never all of them", () => {
     expect(splitReady(1, 3)).toBe(true);
