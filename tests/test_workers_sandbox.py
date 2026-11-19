@@ -201,3 +201,59 @@ async def test_a_chain_that_keeps_re_forking_is_frozen_and_killed(job, new_sessi
     await asyncio.sleep(1.5)
     after = (job / "alive.txt").read_text() if (job / "alive.txt").exists() else ""
     assert before == after  # nothing of it is running any more
+
+
+# ── a Mac with Xcode: git, make, cc and python3 in /usr/bin load the real tool from Xcode's Developer folder ──
+
+def _select(tmp_path, monkeypatch, target):
+    link = tmp_path / "xcode_select_link"
+    link.symlink_to(target)
+    monkeypatch.setattr(sandbox, "XCODE_LINK", str(link))
+    monkeypatch.delenv("DEVELOPER_DIR", raising=False)
+
+
+def test_xcode_is_readable_when_it_is_the_selected_one(tmp_path, monkeypatch):
+    developer = tmp_path / "Applications" / "Xcode_26.6.app" / "Contents" / "Developer"
+    developer.mkdir(parents=True)
+    _select(tmp_path, monkeypatch, developer)
+    app = developer.resolve().parents[1]
+    assert sandbox.developer_reads() == [str(app)]  # the whole app: its tools load Contents/SharedFrameworks too
+    assert f'(subpath "{app}")' in sandbox.profile(tmp_path / "job", home=tmp_path / "home")
+
+
+def test_with_xcode_selected_its_real_tools_come_before_the_launchers(tmp_path, monkeypatch):
+    developer = tmp_path / "Applications" / "Xcode.app" / "Contents" / "Developer"
+    (developer / "usr" / "bin").mkdir(parents=True)
+    (developer / "Toolchains" / "XcodeDefault.xctoolchain" / "usr" / "bin").mkdir(parents=True)
+    _select(tmp_path, monkeypatch, developer)
+    real = developer.resolve()
+    got = sandbox.developer_path("/opt/homebrew/bin:/usr/bin:/bin")
+    assert got == (f"/opt/homebrew/bin:{real}/usr/bin:{real}/Toolchains/XcodeDefault.xctoolchain/usr/bin"
+                   ":/usr/bin:/bin")
+    assert sandbox.developer_env() == {"DEVELOPER_DIR": str(real)}
+
+
+def test_without_xcode_the_path_and_the_environment_stay_as_they_were(tmp_path, monkeypatch):
+    _select(tmp_path, monkeypatch, "/Library/Developer/CommandLineTools")
+    assert sandbox.developer_path("/opt/homebrew/bin:/usr/bin:/bin") == "/opt/homebrew/bin:/usr/bin:/bin"
+    assert sandbox.developer_env() == {}
+
+
+def test_the_command_line_tools_need_nothing_more(tmp_path, monkeypatch):
+    _select(tmp_path, monkeypatch, "/Library/Developer/CommandLineTools")
+    assert sandbox.developer_reads() == []
+
+
+def test_a_selected_folder_that_is_no_developer_folder_opens_nothing(tmp_path, monkeypatch):
+    odd = tmp_path / "Documents"
+    odd.mkdir()
+    _select(tmp_path, monkeypatch, odd)
+    assert sandbox.developer_reads() == []
+    monkeypatch.setenv("DEVELOPER_DIR", str(odd))
+    assert sandbox.developer_reads() == []
+
+
+def test_no_selection_at_all_opens_nothing(tmp_path, monkeypatch):
+    monkeypatch.setattr(sandbox, "XCODE_LINK", str(tmp_path / "missing"))
+    monkeypatch.delenv("DEVELOPER_DIR", raising=False)
+    assert sandbox.developer_reads() == []
