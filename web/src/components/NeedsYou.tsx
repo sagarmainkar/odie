@@ -1,14 +1,18 @@
 import { AnimatePresence, motion } from "framer-motion";
-import { useState } from "react";
-import { badgeTone, buttonsOf, knowsAction, tileColour, type Need, type NeedAction, type WatchNote } from "../needs";
+import { useRef, useState } from "react";
+import { badgeTone, busyWord, buttonsOf, knowsAction, tileColour, type Need, type NeedAction, type WatchNote } from "../needs";
 import { mediaUrl } from "../media";
 import { Orb } from "./Orb";
 import { Icon, Tile } from "./Tile";
 import { WatchClosed, type WatchClosedItem } from "./WatchClosed";
 import type { JobDone, LoopDone } from "../pulse";
 import { fresh } from "../freshness";
+import { pulseTaps, useListChanged } from "../tapGuard";
 
-const ask = (q: string) => { location.hash = `#chat?q=${encodeURIComponent(q)}`; };
+const ask = (q: string) => {
+  if (!pulseTaps.ok()) return;  // the card under the finger may have just moved there
+  location.hash = `#chat?q=${encodeURIComponent(q)}`;
+};
 
 /** A Pulse's "Needs you": one card per thing to act on, from the watch's last check, Odie's loops and jobs, and the
  * user's own reminders. Each card has its move, Done and (mostly) Later. A tested pull request's card also has "Why?"
@@ -17,20 +21,40 @@ const ask = (q: string) => { location.hash = `#chat?q=${encodeURIComponent(q)}`;
  * Reopen), and jobs that finished. open: start unfolded (tests). */
 export function NeedsYou({ items, footer, closed, notes = [], loopsDone = [], jobsDone = [], onAct, onReopen, onReopenLoop, open = false, empty }: {
   items: Need[] | null; footer: string; closed: WatchClosedItem[]; notes?: WatchNote[]; loopsDone?: LoopDone[]; jobsDone?: JobDone[];
-  onAct: (need: Need, act: NeedAction) => void; onReopen: (id: number) => void; onReopenLoop?: (id: number) => void; open?: boolean;
+  onAct: (need: Need, act: NeedAction) => Promise<void> | void; onReopen: (id: number) => void; onReopenLoop?: (id: number) => void; open?: boolean;
   empty?: string;
 }) {
   const [showClosed, setShowClosed] = useState(open);
   const [unfolded, setUnfolded] = useState<Record<string, "why" | "output" | undefined>>({});
-  const [wholeStep, setWholeStep] = useState<Record<string, boolean>>({});
-  const [needsNewer, setNeedsNewer] = useState<Record<string, boolean>>({});  // ref -> a tapped button this app doesn't know  // "<ref>:<i>" -> the step's command shown whole
+  const [wholeStep, setWholeStep] = useState<Record<string, boolean>>({});  // "<ref>:<i>" -> the step's command shown whole
+  const [needsNewer, setNeedsNewer] = useState<Record<string, boolean>>({});  // ref -> a tapped button this app doesn't know
+  const [busy, setBusy] = useState<Record<string, string>>({});  // ref -> the tapped button's action while its call runs
+  const running = useRef(new Set<string>());  // the same, at once: a double tap's second click comes before a redraw
+  useListChanged((items ?? []).map((n) => n.ref).join(" "));
+  useListChanged(`${closed.map((c) => c.id).join(" ")} | ${loopsDone.map((l) => l.id).join(" ")}`);  // Reopen rows move up too
   const toggle = (ref: string, what: "why" | "output") => setUnfolded((u) => ({ ...u, [ref]: u[ref] === what ? undefined : what }));
-  // A tap: "Show failures" unfolds the output here; an action this app doesn't know says the card needs the new
-  // version; anything else goes to the screen (Today's act).
-  const tap = (n: Need, a: NeedAction) => {
+  // A tap, on the card `n` this button was drawn with (by its ref, never its place). Ignored just after the cards
+  // moved, or while this card's call runs. "Show failures" unfolds the output here; an action this app doesn't know
+  // says the card needs the new version; Merge, Use this, Allow and Retry keep the card in place and busy until the
+  // server answers and the list is re-read; the rest go to the screen at once (Today's act).
+  const tap = async (n: Need, a: NeedAction) => {
+    if (!pulseTaps.ok()) return;
+    if (running.current.has(n.ref)) return;
     if (a.action === "show_output") { toggle(n.ref, "output"); return; }
     if (!knowsAction(a.action)) { setNeedsNewer((m) => ({ ...m, [n.ref]: true })); return; }
-    onAct(n, a);
+    if (!busyWord(a.action)) { void onAct(n, a); return; }
+    running.current.add(n.ref);
+    setBusy((m) => ({ ...m, [n.ref]: a.action }));
+    try {
+      await onAct(n, a);
+    } finally {
+      running.current.delete(n.ref);
+      setBusy((m) => {
+        const rest = { ...m };
+        delete rest[n.ref];
+        return rest;
+      });
+    }
   };
   const doneCount = closed.length + notes.length + loopsDone.length + jobsDone.length;
   return (
@@ -49,7 +73,7 @@ export function NeedsYou({ items, footer, closed, notes = [], loopsDone = [], jo
       <AnimatePresence initial={false}>
         {(items ?? []).map((n) => (
           <motion.div key={n.ref} layout initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, scale: 0.97 }}
-            transition={{ duration: 0.2 }} className="glass glass-solid rounded-card px-4 py-3.5 flex flex-col gap-3">
+            transition={{ duration: 0.2 }} aria-busy={!!busy[n.ref]} className="glass glass-solid rounded-card px-4 py-3.5 flex flex-col gap-3">
             <button type="button" onClick={() => ask(n.ask)} className="flex items-start gap-3 text-left">
               <Tile icon={n.icon} color={tileColour(n.icon)} />
               <span className="flex-1 min-w-0">
@@ -91,18 +115,22 @@ export function NeedsYou({ items, footer, closed, notes = [], loopsDone = [], jo
             {unfolded[n.ref] === "output" && n.output && (
               <pre className="min-[430px]:ml-12 max-h-[240px] overflow-auto rounded-tile bg-well px-3 py-2 text-caption leading-4 font-mono whitespace-pre-wrap break-words" aria-label="Failures">{n.output}</pre>
             )}
-            {/* The move first and solid, then Done and Later, always on one row: a long move ends in "…" (its whole
-                label is its title), Done and Later keep their size. Under the tile only on a wide phone or larger (430px up). */}
             {needsNewer[n.ref] && (
               <div role="status" className="min-[430px]:ml-12 text-ui text-muted">
                 This needs the new version · <button type="button" onClick={() => fresh.tap()} className="font-semibold text-ink underline underline-offset-2">Reload</button>
               </div>
             )}
+            {/* The move first and solid, then Done and Later, always on one row: a long move ends in "…" (its whole
+                label is its title), Done and Later keep their size. Under the tile only on a wide phone or larger (430px up). */}
             <div className="flex gap-2 min-[430px]:pl-12" data-buttons="one-row">
-              {buttonsOf(n).map((a, i) => (
-                <button key={a.action + i} type="button" onClick={() => tap(n, a)} title={a.label}
-                  className={i === 0 ? "pill pill-solid h-9 px-4 text-ui shadow-none min-w-0 shrink max-w-[60%]" : "pill h-9 px-3 text-ui shrink-0"}><span className="truncate">{a.label}</span></button>
-              ))}
+              {buttonsOf(n).map((a, i) => {
+                const working = busy[n.ref] === a.action;  // this button's call is running: it says so
+                const label = working ? busyWord(a.action) : a.label;
+                return (
+                  <button key={a.action + i} type="button" onClick={() => void tap(n, a)} title={a.label} disabled={!!busy[n.ref]}
+                    className={`${i === 0 ? "pill pill-solid h-9 px-4 text-ui shadow-none min-w-0 shrink max-w-[60%]" : "pill h-9 px-3 text-ui shrink-0"} disabled:opacity-60`}><span className="truncate">{label}</span></button>
+                );
+              })}
             </div>
           </motion.div>
         ))}
@@ -127,8 +155,8 @@ export function NeedsYou({ items, footer, closed, notes = [], loopsDone = [], jo
               </div>
             </div>
           ))}
-          {showClosed && <WatchClosed items={closed} onReopen={onReopen} />}
-          {showClosed && <WatchClosed items={loopsDone} onReopen={(id) => onReopenLoop?.(id)} />}
+          {showClosed && <WatchClosed items={closed} onReopen={(id) => { if (pulseTaps.ok()) onReopen(id); }} />}
+          {showClosed && <WatchClosed items={loopsDone} onReopen={(id) => { if (pulseTaps.ok()) onReopenLoop?.(id); }} />}
           {showClosed && <WatchClosed items={jobsDone} />}
         </div>
       )}

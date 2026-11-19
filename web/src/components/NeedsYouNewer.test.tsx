@@ -7,11 +7,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Need, NeedAction } from "../needs";
 import { knowsAction } from "../needs";
 import { NeedsYou } from "./NeedsYou";
+import { SETTLE_MS } from "../tapGuard";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 let unmount: (() => void) | null = null;
-afterEach(() => { unmount?.(); unmount = null; document.body.innerHTML = ""; });
+afterEach(() => { unmount?.(); unmount = null; document.body.innerHTML = ""; vi.useRealTimers(); });
 
 const newer: Need = {
   ref: "job:9", title: "Tidy the photos folder", why: "Odie's job", icon: "rupee", badge: "Needs you", ask: "",
@@ -42,8 +43,10 @@ describe("a button from a newer server", () => {
   });
 
   it("an unknown action shows the reload hint on its card and calls nothing", async () => {
+    vi.useFakeTimers();
     const onAct = vi.fn();
     const host = await draw([newer], onAct);
+    await act(async () => { vi.advanceTimersByTime(SETTLE_MS + 50); });  // the cards have held still
     expect(host.textContent).not.toContain("This needs the new version");
     await act(async () => button(host, "Pause it").click());
     expect(onAct).not.toHaveBeenCalled();

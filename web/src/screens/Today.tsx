@@ -7,7 +7,7 @@ import type { Proactive } from "../proactive";
 import { AnimatePresence, motion } from "framer-motion";
 import { NeedsYou } from "../components/NeedsYou";
 import { footer, type WatchCardData } from "../watch";
-import { chatRunHash, opensSafely, type Need, type NeedAction, type WatchNote } from "../needs";
+import { busyWord, chatRunHash, opensSafely, type Need, type NeedAction, type WatchNote } from "../needs";
 import { useCallback, useEffect, useState } from "react";
 import { useLive } from "../live";
 import { getJSON, postJSON, todayISO } from "../api";
@@ -100,9 +100,10 @@ export function Today() {
   const [needs, setNeeds] = useState<Need[] | null>(null);
   const [checked, setChecked] = useState("");  // under "Needs you": when the watch last checked, or what isn't working
   const [notes, setNotes] = useState<WatchNote[]>([]);  // what the watch told the user in the last day
-  const loadNeeds = useCallback(() => {
+  const loadNeeds = useCallback((): Promise<void> => {
     const askedFor = getPick();
-    getJSON<PulseGot>("/api/needs_you").then((g) => {
+    void postJSON("/api/watch/seen", {}).catch(() => {});
+    return getJSON<PulseGot>("/api/needs_you").then((g) => {
       if (!stillPicked(askedFor, getPick())) return;  // the pick changed meanwhile: that one's cards never show here
       setNeeds(g.items);
       setNotes(g.notes ?? []);
@@ -115,7 +116,6 @@ export function Today() {
       setItsEvents((w.events ?? []) as { id: string; title: string; start: string }[]);
       setChecked(w.off || (w.checked_at ? footer({ needs_you: [], events: [], unseen: 0, line: "", sources: {}, ...w } as WatchCardData, new Date()) : ""));
     }).catch(() => {});
-    void postJSON("/api/watch/seen", {}).catch(() => {});
   }, []);
   // Another pick: its own Pulse, never the last one's cards while it loads.
   useEffect(() => { setNeeds(null); setOnIt([]); setLoopsDone([]); setJobsDone([]); setFailed(""); setOthers([]); setProactive(null); setItsEvents([]); setWatchClosed([]); setApprovals([]); }, [pick]);
@@ -124,10 +124,10 @@ export function Today() {
     const askedFor = getPick();
     getJSON<Approval[]>("/api/approvals").then((a) => { if (stillPicked(askedFor, getPick())) setApprovals(a); }).catch(() => {});
   }, []);
-  const loadTasks = useCallback(() => {
-    loadNeeds();
+  const loadTasks = useCallback((): Promise<void> => {
     const askedFor = getPick();
     getJSON<WatchClosedItem[]>("/api/tasks/closed_by_watch").then((c) => { if (stillPicked(askedFor, getPick())) setWatchClosed(c); }).catch(() => {});
+    return loadNeeds();
   }, [loadNeeds]);
   const loadUp = useCallback(() => {
     getJSON<{ items: UpItem[]; sources: Record<string, boolean> }>("/api/upcoming").then(setUp).catch(() => {}).finally(() => setUpLoading(false));
@@ -144,14 +144,16 @@ export function Today() {
     setLoopsDone((items) => items.filter((x) => x.id !== id));
     try { await postJSON(`/api/loops/${id}/reopen`, {}); } finally { loadTasks(); }
   }
-  // A card's button: chat sends its request; the others act at once and the card goes.
-  async function act(need: Need, a: NeedAction) {
+  // A card's button: chat sends its request; Done, Later and the like take their card away at once (harmless);
+  // Merge, Use this, Allow and Retry leave it in place, busy (NeedsYou), until the server answers and the list is
+  // re-read, so nothing slides up under the finger.
+  async function act(need: Need, a: NeedAction): Promise<void> {
     if (a.action === "chat") { location.hash = chatRunHash(String(a.value)); return; }
     if (a.action === "open") {
       if (opensSafely(String(a.value))) window.open(String(a.value), "_blank", "noopener");
       return;
     }
-    setNeeds((items) => (items ?? []).filter((x) => x.ref !== need.ref));
+    if (!busyWord(a.action)) setNeeds((items) => (items ?? []).filter((x) => x.ref !== need.ref));
     setFailed("");
     try {
       if (a.action === "dismiss") await postJSON("/api/watch/done", { ref: a.value });
@@ -165,11 +167,13 @@ export function Today() {
       if (a.action === "merge") await postJSON(`/api/loops/${a.value}/merge`, {});
       if (a.action === "recipe_use") await postJSON("/api/recipes/use", { repo: a.value });
       if (a.action === "recipe_no") await postJSON("/api/recipes/no", { repo: a.value });
-    } catch (e) { setFailed(e instanceof Error ? e.message : String(e)); } finally { loadTasks(); }
+    } catch (e) { setFailed(e instanceof Error ? e.message : String(e)); }
+    await loadTasks();
   }
-  async function stopJob(id: string) {
-    setOnIt((items) => items.filter((x) => x.stop !== id));
-    try { await postJSON(`/api/jobs/${id}/stop`, {}); } catch { /* it had ended */ } finally { loadTasks(); }
+  // Stop keeps its row (OnIt shows "Stopping…") until the list is re-read.
+  async function stopJob(id: string): Promise<void> {
+    try { await postJSON(`/api/jobs/${id}/stop`, {}); } catch { /* it had ended */ }
+    await loadTasks();
   }
 
   // The day bands and week dots read the same merged list as Up next (calendar, SMS, mail, tasks).
@@ -187,7 +191,7 @@ export function Today() {
     <>
     {failed && <div role="alert" className="glass rounded-tile px-3.5 py-3 mb-2.5 text-ui text-warn-ink bg-warn-tint">{failed}</div>}
     <NeedsYou items={needs} footer={checked} closed={watchClosed} notes={notes} loopsDone={loopsDone} jobsDone={jobsDone}
-      onAct={(n, a) => void act(n, a)} onReopen={(id) => void reopen(id)} onReopenLoop={(id) => void reopenLoop(id)}
+      onAct={(n, a) => act(n, a)} onReopen={(id) => void reopen(id)} onReopenLoop={(id) => void reopenLoop(id)}
       empty={pick && !proactive?.on ? "Nothing waiting. Its own reminders and cards show here." : undefined} />
     </>
   );
@@ -217,7 +221,7 @@ export function Today() {
             <div className="rise" style={delay(0.08)}>{needsYou}</div>
           </div>
           <div className="contents lg:flex lg:flex-col lg:gap-[18px]">
-            <div className="rise" style={delay(0.1)}><OnIt items={onIt} who={picked.name} onStop={(id) => void stopJob(id)} /></div>
+            <div className="rise" style={delay(0.1)}><OnIt items={onIt} who={picked.name} onStop={(id) => stopJob(id)} /></div>
             {itsEvents.length > 0 && (
               <section className="glass rounded-card px-4 py-3 rise" style={delay(0.12)} aria-label="Coming up">
                 <div className="text-ui font-bold text-ink-2 mb-1">Coming up</div>
@@ -274,7 +278,7 @@ export function Today() {
 
           <div className="rise" style={delay(0.08)}>{needsYou}</div>
 
-          <div className="rise" style={delay(0.09)}><OnIt items={onIt} who={picked.name} onStop={(id) => void stopJob(id)} /></div>
+          <div className="rise" style={delay(0.09)}><OnIt items={onIt} who={picked.name} onStop={(id) => stopJob(id)} /></div>
 
           <div className="rise" style={delay(0.1)}><UpNext items={up?.items ?? null} loading={upLoading} /></div>
 

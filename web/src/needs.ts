@@ -19,6 +19,15 @@ export function knowsAction(action: string): boolean {
   return KNOWN_ACTIONS.has(action);
 }
 
+/** What a card says while its button's call runs, for the moves that must keep the card in place until the server
+ *  answers: "merge" -> "Merging…"; "recipe_use", "job_allow", "job_retry" -> "Working…"; anything else (Done,
+ *  Later: harmless, their card goes at once) -> "". */
+export function busyWord(action: string): string {
+  if (action === "merge") return "Merging…";
+  if (action === "recipe_use" || action === "job_allow" || action === "job_retry") return "Working…";
+  return "";
+}
+
 /** One card in a Pulse's "Needs you": a watch item from mail, or one of the user's own reminders. Every card has the
  *  same three buttons: its one move (main), Done (other) and Later (later; an older server sends no Later). */
 export type Need = { ref: string; title: string; why: string; brief?: string; icon: IconName; badge: string; ask: string; main: NeedAction; other: NeedAction; later?: NeedAction;
