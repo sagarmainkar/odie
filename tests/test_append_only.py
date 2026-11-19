@@ -21,6 +21,14 @@ from odie.store.db import Store
 
 SESSION = "chat-2099-01-01"  # not today's
 
+
+@pytest.fixture(autouse=True)
+def no_read_for_promises(monkeypatch):
+    """The after-turn read for promises (odie.loops.chat_read) is a request of its own, not the chat's: these tests
+    count and compare the chat's requests alone."""
+    from odie.app.runner import OdieRunner
+    monkeypatch.setattr(OdieRunner, "_read_for_promises", lambda self, *args: None)
+
 # Each turn: the user's words, then what the model does at each step (a tool call, or the final text).
 TURNS = [
     ("Remind me tomorrow at 9 to call the bank",
