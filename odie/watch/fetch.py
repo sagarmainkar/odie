@@ -637,6 +637,10 @@ class Fetcher:
                 self._ok(src, False, str(e))
         return fold_events(got)  # one row for an event both calendars hold
 
+    def read_by_check(self, mail_id: str) -> bool:
+        """Whether code read this mail for this check (its new mail, or the bills catch-up), not a search's find."""
+        return mail_id in self._mail
+
     def read_mail(self, mail_id: str) -> Mail | None:
         """A mail this check knows: one of its new mails, or one a search turned up."""
         mail = self._mail.get(mail_id)

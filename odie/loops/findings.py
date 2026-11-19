@@ -122,12 +122,16 @@ def mail_fields(mail, statuses: dict) -> dict:
 
 
 def read_new(check, mail) -> bool:
-    """Whether a mail is one this check read as new (its inbox since the last check) or the user's own sent mail: only
-    those make a finding's IDs strong. A mail search_mail or sent_to found is readable context, but a finding about it
-    is weak: evidence text only (it can't join a loop by its ID, nor close one)."""
-    new = {m.id for m in (getattr(check, "mails", None) or [])}
-    sent = {m.id for m in check.sent}
-    return mail.id in new or mail.id in sent
+    """Whether code read this mail for this check, so a finding about it has strong IDs: its new mail, the bills
+    catch-up, or the user's own sent mail. A mail search_mail or sent_to found is readable context, but a finding
+    about it is weak: evidence text only (it can't join a loop by its ID, nor close one).
+      a new bill mail -> True;  a catch-up bill from last month -> True;  last year's mail a search found -> False"""
+    if mail.id in {m.id for m in check.sent}:
+        return True
+    if mail.id in {m.id for m in (getattr(check, "mails", None) or [])}:
+        return True
+    read_by_check = getattr(check.fetcher, "read_by_check", None)
+    return read_by_check is not None and read_by_check(mail.id)
 
 
 def own_ref_ok(ref: str, check) -> bool:

@@ -306,3 +306,19 @@ def test_a_carried_reminder_that_rang_never_closes_its_loop_on_a_later_run(store
     migrate.before_rollback(store, NOW)
     migrate.run_once(store, NOW + timedelta(hours=1))
     assert ledger.get(store, lid)["state"] in ledger.OPEN
+
+
+def test_a_catch_up_bill_is_strong_and_a_searched_mail_weak(store):
+    from odie.watch.fetch import Fetcher
+    fetcher = Fetcher(store, NOW)
+    caught = Mail(id="cu1", frm="Gas <bills@gas.example>", subject="Gas bill", at="", snippet="", attachments=[],
+                  source="gmail", thread="tC")
+    searched = Mail(id="se1", frm="Bank <alerts@bank.example>", subject="Statement", at="", snippet="",
+                    attachments=[], source="gmail", thread="tS")
+    fetcher._mail["cu1"] = caught  # what catch_up_mail keeps
+    fetcher._found["se1"] = searched  # what search_mail keeps
+    chk = SimpleNamespace(fetcher=fetcher, sent=[], events=[], ahead=[], threads_found=[], mails=[],
+                          report={"findings": [{"ref": "mail:cu1", "title": "Pay gas bill", "owner": "you"},
+                                               {"ref": "mail:se1", "title": "Card statement", "owner": "you"}]})
+    got = {f["ref"]: f["weak"] for f in findings.collect(chk)}
+    assert got == {"mail:cu1": False, "mail:se1": True}
