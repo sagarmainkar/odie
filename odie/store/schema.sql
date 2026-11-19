@@ -105,7 +105,8 @@ create table if not exists loops (
   closed_why text,
   created_at text not null,
   updated_at text not null,
-  closed_at text
+  closed_at text,
+  card_json text not null default '{}'
 );
 create table if not exists loop_events (
   id integer primary key autoincrement,

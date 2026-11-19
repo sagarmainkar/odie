@@ -783,6 +783,11 @@ async def task_done(task_id: int, request: Request):
     if row is None:
         raise HTTPException(404, "no such task")
     store.update_task(task_id, status="done")
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from odie.loops import ledger
+    ledger.reminder_done(store, task_id, datetime.now(ZoneInfo(config.settings.timezone)))  # its loop: Done, remembered
     note = ""
     if row["source_kind"]:
         from odie.agent.agent import source_done
@@ -2372,20 +2377,25 @@ class WatchDoneIn(BaseModel):
 
 @router.get("/watch")
 async def watch_get(request: Request) -> dict[str, Any]:
-    """The watch's card for Today: the last check's line, the needs-you items, the next events, each source's status,
-    and how many needs-you items are new since Today was last opened (one put off with Later isn't counted)."""
+    """The watch's card for Pulse: the last check's line, the next events, each source's status, and how many cards
+    are new since Pulse was last opened (loops made cards since then; one put off with Later isn't counted). needs_you
+    is always empty now: what needs the user is a loop (GET /api/needs_you)."""
     from datetime import datetime
     from zoneinfo import ZoneInfo
 
-    from odie.watch import needs, report
+    from odie.loops import cards as loop_cards
+    from odie.watch import report
     from odie.watch.owner import key
     store = request.app.state.store
-    card = store.get_setting(key(report.CARD, _personality(request)))  # the picked one's own watch
+    pid = _personality(request)
+    card = store.get_setting(key(report.CARD, pid))  # the picked one's own watch
     if not card:
         return {"off": "The first check runs a minute after Odie starts.", "needs_you": [], "events": [], "unseen": 0}
     now = datetime.now(ZoneInfo(config.settings.timezone))
-    new_ones = [i for i in card.get("needs_you", []) if not i.get("done") and not i.get("seen") and not needs.hidden(i, now)]
-    return {**card, "unseen": len(new_ones)}
+    seen_at = card.get("seen_at") or ""
+    unseen = [lp for lp in loop_cards.ready_loops(store, pid, now) if (lp.get("shown_at") or "") > seen_at]
+    shown = {k: v for k, v in card.items() if k != "needs_you"}
+    return {**shown, "needs_you": [], "unseen": len(unseen)}
 
 
 @router.get("/needs_you")
@@ -2444,18 +2454,58 @@ async def loop_done(loop_id: int, request: Request) -> dict[str, Any]:
 
 @router.post("/loops/{loop_id}/reopen")
 async def loop_reopen(loop_id: int, request: Request) -> dict[str, Any]:
-    """Done today's Reopen: Odie closed it wrongly; it opens again and is looked at once more."""
+    """Reopen: a loop closed wrongly (by Odie's evidence, or his Done) opens again and is looked at once more; for
+    REOPEN_DAYS after its close (odie.loops.ledger.may_reopen)."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from odie.loops import ledger
+    store = request.app.state.store
+    now = datetime.now(ZoneInfo(config.settings.timezone))
+    loop = ledger.get(store, loop_id)
+    if loop is None or loop["personality"] != _personality(request) or not ledger.may_reopen(loop, now):
+        raise HTTPException(404, "Nothing to reopen.")
+    ledger.reopen(store, loop_id, now)
+    store.audit("user", "loop_reopen", result_summary=loop["title"])
+    return {"ok": True}
+
+
+@router.get("/loops/{loop_id}")
+async def loop_get(loop_id: int, request: Request) -> dict[str, Any]:
+    """One of the picked one's loops with all its evidence (each line with its id), for Split's chooser."""
+    from odie.loops import ledger
+    store = request.app.state.store
+    loop = ledger.get(store, loop_id)
+    if loop is None or loop["personality"] != _personality(request):
+        raise HTTPException(404, "That card isn't there any more.")
+    lines = [{"id": e["id"], "at": e["at"], "source": e["source"], "fact": e["fact"]}
+             for e in ledger.events(store, loop_id) if e["ref"] not in ("later", "split", "pushed")]
+    return {"id": loop["id"], "title": loop["title"], "kind": loop["kind"], "state": loop["state"], "evidence": lines}
+
+
+class SplitIn(BaseModel):
+    events: list[int]
+
+
+@router.post("/loops/{loop_id}/split")
+async def loop_split(loop_id: int, body: SplitIn, request: Request) -> dict[str, Any]:
+    """Split: a merge was wrong; the evidence he picked becomes a loop of its own (odie.loops.ledger.split)."""
     from datetime import datetime
     from zoneinfo import ZoneInfo
 
     from odie.loops import ledger
     store = request.app.state.store
     loop = ledger.get(store, loop_id)
-    if loop is None or loop["personality"] != _personality(request) or loop["state"] in ledger.OPEN:
-        raise HTTPException(404, "Nothing to reopen.")
-    ledger.reopen(store, loop_id, datetime.now(ZoneInfo(config.settings.timezone)))
-    store.audit("user", "loop_reopen", result_summary=loop["title"])
-    return {"ok": True}
+    if loop is None or loop["personality"] != _personality(request) or loop["state"] not in ledger.OPEN:
+        raise HTTPException(404, "That card isn't there any more.")
+    now = datetime.now(ZoneInfo(config.settings.timezone))
+    try:
+        new_id = ledger.split(store, loop_id, body.events, now)
+    except ValueError as e:
+        raise HTTPException(409, str(e)) from e
+    ledger.update(store, loop_id, now, tapped="split")
+    store.audit("user", "loop_split", args={"events": body.events}, result_summary=f"#{loop_id} -> #{new_id}")
+    return {"ok": True, "id": new_id}
 
 
 @router.post("/loops/{loop_id}/merge")
@@ -2626,16 +2676,26 @@ async def job_clear(job_id: str, request: Request) -> dict[str, Any]:
 
 @router.post("/watch/done")
 async def watch_done(body: WatchDoneIn, request: Request) -> dict[str, Any]:
-    """A watch card's Done, on the picked one's Pulse: off its card, and its thread no longer followed."""
-    from odie.watch import report, threads
-    from odie.watch.owner import key
+    """A card's "dismiss", on the picked one's Pulse: Sunday's "Still care?" card drops the loops in it; a loop's ref
+    ("loop:3"), or the mail or event an open loop holds (an older app's card), is that loop's Done (remembered)."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from odie.loops import cards as loop_cards
+    from odie.loops import ledger
     store = request.app.state.store
     pid = _personality(request)
-    card_key = key(report.CARD, pid)
-    card = store.get_setting(card_key) or {}
-    card["needs_you"] = [i for i in card.get("needs_you", []) if i.get("ref") != body.ref]
-    store.set_setting(card_key, card)
-    threads.close(store, body.ref, "dismissed on Today", by_user=True, owner=pid)  # the watch stops following it too
+    now = datetime.now(ZoneInfo(config.settings.timezone))
+    if body.ref == loop_cards.BATCH:
+        return {"ok": True, "dropped": loop_cards.drop_batch(store, pid, now)}
+    loop = None
+    if body.ref.startswith("loop:") and body.ref[len("loop:"):].isdigit():
+        loop = ledger.get(store, int(body.ref[len("loop:"):]))
+    elif body.ref:
+        loop = ledger.find_by_refs(store, pid, [body.ref])
+    if loop is not None and loop["personality"] == pid and loop["state"] in ledger.OPEN:
+        ledger.done(store, loop["id"], now)
+        ledger.update(store, loop["id"], now, tapped="done")
     return {"ok": True}
 
 
@@ -2645,8 +2705,8 @@ class LaterIn(BaseModel):
 
 @router.post("/needs_you/later")
 async def needs_you_later(body: LaterIn, request: Request) -> dict[str, Any]:
-    """A card's Later: hidden until 09:00 tomorrow, then back (odie.watch.needs.later). A watch item ("mail:m1") or a
-    task ("task:12"); a card that isn't there -> 404."""
+    """A card's Later: hidden until 09:00 tomorrow, then back (odie.watch.needs.later). A loop ("loop:3"; its third
+    Later: till Sunday), Sunday's batch, or a task ("task:12"); a card that isn't there -> 404."""
     from datetime import datetime
     from zoneinfo import ZoneInfo
 
@@ -2663,13 +2723,16 @@ async def needs_you_later(body: LaterIn, request: Request) -> dict[str, Any]:
 
 @router.post("/watch/seen")
 async def watch_seen(request: Request) -> dict[str, Any]:
-    """A Pulse was opened: everything on its card now has been seen (the count on chat's Back to Pulse goes)."""
+    """A Pulse was opened: every card on it now has been seen (the count on chat's Back to Pulse goes)."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
     from odie.watch import report
     from odie.watch.owner import key
     store = request.app.state.store
     card_key = key(report.CARD, _personality(request))
     card = store.get_setting(card_key) or {}
-    card["needs_you"] = [{**i, "seen": True} for i in card.get("needs_you", [])]
+    card["seen_at"] = datetime.now(ZoneInfo(config.settings.timezone)).isoformat(timespec="seconds")
     store.set_setting(card_key, card)
     return {"ok": True}
 

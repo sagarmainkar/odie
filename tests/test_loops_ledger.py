@@ -51,7 +51,7 @@ def test_loops_stay_with_their_personality(store):
 
 
 def test_a_close_needs_a_reason_and_shows_in_done_today_with_reopen(store):
-    lid = ledger.open_loop(store, "", NOW, "app #49", "pull request")
+    lid = ledger.open_loop(store, "", NOW, "app #49", "pull request", playbook="github-pr")
     with pytest.raises(ValueError):
         ledger.close(store, lid, NOW, "odie", "")
     ledger.close(store, lid, NOW, "odie", "merged 18 Nov 09:40")

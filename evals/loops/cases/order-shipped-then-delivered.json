@@ -1,0 +1,113 @@
+{
+  "id": "order-shipped-then-delivered",
+  "about": "An order shipped, out for delivery, delivered: one loop, waiting on the shop, closed by the delivery.",
+  "checks": [
+    {
+      "at": "2026-11-19T09:00:00+05:30",
+      "mails": [
+        {
+          "id": "o1",
+          "from": "Shopkart <orders@shopkart.example>",
+          "subject": "Your desk lamp has shipped",
+          "at": "2026-11-19T02:30:00Z",
+          "snippet": "Order #SK-4471: desk lamp. Shipped, arriving Friday 21 Nov.",
+          "body": "Order #SK-4471: desk lamp. Shipped, arriving Friday 21 Nov.",
+          "thread": "to1"
+        }
+      ],
+      "script": {
+        "threads": [
+          {
+            "ref": "mail:o1",
+            "kind": "order",
+            "title": "Order: desk lamp",
+            "stage": "shipped",
+            "due": "2026-11-21"
+          }
+        ],
+        "answers": [
+          {
+            "f": "F1",
+            "is": "new"
+          }
+        ]
+      }
+    },
+    {
+      "at": "2026-11-21T08:00:00+05:30",
+      "mails": [
+        {
+          "id": "o2",
+          "from": "Shopkart <orders@shopkart.example>",
+          "subject": "Out for delivery: desk lamp",
+          "at": "2026-11-21T02:00:00Z",
+          "snippet": "Order #SK-4471 is out for delivery today.",
+          "body": "Order #SK-4471 is out for delivery today.",
+          "thread": "to2"
+        }
+      ],
+      "script": {
+        "threads": [
+          {
+            "ref": "mail:o2",
+            "kind": "order",
+            "title": "Order: desk lamp",
+            "stage": "out for delivery"
+          }
+        ],
+        "answers": [
+          {
+            "f": "F1",
+            "is": "same",
+            "loop_ref": "mail:o1"
+          }
+        ]
+      }
+    },
+    {
+      "at": "2026-11-21T15:00:00+05:30",
+      "mails": [
+        {
+          "id": "o3",
+          "from": "Shopkart <orders@shopkart.example>",
+          "subject": "Delivered: desk lamp",
+          "at": "2026-11-21T09:00:00Z",
+          "snippet": "Order #SK-4471 was delivered at 14:20.",
+          "body": "Order #SK-4471 was delivered at 14:20.",
+          "thread": "to3"
+        }
+      ],
+      "script": {
+        "threads": [
+          {
+            "ref": "mail:o3",
+            "kind": "order",
+            "title": "Order: desk lamp",
+            "stage": "done",
+            "why": "delivered 21 Nov 14:20"
+          }
+        ],
+        "answers": [
+          {
+            "f": "F1",
+            "is": "closes",
+            "loop_ref": "mail:o1",
+            "why": "delivered 21 Nov"
+          }
+        ]
+      }
+    }
+  ],
+  "expect": {
+    "loops": 1,
+    "closed": [
+      "mail:o1"
+    ],
+    "no_card": [
+      "mail:o1"
+    ],
+    "owner": {
+      "mail:o1": "them"
+    }
+  }
+}

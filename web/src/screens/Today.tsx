@@ -140,6 +140,12 @@ export function Today() {
     setWatchClosed((items) => items.filter((x) => x.id !== id));
     try { await postJSON(`/api/tasks/${id}/reopen`, {}); } finally { loadTasks(); }
   }
+  // Split (a card's small menu): the lines he picked become a loop of their own; the list is read again after.
+  async function splitLoop(id: number, eventIds: number[]): Promise<void> {
+    setFailed("");
+    try { await postJSON(`/api/loops/${id}/split`, { events: eventIds }); } catch (e) { setFailed(e instanceof Error ? e.message : String(e)); }
+    await loadTasks();
+  }
   async function reopenLoop(id: number) {
     setLoopsDone((items) => items.filter((x) => x.id !== id));
     try { await postJSON(`/api/loops/${id}/reopen`, {}); } finally { loadTasks(); }
@@ -191,7 +197,7 @@ export function Today() {
     <>
     {failed && <div role="alert" className="glass rounded-tile px-3.5 py-3 mb-2.5 text-ui text-warn-ink bg-warn-tint">{failed}</div>}
     <NeedsYou items={needs} footer={checked} closed={watchClosed} notes={notes} loopsDone={loopsDone} jobsDone={jobsDone}
-      onAct={(n, a) => act(n, a)} onReopen={(id) => void reopen(id)} onReopenLoop={(id) => void reopenLoop(id)}
+      onAct={(n, a) => act(n, a)} onReopen={(id) => void reopen(id)} onReopenLoop={(id) => void reopenLoop(id)} onSplit={splitLoop}
       empty={pick && !proactive?.on ? "Nothing waiting. Its own reminders and cards show here." : undefined} />
     </>
   );

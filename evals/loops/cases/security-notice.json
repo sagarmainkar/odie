@@ -1,0 +1,43 @@
+{
+  "id": "security-notice",
+  "about": "A sign-in from a new device asking him to act: his card.",
+  "mails": [
+    {
+      "id": "sx1",
+      "from": "Accounts <no-reply@accounts.example>",
+      "subject": "New sign-in from Chrome on Windows",
+      "at": "2026-11-18T04:00:00Z",
+      "snippet": "We noticed a new sign-in. If this wasn't you, secure your account now.",
+      "body": "We noticed a new sign-in. If this wasn't you, secure your account now.",
+      "thread": "tsx1"
+    }
+  ],
+  "script": {
+    "findings": [
+      {
+        "ref": "mail:sx1",
+        "title": "Check the new sign-in",
+        "kind": "security notice",
+        "why": "a sign-in from Chrome on Windows: was it you?",
+        "owner": "you",
+        "pile": "alerts",
+        "push": true
+      }
+    ],
+    "answers": [
+      {
+        "f": "F1",
+        "is": "new"
+      }
+    ]
+  },
+  "expect": {
+    "loops": 1,
+    "cards": [
+      "mail:sx1"
+    ],
+    "owner": {
+      "mail:sx1": "you"
+    }
+  }
+}

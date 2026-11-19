@@ -16,7 +16,7 @@ from odie.plugins import access
 ODIE = personalities.ODIE
 PROACTIVE = "proactive"  # settings key prefix: "proactive:<id>" is True when that personality's watch runs
 # Every settings key a watch keeps: its card, its place in the mail, its pushes said and held, its sources.
-WATCH_KEYS = ("watch.card", "watch.state", "watch.flagged", "watch.held", "watch.sources")
+WATCH_KEYS = ("watch.card", "watch.state", "watch.flagged", "watch.held", "watch.sources", "loops.pending")
 
 
 def key(name: str, owner: str) -> str:

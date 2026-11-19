@@ -1,0 +1,62 @@
+{
+  "id": "reply-from-the-phone",
+  "about": "A reply owed; he answers from his phone, in the same thread, to her: closed by evidence.",
+  "checks": [
+    {
+      "at": "2026-11-19T09:00:00+05:30",
+      "mails": [
+        {
+          "id": "q1",
+          "from": "Priya Shah <priya@example.com>",
+          "subject": "Quote for the kitchen",
+          "at": "2026-11-19T03:00:00Z",
+          "snippet": "Can you confirm the quote by Monday so we can order the tiles?",
+          "body": "Can you confirm the quote by Monday so we can order the tiles?",
+          "thread": "tq1"
+        }
+      ],
+      "script": {
+        "findings": [
+          {
+            "ref": "mail:q1",
+            "title": "Confirm the kitchen quote",
+            "kind": "reply owed",
+            "why": "by Monday",
+            "owner": "you",
+            "due": "2026-11-23"
+          }
+        ],
+        "answers": [
+          {
+            "f": "F1",
+            "is": "new"
+          }
+        ]
+      }
+    },
+    {
+      "at": "2026-11-19T13:00:00+05:30",
+      "sent": [
+        {
+          "id": "s1",
+          "from": "Me <me@example.com>",
+          "to": "Priya Shah <priya@example.com>",
+          "subject": "Re: Quote for the kitchen",
+          "at": "2026-11-19T06:32:00Z",
+          "snippet": "Confirmed, please go ahead.",
+          "thread": "tq1"
+        }
+      ],
+      "script": {
+        "findings": [],
+        "answers": []
+      }
+    }
+  ],
+  "expect": {
+    "loops": 1,
+    "closed": [
+      "mail:q1"
+    ]
+  }
+}

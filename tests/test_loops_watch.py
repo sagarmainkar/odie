@@ -1,5 +1,5 @@
-"""The watch's turn writes pull requests and issues as loops (proactive design §12, phase 1). The model recognises
-them; code keeps one loop per thing: fourteen notification mails about one pull request are one loop."""
+"""The watch's pull requests and issues become loops (proactive design §12): stage 1 writes a finding per mail, stage 2
+places them, and code keeps one loop per thing: fourteen notification mails about one pull request are one loop."""
 import json
 from datetime import datetime, timedelta
 from types import SimpleNamespace
@@ -43,18 +43,20 @@ async def test_fourteen_mails_about_one_pull_request_are_one_loop(store, tmp_pat
     mcp.write_config({"home": spec_for("plain", tmp_path, mail=pr_mails())})
 
     async def naive(prompt, tools, instruction):
-        """The worst case: the model opens a loop for every mail it sees."""
+        """The worst case: the model writes a finding for every mail it sees."""
         mails = json.loads((await call(tools, "new_mail"))["result"])
-        for m in mails:
-            await call(tools, "loop", title="app #49 Threads newest first", kind="pull request",
-                       refs=["example/app#49"], mail_id=m["id"])
-        await call(tools, "report", needs_you=[], line="14 GitHub updates")
-    assert await check.run_check(store, NOW, naive, lambda t, b: None) == "ok"
+        found = [{"ref": f"mail:{m['id']}", "title": "app #49 Threads newest first", "kind": "pull request",
+                  "owner": "odie", "refs": ["example/app#49"]} for m in mails]
+        await call(tools, "report", findings=found, line="14 GitHub updates")
+
+    async def unsure(prompt, instruction):
+        return '{"answers": [' + ", ".join('{"f": "F%d", "is": "new"}' % n for n in range(1, 15)) + "]}"
+    assert await check.run_check(store, NOW, naive, lambda t, b: None, think=unsure) == "ok"
     loops = ledger.open_loops(store, "")
-    assert len(loops) == 1
-    assert loops[0]["playbook"] == "github-pr" and set(loops[0]["refs"]) == {"example/app#49", "thread:t49"}
-    assert len(ledger.events(store, loops[0]["id"])) == 14
-    assert store.get_setting(report.CARD)["needs_you"] == []  # no card per mail
+    assert len(loops) == 1  # one loop per pull request, whatever the model says
+    assert loops[0]["playbook"] == "github-pr" and {"example/app#49", "thread:t49"} <= set(loops[0]["refs"])
+    assert len({e["ref"] for e in ledger.events(store, loops[0]["id"])}) == 14
+    assert loops[0]["state"] == "new"  # Odie looks at GitHub before any card
 
 
 async def test_a_later_mail_in_the_same_thread_joins_by_code(store, tmp_path):
@@ -72,28 +74,24 @@ async def test_a_later_mail_in_the_same_thread_joins_by_code(store, tmp_path):
     assert ledger.get(store, lid)["has_news"] == 1 and "example/app#49" in ledger.get(store, lid)["refs"]
 
 
-async def test_the_loop_tool_checks_what_the_model_named(store, tmp_path):
-    from odie.plugins import mcp
+async def test_findings_are_checked_before_they_reach_the_ledger(store, tmp_path):
     from odie import personalities
+    from odie.plugins import mcp
     mcp.write_config({"home": spec_for("plain", tmp_path, mail=pr_mails(1))})
     mira = personalities.create(store, "Mira").id
     hers = ledger.open_loop(store, mira, NOW, "Mira's", "issue", refs=["example/app#7"])
-    said = {}
 
     async def turn(prompt, tools, instruction):
         await call(tools, "new_mail")
-        said["bad"] = (await call(tools, "loop", title="x", kind="pull request", refs=["app 49; rm -rf ~"]))["result"]
-        said["unknown"] = (await call(tools, "loop", title="x", kind="issue", mail_id="nope"))["result"]
-        said["hers"] = (await call(tools, "loop", title="x", kind="issue", loop_id=hers, close_why="done"))["result"]
-        said["open"] = (await call(tools, "loop", title="app #49", kind="pull request", refs=["example/app#49"],
-                                   mail_id="g0"))["result"]
-        lid = int(said["open"].split("#")[1].split()[0])
-        said["close"] = (await call(tools, "loop", title="app #49", kind="pull request", loop_id=lid,
-                                    close_why="merged 18 Nov"))["result"]
-        await call(tools, "report", needs_you=[], line="")
-    await check.run_check(store, NOW, turn, lambda t, b: None)
-    assert said["bad"].startswith("Not a GitHub name")
-    assert "doesn't know mail" in said["unknown"]
-    assert said["hers"] == f"No open loop #{hers}."  # another owner's loop: never touched from Odie's watch
-    assert ledger.get(store, hers)["state"] == "new"
-    assert said["open"].startswith("Opened loop #") and said["close"].startswith("Closed loop #")
+        found = [{"ref": "mail:nope", "title": "made up", "kind": "issue"},
+                 {"ref": "mail:g0", "title": "app #49", "kind": "pull request", "owner": "odie",
+                  "refs": ["app 49; rm -rf ~", "example/app#7"]}]
+        await call(tools, "report", findings=found, line="")
+
+    async def says_hers(prompt, instruction):
+        return '{"answers": [{"f": "F1", "is": "closes", "loop": %d, "why": "done"}]}' % hers
+    await check.run_check(store, NOW, turn, lambda t, b: None, think=says_hers)
+    assert ledger.get(store, hers)["state"] == "new"  # another owner's loop: never touched from Odie's watch
+    [mine] = ledger.open_loops(store, "")
+    assert "app 49; rm -rf ~" not in mine["refs"] and {"example/app#49", "example/app#7"} <= set(mine["refs"])
+    assert store.one("select count(*) n from loops where title='made up'")["n"] == 0  # a mail this check never saw

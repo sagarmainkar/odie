@@ -1,0 +1,38 @@
+{
+  "id": "meeting-moved",
+  "about": "A meeting moved: his card.",
+  "events": [
+    {
+      "id": "em1",
+      "title": "1:1 with Priya",
+      "start": "2026-11-19T16:00:00+05:30",
+      "end": "2026-11-19T16:30:00+05:30",
+      "change": "moved"
+    }
+  ],
+  "script": {
+    "findings": [
+      {
+        "ref": "event:em1",
+        "title": "1:1 with Priya moved to 16:00",
+        "kind": "event",
+        "why": "moved",
+        "owner": "you",
+        "pile": "events"
+      }
+    ],
+    "answers": [
+      {
+        "f": "F1",
+        "is": "new"
+      }
+    ]
+  },
+  "expect": {
+    "loops": 1,
+    "cards": [
+      "event:em1"
+    ],
+    "why": true
+  }
+}

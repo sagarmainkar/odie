@@ -1,213 +1,84 @@
 {
   "date": "2026-11-19",
-  "odie_commit": "9971a54",
+  "odie_commit": "800be00",
   "provider": "ollama",
   "model": "deepseek-v4.1-flash:1017-cloud",
   "totals": {
-    "right": 27,
-    "of": 27,
-    "wrong": []
+    "right": 7,
+    "of": 13,
+    "wrong": [
+      "order-shipped-then-delivered: mail:o1 not closed with a reason",
+      "own-pr-green-tested: 0 loops, wanted 1",
+      "own-pr-green-tested: you-dev/app#70 has no tested card with Merge",
+      "own-pr-lockfile: 0 loops, wanted 1",
+      "own-pr-no-recipe: 0 loops, wanted 1",
+      "own-pr-no-recipe: no Use this card for you-dev/notes"
+    ]
   },
   "results": [
     {
-      "id": "a-draft-waits",
-      "error": "",
-      "ran": [
-        [
-          1,
-          "wait"
-        ]
-      ],
-      "score": {
-        "right": 1,
-        "of": 1,
-        "wrong": [],
-        "loops": 1
-      }
-    },
-    {
-      "id": "done-pr-gets-mail",
-      "error": "",
-      "ran": [],
-      "score": {
-        "right": 2,
-        "of": 2,
-        "wrong": [],
-        "loops": 1
-      }
-    },
-    {
-      "id": "fourteen-mails-one-pr",
-      "error": "",
-      "ran": [
-        [
-          3,
-          "ready"
-        ]
-      ],
-      "score": {
-        "right": 2,
-        "of": 2,
-        "wrong": [],
-        "loops": 1
-      }
-    },
-    {
-      "id": "issue-assigned-to-you",
-      "error": "",
-      "ran": [
-        [
-          4,
-          "ready"
-        ]
-      ],
-      "score": {
-        "right": 2,
-        "of": 2,
-        "wrong": [],
-        "loops": 1
-      }
-    },
-    {
-      "id": "issue-not-yours",
-      "error": "",
-      "ran": [
-        [
-          5,
-          "drop"
-        ]
-      ],
-      "score": {
-        "right": 1,
-        "of": 1,
-        "wrong": [],
-        "loops": 1
-      }
-    },
-    {
-      "id": "lone-merged-mail",
-      "error": "",
-      "ran": [],
-      "score": {
-        "right": 1,
-        "of": 1,
-        "wrong": [],
-        "loops": 0
-      }
-    },
-    {
-      "id": "merged-pr-closes",
+      "id": "order-shipped-then-delivered",
       "error": "",
       "ran": [],
       "score": {
         "right": 3,
-        "of": 3,
-        "wrong": [],
-        "loops": 1
-      }
-    },
-    {
-      "id": "own-pr-ci-failing",
-      "error": "",
-      "ran": [
-        [
-          7,
-          "ready"
-        ]
-      ],
-      "score": {
-        "right": 2,
-        "of": 2,
-        "wrong": [],
+        "of": 4,
+        "wrong": [
+          "mail:o1 not closed with a reason"
+        ],
         "loops": 1
       }
     },
     {
       "id": "own-pr-green-tested",
       "error": "",
-      "ran": [
-        [
-          8,
-          "test"
-        ],
-        [
-          8,
-          "ready"
-        ]
-      ],
+      "ran": [],
       "score": {
-        "right": 2,
+        "right": 0,
         "of": 2,
-        "wrong": [],
-        "loops": 1
+        "wrong": [
+          "0 loops, wanted 1",
+          "you-dev/app#70 has no tested card with Merge"
+        ],
+        "loops": 0
       }
     },
     {
       "id": "own-pr-lockfile",
       "error": "",
-      "ran": [
-        [
-          9,
-          "ready"
-        ]
-      ],
+      "ran": [],
       "score": {
-        "right": 2,
+        "right": 1,
         "of": 2,
-        "wrong": [],
-        "loops": 1
+        "wrong": [
+          "0 loops, wanted 1"
+        ],
+        "loops": 0
       }
     },
     {
       "id": "own-pr-no-recipe",
       "error": "",
-      "ran": [
-        [
-          10,
-          "ask"
-        ]
-      ],
+      "ran": [],
       "score": {
-        "right": 3,
+        "right": 1,
         "of": 3,
-        "wrong": [],
-        "loops": 1
-      }
-    },
-    {
-      "id": "someone-elses-pr",
-      "error": "",
-      "ran": [
-        [
-          11,
-          "ready"
-        ]
-      ],
-      "score": {
-        "right": 3,
-        "of": 3,
-        "wrong": [],
-        "loops": 1
-      }
-    },
-    {
-      "id": "two-prs-alike",
-      "error": "",
-      "ran": [
-        [
-          12,
-          "drop"
+        "wrong": [
+          "0 loops, wanted 1",
+          "no Use this card for you-dev/notes"
         ],
-        [
-          13,
-          "wait"
-        ]
-      ],
+        "loops": 0
+      }
+    },
+    {
+      "id": "two-mails-one-order",
+      "error": "",
+      "ran": [],
       "score": {
-        "right": 3,
-        "of": 3,
+        "right": 2,
+        "of": 2,
         "wrong": [],
-        "loops": 2
+        "loops": 1
       }
     }
   ]

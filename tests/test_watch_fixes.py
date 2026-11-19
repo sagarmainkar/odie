@@ -95,7 +95,15 @@ async def test_attachments_never_fetch_a_planted_or_home_link(store, tmp_path):
 def test_the_watcher_cant_drive_the_browser_or_close_tasks():
     for name in ("browser_open", "browser_click", "browser_type", "browser_scroll", "task_update"):
         assert check.guard(SimpleNamespace(name=name), {}, None) is not None, name
-    assert check.guard(SimpleNamespace(name="task_add"), {}, None) is None
+    # Stage 1 reads other people's text (19 Nov): nothing private, and a reminder is a finding's remind_at
+    for name in ("task_add", "task_list", "fetch_memory", "search_everything", "related_notes"):
+        assert check.guard(SimpleNamespace(name=name), {}, None) is not None, name
+    check.WATCH_FOR_NOTES.clear()
+    check.WATCH_FOR_NOTES.update(check.notes_named("- Digests: relay Inbox/digest.md\n- Daily/ notes each morning"))
+    assert check.guard(SimpleNamespace(name="read_note"), {"note": "Inbox/digest.md"}, None) is None
+    assert check.guard(SimpleNamespace(name="read_note"), {"note": "Daily/2026-11-19.md"}, None) is None
+    assert check.guard(SimpleNamespace(name="read_note"), {"note": "People/Asha.md"}, None) is not None
+    check.WATCH_FOR_NOTES.clear()
     # the one write the owner allows in the background: a calendar event for a bill or a deadline
     assert check.guard(SimpleNamespace(name="calendar_create_event", _require_confirmation=True), {}, None) is None
     assert check.guard(SimpleNamespace(name="gmail_send_draft", _require_confirmation=True), {}, None) is not None

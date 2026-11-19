@@ -1,6 +1,7 @@
-"""The watcher's tools (spec part 2), bound to one check: they read through the Fetcher and keep what the model
-reports, so check.py applies it with the push rules after the turn; bills_and_orders and close_reminder keep the
-user's bills and orders (odie.watch.bills)."""
+"""The watcher's tools (spec part 2), bound to one check (stage 1 of the proactive design): they read through the
+Fetcher and keep the findings the model writes (report, track_thread), which stage 2 places in the ledger after the
+turn (odie.loops.consolidate); bills_and_orders and close_reminder keep the user's bills and orders (odie.watch.bills).
+Stage 1 reads other people's text, so it gets no ledger and no memory: what Odie follows is stage 2's to see."""
 from __future__ import annotations
 
 import json
@@ -8,7 +9,7 @@ import json
 from google.adk.tools import FunctionTool
 
 from odie.agent.callbacks import wrap_untrusted
-from odie.watch import bills, threads
+from odie.watch import bills
 from odie.watch.calls import CallError
 from odie.watch.fetch import Event, Fetcher, Mail, address_of
 
@@ -40,6 +41,8 @@ class Check:
         self.events: list[Event] = []
         self.sent: list[Mail] = []  # the user's sent mail that closed nothing in code (odie.watch.sent)
         self.report: dict | None = None
+        self.ahead: list[Event] = []  # the events bills_and_orders read (45 days), which a finding may name
+        self.threads_found: list[dict] = []  # track_thread's findings, in the order written (odie.loops.findings)
         self.loop_of: dict[str, int] = {}  # mails code already attached to an open loop (odie.loops.shortcut)
         self.read = False  # the check has read the mail or the events
         self.mail_read = False  # the check has read its new mail (run_check reads it before the turn)
@@ -120,9 +123,9 @@ def watch_tools(check: Check) -> list[FunctionTool]:
         return {"result": json.dumps([e.brief() for e in check.events], ensure_ascii=False)}
 
     def what_you_sent(tool_context=None) -> dict:
-        """What the user sent since the last check (to, subject, time, first lines); a reply in the same thread as an
-        open item already closed it. Close an open thread with track_thread "done" when one of these answers it: to
-        the same person, about the same thing; why in the user's words ("you replied 18 Nov 14:20")."""
+        """What the user sent since the last check (to, subject, time, first lines); a reply in the same thread as
+        something Odie follows already closed it. When one of these answers someone (to the same person, about the
+        same thing), write a finding with its ref and done in the user's words ("you replied 18 Nov 14:20")."""
         mark_read(tool_context)
         return {"result": json.dumps([check.fenced_sent(m) for m in check.sent], ensure_ascii=False)}
 
@@ -182,46 +185,36 @@ def watch_tools(check: Check) -> list[FunctionTool]:
         store = check.fetcher.store
         reminders = bills.open_bills_and_orders(store, check.fetcher.owner)
         ahead = await check.fetcher.events_ahead(BILLS_DAYS)
+        check.ahead = ahead
         events = [e.brief() for e in ahead if bills.is_bill_or_order(e.title)]
         return {"result": json.dumps({"reminders": reminders, "events": events}, ensure_ascii=False)}
 
-    def open_threads() -> dict:
-        """The orders, bills, replies owed and deadlines you are following (start every check here): id, ref, kind,
-        title, stage, due, overdue. Move or close each one with track_thread; read_thread works on a reply's ref."""
-        listed = threads.open_threads(check.fetcher.store, check.fetcher.now, check.fetcher.owner)
-        for t in listed:
-            known_mail(t)
-        return {"result": json.dumps(listed, ensure_ascii=False)}
-
-    def known_mail(t: dict) -> None:
-        """Makes a thread's mail known to this check (its id, thread and app), so read_thread can read it."""
-        ref = str(t.get("ref") or "")
-        if not ref.startswith("mail:"):
-            return
-        mail_id = ref[len("mail:"):]
-        check.fetcher.remember(Mail(id=mail_id, frm="", subject=t.get("title", ""), at="", snippet="", attachments=[],
-                                    source=t.get("source", ""), thread=t.get("thread", "")))
-
     def knows_the_thread(ref: str) -> bool:
-        """Whether the watch already follows this ref, so moving or closing it needs no mail from this check:
-        "mail:o1" with an open thread -> True; "mail:unknown9", never seen and never followed -> False."""
-        return ref in threads.open_refs(check.fetcher.store, check.fetcher.owner)
+        """Whether Odie already follows this ref, so a finding about it needs no mail from this check: "mail:o1" held
+        by an open loop -> True; "mail:unknown9", never seen and never followed -> False."""
+        from odie.loops import ledger
+        return ledger.find_by_refs(check.fetcher.store, check.fetcher.owner, [ref]) is not None
 
     def track_thread(ref: str, kind: str, title: str, stage: str, due: str = "", why: str = "") -> dict:
-        """Follow something until it's done: open a thread, move it to a new stage, or close it. ref: "mail:<id>".
-        kind: order, bill, reply (a reply the user owes) or deadline. stage: where it is now ("placed", "shipped",
-        "owed", "due"), or "done" / "dropped" to close it, with why (which mail showed it). due: when it's due or
-        expected, as 2026-10-24. Only your own threads change; the user's tasks never do."""
+        """Follow something until it's done: an order, a bill, a reply the user owes or a deadline, from its mail.
+        ref: "mail:<id>". kind: order, bill, reply or deadline. stage: where it is now ("placed", "shipped", "owed",
+        "due"), or "done" / "dropped" when the mail shows it finished, with why (which mail showed it). due: when it's
+        due or expected, as 2026-10-24. Odie matches it to what it already follows after the check."""
+        from odie.loops import findings
+        if kind not in findings.THREAD_KINDS:
+            return {"result": f"Unknown kind {kind!r}: a thread is an order, a bill, a reply or a deadline."}
+        closing = (stage or "").strip().lower() in findings.CLOSING
+        if closing and not (why or "").strip():
+            return {"result": "Say why it's closed: which mail showed it, or what the user did."}
         mail = check.fetcher.read_mail(ref[len("mail:"):]) if ref.startswith("mail:") else None
         if mail is None and not knows_the_thread(ref):
             return {"result": f"This check doesn't know {ref}: find the mail with search_mail (or read it from "
                               "new_mail) first, so the thread can be read again later."}
-        thread, source, sender = "", "", ""
-        if mail is not None:
-            thread, source, sender = mail.thread, mail.source, address_of(mail.frm)
-        said = threads.track(check.fetcher.store, ref, kind, title, stage, due=due or None, why=why,
-                             mail_thread=thread, mail_source=source, owner=check.fetcher.owner, sender=sender)
-        return {"result": said}
+        if mail is None and ref.startswith("mail:"):  # a mail Odie follows, named by its ref: known to this check now
+            check.fetcher.remember(Mail(id=ref[len("mail:"):], frm="", subject=title, at="", snippet="",
+                                        attachments=[], source=""))
+        check.threads_found.append(findings.from_thread(ref, kind, title, stage, due, why))
+        return {"result": f"Noted: {title.strip()} ({stage.strip() or kind})."}
 
     def close_reminder(task_id: int, why: str) -> dict:
         """Close an open bill or order reminder because a mail shows it's done: a payment confirmation for the same
@@ -229,40 +222,23 @@ def watch_tools(check: Check) -> list[FunctionTool]:
         user sees why on Today and can reopen it."""
         return {"result": bills.close(check.fetcher.store, task_id, why, check.fetcher.owner)}
 
-    def report(needs_you: list[dict], line: str, done: list[dict] | None = None) -> dict:
-        """Finish the check. needs_you: [{ref: "mail:<id>" or "event:<id>", title, why (≤120 chars: what is asked, by
-        when), pile (alerts, bills, events, personal or orders), suggestion {label} (the one move Odie can make,
-        "Show the draft", "Open PR #31"; leave it out when there is none: the card offers "Tell me more"; Done and
-        Later are on every card), due (2026-10-24), amount {value, currency}, draft {to, subject, body} when a reply
-        is owed, push}] (push only for what needs the user soon). line: one sentence for Today. done: what you did
-        for a Watch for entry: [{message, files: [paths in the workspace], tell}]. tell: true only when the user
-        should hear it now (a reminder you added, something new he'd act on); leave it out for "nothing new",
+    def report(findings: list[dict] | None = None, line: str = "", done: list[dict] | None = None,
+               needs_you: list[dict] | None = None) -> dict:
+        """Finish the check. findings: what this check found that needs the user or changes something Odie follows:
+        [{ref: "mail:<id>" or "event:<id>", title (short, the user's words), kind (your words: "reply owed", "bill",
+        "order", "deadline", "decision", "security notice", "event", "pull request"), why (≤120 chars: what is
+        asked, by when), owner (you: the user must act; them: waiting on someone; odie: Odie can follow it alone),
+        due (2026-10-24), remind_at (2026-10-24T09:00: a reminder must ring then), done (it shows something is
+        finished: "you replied 18 Nov 14:20", "paid", "delivered"), refs (["example/app#49"]), pile (alerts, bills,
+        events, personal or orders), suggestion {label} (the one move Odie can make: "Show the draft"), amount
+        {value, currency}, draft {to, subject, body} when a reply is owed, push (only what needs the user soon)}].
+        line: one sentence for Today. done: what you did for a Watch for entry: [{message, files: [paths in the
+        workspace], tell}]. tell: true only when the user should hear it now; leave it out for "nothing new",
         "already covered" or "couldn't": those stay on the card, never in the chat."""
-        check.report = {"needs_you": items_of(needs_you), "line": str(line or ""), "done": items_of(done)}
+        found = items_of(findings) + items_of(needs_you)  # needs_you: the list's name before findings
+        check.report = {"findings": found, "line": str(line or ""), "done": items_of(done)}
         return {"result": "Reported. The check is over."}
 
-    def open_loops() -> dict:
-        """The open loops (pull requests and issues you follow until they close), one line each: id, title, kind,
-        owner, state, refs and the last evidence. A mail with "loop": N was already added to loop N."""
-        from odie.loops import ledger
-        store, pid = check.fetcher.store, check.fetcher.owner
-        lines = [ledger.line(lp, ledger.events(store, lp["id"])) for lp in ledger.open_loops(store, pid)]
-        if not lines:
-            return {"result": "(none open)"}
-        return {"result": wrap_untrusted("\n".join(lines))}  # titles and evidence carry mail subjects
-
-    def loop(title: str, kind: str, owner: str = "odie", refs: list[str] | None = None, mail_id: str = "",
-             next_step: str = "", loop_id: int = 0, close_why: str = "", priority: str = "normal") -> dict:
-        """Open a loop, add to one, or close one: one loop per real thing. kind: "pull request" or "issue". refs: its
-        GitHub name, as ["example/app#49"]. mail_id: the mail it came from. owner: odie (Odie can move it), you (only
-        the user can), them (waiting on someone). loop_id: the open loop this is about; with close_why it closes it
-        (the evidence: "merged 18 Nov"). A loop that already holds the same ref gets the mail added, not a second loop.
-        priority: high only when the user is asked for something soon (a review requested)."""
-        from odie.loops import writes
-        said = writes.from_watch(check, title=title, kind=kind, owner=owner, refs=texts_of(refs), mail_id=mail_id,
-                                 next_step=next_step, loop_id=loop_id, close_why=close_why, priority=priority)
-        return {"result": said}
-
-    return [FunctionTool(f) for f in (open_threads, what_you_sent, new_mail, upcoming_events, read_mail, read_thread,
-                                       search_mail, sent_to, save_attachment, bills_and_orders, track_thread,
-                                       close_reminder, open_loops, loop, report)]
+    return [FunctionTool(f) for f in (what_you_sent, new_mail, upcoming_events, read_mail, read_thread, search_mail,
+                                       sent_to, save_attachment, bills_and_orders, track_thread, close_reminder,
+                                       report)]

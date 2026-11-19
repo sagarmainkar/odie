@@ -209,7 +209,7 @@ def test_the_card_keeps_a_busy_fortnight_of_events():
 
 def test_the_watch_skill_shows_bills_payments_and_orders_by_example():
     text = check.SKILL.read_text()
-    for name in ("bills_and_orders", "close_reminder", "calendar_update_event", "calendar_create_event", "task_add"):
+    for name in ("bills_and_orders", "close_reminder", "calendar_update_event", "calendar_create_event", "remind_at"):
         assert name in text
     for mark, _state in bills.DONE_MARKS:  # the same marks Up next reads (bills.done_state)
         assert mark.strip() in text

@@ -97,8 +97,11 @@ def test_old_closes_leave_done_today(store):
 
 async def test_the_watch_count_follows_the_pick(api, store):
     mira = personalities.create(store, "Mira").id
-    store.set_setting(f"watch.card:{mira}", {"needs_you": [{"ref": "mail:1", "title": "x"}, {"ref": "mail:2", "title": "y"}]})
-    store.set_setting("watch.card", {"needs_you": [{"ref": "mail:9", "title": "z"}]})
+    store.set_setting(f"watch.card:{mira}", {"line": ""})
+    store.set_setting("watch.card", {"line": ""})
+    for title in ("x", "y"):
+        ledger.open_loop(store, mira, now(), title, "reply owed", owner="you", state="ready")
+    ledger.open_loop(store, "", now(), "z", "reply owed", owner="you", state="ready")
     assert (await api.get(f"/api/watch?personality={mira}")).json()["unseen"] == 2
     assert (await api.get("/api/watch")).json()["unseen"] == 1
 

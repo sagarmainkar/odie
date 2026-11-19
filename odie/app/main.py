@@ -231,7 +231,7 @@ def background_for(store: Store, runner):
             watch_pushed(store, runner, title, body)
         memory = getattr(runner, "memory", None)
         index = build_index(memory.load(), max_chars=3000) if memory is not None and memory.exists() else ""
-        await watch.run_check(store, now(), turn, push, memory=memory, memory_index=index)
+        await watch.run_check(store, now(), turn, push, memory=memory, memory_index=index, think=consolidate_for(runner, ""))
     # Each wake-up: the mail and calendar watch when it's due (every 30 minutes), then trackers (then, in 9c, parked tasks).
     # Detection (a minute or two), the turn (280 s), and reads when the model didn't: 10 minutes at most.
     bg.parts.insert(0, Part("watch", watch_part, due=lambda _now: watch.due(store, now()), limit=600))
@@ -246,7 +246,26 @@ def background_for(store: Store, runner):
         await run_loops(store, runner, now())
     # Then the loops whose time has come (odie.loops.clock): facts, one model call each, within the day's budget.
     bg.add(Part("loops", loops_part, due=lambda _now: bool(loops_clock.due(store, now())), limit=600))
+
+    async def ladder_part() -> None:
+        run_ladder(store, runner, now())
+    # And the follow-up ladder (odie.loops.ladder): code only, every wake-up (a push the day before, a nudge card).
+    bg.add(Part("ladder", ladder_part, limit=60))
     return bg
+
+
+def run_ladder(store: Store, runner, now) -> list:
+    """The follow-up ladder's tick (odie.loops.ladder): its pushes open the owner's Pulse."""
+    from odie.loops import ladder
+
+    def push_for(pid: str):
+        if runner is None:
+            return None
+
+        def push(title, body):
+            watch_pushed(store, runner, title, body, owner=pid)
+        return push
+    return ladder.run(store, now, push_for)
 
 
 async def run_loops(store: Store, runner, now) -> list:
@@ -285,8 +304,17 @@ async def personality_watch(store: Store, runner, now) -> str | None:
         watch_pushed(store, runner, title, body, owner=pid)
     memory = runner.memory_of(pid)
     index = runner.memory_index(pid)
-    await watch.run_check(store, now, turn, push, memory=memory, memory_index=index, owner=pid)
+    await watch.run_check(store, now, turn, push, memory=memory, memory_index=index, owner=pid,
+                          think=consolidate_for(runner, pid))
     return pid
+
+
+def consolidate_for(runner, pid: str):
+    """Stage 2's model call for this owner (odie.loops.consolidate): its brain, no tools at all, so it can only
+    answer; code writes the answer to the ledger."""
+    async def think(prompt: str, instruction: str) -> str:
+        return await runner.background_turn(prompt, timeout=120, instruction=instruction, bare=True, owner=pid)
+    return think
 
 
 def start_scheduler(store: Store, runner=None, background=None):
@@ -388,6 +416,11 @@ def create_app(runner=None, store: Store | None = None) -> FastAPI:
     home.ensure(home.Layout(s.home, s.data_dir, s.config_dir))
     store = store or Store(s.db_path)
     store.init_schema()
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from odie.loops import migrate
+    migrate.run_once(store, datetime.now(ZoneInfo(s.timezone)))  # phase 3: the watch's threads and cards become loops
     devices.hide_pairing_queries_in_access_log()  # the setup link's token never lands in logs/server.log
 
     @asynccontextmanager

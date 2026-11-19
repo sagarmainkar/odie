@@ -1,6 +1,8 @@
 """The loop eval's made-up cases, scored with a scripted model (deterministic): code's part — the same-ID shortcut,
-checked refs, closes with evidence, cards — must get every case right even when the model is naive. The real model
-runs the same cases with scripts/loops_eval.sh."""
+checked refs, the rails of stage 2 (Done remembered, a reminder only for a new loop), closes with evidence, cards —
+must get every case right. For a pull request the scripted model is naive (a finding per GitHub mail, no answers in
+stage 2); for anything else it writes what the case's script says, as a model would. The real model runs the same
+cases, never seeing a script, with scripts/loops_eval.sh."""
 import json
 import re
 from datetime import datetime
@@ -37,20 +39,44 @@ async def call(tools, name, **args):
     return await t.run_async(args=args, tool_context=SimpleNamespace())
 
 
-async def naive_turn(prompt, tools, instruction):
-    """A naive model: one loop call per GitHub mail, never looking at open_loops."""
+async def naive_turn(prompt, tools, instruction, script=None):
+    """A naive model: one finding per GitHub mail, never knowing what Odie follows; for anything else the case's
+    script (the findings it should write, and any thread it should follow)."""
+    found = []
     for mail in json.loads((await call(tools, "new_mail"))["result"]):
-        found = NAME.search(mail["subject"])
-        if found is None:
+        hit = NAME.search(mail["subject"])
+        if hit is None:
             continue
         kind = "issue" if "(Issue" in mail["subject"] else "pull request"
-        await call(tools, "loop", title=f"{found.group(1)} #{found.group(2)}", kind=kind,
-                   refs=[f"{found.group(1)}#{found.group(2)}"], mail_id=mail["id"])
-    await call(tools, "report", needs_you=[], line="")
+        found.append({"ref": f"mail:{mail['id']}", "title": f"{hit.group(1)} #{hit.group(2)}", "kind": kind,
+                      "owner": "odie", "refs": [f"{hit.group(1)}#{hit.group(2)}"]})
+    for args in (script or {}).get("threads", []):
+        await call(tools, "track_thread", **args)
+    found += (script or {}).get("findings", [])
+    await call(tools, "report", findings=found, line="")
 
 
-async def sensible_think(prompt, instruction):
-    """Picks as the playbook says, from the fenced facts."""
+def loop_number(prompt: str, ref: str) -> int | None:
+    """The number of the loop the prompt lists holding this ref: "#12 Vote … · refs event:uid-vote" -> 12."""
+    for line in prompt.splitlines():
+        found = re.match(r"#(\d+) ", line)
+        if found and ref in line:
+            return int(found.group(1))
+    return None
+
+
+async def sensible_think(prompt, instruction, script=None):
+    """Stage 2: the case's scripted answers (none for a pull request: the shortcut and the rails place it). Stage 4:
+    picks as the playbook says, from the fenced facts."""
+    if prompt.startswith("Findings from this check:"):
+        answers = []
+        for answer in (script or {}).get("answers", []):  # a script names loops by a ref they hold
+            answer = dict(answer)
+            for key in ("loop_ref", "after_ref"):
+                if key in answer:
+                    answer[key.removesuffix("_ref")] = loop_number(prompt, answer.pop(key))
+            answers.append(answer)
+        return json.dumps({"answers": answers})
     fenced = prompt.split("Facts from GitHub just now:\n")[1]
     facts = json.loads(fenced.split("\n")[1])  # the line inside the fence
     if "Odie tested the head commit" in prompt:
@@ -75,7 +101,13 @@ async def test_every_case_scores_right_with_a_naive_model(store, tmp_path):
     assert {c["id"] for c in cases} >= {"fourteen-mails-one-pr", "merged-pr-closes", "issue-not-yours", "two-prs-alike",
                                         "lone-merged-mail", "own-pr-ci-failing", "a-draft-waits", "issue-assigned-to-you",
                                         "done-pr-gets-mail", "own-pr-green-tested", "own-pr-lockfile",
-                                        "someone-elses-pr", "own-pr-no-recipe"}
+                                        "someone-elses-pr", "own-pr-no-recipe",
+                                        # phase 3: the whole watch in the ledger (the owner's five cases first)
+                                        "vote-event-digest-event", "dismissed-event-stays-gone", "old-pr-card-and-loop",
+                                        "reply-owed-no-due-date", "deck-by-friday-then-a-call", "reply-from-the-phone",
+                                        "bill-then-paid", "order-shipped-then-delivered", "newsletter-is-nothing",
+                                        "two-invoices-one-biller", "forward-leaves-reply-open", "personality-inbox"}
+    assert len(cases) >= 30
     results = []
     for case in cases:
         folder = tmp_path / case["id"]

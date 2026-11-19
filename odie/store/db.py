@@ -38,6 +38,8 @@ class Store:
     APPROVAL_COLUMNS = {"risk": "TEXT", "call_id": "TEXT"}  # call_id: the tool call this approval answered
     PUSH_COLUMNS = {"device_id": "INTEGER"}  # the paired device that subscribed (none before pairing)
     THREAD_COLUMNS = {"personality": "TEXT"}  # whose thread it is (odie.personalities); NULL = everyday Odie
+    # Phase 3 of the proactive design: what a loop's card shows (pile, amount, draft, the mail it came from), as JSON.
+    LOOP_COLUMNS = {"card_json": "TEXT NOT NULL DEFAULT '{}'"}
     TRACKER_COLUMNS = {"page_url": "TEXT", "signin_allowed": "INTEGER NOT NULL DEFAULT 0"}  # a signed-in tracker's page and the user's Allow
     # Workers (odie.workers): an install that tried the old bots experiment already has a jobs table of another shape
     # (create table if not exists leaves it as it was). Its missing columns are added; its rows keep version 0, which
@@ -76,6 +78,10 @@ class Store:
             for col, typ in self.TRACKER_COLUMNS.items():
                 if col not in have:
                     self._conn.execute(f"alter table trackers add column {col} {typ}")
+            have = {r["name"] for r in self._conn.execute("pragma table_info(loops)")}
+            for col, typ in self.LOOP_COLUMNS.items():
+                if col not in have:
+                    self._conn.execute(f"alter table loops add column {col} {typ}")
             have = {r["name"] for r in self._conn.execute("pragma table_info(jobs)")}
             for col, typ in self.JOB_COLUMNS.items():
                 if col not in have:

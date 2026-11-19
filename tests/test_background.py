@@ -110,7 +110,8 @@ async def test_trackers_run_as_a_part(isolated_settings, tmp_path):
             return 0
     bg = background_for(s, Runner())
     assert [p.name for p in bg.parts][:2] == ["watch", "trackers"] and bg.parts[1].limit > 300  # the watch first; each due tracker gets its 5 minutes
-    assert await bg.tick() == ["watch", "trackers"] and calls == ["trackers"]  # the watch is due at once (never checked)
+    ran = await bg.tick()  # the watch is due at once (never checked); the follow-up ladder runs every wake-up
+    assert ran == ["watch", "trackers", "ladder"] and calls == ["trackers"]
 
 
 async def test_the_background_route(isolated_settings, tmp_path):

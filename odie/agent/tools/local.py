@@ -104,6 +104,9 @@ def make_local_tools(store: Store, tz: str, source_done=None) -> list[FunctionTo
             return "Nothing to update."
         if fields:
             store.update_task(int(task_id), **fields)
+        if status == "done":
+            from odie.loops import ledger
+            ledger.reminder_done(store, int(task_id), datetime.now(zone))  # a loop's reminder: the loop is Done too
         msg = f"Task #{task_id} '{row['title']}': " + ", ".join(f"{k}={v}" for k, v in fields.items() if k != "delivered_at")
         if snooze_until:
             msg += f" snoozed until {parse_when(snooze_until, zone)}"

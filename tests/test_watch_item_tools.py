@@ -1,13 +1,16 @@
-"""Chat acting on a watch card: watch_item shows an item and its drafted reply; watch_close takes it off and closes its thread."""
+"""Chat acting on a loop's card: watch_item shows the loop, its drafted reply and its evidence; watch_close is the
+user's Done said in chat (remembered: closed by him, not by Odie)."""
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
 import pytest
 
+from odie.loops import ledger
 from odie.store.db import Store
-from odie.watch import report, threads
 
-ITEM = {"ref": "mail:m1", "title": "Workshop invite", "why": "Asks your fee by Friday", "pile": "alerts", "done": False,
-        "from": "Tom Reyes", "subject": "Quick note", "due": "2026-10-24",
-        "suggestion": {"label": "Reply with your fee", "run": "Show the draft for watch item mail:m1"},
-        "escape": {"label": "Not interested", "run": "Close watch item mail:m1: not interested"},
+NOW = datetime(2026, 11, 19, 10, 0, tzinfo=ZoneInfo("Asia/Kolkata"))
+CARD = {"pile": "alerts", "from": "Tom Reyes", "subject": "Quick note", "due": "2026-10-24",
+        "suggestion": "Reply with your fee",
         "draft": {"to": "tom@learnhub.example.org", "subject": "Re: Quick note", "body": "Hi Tom, my fee is [fee]."}}
 
 
@@ -15,8 +18,14 @@ ITEM = {"ref": "mail:m1", "title": "Workshop invite", "why": "Asks your fee by F
 def store(isolated_settings, tmp_path):
     s = Store(tmp_path / "a.db")
     s.init_schema()
-    s.set_setting(report.CARD, {"needs_you": [ITEM, {**ITEM, "ref": "mail:m2", "title": "Other"}]})
     return s
+
+
+def a_loop(store, **kw):
+    return ledger.open_loop(store, "", NOW, kw.pop("title", "Workshop invite"), "reply owed", owner="you",
+                            refs=kw.pop("refs", ["mail:m1", "thread:t1"]), state="ready",
+                            result="Asks your fee by Friday", due_at="2026-10-24T09:00+05:30", source="mail",
+                            ref="mail:m1", fact="Workshop invite: asks your fee", card=kw.pop("card", CARD))
 
 
 def tools_for(store):
@@ -24,58 +33,54 @@ def tools_for(store):
     return {t.name: t.func for t in make_watch_item_tools(store)}
 
 
-def test_watch_item_shows_the_item_and_its_draft(store):
-    text = tools_for(store)["watch_item"](ref="mail:m1")
-    assert "Workshop invite" in text and "Asks your fee by Friday" in text and "2026-10-24" in text
-    assert "tom@learnhub.example.org" in text and "Hi Tom, my fee is [fee]." in text
+def test_watch_item_shows_the_loop_its_draft_and_why(store):
+    lid = a_loop(store)
+    for ref in (f"loop:{lid}", f"#{lid}", str(lid), "mail:m1"):
+        text = tools_for(store)["watch_item"](ref=ref)
+        assert f"Loop #{lid}" in text and "Workshop invite" in text and "Asks your fee by Friday" in text
+    assert "tom@learnhub.example.org" in text and "Hi Tom, my fee is [fee]." in text and "2026-10-24" in text
+    assert "asks your fee" in text  # its evidence
     assert "UNTRUSTED" in text  # what came from mail is fenced
-    assert "isn't on Today" in tools_for(store)["watch_item"](ref="mail:zz")
+    assert ledger.get(store, lid)["tapped"] == "ask"
+    assert "isn't on Pulse" in tools_for(store)["watch_item"](ref="mail:zz")
 
 
-def test_watch_close_takes_it_off_and_closes_its_thread(store):
-    threads.track(store, "mail:m1", "reply", "Reply: workshop invite", "owed", due="2026-10-24")
-    said = tools_for(store)["watch_close"](ref="mail:m1", why="not interested")
+def test_watch_close_is_his_done_and_is_remembered(store):
+    lid = a_loop(store)
+    said = tools_for(store)["watch_close"](ref=f"loop:{lid}", why="not interested")
     assert "Closed" in said
-    assert [i["ref"] for i in store.get_setting(report.CARD)["needs_you"]] == ["mail:m2"]
-    assert threads.open_refs(store) == set()
-    row = store.one("select status, notes from tasks where source_ref = 'mail:m1'")
-    assert row["status"] == "done" and "not interested" in row["notes"]
+    loop = ledger.get(store, lid)
+    assert loop["state"] == "closed" and loop["closed_by"] == "you" and loop["closed_why"] == "not interested"
+    assert ledger.closed_since(store, "", NOW.replace(hour=0)) == []  # his, so not in Done today
 
 
-def test_watch_close_needs_a_reason_and_a_known_item(store):
+def test_watch_close_needs_a_reason_and_a_known_card(store):
     tools = tools_for(store)
-    assert "why" in tools["watch_close"](ref="mail:m1", why="").lower()
-    assert "isn't on Today" in tools["watch_close"](ref="mail:zz", why="done")
+    lid = a_loop(store)
+    assert "why" in tools["watch_close"](ref=f"loop:{lid}", why="").lower()
+    assert "isn't on Pulse" in tools["watch_close"](ref="loop:999", why="done")
 
 
 def test_a_reminder_card_points_to_task_update(store):
     assert "task_update" in tools_for(store)["watch_item"](ref="task:7")
 
 
-def test_threads_close_by_ref(store):
-    threads.track(store, "mail:o1", "order", "Order: lamp", "shipped")
-    assert "Closed" in threads.close(store, "mail:o1", "delivered")
-    assert "No open thread" in threads.close(store, "mail:o1", "delivered")
-
-
-
 def test_everything_the_watch_wrote_is_inside_the_fence(store):
-    text = tools_for(store)["watch_item"](ref="mail:m1")
+    lid = a_loop(store)
+    text = tools_for(store)["watch_item"](ref=f"loop:{lid}")
     fence = text.index("<<<UNTRUSTED")
     assert text.index("Workshop invite") > fence and text.index("Reply with your fee") > fence
 
 
-def test_closing_in_chat_is_the_users_not_the_watchs(store):
-    from datetime import datetime, timedelta
-
-    from odie.watch import bills
-    threads.track(store, "mail:m1", "reply", "Reply: workshop invite", "owed")
-    tools_for(store)["watch_close"](ref="mail:m1", why="not interested")
-    assert bills.closed_by_watch(store, datetime.now().astimezone() - timedelta(minutes=1)) == []
-
-
 def test_watch_item_names_the_app_that_holds_the_mail(store):
-    """Chat opens a mail by its id in the right app (Gmail's connector, not Apple Mail): the item says which."""
-    store.set_setting(report.CARD, {"needs_you": [{**ITEM, "app": "Mail Connector"}]})
-    text = tools_for(store)["watch_item"](ref="mail:m1")
+    """Chat opens a mail by its id in the right app (Gmail's connector, not Apple Mail): the loop says which."""
+    lid = a_loop(store, card={**CARD, "app": "Mail Connector"})
+    text = tools_for(store)["watch_item"](ref=f"loop:{lid}")
     assert "in Mail Connector, id m1" in text
+
+
+def test_a_personalitys_loop_is_not_everyday_chats(store):
+    from odie import personalities
+    mira = personalities.create(store, "Mira").id
+    hers = ledger.open_loop(store, mira, NOW, "Mira's", "reply owed", owner="you", state="ready")
+    assert "isn't on Pulse" in tools_for(store)["watch_item"](ref=f"loop:{hers}")

@@ -7,12 +7,17 @@ personality is "" for everyday Odie (stored as NULL, as tasks are)."""
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 
 OPEN = ("new", "working", "ready", "waiting")
 OWNERS = ("odie", "you", "them")
 PRIORITIES = ("high", "normal", "low")
 CLOSED_BY_USER = "you"
+FINISHED_DAYS = 30  # loops he closed with Done stay in stage 2's view this long ("same as the one he finished")
+REOPEN_DAYS = 7  # a closed loop may be reopened this long after its close
+# The reminders a loop may close with it: the ones Odie made (for a loop, a watch thread of old, a reminder with a source
+# ref the watch added). His own (no source kind) are never touched.
+ODIES_TASKS = ("loop", "watch", "ref")
 # The fields code may change on a loop (update); the rest change only through open/attach/close/reopen.
 CHANGEABLE = frozenset({"title", "kind", "owner", "state", "next_step", "playbook", "priority", "due_at",
                         "next_check_at", "hidden_until", "has_news", "result", "brief", "link", "nudges", "attempts",
@@ -36,24 +41,35 @@ def _row(row) -> dict | None:
         return None
     loop = dict(row)
     loop["refs"] = json.loads(loop.pop("refs_json") or "[]")
+    loop["card"] = json.loads(loop.pop("card_json", None) or "{}")
     loop["personality"] = loop["personality"] or ""
     return loop
 
 
 def open_loop(store, pid: str, now: datetime, title: str, kind: str, owner: str = "odie", refs: list[str] | None = None,
               next_step: str = "", playbook: str = "", priority: str = "normal", due_at: str | None = None,
-              source: str = "model", ref: str = "", fact: str = "") -> int:
-    """A new loop for this owner, due for its first look at once, with its first evidence when given. Returns its id."""
+              source: str = "model", ref: str = "", fact: str = "", card: dict | None = None,
+              state: str = "new", result: str = "") -> int:
+    """A new loop for this owner, due for its first look at once, with its first evidence when given. Returns its id.
+    card: what its card shows besides the loop's own fields (pile, amount, draft, the mail it came from). state "ready"
+    makes it a card at once (shown now)."""
     if owner not in OWNERS:
         owner = "odie"
     if priority not in PRIORITIES:
         priority = "normal"
+    if state not in OPEN:
+        state = "new"
     at = _at(now)
+    shown_at = None
+    if state == "ready":
+        shown_at = at
     cur = store.execute(
-        "insert into loops(personality, title, kind, owner, next_step, playbook, priority, due_at, next_check_at, "
-        "refs_json, has_news, created_at, updated_at) values (?,?,?,?,?,?,?,?,?,?,?,?,?)",
-        (pid or None, title.strip()[:200], kind.strip()[:40], owner, next_step.strip()[:200], playbook, priority, due_at,
-         at, json.dumps(list(dict.fromkeys(refs or []))), 1, at, at))
+        "insert into loops(personality, title, kind, owner, state, next_step, playbook, priority, due_at, "
+        "next_check_at, refs_json, has_news, result, shown_at, card_json, created_at, updated_at) "
+        "values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (pid or None, title.strip()[:200], kind.strip()[:40], owner, state, next_step.strip()[:200], playbook, priority,
+         due_at, at, json.dumps(list(dict.fromkeys(refs or []))), 1, result.strip()[:300], shown_at,
+         json.dumps(card or {}, ensure_ascii=False), at, at))
     lid = int(cur.lastrowid)
     if fact:
         add_event(store, lid, now, source, ref, fact)
@@ -125,6 +141,26 @@ def attach(store, loop_id: int, now: datetime, source: str, ref: str, fact: str,
     add_event(store, loop_id, now, source, ref, fact)
 
 
+def merge_card(store, loop_id: int, now: datetime, fields: dict) -> None:
+    """Adds to what a loop's card shows: the fields given replace those of the same name, the rest stay. A pile kept,
+    an amount added -> both on the card."""
+    loop = get(store, loop_id)
+    if loop is None or not fields:
+        return
+    card = {**loop["card"], **fields}
+    store.execute("update loops set card_json=?, updated_at=? where id=?",
+                  (json.dumps(card, ensure_ascii=False), _at(now), int(loop_id)))
+
+
+def add_refs(store, loop_id: int, now: datetime, refs: list[str]) -> None:
+    """Adds refs to a loop (none twice), with no evidence and no news: a reminder made for it, say."""
+    loop = get(store, loop_id)
+    if loop is None:
+        return
+    held = list(dict.fromkeys([*loop["refs"], *[r for r in refs if r]]))
+    store.execute("update loops set refs_json=?, updated_at=? where id=?", (json.dumps(held), _at(now), int(loop_id)))
+
+
 def update(store, loop_id: int, now: datetime, **fields) -> None:
     """Changes the named fields (only those in CHANGEABLE; anything else raises ValueError)."""
     unknown = set(fields) - CHANGEABLE
@@ -148,6 +184,61 @@ def close(store, loop_id: int, now: datetime, by: str, why: str, state: str = "c
     store.execute("update loops set state=?, closed_by=?, closed_why=?, closed_at=?, has_news=0, updated_at=? where id=?",
                   (state, by, reason[:300], at, at, int(loop_id)))
     add_event(store, loop_id, now, by, "", f"Closed: {reason}")
+    close_its_reminder(store, get(store, loop_id))
+
+
+def reminders_of(loop: dict) -> list[int]:
+    """Every reminder a loop points at ("task:<id>" refs), newest first: an upgrade may have folded three reminders
+    for one thing into one loop. ["event:uid1", "task:12", "task:15"] -> [15, 12]; no task ref -> []."""
+    out = []
+    for ref in loop["refs"]:
+        number = ref[len("task:"):]
+        if ref.startswith("task:") and number.isdigit():
+            out.append(int(number))
+    return sorted(out, reverse=True)
+
+
+def reminder_of(loop: dict) -> int | None:
+    """The reminder a loop points at (the newest "task:<id>" ref), or None. ["event:uid1", "task:12"] -> 12; no task
+    ref -> None."""
+    held = reminders_of(loop)
+    if not held:
+        return None
+    return held[0]
+
+
+def pointing_at(store, task_id: int) -> dict | None:
+    """The loop that points at this reminder, open or closed (the newest), or None."""
+    rows = store.query("select * from loops where refs_json like ? order by id desc", (f'%"task:{int(task_id)}"%',))
+    for row in rows:
+        loop = _row(row)
+        if f"task:{int(task_id)}" in loop["refs"]:
+            return loop
+    return None
+
+
+def reminder_done(store, task_id: int, now: datetime) -> int | None:
+    """He ticked off a reminder a loop points at (on Pulse, in chat): the loop is his Done too, remembered like any
+    Done. Returns the loop's id, or None when no open loop points at it. Task #12 of the vote loop ticked -> that loop
+    closed by you; his own "Pay rent" -> None."""
+    loop = pointing_at(store, task_id)
+    if loop is None or loop["state"] not in OPEN:
+        return None
+    done(store, loop["id"], now)
+    update(store, loop["id"], now, tapped="done")
+    return loop["id"]
+
+
+def close_its_reminder(store, loop: dict | None) -> None:
+    """A closed loop's reminder closes with it, when Odie made it (ODIES_TASKS), so it never rings for something
+    finished. His own reminder is never touched."""
+    if loop is None:
+        return
+    for task_id in reminders_of(loop):
+        row = store.one("select id, status, source_kind from tasks where id=?", (task_id,))
+        if row is None or row["status"] not in ("open", "waiting") or row["source_kind"] not in ODIES_TASKS:
+            continue
+        store.update_task(task_id, status="done")
 
 
 def done(store, loop_id: int, now: datetime) -> None:
@@ -155,12 +246,95 @@ def done(store, loop_id: int, now: datetime) -> None:
     close(store, loop_id, now, CLOSED_BY_USER, "Done")
 
 
+def state_after_reopen(loop: dict) -> str:
+    """Where a reopened loop goes: one with a playbook is looked at again by stage 4 ("new"); his own (owner you) is a
+    card again ("ready"); the rest are followed ("waiting"). A pull request -> "new"; "Reply to Asha" -> "ready"; an
+    order on its way -> "waiting"."""
+    if loop["playbook"]:
+        return "new"
+    if loop["owner"] == "you":
+        return "ready"
+    return "waiting"
+
+
 def reopen(store, loop_id: int, now: datetime) -> None:
     """Reopen (from Done today): open again and due for a look at once; the wrong close stays in its evidence."""
+    loop = get(store, loop_id)
+    if loop is None:
+        return
     at = _at(now)
-    store.execute("update loops set state='new', closed_by=null, closed_why=null, closed_at=null, has_news=1, "
-                  "attempts=0, next_check_at=?, hidden_until=null, updated_at=? where id=?", (at, at, int(loop_id)))
+    store.execute("update loops set state=?, closed_by=null, closed_why=null, closed_at=null, has_news=1, "
+                  "attempts=0, next_check_at=?, hidden_until=null, shown_at=?, tapped='reopen', updated_at=? where id=?",
+                  (state_after_reopen(loop), at, at, at, int(loop_id)))
     add_event(store, loop_id, now, CLOSED_BY_USER, "", "Reopened by you")
+
+
+def may_reopen(loop: dict, now: datetime) -> bool:
+    """Whether a loop can be reopened now: it is closed, within REOPEN_DAYS of its close. Closed by Odie 2 days ago ->
+    True; 8 days ago -> False; still open -> False."""
+    if loop["state"] in OPEN or not loop.get("closed_at"):
+        return False
+    return now - datetime.fromisoformat(loop["closed_at"]) <= timedelta(days=REOPEN_DAYS)
+
+
+def note_later(store, loop_id: int, now: datetime, until: str) -> None:
+    """The card's Later: hidden until then, the tap noted, and a line of evidence (Later is counted from those)."""
+    update(store, loop_id, now, hidden_until=until, tapped="later")
+    add_event(store, loop_id, now, CLOSED_BY_USER, "later", f"Later: back {until[:16]}")
+
+
+def laters(store, loop_id: int) -> int:
+    """How many times he put this loop off with Later."""
+    row = store.one("select count(*) n from loop_events where loop_id=? and ref='later'", (int(loop_id),))
+    return int(row["n"])
+
+
+def split(store, loop_id: int, event_ids: list[int], now: datetime) -> int:
+    """A wrong merge undone (design §3): the chosen evidence moves to a new loop of its own, with the refs it brought,
+    and the old loop stops holding those refs (so the shortcut no longer sends them there). Both keep a line saying so.
+    The new loop takes the old one's kind and owner, its title from the first moved line; his (owner you) is a card at
+    once. No evidence chosen, or none of this loop's -> ValueError."""
+    loop = get(store, loop_id)
+    if loop is None:
+        raise ValueError("no such loop")
+    wanted = {int(e) for e in event_ids}
+    moving = [e for e in events(store, loop_id) if e["id"] in wanted]
+    if not moving:
+        raise ValueError("choose the evidence that belongs to another thing")
+    moved_refs = [e["ref"] for e in moving if e["ref"]]
+    state = "waiting"
+    if loop["owner"] == "you":
+        state = "ready"
+    title = moving[0]["fact"][:120]
+    new_id = open_loop(store, loop["personality"], now, title, loop["kind"], owner=loop["owner"], refs=moved_refs,
+                       priority=loop["priority"], state=state, card=loop["card"], result=moving[0]["fact"][:300])
+    for e in moving:
+        store.execute("update loop_events set loop_id=? where id=?", (new_id, e["id"]))
+    kept = [r for r in loop["refs"] if r not in set(moved_refs)]
+    store.execute("update loops set refs_json=?, updated_at=? where id=?", (json.dumps(kept), _at(now), int(loop_id)))
+    add_event(store, loop_id, now, CLOSED_BY_USER, "split", f"Split off into #{new_id}: {title}")
+    add_event(store, new_id, now, CLOSED_BY_USER, "split", f"Split off from #{loop_id} by you")
+    return new_id
+
+
+def finished(store, pid: str, now: datetime) -> list[dict]:
+    """The owner's loops he closed with Done in the last FINISHED_DAYS, newest first: stage 2 reads them so a later
+    mention of the same thing, from any source, is "the one he finished" and attaches quietly."""
+    mine, values = _whose(pid)
+    since = now - timedelta(days=FINISHED_DAYS)
+    rows = store.query(f"select * from loops where state in ('closed','dropped') and closed_by = ? and {mine} "
+                       "order by closed_at desc", (CLOSED_BY_USER, *values))
+    return [_row(r) for r in rows if datetime.fromisoformat(r["closed_at"]) >= since]
+
+
+def finished_line(loop: dict) -> str:
+    """One loop he finished, as stage 2 reads it: "#2 Vote: Northwind ballot · reminder · finished by you 19 Nov 09:10
+    · refs event:uid1"."""
+    when = datetime.fromisoformat(loop["closed_at"])
+    bits = [f"#{loop['id']} {loop['title']}", loop["kind"] or "?", f"finished by you {when.day} {when.strftime('%b %H:%M')}"]
+    if loop["refs"]:
+        bits.append("refs " + ", ".join(loop["refs"][:4]))
+    return " · ".join(bits)
 
 
 def closed_since(store, pid: str, since: datetime) -> list[dict]:

@@ -34,10 +34,10 @@ async def run_all(provider: str, model: str, cases: list[dict], root: Path) -> l
     runner.review_every = 10**6
     await runner.load_plugins()
 
-    async def turn(prompt, tools, instruction):
+    async def turn(prompt, tools, instruction, script=None):
         await runner.background_turn(prompt, timeout=280, tools=tools, instruction=instruction, guard=watch_check.guard)
 
-    async def think(prompt, instruction):
+    async def think(prompt, instruction, script=None):  # the real model: a case's script is for the tests only
         return await runner.background_turn(prompt, timeout=120, instruction=instruction, bare=True)
     now = datetime(2026, 11, 18, 10, 0, tzinfo=ZoneInfo(config.settings.timezone))
     results = []

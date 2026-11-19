@@ -5,12 +5,13 @@ import type { Media } from "./media";
  *  off until 09:00 tomorrow (POST /api/needs_you/later with its ref); "open": open the page the server built (a pull
  *  request); "loop_done": a loop's Done (POST /api/loops/<id>/done). */
 export type NeedAction = { label: string; action: "chat" | "dismiss" | "done_task" | "snooze_task" | "later" | "open" | "loop_done"
-  | "job_retry" | "job_allow" | "job_clear" | "merge" | "recipe_use" | "recipe_no" | "show_output"; value: string | number };
+  | "job_retry" | "job_allow" | "job_clear" | "merge" | "recipe_use" | "recipe_no" | "show_output" | "split"; value: string | number };
 
-/** Every button action this app handles; a newer server may send one it doesn't know yet. */
+/** Every button action this app handles; a newer server may send one it doesn't know yet. "split" only ever comes in
+ *  a card's small menu ("more"), never as one of its three buttons, so an app that doesn't know it shows nothing. */
 const KNOWN_ACTIONS: ReadonlySet<string> = new Set<NeedAction["action"]>([
   "chat", "dismiss", "done_task", "snooze_task", "later", "open", "loop_done",
-  "job_retry", "job_allow", "job_clear", "merge", "recipe_use", "recipe_no", "show_output",
+  "job_retry", "job_allow", "job_clear", "merge", "recipe_use", "recipe_no", "show_output", "split",
 ]);
 
 /** Whether this app knows what a card's button does: "job_allow" -> true; "job_pause" (from a newer server) -> false,
@@ -31,8 +32,18 @@ export function busyWord(action: string): string {
 /** One card in a Pulse's "Needs you": a watch item from mail, or one of the user's own reminders. Every card has the
  *  same three buttons: its one move (main), Done (other) and Later (later; an older server sends no Later). */
 export type Need = { ref: string; title: string; why: string; brief?: string; icon: IconName; badge: string; ask: string; main: NeedAction; other: NeedAction; later?: NeedAction;
-  evidence?: { at: string; source: string; fact: string }[]; output?: string;  // a tested PR's card: Why? and the failures
+  evidence?: Evidence[]; output?: string;  // a loop's card: Why? (its evidence) and, for a tested PR, the failures
+  more?: NeedAction[];  // a loop's small menu: Split (a merge was wrong)
   steps?: JobStep[]; allow_hash?: string; may_read?: string[]; uses?: string };  // a job's card: every step it needed, plain words first; what its tap allows; folders of his it may read
+
+/** One line of a loop's "Why?": when, where from, what was seen; its id names it for Split. */
+export type Evidence = { id?: number; at: string; source: string; fact: string };
+
+/** Whether Split can go ahead with these lines picked: at least one, and not every line (moving all of them would
+ *  leave nothing behind). 1 of 3 -> true; 0 of 3 -> false; 3 of 3 -> false; a card with one line -> never. */
+export function splitReady(picked: number, total: number): boolean {
+  return picked >= 1 && picked < total;
+}
 
 /** A step a background job was refused: what it is in plain words, the exact command, and whether a tap may allow it. */
 export type JobStep = { words: string; raw: string; allowed: boolean };

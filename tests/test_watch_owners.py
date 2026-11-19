@@ -144,7 +144,7 @@ async def test_a_personalitys_check_writes_its_own_card_and_threads(store, tmp_p
     from types import SimpleNamespace
 
     from odie.plugins import mcp
-    from odie.watch import check, report, threads
+    from odie.watch import check, report
     from tests.test_watch_calls import spec_for
     from tests.test_watch_fetch import EVENTS, ZAP_MAIL
     mira = made(store, "Mira")
@@ -164,8 +164,11 @@ async def test_a_personalitys_check_writes_its_own_card_and_threads(store, tmp_p
                    line="1 new email")
     assert await check.run_check(store, DAY, turn, lambda t, b: None, owner=mira) == "ok"
     assert store.get_setting(report.CARD) is None  # Odie's card untouched
-    assert store.get_setting("watch.card:" + mira)["needs_you"][0]["ref"] == "mail:m1"
-    assert threads.open_refs(store) == set() and threads.open_refs(store, mira) == {"mail:m1"}
+    assert store.get_setting("watch.card:" + mira)["line"] == "1 new email"
+    from odie.loops import ledger
+    assert ledger.open_loops(store, "") == []  # Odie's loops untouched
+    [hers] = ledger.open_loops(store, mira)  # the thread and the item about one mail: one loop, hers
+    assert "mail:m1" in hers["refs"] and hers["state"] == "ready" and hers["kind"] == "reply owed"
 
 
 async def test_nothing_new_means_no_model_call(store, tmp_path):
@@ -181,7 +184,7 @@ async def test_nothing_new_means_no_model_call(store, tmp_path):
         raise AssertionError("no model call when nothing is new")
     assert await check.run_check(store, DAY, turn, lambda t, b: None) == "quiet"
     card = store.get_setting(report.CARD)
-    assert card["checked_at"].startswith("2026-11-18T10:00") and card["needs_you"] == []
+    assert card["checked_at"].startswith("2026-11-18T10:00") and card["line"] == ""
     assert store.get_setting("watch.state")["last_check"].startswith("2026-11-18T10:00")  # the check counts as done
 
 
@@ -238,7 +241,7 @@ async def test_the_personalities_watch_part_runs_only_when_one_is_switched_on(st
         def memory_index(self, pid):
             return ""
 
-    async def fake_run_check(store_, now, turn, push, memory=None, memory_index="", owner=""):
+    async def fake_run_check(store_, now, turn, push, memory=None, memory_index="", owner="", think=None):
         await turn("Run the watch check.", [], "")
         return "ok"
     monkeypatch.setattr("odie.watch.check.run_check", fake_run_check)

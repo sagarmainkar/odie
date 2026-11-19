@@ -1,0 +1,58 @@
+{
+  "id": "two-mails-one-order",
+  "about": "An order confirmation and its shipping mail in one check, in different threads: one loop.",
+  "mails": [
+    {
+      "id": "oc1",
+      "from": "Soundshop <orders@soundshop.example>",
+      "subject": "Order confirmed: headphones #A-1182",
+      "at": "2026-11-18T02:00:00Z",
+      "snippet": "Thanks for your order #A-1182: noise-cancelling headphones.",
+      "body": "Thanks for your order #A-1182: noise-cancelling headphones.",
+      "thread": "toc1"
+    },
+    {
+      "id": "oc2",
+      "from": "Soundshop <orders@soundshop.example>",
+      "subject": "Shipped: your order #A-1182 arrives Saturday",
+      "at": "2026-11-18T04:00:00Z",
+      "snippet": "Order #A-1182 has shipped. Arriving Saturday 21 Nov.",
+      "body": "Order #A-1182 has shipped. Arriving Saturday 21 Nov.",
+      "thread": "toc2"
+    }
+  ],
+  "script": {
+    "threads": [
+      {
+        "ref": "mail:oc1",
+        "kind": "order",
+        "title": "Order: headphones",
+        "stage": "placed"
+      },
+      {
+        "ref": "mail:oc2",
+        "kind": "order",
+        "title": "Order: headphones",
+        "stage": "shipped",
+        "due": "2026-11-21"
+      }
+    ],
+    "answers": [
+      {
+        "f": "F1",
+        "is": "new"
+      },
+      {
+        "f": "F2",
+        "is": "same",
+        "finding": "F1"
+      }
+    ]
+  },
+  "expect": {
+    "loops": 1,
+    "owner": {
+      "mail:oc2": "them"
+    }
+  }
+}

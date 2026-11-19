@@ -50,8 +50,8 @@ class EvalFetcher(Fetcher):
     """The watch's reads answered from one case, with every mail it opened kept in `opened`. Nothing is called and
     nothing is saved."""
 
-    def __init__(self, store, now: datetime, case: dict):
-        super().__init__(store, now)
+    def __init__(self, store, now: datetime, case: dict, owner: str = ""):
+        super().__init__(store, now, owner)
         self.case = case
         self.opened: set[str] = set()
         self._bodies = {row["id"]: row.get("body", "") for row in case["mails"]}
@@ -62,10 +62,16 @@ class EvalFetcher(Fetcher):
         return newest_first(list(self._mail.values()))
 
     async def upcoming_events(self, hours: int = 24) -> list:
-        return []
+        return self.events()
 
     async def events_ahead(self, days: int) -> list:
-        return []
+        return self.events()
+
+    def events(self) -> list:
+        """The case's calendar ("events": [{id, title, start, end, change}]), as the watch's Events."""
+        from odie.watch.fetch import Event
+        return [Event(e["id"], e["title"], e["start"], e.get("end", ""), e.get("where", ""), e.get("attendees", []),
+                      "calendar:eval", e.get("change")) for e in self.case.get("events", [])]
 
     async def open_mail(self, mail_id: str) -> Mail | None:
         mail = self._mail.get(mail_id)
@@ -128,7 +134,10 @@ def score(case: dict, report: dict | None, opened: set[str], acted: list[str] | 
     kind opened for a mail ("track"); and an older thread closed or flagged again as threads_expect says."""
     flagged = set()
     pile_of: dict[str, str] = {}
-    for item in (report or {}).get("needs_you", []):
+    reported = (report or {}).get("findings") or (report or {}).get("needs_you") or []
+    for item in reported:
+        if str(item.get("owner") or "you").lower() in ("them", "odie"):
+            continue  # followed (an order on its way, a pull request): not a card for the user
         ref = str(item.get("ref") or "")
         if ref.startswith("mail:"):
             flagged.add(ref[len("mail:"):])
@@ -164,7 +173,7 @@ def score(case: dict, report: dict | None, opened: set[str], acted: list[str] | 
     for ref, wanted in (case.get("threads_expect") or {}).items():
         threads_of += 1
         closed = (after.get(ref) or {}).get("status") in ("done", "dropped")
-        raised = ref[len("mail:"):] in flagged
+        raised = ref[len("mail:"):] in flagged or (after.get(ref) or {}).get("status") == "ready"
         if (wanted == "closed" and closed) or (wanted == "flagged" and raised):
             threads_right += 1
     acted_wrongly = []
@@ -181,19 +190,25 @@ def score(case: dict, report: dict | None, opened: set[str], acted: list[str] | 
 async def run_case(runner, store, case: dict, now: datetime) -> dict:
     """One case through the real watch turn: its tools read from the case; the report is scored."""
     from odie.watch import check as watch_check
-    from odie.watch import threads
     from odie.watch.tools import Check, watch_tools
+    from odie.loops import consolidate, findings, ledger
     store.execute("delete from tasks")  # each case starts with only its own open reminders
+    store.execute("delete from loop_events")
+    store.execute("delete from loops")
     for title in case.get("open_tasks", []):
         store.add_task(title, "reminder", origin="agent")
-    for t in case.get("threads_open", []):
-        threads.track(store, t["ref"], t["kind"], t["title"], t["stage"], due=t.get("due"),
-                      mail_thread=t.get("thread", ""), mail_source=EVAL_SOURCE)
-    given = len(case.get("open_tasks", [])) + len(case.get("threads_open", []))
+    for t in case.get("threads_open", []):  # what Odie already follows: loops (stage 1 doesn't see them)
+        words, owner = findings.THREAD_KINDS[t["kind"]]
+        refs = [t["ref"]]
+        if t.get("thread"):
+            refs.append(f"thread:{t['thread']}")
+        ledger.open_loop(store, "", now, t["title"], words, owner=owner, refs=refs,
+                         state=consolidate.state_for(owner, ""), card={"thread": t.get("thread", "")})
+    given = len(case.get("open_tasks", []))
     check = Check(EvalFetcher(store, now, case))
     writes: list[dict] = []
     tools = watch_tools(check) + calendar_fakes(writes)
-    instruction = watch_check._instruction("", case.get("watch_for", ""))
+    instruction = watch_check._instruction(case.get("watch_for", ""))
     started = time.monotonic()
     error = ""
     try:
@@ -204,19 +219,38 @@ async def run_case(runner, store, case: dict, now: datetime) -> dict:
                                          instruction=instruction, guard=watch_check.guard, free=FREE)
     except Exception as e:  # noqa: BLE001 (a failed case is recorded, the rest still run)
         error = f"{type(e).__name__}: {e}"[:200]
+    found = findings.collect(check)  # placed by the shortcut alone: this eval scores stage 1
+    consolidate.apply(store, "", now, found, {}, consolidate.hints(store, "", found))
     fetcher = check.fetcher
     added = store.query("select title from tasks order by id")[given:]
-    threads_after = {}
-    for row in store.query("select source_ref, status, notes from tasks where source_kind = 'watch'"):
-        kind = ""
-        if row["status"] in ("open", "waiting"):
-            kind = json.loads(row["notes"] or "{}").get("kind", "")
-        threads_after[row["source_ref"]] = {"kind": kind or "closed", "status": row["status"]}
+    threads_after = threads_now(store)
     acted = [f"calendar: {w.get('summary') or w.get('event_id')}" for w in writes]
     acted += [f"task: {row['title']}" for row in added]
     return {"id": case["id"], "kind": case["kind"], "seconds": round(time.monotonic() - started, 1), "error": error,
             "report": check.report, "opened": sorted(fetcher.opened), "writes": writes, "acted": acted,
             "threads_after": threads_after, "score": score(case, check.report, fetcher.opened, acted, threads_after)}
+
+
+def threads_now(store) -> dict:
+    """What Odie follows after a case, by each mail a loop holds: {"mail:o1": {"kind": "order", "status": "open"}};
+    a closed loop's status is "done", a card's "ready"."""
+    from odie.loops import findings, ledger
+    kind_key = {words: key for key, (words, _owner) in findings.THREAD_KINDS.items()}
+    out = {}
+    for row in store.query("select id from loops order by id"):
+        loop = ledger.get(store, row["id"])
+        status = "open"
+        if loop["state"] == "ready":
+            status = "ready"
+        if loop["state"] not in ledger.OPEN:
+            status = "done"
+        kind = kind_key.get(loop["kind"], loop["kind"])
+        if status == "done":
+            kind = "closed"
+        for ref in loop["refs"]:
+            if ref.startswith("mail:"):
+                out[ref] = {"kind": kind, "status": status}
+    return out
 
 
 def totals(results: list[dict]) -> dict:

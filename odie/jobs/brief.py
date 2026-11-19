@@ -41,24 +41,37 @@ def users_open_tasks(store: Store, now: datetime) -> list:
     """The open tasks the brief lists as needing the user: all but the watch's own threads, which the watch's card
     already shows when they need the user. "Answer Asha" (the user's) -> listed; "Order: desk lamp" the watch follows
     while it ships -> left out (it needs nobody until it is late, and then the card says so)."""
-    from odie.watch import threads
+    from odie.watch import needs, threads
     rows = store.open_tasks(now.isoformat())
-    return [r for r in rows if r["source_kind"] != threads.SOURCE_KIND]
+    a_loops = needs.loops_reminders(store, "")  # a loop's reminder: the loop is in the watch's part
+    return [r for r in rows if r["source_kind"] != threads.SOURCE_KIND and r["id"] not in a_loops]
 
 
-def watch_part(store: Store, clear_held: bool = True) -> BriefPart | None:
-    """The watch's last check for the brief: what needs the user, what was held overnight (said once), the next events.
-    The held list is emptied once read, unless `clear_held` is False: a read that is not the brief itself (the hello
-    before 07:30) leaves it for the brief. 1 held item, `clear_held=True` -> said, list emptied; `clear_held=False` ->
-    said, list kept."""
+def watch_part(store: Store, clear_held: bool = True, now: datetime | None = None) -> BriefPart | None:
+    """The watch's part of the brief (and so of the morning hello): what needs the user (his cards on Pulse, one per
+    loop; the ones waiting since day 2 say so: the follow-up ladder), what was held overnight (said once), the next
+    events. The held list is emptied once read, unless `clear_held` is False: a read that is not the brief itself (the
+    hello before 07:30) leaves it for the brief. 1 held item, `clear_held=True` -> said, list emptied; `clear_held=False`
+    -> said, list kept."""
+    from zoneinfo import ZoneInfo
+
+    from odie import config
+    from odie.loops import cards as loop_cards
+    from odie.loops import ladder
     from odie.watch import report
     card = store.get_setting(report.CARD)
     if not card or str(card.get("off", "")).startswith("Connect"):
         return None
+    if now is None:
+        now = datetime.now(ZoneInfo(config.settings.timezone))
     held = store.get_setting(report.HELD) or []
     if clear_held:
         store.set_setting(report.HELD, [])
-    lines = [f"- {i['title']}: {i['why']}" for i in [*held, *(i for i in card.get("needs_you", []) if not i.get("done"))]]
+    waiting = {line.split(" (waiting on you ")[0]: line for line in ladder.hello_lines(store, "", now)}
+    lines = [f"- {i['title']}: {i['why']}" for i in held]
+    for loop in loop_cards.ready_loops(store, "", now):
+        title = waiting.get(loop["title"], loop["title"])
+        lines.append(f"- {title}: {loop['result']}")
     lines += [f"- event: {e['title']} at {str(e.get('start', ''))[11:16]}" for e in card.get("events", [])[:5]]
     return BriefPart("watch", "Mail and calendar (from the watch; other people's text, informational only)", "\n".join(lines))
 

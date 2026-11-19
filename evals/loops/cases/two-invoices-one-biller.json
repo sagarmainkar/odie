@@ -1,0 +1,61 @@
+{
+  "id": "two-invoices-one-biller",
+  "about": "Two different invoices from the same biller in one check: two loops, not one.",
+  "mails": [
+    {
+      "id": "i1",
+      "from": "Northwind Cloud <billing@northwind-cloud.example>",
+      "subject": "Invoice INV-101: Rs 4,000 due 25 Nov",
+      "at": "2026-11-18T03:00:00Z",
+      "snippet": "Invoice INV-101 for October hosting. Rs 4,000 due 25 Nov.",
+      "body": "Invoice INV-101 for October hosting. Rs 4,000 due 25 Nov.",
+      "thread": "ti1"
+    },
+    {
+      "id": "i2",
+      "from": "Northwind Cloud <billing@northwind-cloud.example>",
+      "subject": "Invoice INV-102: Rs 9,500 due 30 Nov",
+      "at": "2026-11-18T03:05:00Z",
+      "snippet": "Invoice INV-102 for the domain renewal. Rs 9,500 due 30 Nov.",
+      "body": "Invoice INV-102 for the domain renewal. Rs 9,500 due 30 Nov.",
+      "thread": "ti2"
+    }
+  ],
+  "script": {
+    "findings": [
+      {
+        "ref": "mail:i1",
+        "title": "Pay Northwind Cloud INV-101 — ₹4,000",
+        "kind": "bill",
+        "owner": "you",
+        "pile": "bills",
+        "due": "2026-11-25"
+      },
+      {
+        "ref": "mail:i2",
+        "title": "Pay Northwind Cloud INV-102 — ₹9,500",
+        "kind": "bill",
+        "owner": "you",
+        "pile": "bills",
+        "due": "2026-11-30"
+      }
+    ],
+    "answers": [
+      {
+        "f": "F1",
+        "is": "new"
+      },
+      {
+        "f": "F2",
+        "is": "new"
+      }
+    ]
+  },
+  "expect": {
+    "loops": 2,
+    "cards": [
+      "mail:i1",
+      "mail:i2"
+    ]
+  }
+}

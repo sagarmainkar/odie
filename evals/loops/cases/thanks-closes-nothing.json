@@ -1,0 +1,55 @@
+{
+  "id": "thanks-closes-nothing",
+  "about": "Odie waits on Priya for a shortlist; her 'thanks, tomorrow' in the same thread closes nothing.",
+  "open_loops": [
+    {
+      "title": "Priya sends the venue shortlist",
+      "kind": "waiting on them",
+      "owner": "them",
+      "refs": [
+        "mail:tv0",
+        "thread:tv1"
+      ],
+      "fact": "You asked Priya for the venue shortlist"
+    }
+  ],
+  "mails": [
+    {
+      "id": "tv2",
+      "from": "Priya Shah <priya@example.com>",
+      "subject": "Re: Venue shortlist",
+      "at": "2026-11-18T05:00:00Z",
+      "snippet": "Thanks! I'll send the shortlist tomorrow.",
+      "body": "Thanks! I'll send the shortlist tomorrow.",
+      "thread": "tv1"
+    }
+  ],
+  "script": {
+    "findings": [
+      {
+        "ref": "mail:tv2",
+        "title": "Priya sends the venue shortlist tomorrow",
+        "kind": "waiting on them",
+        "owner": "them",
+        "due": "2026-11-19"
+      }
+    ],
+    "answers": [
+      {
+        "f": "F1",
+        "is": "same",
+        "loop_ref": "thread:tv1",
+        "due": "2026-11-19"
+      }
+    ]
+  },
+  "expect": {
+    "loops": 1,
+    "owner": {
+      "thread:tv1": "them"
+    },
+    "no_card": [
+      "thread:tv1"
+    ]
+  }
+}

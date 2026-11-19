@@ -1,0 +1,42 @@
+{
+  "id": "personality-inbox",
+  "about": "A personality's own inbox: its loops are its own, none of everyday Odie's.",
+  "owner": "personality",
+  "mails": [
+    {
+      "id": "m1",
+      "from": "Lakeview Lettings <landlord@lakeview.example>",
+      "subject": "Lease renewal: please sign by 30 Nov",
+      "at": "2026-11-18T03:00:00Z",
+      "snippet": "Your lease renewal is attached. Please sign and return it by 30 Nov.",
+      "body": "Your lease renewal is attached. Please sign and return it by 30 Nov.",
+      "thread": "tm1"
+    }
+  ],
+  "script": {
+    "findings": [
+      {
+        "ref": "mail:m1",
+        "title": "Sign the lease renewal",
+        "kind": "decision",
+        "why": "sign by 30 Nov",
+        "owner": "you",
+        "due": "2026-11-30",
+        "pile": "alerts"
+      }
+    ],
+    "answers": [
+      {
+        "f": "F1",
+        "is": "new"
+      }
+    ]
+  },
+  "expect": {
+    "loops": 1,
+    "odie_loops": 0,
+    "cards": [
+      "mail:m1"
+    ]
+  }
+}

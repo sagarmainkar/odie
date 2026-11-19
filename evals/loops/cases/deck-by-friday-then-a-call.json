@@ -1,0 +1,80 @@
+{
+  "id": "deck-by-friday-then-a-call",
+  "about": "Asha asks for the deck by Friday; later a call with her about it lands on Friday 15:00: one loop, its due date moves to the call.",
+  "checks": [
+    {
+      "at": "2026-11-19T10:00:00+05:30",
+      "mails": [
+        {
+          "id": "d1",
+          "from": "Asha Rao <asha@example.com>",
+          "subject": "Deck for the board",
+          "at": "2026-11-19T04:00:00Z",
+          "snippet": "Can you send me the board deck by Friday? I want to go through it before we present.",
+          "body": "Can you send me the board deck by Friday? I want to go through it before we present.",
+          "thread": "td1"
+        }
+      ],
+      "script": {
+        "findings": [
+          {
+            "ref": "mail:d1",
+            "title": "Send Asha the board deck",
+            "kind": "reply owed",
+            "why": "by Friday",
+            "owner": "you",
+            "due": "2026-11-20",
+            "pile": "personal"
+          }
+        ],
+        "answers": [
+          {
+            "f": "F1",
+            "is": "new"
+          }
+        ]
+      }
+    },
+    {
+      "at": "2026-11-19T14:00:00+05:30",
+      "events": [
+        {
+          "id": "ev-call",
+          "title": "Call with Asha: board deck",
+          "start": "2026-11-20T15:00:00+05:30",
+          "end": "2026-11-20T15:30:00+05:30",
+          "change": "new"
+        }
+      ],
+      "script": {
+        "findings": [
+          {
+            "ref": "event:ev-call",
+            "title": "Call with Asha: board deck",
+            "kind": "event",
+            "owner": "you",
+            "due": "2026-11-20T15:00"
+          }
+        ],
+        "answers": [
+          {
+            "f": "F1",
+            "is": "same",
+            "loop_ref": "mail:d1",
+            "due": "2026-11-20T15:00"
+          }
+        ]
+      }
+    }
+  ],
+  "expect": {
+    "loops": 1,
+    "cards": [
+      "mail:d1"
+    ],
+    "due": {
+      "mail:d1": "2026-11-20T15:00"
+    },
+    "why": true
+  }
+}

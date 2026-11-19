@@ -1,0 +1,43 @@
+{
+  "id": "reply-owed-no-due-date",
+  "about": "A friend asks for something with no date: a reply owed is a card even with no due date.",
+  "mails": [
+    {
+      "id": "r1",
+      "from": "Asha Rao <asha@example.com>",
+      "subject": "Venue options for the offsite?",
+      "at": "2026-11-18T04:10:00Z",
+      "snippet": "Hi! Could you send me the two venue options you liked? No rush, whenever you can.",
+      "body": "Hi! Could you send me the two venue options you liked? No rush, whenever you can.",
+      "thread": "tr1"
+    }
+  ],
+  "script": {
+    "findings": [
+      {
+        "ref": "mail:r1",
+        "title": "Reply to Asha: venue options",
+        "kind": "reply owed",
+        "why": "asks for the two venue options you liked",
+        "owner": "you",
+        "pile": "personal"
+      }
+    ],
+    "answers": [
+      {
+        "f": "F1",
+        "is": "new"
+      }
+    ]
+  },
+  "expect": {
+    "loops": 1,
+    "cards": [
+      "mail:r1"
+    ],
+    "owner": {
+      "mail:r1": "you"
+    },
+    "why": true
+  }
+}

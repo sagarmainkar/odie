@@ -1,6 +1,7 @@
 """What the user sent closes what it answers (18 Nov 2026): every check reads the user's sent mail since the last check;
-a sent mail in the same thread as an open reply closes it in code ("you replied 18 Nov 14:20"); the rest go to the
-check as "What you sent", for the model to match. What closes shows in Done today, never silently gone."""
+a sent mail in the same thread as an open loop's mail, to its sender, closes it in code ("you replied 18 Nov 14:20");
+the rest go to the check as "What you sent", for the model to match. What closes shows in Done today (loops Odie
+closed, each with Reopen), never silently gone."""
 import json
 from datetime import datetime, timedelta
 from types import SimpleNamespace
@@ -9,7 +10,8 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from odie.store.db import Store
-from odie.watch import bills, fetch, needs, report, sent, sources, threads
+from odie.loops import ledger
+from odie.watch import fetch, sent, sources
 from odie.watch.fetch import Mail
 from tests.test_watch_calls import spec_for
 from tests.test_watch_fetch import GM_INVITE, NOW, calls_to
@@ -31,8 +33,11 @@ def mine(mail_id: str, thread: str, to: str = "A Person <a.person@example.com>",
                 "mail:gmail-calendar", thread=thread, to=to)
 
 
-def card_with(store, *items):
-    store.set_setting(report.CARD, {"checked_at": "", "line": "", "needs_you": list(items), "events": [], "sources": {}})
+def a_loop(store, title, thread, sender="a.person@example.com", kind="reply owed", pile="alerts", ref="mail:g1"):
+    """A loop from a mail in that thread, as stage 2 makes it (its card keeps the thread and the sender)."""
+    return ledger.open_loop(store, "", AFTERNOON - timedelta(days=1), title, kind, owner="you",
+                            refs=[ref, f"thread:{thread}"], state="ready",
+                            card={"thread": thread, "sender": sender, "pile": pile})
 
 
 def test_a_sent_mail_says_who_it_went_to():
@@ -71,35 +76,32 @@ def test_reads_sent_mail_only_from_gmail_style_apps():
 
 
 def test_a_reply_in_the_same_thread_closes_the_reply_owed_in_code(store):
-    threads.track(store, "mail:g1", "reply", "Reply to A Person", "owed", mail_thread="t1", mail_source="mail:gmail-calendar",
-                  sender="a.person@example.com")
-    card_with(store, {"ref": "mail:g1", "title": "Reply to A Person", "thread": "t1", "pile": "alerts",
-                      "sender": "a.person@example.com"})
+    lid = a_loop(store, "Reply to A Person", "t1")
     left = sent.close_answered(store, AFTERNOON, [mine("s1", "t1"), mine("s2", "t7", subject="Lunch?")])
     assert [m.id for m in left] == ["s2"]  # what closed nothing goes to the check as "What you sent"
-    assert threads.open_refs(store) == set()
-    assert store.get_setting(report.CARD)["needs_you"] == []
-    [closed] = bills.closed_by_watch(store, AFTERNOON - timedelta(days=1))  # Done today, with Reopen
-    assert closed["title"] == "Reply to A Person" and closed["why"] == "you replied 18 Nov 14:20"
+    loop = ledger.get(store, lid)
+    assert loop["state"] == "closed" and loop["closed_by"] == "odie" and loop["closed_why"] == "you replied 18 Nov 14:20"
+    from odie.loops import cards
+    [done] = cards.done_today(store, "", AFTERNOON)  # Done today, with Reopen
+    assert done["title"] == "Reply to A Person" and any(e["ref"] == "mail:s1" for e in ledger.events(store, lid))
 
 
-def test_a_card_item_with_no_thread_followed_closes_too_and_shows_in_done_today(store):
-    card_with(store, {"ref": "mail:g2", "title": "Reply to Sam", "thread": "t2", "pile": "personal",
-                      "sender": "a.person@example.com"},
-              {"ref": "mail:g3", "title": "New sign-in", "thread": "t3", "pile": "alerts"})
-    sent.close_answered(store, AFTERNOON, [mine("s1", "t2")])
-    assert [i["ref"] for i in store.get_setting(report.CARD)["needs_you"]] == ["mail:g3"]
-    notes = needs.recent_notes(store, AFTERNOON)
-    assert [n["message"] for n in notes] == ["Reply to Sam: you replied 18 Nov 14:20"]
+def test_a_reply_to_someone_else_or_a_loop_from_no_mail_stays_open(store):
+    forward = a_loop(store, "Reply to Sam", "t2", sender="sam@example.com")
+    plain = ledger.open_loop(store, "", AFTERNOON, "Renew passport", "deadline", owner="you", state="ready")
+    left = sent.close_answered(store, AFTERNOON, [mine("s1", "t2")])
+    assert [m.id for m in left] == ["s1"]
+    assert ledger.get(store, forward)["state"] == "ready" and ledger.get(store, plain)["state"] == "ready"
 
 
 def test_a_bill_or_an_order_in_the_same_thread_stays_open(store):
-    threads.track(store, "mail:b1", "bill", "Gas bill", "due", due="2026-11-25", mail_thread="t5")
-    card_with(store, {"ref": "mail:b1", "title": "Gas bill", "thread": "t5", "pile": "bills"})
-    left = sent.close_answered(store, AFTERNOON, [mine("s1", "t5")])
-    assert [m.id for m in left] == ["s1"]  # a question about a bill doesn't pay it: the model decides
-    assert threads.open_refs(store) == {"mail:b1"}
-    assert len(store.get_setting(report.CARD)["needs_you"]) == 1
+    bill = a_loop(store, "Gas bill", "t5", kind="bill", pile="bills", ref="mail:b1")
+    order = ledger.open_loop(store, "", AFTERNOON, "Order: lamp", "order delivery", owner="them",
+                             refs=["mail:o1", "thread:t6"], state="waiting", card={"thread": "t6",
+                                                                                   "sender": "a.person@example.com"})
+    left = sent.close_answered(store, AFTERNOON, [mine("s1", "t5"), mine("s2", "t6")])
+    assert [m.id for m in left] == ["s1", "s2"]  # a question about a bill doesn't pay it: the model decides
+    assert ledger.get(store, bill)["state"] == "ready" and ledger.get(store, order)["state"] == "waiting"
 
 
 def test_closes_by_its_thread():
@@ -107,13 +109,6 @@ def test_closes_by_its_thread():
     assert sent.closes_by_its_thread("personal") and sent.closes_by_its_thread("")
     assert not sent.closes_by_its_thread("bill") and not sent.closes_by_its_thread("bills")
     assert not sent.closes_by_its_thread("order") and not sent.closes_by_its_thread("orders")
-
-
-def test_a_card_item_keeps_its_mails_thread(store):
-    mails = [Mail("g1", "A Person <a.person@example.com>", "Hello", "2026-11-18T08:00:00Z", "hi", [], "mail:gm", thread="t1")]
-    report.apply(store, AFTERNOON, [{"ref": "mail:g1", "title": "Reply to A Person"}], "", mails, [], {}, first=True)
-    assert store.get_setting(report.CARD)["needs_you"][0]["thread"] == "t1"
-    assert store.get_setting(report.CARD)["needs_you"][0]["sender"] == "a.person@example.com"  # a reply must go to them
 
 
 async def test_the_check_reads_what_you_sent_and_that_counts_as_reading_mail(store):
@@ -138,14 +133,14 @@ async def test_a_check_closes_a_reply_the_user_sent_before_the_model_runs(store,
                    "subject": "Re: New consultation", "date": "2026-10-08T04:00:00Z", "snippet": "Tuesday works."}]
     mcp.write_config({"gmail-calendar": spec_for("gmailmcp", tmp_path, mail=GM_INVITE,
                                                  query_hits={f"in:sent after:{since}": sent_by_me})})
-    threads.track(store, "mail:g1", "reply", "Reply to A Person", "owed", mail_thread="t1", mail_source="mail:gmail-calendar",
-                  sender="a.person@example.com")
+    lid = ledger.open_loop(store, "", day, "Reply to A Person", "reply owed", owner="you", refs=["mail:g1", "thread:t1"],
+                           state="ready", card={"thread": "t1", "sender": "a.person@example.com"})
     seen = {}
 
     async def turn(prompt, tools, instruction):
-        seen["open"] = threads.open_refs(store)
+        seen["open"] = [lp["id"] for lp in ledger.open_loops(store, "")]
         report_tool = next(t for t in tools if t.name == "report")
         await report_tool.run_async(args={"needs_you": [], "line": "quiet"}, tool_context=SimpleNamespace())
 
     assert await check.run_check(store, day, turn, lambda title, body: None) == "ok"
-    assert seen["open"] == set()  # closed in code before the model looked
+    assert seen["open"] == [] and ledger.get(store, lid)["closed_by"] == "odie"  # closed in code before the model looked

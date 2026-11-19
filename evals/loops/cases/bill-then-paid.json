@@ -1,0 +1,91 @@
+{
+  "id": "bill-then-paid",
+  "about": "An electricity bill (put on the calendar), then the payment confirmation for the same biller and amount in another thread: closed by evidence.",
+  "checks": [
+    {
+      "at": "2026-11-19T09:00:00+05:30",
+      "mails": [
+        {
+          "id": "b1",
+          "from": "Northwind Power <billing@northwind-power.example>",
+          "subject": "Your electricity bill of Rs 4,280 is due on 25-Nov-2026",
+          "at": "2026-11-19T02:00:00Z",
+          "snippet": "Consumer 1702-55. Amount due Rs 4,280 by 25-Nov-2026. Pay online to avoid a late fee.",
+          "body": "Consumer 1702-55. Amount due Rs 4,280 by 25-Nov-2026. Pay online to avoid a late fee.",
+          "thread": "tb1"
+        }
+      ],
+      "script": {
+        "threads": [
+          {
+            "ref": "mail:b1",
+            "kind": "bill",
+            "title": "Pay electricity bill — ₹4,280",
+            "stage": "due",
+            "due": "2026-11-25"
+          }
+        ],
+        "findings": [
+          {
+            "ref": "mail:b1",
+            "title": "Pay electricity bill — ₹4,280",
+            "kind": "bill",
+            "why": "₹4,280 due 25 Nov",
+            "owner": "you",
+            "pile": "bills",
+            "due": "2026-11-25",
+            "amount": {
+              "value": 4280,
+              "currency": "INR"
+            }
+          }
+        ],
+        "answers": [
+          {
+            "f": "F1",
+            "is": "new"
+          }
+        ]
+      }
+    },
+    {
+      "at": "2026-11-20T18:00:00+05:30",
+      "mails": [
+        {
+          "id": "p1",
+          "from": "Northwind Power <payments@northwind-power.example>",
+          "subject": "Payment of Rs 4,280 received",
+          "at": "2026-11-20T12:00:00Z",
+          "snippet": "We received your payment of Rs 4,280 for consumer 1702-55. Thank you.",
+          "body": "We received your payment of Rs 4,280 for consumer 1702-55. Thank you.",
+          "thread": "tp1"
+        }
+      ],
+      "script": {
+        "threads": [
+          {
+            "ref": "mail:p1",
+            "kind": "bill",
+            "title": "Pay electricity bill — ₹4,280",
+            "stage": "done",
+            "why": "paid: confirmation 20 Nov"
+          }
+        ],
+        "answers": [
+          {
+            "f": "F1",
+            "is": "closes",
+            "loop_ref": "mail:b1",
+            "why": "paid: confirmation 20 Nov"
+          }
+        ]
+      }
+    }
+  ],
+  "expect": {
+    "loops": 1,
+    "closed": [
+      "mail:b1"
+    ]
+  }
+}
