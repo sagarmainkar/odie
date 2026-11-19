@@ -12,6 +12,14 @@ describe("withPickOf", () => {
     expect(followsPick("/api/chat/thinking")).toBe(true);
   });
 
+  it("names it on each one's Now list and its Track this? offers", () => {
+    expect(withPickOf("/api/now", "abc")).toBe("/api/now?personality=abc");
+    expect(withPickOf("/api/now/2/accept", "abc")).toBe("/api/now/2/accept?personality=abc");
+    expect(withPickOf("/api/now/draft", "abc")).toBe("/api/now/draft?personality=abc");
+    expect(withPickOf("/api/offers/3/track", "abc")).toBe("/api/offers/3/track?personality=abc");
+    expect(followsPick("/api/nowhere")).toBe(false);
+  });
+
   it("leaves a call alone while everyday Odie is picked, unless the call always says who", () => {
     expect(withPickOf("/api/threads?q=x", "")).toBe("/api/threads?q=x");
     expect(withPickOf("/api/events", "", true)).toBe("/api/events?personality=");

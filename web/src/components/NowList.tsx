@@ -103,16 +103,16 @@ export function NowList({ who, initial, editWith, onSaved, onClosed }: {
         <div className="glass glass-solid rounded-card px-3 py-3 flex flex-col gap-2" aria-label="Edit your Now list">
           {answering !== null && <div className="text-small text-muted px-1">{who}'s proposal: change what you like, then save.</div>}
           {editing.map((line, i) => (
-            <div key={i} className="flex items-center gap-1.5">
-              <span className="serif text-title text-dim w-4 shrink-0 text-center tabular-nums" aria-hidden="true">{i + 1}</span>
+            <div key={i} className="flex items-center gap-1">
+              <span className="serif text-title text-dim w-3.5 shrink-0 text-center tabular-nums" aria-hidden="true">{i + 1}</span>
               <input value={line} onChange={(e) => setLine(i, e.target.value)} maxLength={LINE_MOST} aria-label={`Line ${i + 1}`}
                 placeholder="Something that matters now" className="flex-1 min-w-0 h-10 rounded-tile bg-well px-3 text-ui text-ink outline-none focus:ring-2 focus:ring-brand" />
               <button type="button" onClick={() => setEditing(moveLine(editing, i, -1))} disabled={i === 0} aria-label={`Move line ${i + 1} up`}
-                className="pill h-8 w-8 px-0 text-small disabled:opacity-40">↑</button>
+                className="h-9 w-7 shrink-0 grid place-items-center rounded-full text-ui text-muted active:bg-well disabled:opacity-30">↑</button>
               <button type="button" onClick={() => setEditing(moveLine(editing, i, 1))} disabled={i === editing.length - 1} aria-label={`Move line ${i + 1} down`}
-                className="pill h-8 w-8 px-0 text-small disabled:opacity-40">↓</button>
+                className="h-9 w-7 shrink-0 grid place-items-center rounded-full text-ui text-muted active:bg-well disabled:opacity-30">↓</button>
               <button type="button" onClick={() => setEditing(withoutLine(editing, i))} aria-label={`Remove line ${i + 1}`}
-                className="pill h-8 w-8 px-0 text-small">×</button>
+                className="h-9 w-7 shrink-0 grid place-items-center rounded-full text-ui text-muted active:bg-well">×</button>
             </div>
           ))}
           <button type="button" onClick={() => setEditing([...editing, ""])} disabled={!canAdd(editing, most)}
