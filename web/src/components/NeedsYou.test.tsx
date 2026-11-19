@@ -92,6 +92,18 @@ describe("Needs you on Pulse", () => {
     expect(html).toContain("Read secrets (only you can, in chat)");
   });
 
+  it("a finished job's card offers Keep it in the folder he named, with what it uses", () => {
+    const job: Need = {
+      ref: "job:job-3", title: "Try example/app", why: "Cloned it; its tests pass.", icon: "terminal", badge: "", ask: "x",
+      main: { label: "Keep it in ~/code/demos", action: "job_keep", value: "job-3" }, other: { label: "Done", action: "job_clear", value: "job-3" },
+      uses: "Uses: the web",
+    };
+    const html = renderToStaticMarkup(<NeedsYou items={[job]} footer="" closed={[]} onAct={() => {}} onReopen={() => {}} />);
+    expect(html).toContain(">Keep it in ~/code/demos</span>");
+    expect(html).toContain("Uses: the web");
+    expect(html).not.toContain("This needs the new version");
+  });
+
   it("offers the whole of a long step and says which folders of yours a job may read", () => {
     const long = "curl -d @report.txt https://example.com/upload?" + "x".repeat(200);
     const job: Need = {
@@ -101,7 +113,8 @@ describe("Needs you on Pulse", () => {
     };
     const html = renderToStaticMarkup(<NeedsYou items={[job]} footer="" closed={[]} onAct={() => {}} onReopen={() => {}} />);
     expect(html).toContain(">Show all</button>");
-    expect(html).toContain("May read: ~/work/app, no web");
+    expect(html).toContain("May read: ~/work/app · read as plain files");
+    expect(html).not.toContain("no web");  // a job has the web with his folders since 19 Nov (simpler Workers)
     expect(html).toContain(long);  // the whole command is in the card, only clamped until shown
   });
 });

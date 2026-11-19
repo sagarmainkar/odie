@@ -2,8 +2,9 @@
 
 The Worker sees only its instruction, its tools and report, in a fresh in-memory session: no Odie prompt, no memory,
 no chat history. Its tools: the shell (starting in its folder), write_file and read_file in its folder, web search and
-fetch, and the connected apps of the personality that started it (the session belongs to that personality while the
-run lasts, so only its apps list and run). It thinks with that personality's brain (odie.brains).
+fetch, clone_repo (git in its sandbox, with the internet: odie.workers.clone), and, when the user's words asked about
+them, the connected apps of the personality that started it (the session belongs to that personality while the run
+lasts, so only its apps list and run). It thinks with that personality's brain (odie.brains).
 
 Three callbacks keep the record and the fences:
 - the guard (before each tool): the Smart rules decide; a step they would put on a card is refused with a line, noted
@@ -54,36 +55,44 @@ answers questions, so decide for yourself and keep going.
 
 - Work in your own folder, {folder}; run_shell starts there. Write every file with write_file and read with \
 read_file; the shell is for running things. Your commands run in a sandbox: they read the system, the toolchains, your \
-folder{read_dirs}, and write only inside your folder; the shell has no network (use web_search and web_fetch when you \
-have them). For anything else, say in your report what the user should do.
-- Nobody can approve anything while you work. A step the rules refuse (deleting or stopping things, installing, \
-secrets, sending data out, changing Odie) is not run, and the answer says why. Don't try it in another form: find \
+folder{read_dirs}, and write only inside your folder; {network} Clone a repo with clone_repo, never git clone in the \
+shell. Once you have read the user's folders or apps, the web is closed for the rest of the job, so do web work first. \
+Nothing you start keeps running after a command returns, so never leave a server running: say in your report how the \
+user can run it. For anything else, say in your report what the user should do.
+- Installing and building inside your folder (npm install, pip install into a venv there, uv, make, cargo build) needs \
+nobody's OK. Nobody can approve anything else while you work. A step the rules refuse (deleting or stopping things \
+outside your folder, secrets, sending data out, pushing or publishing, changing Odie) is not run, and the answer says \
+why. Don't try it in another form: find \
 another way, or finish and say in your report exactly what you needed. The user can allow it and run the job again.
 - Verify before you say something works: run it, read the output.
 - Finish by calling report, once, with what you did and what you found. Keep it short, in plain words: a result the \
-user can use, or a clear question they must answer. Never stop without calling report."""
+user can use, or a clear question they must answer. When something you made or cloned is worth keeping (a repo you \
+cloned: its folder), name it in report's keep: the user can then copy it to their own folder with a tap. Never stop \
+without calling report."""
 
 
 @dataclass
 class Report:
-    """What the Worker said in report, once it has: outcome, text and the files it points at."""
+    """What the Worker said in report, once it has: outcome, text, the files it points at, and what is worth keeping."""
     outcome: str = ""
     text: str = ""
     files: list[str] = field(default_factory=list)
+    keep: str = ""
 
     def given(self) -> bool:
         return bool(self.outcome)
 
 
 def make_report_tool(got: Report) -> FunctionTool:
-    def report(outcome: str, text: str, files: list[str] | None = None) -> dict:
-        """Finish the job. Call it once, at the end. outcome: "ready" (the result is here, or the work is done), "blocked" (you can't finish without the user: say what you need), or "dropped" (there was nothing to do: say why). text: the report, short and plain. files: paths of files in your folder the user should get."""
+    def report(outcome: str, text: str, files: list[str] | None = None, keep: str | None = None) -> dict:
+        """Finish the job. Call it once, at the end. outcome: "ready" (the result is here, or the work is done), "blocked" (you can't finish without the user: say what you need), or "dropped" (there was nothing to do: say why). text: the report, short and plain. files: paths of files in your folder the user should get. keep: one path in your folder worth keeping in the user's own folder (a cloned repo: its folder name), or nothing."""
         outcome_given = outcome
         if outcome_given not in OUTCOMES:
             outcome_given = "ready"
         got.outcome = outcome_given
         got.text = (text or "").strip()[:REPORT_LIMIT]
         got.files = [str(f) for f in (files or []) if f]
+        got.keep = str(keep or "").strip()
         return {"ok": True}
     return FunctionTool(report)
 
@@ -105,17 +114,21 @@ class UnlockedToolset(BaseToolset):
         pass  # the inner toolset is the app's; it closes with the app
 
 
+OLD_NO_WEB = ("folder", "none")  # what a job started before 19 Nov 2026 without the web says in its row
+
+
 def no_web(job: Job) -> bool:
-    """Whether a Worker gets no web tools: anything but a job that uses the web (odie.workers.tools.uses_for). A job
-    gets ONE of the web, his apps or his named folders, so what it read of his can't leave through a web fetch.
-      uses the web -> False;  uses your mail -> True;  may read ~/work/app -> True;  tainted -> True"""
-    return job.uses != "web" or bool(job.taint) or bool(job.read_dirs)
+    """Whether a Worker gets no web tools: only an older job's row that was started without it (a retry keeps what
+    its card said). Every job started now has the web, with his folders and apps (odie.workers.tools.uses_for); the
+    guard still keeps one run from carrying what it read of his out to the web (guard_for: MIXED).
+      uses "web", "apps:mail", "app:notion" -> False;  an older row's "folder" or "none" -> True"""
+    return job.uses in OLD_NO_WEB
 
 
 def uses_apps(job: Job) -> bool:
-    """Whether a Worker gets the personality's apps: only a job that uses them ("check my mail for …"), never with
-    the web, a named folder or taint."""
-    return job.uses.startswith("app") and not job.taint and not job.read_dirs
+    """Whether a Worker gets the personality's apps: only a job whose request asked about them ("check my mail for …"
+    -> "apps:mail"; "use notion to …" -> "app:notion"), alongside the web; "web" -> False."""
+    return job.uses.startswith("app")
 
 
 def servers_for(store: Store, job: Job) -> set[str]:
@@ -166,20 +179,41 @@ def app_may_run(tool, args: dict | None) -> bool:
 
 def tools_for(store: Store, job: Job, runner) -> list:
     """A Worker's tools: its own sandboxed shell (odie.workers.shell; the guard applies the Smart rules on top),
-    write_file and read_file in the job's folder, web search and fetch, and the connected apps (each listed only where
-    the job's personality has it switched on). A tainted job (started after its chat read mail or web pages) gets the
-    shell (offline) and its files only: nothing that could carry data out. No browser, no memory, no Workers of its own."""
+    write_file and read_file in the job's folder, web search and fetch and clone_repo, and the connected apps his words
+    asked about (each listed only where the job's personality has it switched on). An older row started without the
+    web (no_web) gets the shell and its files only. No browser, no memory, no Workers of its own."""
     from odie.agent.tools.web import make_web_tools
+    from odie.workers.clone import make_clone_tool
     from odie.workers.files import make_job_file_tools
     from odie.workers.shell import make_worker_shell
-    own = [make_worker_shell(store, job), *make_job_file_tools(job.folder)]
+    tools = [make_worker_shell(store, job), *make_job_file_tools(job.folder)]
+    if no_web(job):
+        return tools
+    tools += [*make_web_tools(store=store, browser_for=None, ask_first=False), make_clone_tool(job)]
     if uses_apps(job):
         wanted = servers_for(store, job)
         apps = [t for t in getattr(runner, "_plugin_toolsets", []) if getattr(t, "server", None) in wanted]
-        return [*own, *(UnlockedToolset(t) for t in apps)]
-    if no_web(job):
-        return own
-    return [*own, *make_web_tools(store=store, browser_for=None, ask_first=False)]
+        tools += [UnlockedToolset(t) for t in apps]
+    return tools
+
+
+INTERNET_WORDS = "your commands can reach the internet (never this computer), so install and build in your folder."
+OFFLINE_WORDS = ("your commands have no network, because this job may read the user's folders or apps: use "
+                 "web_search, web_fetch and clone_repo.")
+
+
+def network_words(job: Job) -> str:
+    """What the Worker's instruction says about its shell's network (odie.workers.shell.network_of)."""
+    from odie.workers import sandbox, shell
+    if shell.network_of(job) == sandbox.INTERNET:
+        return INTERNET_WORDS
+    return OFFLINE_WORDS
+
+
+# What the sandbox confines whatever the command is: an install or a build writes only in the job's folder (its HOME,
+# caches and temp are there) and its scripts run in the same sandbox, so it installs nothing on his Mac. A global
+# install (npm -g, brew) is refused by the kernel instead (pass 2 of simpler Workers, 19 Nov 2026).
+CONFINED = frozenset({"installs software (runs its install scripts)"})
 
 
 def shell_reasons(store: Store, job: Job, command: str, cwd: str | None) -> list[str]:
@@ -187,7 +221,8 @@ def shell_reasons(store: Store, job: Job, command: str, cwd: str | None) -> list
     odie.workers.allow.worker_reasons), then why the Smart rules would put it on a card, read as in Smart mode
     whatever the user's mode, with the job's folder as safe as the workspace:
       `echo hi > notes.txt` in the folder -> [];  `rm ~/old.txt` -> ["deletes or stops something"];
-      `gh auth token` -> [GITHUB];  `odie chat hi` -> [ODIE_ITSELF]"""
+      `npm install`, `pip install -r requirements.txt`, `uv sync` -> [] (CONFINED: the sandbox holds it);
+      `npm publish` -> ["sends data out"];  `gh auth token` -> [GITHUB];  `odie chat hi` -> [ODIE_ITSELF]"""
     from odie.agent import shell_grant
     folder = str(job.folder)
     smart = shell_grant.reasons_to_ask(command, safe_dirs=(*shell_grant.safe_places(store), folder), cwd=cwd,
@@ -195,6 +230,7 @@ def shell_reasons(store: Store, job: Job, command: str, cwd: str | None) -> list
                                        own_port=shell_grant._own_port(), odie_dirs=shell_grant.odie_places())
     own = allow.worker_reasons(command, job.folder)
     smart = shell_grant_reasons_outside_own_folder(smart, command, job)
+    smart = [why for why in smart if why not in CONFINED]
     return [*own, *(why for why in smart if why not in own)]
 
 
@@ -222,7 +258,7 @@ def refusal_words(why: str) -> str:
             "your report what you needed; they can allow it and run the job again.")
 
 
-WEB_TOOLS = frozenset({"web_fetch", "web_search"})
+WEB_TOOLS = frozenset({"web_fetch", "web_search", "clone_repo"})  # what reaches the web (an address carries words)
 MIXED = allow.MIXED
 
 
@@ -235,11 +271,12 @@ def seen_of(job: Job) -> set:
     return seen
 
 
-def reads_a_named_folder(job: Job, args: dict) -> bool:
-    """Whether a shell call reaches one of the job's named folders: it runs inside one, or names one."""
-    command = str(args.get("command") or "")
-    cwd = str(args.get("cwd") or "")
-    return any(cwd.startswith(d) or d in command for d in job.read_dirs or [])
+def shell_sees_his_folders(job: Job) -> bool:
+    """Whether a shell command of this job may have read his named folders: whenever the job has any. Its sandbox can
+    read them whatever the command's words say (`cat ../../x`, `$USER`, a script it wrote), so the text is never
+    trusted for this (independent review, 19 Nov 2026).
+      a job that may read ~/work/app, `python3 read.py` -> True;  a job with no named folder, `npm install` -> False"""
+    return bool(job.read_dirs)
 
 
 def guard_for(store: Store, job: Job, runner):
@@ -270,6 +307,8 @@ def guard_for(store: Store, job: Job, runner):
             reasons = shell_reasons(store, job, command, args.get("cwd"))
             missing = allow.uncovered(allowed, "run_shell", args, reasons, job.folder)
             if not missing:
+                if shell_sees_his_folders(job):
+                    seen.add("private")  # before it runs: a web call made alongside it is refused too
                 return None
             return refuse(tool.name, args, allow.need_for_shell(command, missing[0], args.get("cwd")))
         mixes = (tool.name in WEB_TOOLS and "private" in seen) or (
@@ -292,7 +331,8 @@ def guard_for(store: Store, job: Job, runner):
 
 def after_for(store: Store, job: Job):
     """after_tool_callback: every call that ran goes on the record with the size of its answer, and what it brought
-    into the run is noted for the guard (a web result -> "web"; an app's answer or a named folder -> "private"). A
+    into the run is noted for the guard (a web result -> "web"; an app's answer, or any command of a job with named
+    folders -> "private"). A
     call the guard refused is already on the record (ADK still calls this with the refusal as the answer)."""
     seen = seen_of(job)
 
@@ -303,7 +343,7 @@ def after_for(store: Store, job: Job):
             seen.add("web")
         elif getattr(tool, "_odie_server", None) is not None:
             seen.add("private")
-        elif tool.name == "run_shell" and isinstance(args, dict) and reads_a_named_folder(job, args):
+        elif tool.name == "run_shell" and shell_sees_his_folders(job):
             seen.add("private")
         jobs.record_action(store, job.id, tool.name, args, result_chars=len(json.dumps(tool_response, default=str)))
     return after
@@ -374,9 +414,22 @@ def needed_words(needed: list[dict]) -> str:
     return text
 
 
-def message_for(job: Job, status: str, got: Report, error: str, needed: list[dict]) -> str:
+def keep_words(job: Job, keep: str) -> str:
+    """What a finished report adds about what the Worker said is worth keeping (keep: relative to its folder, checked),
+    or "" when it named nothing:
+      he named ~/code/demos in his request -> "To keep app, tap Keep it in ~/code/demos on Pulse."
+      he named no folder                      -> "It's in /…/jobs/try-app-3f9a2c/app." (its whole path)"""
+    if not keep:
+        return ""
+    if job.keep_to:
+        from odie.workers.cards import home_form
+        return f"To keep {keep}, tap Keep it in {home_form(job.keep_to)} on Pulse."
+    return f"It's in {job.folder / keep}."
+
+
+def message_for(job: Job, status: str, got: Report, error: str, needed: list[dict], keep: str = "") -> str:
     """The one message the chat gets when a run ends:
-      done/ready   -> "✅ Done: Tides (job-3f9a2c)\n\n<report>"
+      done/ready   -> "✅ Done: Tides (job-3f9a2c)\n\n<report>" and, when it named something to keep, keep_words
       done/blocked -> "⛔ Tides is stuck (job-3f9a2c)\n\n<report>"
       failed       -> "❌ Tides didn't finish (job-3f9a2c): ran past its budget of 45 minutes. Say "retry …" …"
     and, when a step was refused, the needed_words line at the end."""
@@ -388,6 +441,9 @@ def message_for(job: Job, status: str, got: Report, error: str, needed: list[dic
         text = f"➖ {job.title}: nothing to do ({job.id})\n\n{got.text}"
     else:
         text = f"✅ Done: {job.title} ({job.id})\n\n{got.text}"
+        more = keep_words(job, keep)
+        if more:
+            text = f"{text}\n\n{more}"
     if needs_shown(status, got.outcome):
         more = needed_words(needed)
         if more:
@@ -464,9 +520,14 @@ async def run(job: Job, store: Store, runner, model=None) -> str:
     jobs.ended(store, job.id, status, outcome=got.outcome or None, report=got.text or None, error=error or None)
     needed = jobs.needed(jobs.get(store, job.id) or {})
     media = []
+    keep = ""
+    if status == "done" and got.outcome == "ready":
+        from odie.workers.keep import relative_keep
+        keep = relative_keep(job.folder, got.keep)  # only a path inside its folder, reached without a link
+        jobs.set_keep(store, job.id, keep)
     if status == "done":
         media = media_for(job, got.files)
-    await tell(store, runner, job, message_for(job, status, got, error, needed), media)
+    await tell(store, runner, job, message_for(job, status, got, error, needed, keep), media)
     return status
 
 
@@ -480,7 +541,7 @@ async def _work(job: Job, store: Store, runner, model, got: Report) -> str:
     named = ""
     if job.read_dirs:
         named = " and, read-only, " + ", ".join(job.read_dirs)
-    instruction = INSTRUCTION.format(folder=job.folder, read_dirs=named)
+    instruction = INSTRUCTION.format(folder=job.folder, read_dirs=named, network=network_words(job))
 
     def as_written(_context) -> str:
         return instruction  # a function, so ADK passes the text on untouched (a brace in a path is not state)

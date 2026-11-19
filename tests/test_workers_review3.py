@@ -1,5 +1,6 @@
-"""The third security review (19 Nov 2026): a job gets ONE of the web, his apps or a named folder, decided by code
-when it starts and kept by the guard all run; a folder is named only by a whole path in his own words, in any case,
+"""The third security review (19 Nov 2026): what a job may reach is decided by code from his words when it starts (since
+simpler Workers, the same day: always the web, his apps when he asks about them), and the guard never mixes the web
+with his apps or folders in one run; a folder is named only by a whole path in his own words, in any case,
 never a part of his secret places, and its hidden and secret files stay unread; deploy keys that can write and an
 owner's "signed commits only" stop the PR test; bidi controls can't disguise what a tap allows; the chat's own web
 reads through the shell and a job's report taint the chat. Everything here is a stand-in under tmp folders."""
@@ -16,31 +17,32 @@ from odie.workers import taint as job_taint
 from tests.test_workers import Chat, Ctx, Scripted, Tool, a_job, until, world  # noqa: F401 (fixtures)
 
 
-# ── K1: one of the web, his apps, a named folder ─────────────────────────────
+# ── K1: what a job may reach, decided by code ────────────────────────────────
 
-@pytest.mark.parametrize("words, read_dirs, taint, uses", [
-    ("Research the best e-bikes under 2000 euros in the background", [], "", "web"),
-    ("In the background, check my mail for the invoice from Asha", [], "", "apps:mail"),
-    ("Go through my calendar for next week and list the clashes", [], "", "apps:calendar"),
-    ("Count the lines in ~/work/app", ["/x/work/app"], "", "folder"),
-    ("Research e-bikes", [], "web pages", "none"),
-    ("Check my mail for the invoice", ["/x/work/app"], "", "folder"),  # a named folder wins: never folder + apps
+@pytest.mark.parametrize("words, uses", [
+    ("Research the best e-bikes under 2000 euros in the background", "web"),
+    ("In the background, check my mail for the invoice from Asha", "apps:mail"),
+    ("Go through my calendar for next week and list the clashes", "apps:calendar"),
+    ("Count the lines in ~/work/app", "web"),
 ])
-def test_what_a_job_may_use_is_decided_by_code(words, read_dirs, taint, uses):
+def test_what_a_job_may_use_is_decided_by_code(words, uses):
     from odie.workers.tools import uses_for
-    assert uses_for(words, read_dirs, taint, []) == uses
+    assert uses_for(words, []) == uses
 
 
 def test_a_connected_apps_name_in_the_request_means_apps():
     from odie.workers.tools import uses_for
-    assert uses_for("Use notion to list my open pages", [], "", ["notion"]) == "app:notion"
-    assert uses_for("Explain the notion of entropy", [], "", ["notion-work"]) == "web"
+    assert uses_for("Use notion to list my open pages", ["notion"]) == "app:notion"
+    assert uses_for("Explain the notion of entropy", ["notion-work"]) == "web"
+
+
+WEB = ["clone_repo", "read_file", "report", "run_shell", "web_fetch", "web_search", "write_file"]
 
 
 @pytest.mark.parametrize("uses, names", [
-    ("web", ["read_file", "report", "run_shell", "web_fetch", "web_search", "write_file"]),
-    ("apps:mail", ["read_file", "report", "run_shell", "write_file"]),  # + the apps' tools (none in this test)
-    ("folder", ["read_file", "report", "run_shell", "write_file"]),
+    ("web", WEB),
+    ("apps:mail", WEB),  # + the apps' tools (none in this test)
+    ("folder", ["read_file", "report", "run_shell", "write_file"]),  # an older row, started without the web
     ("none", ["read_file", "report", "run_shell", "write_file"]),
 ])
 async def test_each_use_gets_only_its_tools(world, tmp_path, uses, names):
@@ -70,8 +72,11 @@ def test_the_guard_never_mixes_the_web_with_his_apps_or_folders(world, tmp_path)
 
 def test_the_card_says_what_a_job_uses(world, tmp_path):
     store, _, _ = world
-    for uses, words in (("web", "Uses: the web"), ("apps:mail", "Uses: your mail, no web"),
-                        ("apps:calendar", "Uses: your calendar, no web"), ("apps", "Uses: your apps, no web")):
+    offline = "; its commands stay offline (it may read your apps)"
+    for uses, words in (("web", "Uses: the web, and its commands can reach the internet"),
+                        ("apps:mail", "Uses: the web and your mail" + offline),
+                        ("apps:calendar", "Uses: the web and your calendar" + offline),
+                        ("apps", "Uses: the web and your apps" + offline)):
         job = a_job(store, tmp_path, title=f"T {uses}")
         store.execute("update jobs set uses=? where id=?", (uses, job.id))
         jobs.started(store, job)

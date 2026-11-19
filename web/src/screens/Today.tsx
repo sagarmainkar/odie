@@ -151,8 +151,8 @@ export function Today() {
     try { await postJSON(`/api/loops/${id}/reopen`, {}); } finally { loadTasks(); }
   }
   // A card's button: chat sends its request; Done, Later and the like take their card away at once (harmless);
-  // Merge, Use this, Allow and Retry leave it in place, busy (NeedsYou), until the server answers and the list is
-  // re-read, so nothing slides up under the finger.
+  // Merge, Use this, Allow, Retry and Keep it leave it in place, busy (NeedsYou), until the server answers and the
+  // list is re-read, so nothing slides up under the finger.
   async function act(need: Need, a: NeedAction): Promise<void> {
     if (a.action === "chat") { location.hash = chatRunHash(String(a.value)); return; }
     if (a.action === "open") {
@@ -170,6 +170,7 @@ export function Today() {
       if (a.action === "job_retry") await postJSON(`/api/jobs/${a.value}/retry`, {});
       if (a.action === "job_allow") await postJSON(`/api/jobs/${a.value}/allow`, { hash: need.allow_hash ?? "" });
       if (a.action === "job_clear") await postJSON(`/api/jobs/${a.value}/clear`, {});
+      if (a.action === "job_keep") await postJSON(`/api/jobs/${a.value}/keep`, {});
       if (a.action === "merge") await postJSON(`/api/loops/${a.value}/merge`, {});
       if (a.action === "recipe_use") await postJSON("/api/recipes/use", { repo: a.value });
       if (a.action === "recipe_no") await postJSON("/api/recipes/no", { repo: a.value });

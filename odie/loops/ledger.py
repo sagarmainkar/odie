@@ -54,6 +54,18 @@ def _row(row) -> dict | None:
     return loop
 
 
+def owner_for(owner: str, playbook: str) -> str:
+    """Whose loop it is, given whether Odie has work for it: "odie" only with a playbook (stage 4 looks at it again);
+    "odie" without one would sit under "Odie is on it" with nothing ever looking at it, so it is his ("you": a card
+    with Done). Anything else stays as it is.
+      ("odie", "github-pr") -> "odie";  ("odie", "") -> "you" (a CI mail no pull request was found for);
+      ("them", "") -> "them";  ("you", "") -> "you"
+    """
+    if owner == "odie" and not playbook:
+        return "you"
+    return owner
+
+
 def open_loop(store, pid: str, now: datetime, title: str, kind: str, owner: str = "odie", refs: list[str] | None = None,
               next_step: str = "", playbook: str = "", priority: str = "normal", due_at: str | None = None,
               source: str = "model", ref: str = "", fact: str = "", card: dict | None = None,

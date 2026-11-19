@@ -7,6 +7,10 @@ from contextvars import ContextVar
 from typing import Any
 
 USER_TEXT: ContextVar[str | None] = ContextVar("odie_user_text", default=None)
+# Who sent this turn's words when they weren't typed or dictated: "tap" (a button or a card the app sent for him: its
+# words were made by a model or from a mail), "terminal" (the odie command). None: he typed or dictated them. A tap's
+# words never name his folders or where to keep a result (odie.workers.tools.typed_now).
+SENT_VIA: ContextVar[str | None] = ContextVar("odie_sent_via", default=None)
 # This chat's history limit in tokens (odie.models.history_limit_for), pinned per session by the runner; past it the
 # older turns go as words only (odie.agent.compaction). None outside a chat turn: the default limit.
 HISTORY_LIMIT: ContextVar[int | None] = ContextVar("odie_history_limit", default=None)

@@ -1,0 +1,48 @@
+{
+  "id": "ci-run-mail-no-pr",
+  "about": "GitHub Actions mails 'Run failed' for a push to main: no pull request has that branch, so it is the user's card with Done, never a loop for Odie with nothing to do.",
+  "mails": [
+    {
+      "id": "cm1",
+      "from": "Your Name <notifications@github.com>",
+      "subject": "[example/app] Run failed: checks - main (1a2b3c4)",
+      "at": "2026-11-18T04:20:00Z",
+      "snippet": "checks: 1 failed",
+      "body": "Run failed for main (1a2b3c4). checks: 1 failed.",
+      "thread": "gh-run-cm1"
+    }
+  ],
+  "script": {
+    "findings": [
+      {
+        "ref": "mail:cm1",
+        "title": "CI failed on main",
+        "kind": "pull request",
+        "owner": "odie",
+        "why": "checks failed after a push to main"
+      }
+    ],
+    "answers": [
+      {
+        "f": "F1",
+        "is": "new",
+        "title": "CI failed on main",
+        "kind": "ci failure",
+        "owner": "odie"
+      }
+    ]
+  },
+  "gh": {
+    "prs:example/app@main": [],
+    "user": "you-dev"
+  },
+  "expect": {
+    "loops": 1,
+    "owner": {
+      "mail:cm1": "you"
+    },
+    "cards": [
+      "mail:cm1"
+    ]
+  }
+}

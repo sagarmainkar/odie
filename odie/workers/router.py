@@ -73,10 +73,11 @@ def waiting_for(store: Store, personality: str) -> int:
 
 def start(title: str, brief: str, session_id: str | None, personality: str = "", kind: str = "task",
           started_by: str = "you", loop_id: int | None = None, taint: str = "",
-          read_dirs: list | None = None, uses: str = "web") -> Job | None:
+          read_dirs: list | None = None, uses: str = "web", keep_to: str = "") -> Job | None:
     """Start a job: the row, the folder, and a task that runs it when a slot is free. Returns the job, or None when it
     is Odie's own and today's ODIE_DAILY are used. A user's job with MAX_WAITING of theirs already waiting raises
-    TooMany. taint: the outside text the starting chat had read (no web, no apps for its Worker). Needs the running loop."""
+    TooMany. taint: the outside text the starting chat had read (its brief is then his own words: odie.workers.tools).
+    keep_to: a folder of his for the result (the card's "Keep it in …"), or "". Needs the running loop."""
     store = hooks["store"]
     if started_by == "odie" and odie_left_today(store) <= 0:
         log.info("workers: Odie's own jobs for today are used (%d)", ODIE_DAILY)
@@ -87,7 +88,7 @@ def start(title: str, brief: str, session_id: str | None, personality: str = "",
     folder = folder_for(title, job_id)
     job = jobs.create(store, kind, title, brief, session_id, folder, worker.BUDGET_SECONDS, personality=personality,
                       started_by=started_by, loop_id=loop_id, job_id=job_id, taint=taint, read_dirs=read_dirs,
-                      uses=uses)
+                      uses=uses, keep_to=keep_to)
     launch(job)
     return job
 
@@ -193,8 +194,12 @@ async def fail(job_id: str, why: str) -> None:
 
 def may_retry(row: dict | None) -> bool:
     """Whether a job may be started again: a user's task that ended. Still going -> False; a pull request's test
-    (Odie's own: it goes through the rail and the daily count again, never a plain retry) -> False; unknown -> False."""
+    (Odie's own: it goes through the rail and the daily count again, never a plain retry) -> False; its result being
+    copied by his Keep it tap right now (a new run could change the folder under the copy) -> False; unknown -> False."""
+    from odie.workers import keep
     if row is None or row["status"] in jobs.GOING:
+        return False
+    if keep.copying(row["id"]):
         return False
     return row["kind"] == "task" and row["started_by"] == "you"
 
@@ -202,11 +207,13 @@ def may_retry(row: dict | None) -> bool:
 def retry(job_id: str, allowed: list | None = None) -> Job | None:
     """Start a job that ended again: same row, same folder, same brief. allowed: what the user's tap in the app lets
     through on this run (odie.workers.allow); the chat's retry_job passes none. One that may_retry refuses -> None."""
+    from odie.workers import keep
     store = hooks["store"]
-    row = jobs.get(store, job_id)
-    if not may_retry(row):
-        return None
-    jobs.queued_again(store, job_id, list(allowed or []))
+    with keep.lock:  # never under a Keep it copy, and a keep that looks after this sees it running (keep.keep_job)
+        row = jobs.get(store, job_id)
+        if not may_retry(row):
+            return None
+        jobs.queued_again(store, job_id, list(allowed or []))
     job = jobs.from_row(jobs.get(store, job_id))
     launch(job)
     return job

@@ -62,8 +62,8 @@ export function NeedsYou({ items, footer, closed, notes = [], loopsDone = [], jo
   };
   // A tap, on the card `n` this button was drawn with (by its ref, never its place). Ignored just after the cards
   // moved, or while this card's call runs. "Show failures" unfolds the output here; an action this app doesn't know
-  // says the card needs the new version; Merge, Use this, Allow and Retry keep the card in place and busy until the
-  // server answers and the list is re-read; the rest go to the screen at once (Today's act).
+  // says the card needs the new version; Merge, Use this, Allow, Retry and Keep it keep the card in place and busy
+  // until the server answers and the list is re-read; the rest go to the screen at once (Today's act).
   const tap = async (n: Need, a: NeedAction) => {
     if (!pulseTaps.ok()) return;
     if (running.current.has(n.ref)) return;
@@ -113,7 +113,7 @@ export function NeedsYou({ items, footer, closed, notes = [], loopsDone = [], jo
             {n.uses && <div className="min-[430px]:ml-12 text-small leading-[18px] text-muted">{n.uses}</div>}
             {!!n.may_read?.length && (
               <div className="min-[430px]:ml-12 text-small leading-[18px] text-muted break-all">
-                May read: {n.may_read.join(", ")}, no web · read as plain files; hidden files and git history aren't available
+                May read: {n.may_read.join(", ")} · read as plain files; hidden files and git history aren't available
               </div>
             )}
             {!!n.steps?.length && (

@@ -19,6 +19,7 @@ describe("the tap guard", () => {
     expect(busyWord("recipe_use")).toBe("Working…");
     expect(busyWord("job_allow")).toBe("Working…");
     expect(busyWord("job_retry")).toBe("Working…");
+    expect(busyWord("job_keep")).toBe("Copying…");  // Keep it: the card stays until the copy is done
     expect(busyWord("done_task")).toBe("");
     expect(busyWord("later")).toBe("");
   });

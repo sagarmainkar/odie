@@ -1,8 +1,9 @@
 """A Worker's run_shell (security reviews, 18-19 Nov 2026): the chat's shell rules on top (odie.workers.worker's guard),
 and underneath every command:
   - the default-deny sandbox (odie.workers.sandbox): reads the system, the toolchains, its own folder and the folders
-    the owner named for the job; writes only its own folder; no network at all (web reads go through the Worker's web
-    tools, never its shell);
+    the owner named for the job; writes only its own folder. The network follows the job (network_for, simpler Workers
+    pass 2): a job that can read nothing of his reaches the internet (never this computer), so "try this repo" can
+    install and build; a job that may read his folders or apps has none (its web reads go through the web tools);
   - its own process group, and when the command returns, every process still running in the job's sandbox is killed,
     found by the sandbox itself (sandbox.processes_in), so a child that left the group (setsid), dropped its
     environment and left the folder still goes;
@@ -132,17 +133,69 @@ def cwd_for(folder: Path, read_dirs: list[str], cwd: str | None) -> Path | None:
     return None
 
 
+def network_for(uses: str, read_dirs: list | None) -> str:
+    """The network a job's commands get. The internet (sandbox.INTERNET: never this computer) only when the job can read
+    nothing of his: the web alone, no folder he named, no apps. Then a stranger's script has nothing of his to send.
+    Anything else is offline (sandbox.NONE): his files or his mail plus a stranger's script plus the internet is the
+    one mix that must never happen.
+      "try this repo" (uses "web", no folders)      -> INTERNET
+      "summarise ~/notes/x" (a named folder)        -> NONE
+      "check my mail and …" (apps:mail), app:notion -> NONE
+      an older row's "folder" or "none", or unknown -> NONE"""
+    if uses == "web" and not read_dirs:
+        return sandbox.INTERNET
+    return sandbox.NONE
+
+
+def network_of(job) -> str:
+    """network_for, for a job object (a test's stand-in without uses is offline)."""
+    return network_for(getattr(job, "uses", ""), list(getattr(job, "read_dirs", None) or []))
+
+
+def argv_for(job, command: str) -> list[str]:
+    """A command as a Worker runs it: zsh inside the job's sandbox, with its named folders and its network."""
+    read_dirs = list(getattr(job, "read_dirs", None) or [])
+    return sandbox.command(["/bin/zsh", "-c", command], job.folder, read_dirs=read_dirs, network=network_of(job))
+
+
+REFUSED_WORDS = ("Operation not permitted", "EPERM", "Read-only file system")
+OFFLINE_WORDS = ("Could not resolve host", "ENOTFOUND", "EAI_AGAIN", "getaddrinfo", "nodename nor servname",
+                 "Temporary failure in name resolution", "Name or service not known", "Network is unreachable",
+                 "No route to host", "Failed to establish a new network connection", "npm error network",
+                 "npm ERR! network", "No matching distribution found")  # npm's and pip's own words when offline
+WRITE_HINT = ("[The sandbox refused it: a Worker's commands read nothing of the user's and may not write outside its "
+              "folder. Work inside your folder; say in your report if the user must do this step.]")
+OFFLINE_HINT = ("[This job's commands have no network (it may read the user's folders or apps): use web_search, "
+                "web_fetch or clone_repo.]")
+
+
+def sandbox_hint(output: str, network: str) -> str:
+    """The plain line added to a command's output when the sandbox (not the program) is why it failed, or "":
+      "touch: /x: Operation not permitted", any job          -> the write-outside-its-folder line
+      "Could not resolve host", an offline job (NONE)        -> the no-network line
+      "Operation not permitted" in an offline job            -> both (a connect is refused with the same words)
+      "Could not resolve host" with the internet, "all good" -> "" (nothing the sandbox did)"""
+    hints = []
+    refused = any(words in output for words in REFUSED_WORDS)
+    if refused:
+        hints.append(WRITE_HINT)
+    offline_words = any(words in output for words in OFFLINE_WORDS)
+    if network == sandbox.NONE and (offline_words or refused):
+        hints.append(OFFLINE_HINT)
+    return "\n".join(hints)
+
+
 def make_worker_shell(store, job) -> FunctionTool:
     read_dirs = list(getattr(job, "read_dirs", None) or [])
 
     async def run_shell(command: str, cwd: str | None = None) -> str:
-        """Run a shell command (zsh) in your own folder. Commands run in a sandbox: they read the system, the toolchains, your folder and any folder the user named for this job, and write only inside your folder. No network from the shell. Output is capped at 8 KB and 5 minutes; anything a command starts in the background stops when it returns."""
+        """Run a shell command (zsh) in your own folder. Commands run in a sandbox: they read the system, the toolchains, your folder and any folder the user named for this job, and write only inside your folder. Whether they reach the internet is in your instructions. Output is capped at 8 KB and 5 minutes; anything a command starts in the background stops when it returns."""
         if not sandbox.available():
             return "Not run: this computer has no sandbox for Workers, so a Worker runs no commands here."
         where = cwd_for(job.folder, read_dirs, cwd)
         if where is None or not where.is_dir():
             return f"Not run: {cwd} is neither your folder nor a folder the user named for this job."
-        argv = sandbox.command(["/bin/zsh", "-c", command], job.folder, read_dirs=read_dirs)
+        argv = argv_for(job, command)
         _FOLDERS[job.id] = job.folder
         try:
             proc = await asyncio.create_subprocess_exec(*argv, cwd=str(where), env=sandbox.env(job.folder),
@@ -181,10 +234,14 @@ def make_worker_shell(store, job) -> FunctionTool:
         text = b"".join(chunks).decode(errors="replace")
         if timed_out:
             text += f"\n[stopped after {TIMEOUT_S} seconds]"
+        hint = ""
         if proc.returncode and not (truncated or timed_out):
             text = f"(exit {proc.returncode})\n{text}"
+            hint = sandbox_hint(text, network_of(job))
         if len(text) > OUTPUT_CAP:
             text = text[: OUTPUT_CAP - 1] + "…"
+        if hint:
+            text = f"{text}\n{hint}"  # after the cap, so a long output never hides why it failed
         return text
 
     return FunctionTool(run_shell)

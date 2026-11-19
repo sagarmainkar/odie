@@ -12,14 +12,18 @@ NUDGE = "[This is a job for a Worker: call start_job now with a full brief and s
 # Messages that read like a real long job (security review, 18 Nov: the old pattern fired on "test my knowledge of
 # capitals" or "fix my resume wording"; a missed job costs little, as start_job's own description still invites it):
 #   code to write AND run ("write a script … and run it"), tests to run or fix ("run the tests in ~/work/app",
-#   "test the parser and fix what breaks"), a check of this computer ("check this Mac's disk"), or an explicit
-#   "in the background" / "take your time" / "background job".
+#   "test the parser and fix what breaks"), a check of this computer ("check this Mac's disk"), someone else's code to
+#   try, clone, install, build or run ("can we try https://github.com/x/y.git": 19 Nov, the chat ran it in its own
+#   shell instead), or an explicit "in the background" / "take your time" / "background job".
 _JOB_ASK = re.compile(
     r"\b(write|build|create|make|code)\b.{0,60}\b(script|program|cli|tool)\b.{0,60}\b(and|then)\s+(run|test|execute)\b|"
     r"\b(run|fix)\b.{0,20}\b(the|my|its|all)\s+(unit\s+)?tests?\b|"
     r"\btest\b.{0,40}\band\s+fix\b|"
     r"\b(check|measure|report on)\b.{0,30}\b(this|my|the)\s+(mac|computer|machine|system|laptop)('s)?\b.{0,30}"
     r"\b(disk|memory|ram|cpu|battery|processes|ports?|logs?|storage)\b|"
+    r"\b(try|clone|install|set up|build|run)\b.{0,40}\b(repo|repository)\b|"
+    r"\b(try|clone|install|set up|build|run)\b.{0,80}(\bgithub\.com/|\bgitlab\.com/|\bcodeberg\.org/|\.git\b)|"
+    r"\bclone\s+(https?://|[\w.-]+/[\w.-]+)|"
     r"\bin the background\b|\bbackground (job|task|worker)\b|\btake your time\b",
     re.IGNORECASE,
 )
@@ -39,12 +43,15 @@ def looks_like_a_job(text: str) -> bool:
       "Can you test the new parser and fix what breaks?"                  -> True  (test … and fix)
       "Run the tests in ~/work/app and fix what fails"                    -> True  (run … the tests)
       "Check this Mac's disk and memory and tell me"                      -> True  (check this Mac's … disk)
+      "can we try this one https://github.com/x/y.git in ~/code/demos" -> True  (someone else's code to try)
+      "install this repo and see if it works"                             -> True  (install … repo)
       "Do this in the background: …", "Take your time: …"                 -> True  (said so)
       "test my knowledge of capitals", "check my memory of last week"     -> False (questions, not jobs)
       "Fix my resume wording", "Create a simple app idea list"            -> False (small asks the chat answers)
       "Can you write a python function that reverses a string?"           -> False (code to show, not to run)
       "How is the market today?"                                          -> False (a question)
       "What does this script do?"                                         -> False (a question, even naming a script)
+      "What is this repo about?"                                          -> False (a question, even naming a repo)
       "Remind me to run the tests at 5"                                   -> False (a reminder)
       "Make me a deck about tides"                                        -> False (the deck skill)
       "ls ~/Downloads"                                                    -> False (one command)

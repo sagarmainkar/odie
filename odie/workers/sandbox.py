@@ -4,9 +4,10 @@ and then ran is its own code, which no text rule reads. The sandbox holds whatev
 else:
 
   - reads: the system (/System, /usr, /bin, /sbin, /Library, /private/etc, /private/var/db, /private/var/select, /dev),
-    Homebrew and /usr/local, the Xcode app when it is the selected developer tools (developer_reads), the toolchains
-    under the home (TOOLCHAINS: the uv-managed Pythons, ~/.local/bin, Rust's),
-    read-only; the job's own folder; and any folder the owner named for this job (read_dirs), read-only. Nothing else
+    Homebrew and /usr/local but never their var (databases, logs) or etc (service settings) beyond the certificates
+    and git's settings (prefix_denials), the Xcode app when it is the selected developer tools (developer_reads), the
+    toolchains under the home (TOOLCHAINS: the uv-managed Pythons, Rust's) and, from ~/.local/bin, only uv, uvx and
+    links into the system's tools (local_bin_reads: his own scripts there stay unread), read-only; the job's own folder; and any folder the owner named for this job (read_dirs), read-only. Nothing else
     under the home: no keys, no app tokens, no Documents, not Odie. File metadata (a path's existence and size) stays
     readable everywhere, which tools need to find their way; a folder's listing and a file's contents do not;
   - writes: the job's own folder only (its HOME, temp and package caches live inside it), and /dev's null and
@@ -17,8 +18,9 @@ else:
     tmux, screen, sudo); signals only to its own; system services (mach-lookup) only MACH_ALLOWED (name lookup,
     network settings, certificate trust, user names, logging): LaunchServices, AppleEvents, the pasteboard, the
     Keychain and every other app are unreachable, so nothing it starts can run outside the sandbox;
-  - network: none for a Worker; for a pull request's test, the internet (packages install) but never this computer:
-    no localhost (Odie, Ollama, other agents), no unix sockets (tmux, the SSH agent) but the DNS resolver's.
+  - network: none for a Worker that may read his folders or apps; for a Worker that can read nothing of his
+    (odie.workers.shell.network_for) and for a pull request's test, the internet (packages install) but never this
+    computer: no localhost (Odie, Ollama, other agents), no unix sockets (tmux, the SSH agent) but the DNS resolver's.
 What it doesn't stop: reading file metadata, and, for a test, talking to the internet (it can read nothing secret)."""
 from __future__ import annotations
 
@@ -28,12 +30,17 @@ from pathlib import Path
 
 SANDBOX_EXEC = "/usr/bin/sandbox-exec"
 SYSTEM_READS = ("/System", "/usr", "/bin", "/sbin", "/Library", "/private/etc", "/private/var/db/timezone",
-                "/private/var/select", "/dev", "/opt/homebrew", "/usr/local")  # not /private/var/db's system logs
+                "/private/var/select", "/dev")  # not /private/var/db's system logs
+# Homebrew's places: its tools are read, its data never (independent review, 19 Nov 2026): var holds databases and
+# logs (a VPN's, a database's data folder) and etc services' settings. From etc only what tools need: the
+# certificates (ca-certificates, openssl@N without its private folder) and git's own settings file.
+BREW_PREFIXES = ("/opt/homebrew", "/usr/local")
 # Files no named folder may ever show, wherever they sit below it (third review, 19 Nov 2026): anything hidden (a
 # part starting with "." : .env, .git, .ssh) and the usual names of keys and secrets.
 SECRET_NAME_PATTERNS = (r"(.*/)?\.", r"(.*/)?[^/]*\.(pem|key|p12|pfx|keystore|jks|ppk)$", r"(.*/)?id_[^/]*$",
                         r"(.*/)?secrets?\.[^/]*$", r"(.*/)?credentials[^/]*$", r"(.*/)?[^/]*\.kdbx$")
-TOOLCHAINS = (".local/share/uv/python", ".local/bin", ".cargo/bin", ".rustup/toolchains")  # under the home, read-only
+TOOLCHAINS = (".local/share/uv/python", ".cargo/bin", ".rustup/toolchains")  # under the home, read-only
+LOCAL_BIN_TOOLS = ("uv", "uvx")  # all a job reads by name in ~/.local/bin (local_bin_reads)
 EXEC_DENIED = ("/usr/bin/open", "/usr/bin/osascript", "/bin/launchctl", "/usr/bin/at", "/usr/bin/crontab",
                "/usr/bin/ssh", "/usr/bin/scp", "/usr/bin/sftp", "/usr/bin/security", "/usr/bin/defaults",
                "/usr/bin/pbcopy", "/usr/bin/pbpaste", "/usr/bin/sudo", "/usr/bin/screen", "/opt/homebrew/bin/tmux",
@@ -57,6 +64,13 @@ def _quoted(path: str) -> str:
     """A path as a profile string: /a/b -> "/a/b"; a quote or a backslash in it is escaped."""
     escaped = str(path).replace("\\", "\\\\").replace('"', '\\"')
     return f'"{escaped}"'
+
+
+def literal_reads(paths: list[str]) -> list[str]:
+    """One allow for these exact paths (none when there are none: an empty allow is not a rule)."""
+    if not paths:
+        return []
+    return ["(allow file-read* " + " ".join(f"(literal {_quoted(p)})" for p in paths) + ")"]
 
 
 def _subpaths(paths) -> str:
@@ -129,6 +143,57 @@ def toolchain_reads(home: Path | None = None) -> list[str]:
     return [str(home / p) for p in TOOLCHAINS if (home / p).exists()]
 
 
+def in_system_tools(path: Path) -> bool:
+    """Whether a real path is among the tools every job reads: under a SYSTEM_READS folder or a Homebrew prefix, and
+    not in Homebrew's var or etc. /opt/homebrew/bin/node -> True;  /usr/bin/true -> True;
+    /opt/homebrew/var/x -> False;  <home>/.local/share/claude/x -> False;  /Applications/X.app/… -> False"""
+    text = str(path)
+    for prefix in BREW_PREFIXES:
+        for private in ("var", "etc"):
+            if text == f"{prefix}/{private}" or text.startswith(f"{prefix}/{private}/"):
+                return False
+    for root in (*SYSTEM_READS, *BREW_PREFIXES):
+        if text == root or text.startswith(root.rstrip("/") + "/"):
+            return True
+    return False
+
+
+def local_bin_reads(home: Path | None = None) -> list[str]:
+    """What a job may read in ~/.local/bin, each by its exact path, never the folder: uv and uvx (LOCAL_BIN_TOOLS, and
+    the file each links to), and a link whose real target is among the system's tools (~/.local/bin/node ->
+    /opt/homebrew/bin/node). His own scripts there, and links into the rest of his home or his apps, stay unread.
+      uv (a file) -> [<home>/.local/bin/uv];  node -> /opt/homebrew/bin/node -> [<home>/.local/bin/node]
+      my-script, claude -> ~/.local/share/claude/…, cua -> /Applications/… -> not listed"""
+    if home is None:
+        home = Path.home()
+    folder = Path(home).resolve() / ".local" / "bin"
+    if not folder.is_dir():
+        return []
+    out = []
+    for entry in sorted(folder.iterdir()):
+        real = entry.resolve()
+        if entry.name in LOCAL_BIN_TOOLS:
+            out.append(str(entry))
+            if entry.is_symlink():
+                out.append(str(real))
+        elif entry.is_symlink() and in_system_tools(real):
+            out.append(str(entry))
+    return out
+
+
+def prefix_denials(prefixes) -> list[str]:
+    """For each Homebrew prefix, after the reads that allow it (a later rule wins): its var and etc denied, then from
+    etc the certificates and git's settings allowed again, then openssl's private folder denied again."""
+    out = []
+    for prefix in prefixes:
+        root = regex_quoted(prefix)
+        out.append(f"(deny file-read* (subpath {_quoted(prefix + '/var')}) (subpath {_quoted(prefix + '/etc')}))")
+        out.append(f"(allow file-read* (subpath {_quoted(prefix + '/etc/ca-certificates')}) "
+                   f'(regex #"^{root}/etc/openssl@[^/]+(/|$)") (literal {_quoted(prefix + "/etc/gitconfig")}))')
+        out.append(f'(deny file-read* (regex #"^{root}/etc/openssl@[^/]+/private(/|$)"))')
+    return out
+
+
 def regex_quoted(path: str) -> str:
     """A path inside a profile regex: every character that means something in a regex is escaped."""
     return "".join("\\" + c if c in ".^$*+?()[]{}|\\" else c for c in path)
@@ -166,7 +231,7 @@ def profile(folder: Path, read_dirs: list[str] | tuple = (), network: str = NONE
     if home is None:
         home = Path.home()
     job = str(Path(folder).resolve())
-    reads = [*SYSTEM_READS, *developer_reads(), *(str(Path(d).resolve()) for d in read_dirs)]
+    reads = [*SYSTEM_READS, *BREW_PREFIXES, *developer_reads(), *(str(Path(d).resolve()) for d in read_dirs)]
     mach = " ".join(f"(global-name {_quoted(m)})" for m in MACH_ALLOWED)
     denied_exec = " ".join(f"(literal {_quoted(p)})" for p in EXEC_DENIED)
     lines = [
@@ -187,8 +252,10 @@ def profile(folder: Path, read_dirs: list[str] | tuple = (), network: str = NONE
         "(allow file-read-metadata)",
         f'(allow file-read* (literal "/") (literal "/private") (literal "/private/var") (literal {_quoted(XCODE_LINK)}))',
         f"(allow file-read* {_subpaths(reads)})",
+        *prefix_denials(BREW_PREFIXES),
         *denials_after_named(read_dirs, home),
         f"(allow file-read* {_subpaths([*toolchain_reads(home), job])})",
+        *literal_reads(local_bin_reads(home)),
         f"(allow file-write* (subpath {_quoted(job)}) (literal \"/dev/null\") (literal \"/dev/tty\") "
         "(literal \"/dev/dtracehelper\") (regex #\"^/dev/fd/\") (regex #\"^/dev/ttys\"))",
         f"(allow mach-lookup {mach})",
@@ -243,7 +310,10 @@ def env(folder: Path) -> dict[str, str]:
     base = Path(folder)
     places = {"HOME": base / ".home", "TMPDIR": base / ".tmp", "XDG_CACHE_HOME": base / ".cache",
               "UV_CACHE_DIR": base / ".cache" / "uv", "PIP_CACHE_DIR": base / ".cache" / "pip",
-              "npm_config_cache": base / ".cache" / "npm", "UV_PYTHON_INSTALL_DIR": base / ".cache" / "uv-python"}
+              "npm_config_cache": base / ".cache" / "npm", "UV_PYTHON_INSTALL_DIR": base / ".cache" / "uv-python",
+              "CARGO_HOME": base / ".cache" / "cargo", "GOPATH": base / ".cache" / "go",
+              "GOCACHE": base / ".cache" / "go-build", "GOMODCACHE": base / ".cache" / "go" / "mod",
+              "BUNDLE_USER_HOME": base / ".cache" / "bundle"}  # named, so no tool looks for its own under his home
     for name, place in places.items():
         place.mkdir(parents=True, exist_ok=True)
         out[name] = str(place)

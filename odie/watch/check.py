@@ -396,7 +396,7 @@ async def run_check(store, now: datetime, turn, push, memory=None, memory_index:
     loops). turn(prompt, tools, instruction) is stage 1's model turn; think(prompt, instruction) is stage 2's call with
     no tools (None: the findings are placed by the same-ID shortcut alone, else as new loops). Returns "off" (nothing
     to read), "quiet" (nothing new: no model call), "ok" or "fallback"."""
-    from odie.loops import consolidate, findings, shortcut
+    from odie.loops import ci_runs, consolidate, findings, shortcut
     from odie.watch import pushes
     from odie.watch.owner import key
     if sources.stale(store, now, owner):
@@ -419,6 +419,8 @@ async def run_check(store, now: datetime, turn, push, memory=None, memory_index:
     check.mails = await fetcher.new_mail()
     check.mail_read = True
     check.events = await fetcher.upcoming_events()
+    # GitHub's CI run mail names a branch, not a pull request: code asks gh which one (odie.loops.ci_runs).
+    await ci_runs.resolve(check.mails)
     # A mail in a thread an open loop holds, or GitHub's mail about the same pull request, joins that loop in code.
     check.loop_of = shortcut.attach_known(store, owner, check.mails, now)
     catching_up = needs_catch_up(fetcher)

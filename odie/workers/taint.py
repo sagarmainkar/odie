@@ -1,7 +1,8 @@
 """Which chats have read outside text, for the life of the chat (second security review, 19 Nov 2026). Once mail,
-messages, a web page or an app's answer has entered a chat, any brief written there may carry its words: every job
-started from that chat afterwards is tainted (no web, no apps, no network), not only one started in the same turn.
-A new chat starts clean. Kept in the settings under the chat's id, so erasing a thread forgets it with the thread.
+messages, a web page or an app's answer has entered a chat, any brief the model writes there may carry its words: every
+job started from that chat afterwards is tainted, not only one started in the same turn, and its Worker's brief is
+built by code from his own typed words instead of the model's (simpler Workers: odie.workers.tools.brief_for). A new
+chat starts clean. Kept in the settings under the chat's id, so erasing a thread forgets it with the thread.
 
 Mail and messages are noted as the chat already notes them (odie.signin.guard.remember_read: "your mail", "your
 messages"); the web and the apps are noted here, from the chat's after-tool callback (odie.agent.callbacks)."""

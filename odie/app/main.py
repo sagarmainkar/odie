@@ -423,6 +423,7 @@ def create_app(runner=None, store: Store | None = None) -> FastAPI:
 
     from odie.loops import migrate
     migrate.run_once(store, datetime.now(ZoneInfo(s.timezone)))  # phase 3: the watch's threads and cards become loops
+    migrate.no_orphans_once(store, datetime.now(ZoneInfo(s.timezone)))  # Odie's loops with no work for Odie: his
     devices.hide_pairing_queries_in_access_log()  # the setup link's token never lands in logs/server.log
 
     @asynccontextmanager

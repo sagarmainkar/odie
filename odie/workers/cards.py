@@ -4,7 +4,10 @@
     every step it needed, in full: plain words first, the exact command after, and whether a tap may allow it. Its
     move, written here, is "Allow it and run again" when some step may be allowed (exactly those calls, on the next
     run: odie.workers.allow), else "Retry"; Done takes the card off. No Later: a stuck job is run again or cleared;
-  - Done today: a job that finished today with nothing needed.
+  - a card in Needs you, too, for a job that finished with something worth keeping and a folder of his named for it:
+    its move is "Keep it in <folder>" (odie.workers.keep: his tap copies it there); once kept, it is a Done today row
+    that says where it went;
+  - Done today: a job that finished today with nothing needed, or that he kept today.
 Odie's own jobs (a pull request's test) are on "on it" while they run; their result is the loop's card."""
 from __future__ import annotations
 
@@ -32,9 +35,9 @@ def on_it(store, pid: str) -> list[dict]:
         if row["status"] not in jobs.GOING:
             continue
         may_read = [home_form(d) for d in jobs.loads(row.get("read_dirs_json"))]
-        next_words = uses_line(row).replace("Uses:", "uses")
+        next_words = "uses " + uses_words_of(row)
         if may_read:
-            next_words = "may read " + ", ".join(may_read) + ", no web"
+            next_words += "; may read " + ", ".join(may_read)
         out.append({"id": row["id"], "title": row["title"], "state": STATE_OF[row["status"]], "next": next_words,
                     "stop": row["id"]})
     return out
@@ -42,17 +45,19 @@ def on_it(store, pid: str) -> list[dict]:
 
 def needs_a_card(row: dict, now: datetime) -> bool:
     """Whether a job is a card on Pulse: the user started it, it ended in the last CARD_DAYS, wasn't cleared, and
-    failed or got stuck (blocked). One that finished isn't, even if a step was refused on the way (it did it another
-    way: worker.needs_shown).
+    failed or got stuck (blocked), or finished with something he may keep (odie.workers.keep.offered). One that
+    finished otherwise isn't, even if a step was refused on the way (it did it another way: worker.needs_shown).
       failed yesterday -> True;  done, blocked -> True;  done, a step refused but finished -> False;  done cleanly -> False
+      done, a cloned repo to keep and ~/code/demos named -> True;  the same once kept -> False
       cleared -> False;  failed 4 days ago -> False;  Odie's own (a PR test) -> False;  still running -> False"""
+    from odie.workers import keep as job_keep
     if row["started_by"] != "you" or row["cleared"] or row["status"] in jobs.GOING:
         return False
     ended = _ended(row)
     if ended is None or ended < now - timedelta(days=CARD_DAYS):
         return False
     went_wrong = row["status"] == "failed" or row["outcome"] == "blocked"
-    return went_wrong  # a job that finished isn't a card, whatever it was refused on the way (worker.needs_shown)
+    return went_wrong or job_keep.offered(row)
 
 
 def allowable(row: dict) -> list[dict]:
@@ -107,17 +112,22 @@ def why_of(row: dict) -> str:
 
 def card(row: dict) -> dict:
     """A job as a Pulse card, in the shape odie.watch.needs gives every card; its buttons are written here."""
+    from odie.workers import keep as job_keep
     main = {"label": "Retry", "action": "job_retry", "value": row["id"]}
     if allowable(row):
         main = {"label": "Allow it and run again", "action": "job_allow", "value": row["id"]}
+    why = why_of(row)
+    if job_keep.offered(row):  # a new action: an app that doesn't know it says to update, never a dead button
+        main = {"label": f"Keep it in {home_form(row['keep_to'])}", "action": "job_keep", "value": row["id"]}
+        why = partly_kept_words(jobs.kept_of(row)) or why
     brief = ""
     if row["report"]:
         brief = row["report"][:BRIEF_MOST]
     badge = ""
     if row.get("taint"):
-        badge = f"Started from {row['taint']}: no web"
+        badge = f"Brief: your own words (the chat read {row['taint']})"
     read_dirs = jobs.loads(row.get("read_dirs_json"))
-    return {"ref": f"job:{row['id']}", "title": row["title"], "why": why_of(row), "brief": brief, "icon": "terminal",
+    return {"ref": f"job:{row['id']}", "title": row["title"], "why": why, "brief": brief, "icon": "terminal",
             "badge": badge, "ask": f"What happened with job {row['id']} ({row['title']})?", "main": main,
             "other": {"label": "Done", "action": "job_clear", "value": row["id"]}, "pile": "alerts",
             "since": row["ended_at"] or "", "decide": False, "steps": steps_of(row),
@@ -125,14 +135,40 @@ def card(row: dict) -> dict:
             "uses": uses_line(row)}
 
 
-def uses_line(row: dict) -> str:
-    """What the card says the job may reach: "Uses: the web"; "Uses: your mail, no web"; "" for a job of named
-    folders (its "May read" line says it) or a tainted one (its badge says it)."""
-    from odie.workers.tools import uses_words
-    uses = row.get("uses") or "web"
-    if row.get("taint") or uses in ("folder", "none"):
+def partly_kept_words(kept: dict) -> str:
+    """The card's line after a Keep it that stopped part way, or "" for any other: {"partial": True, "path":
+    "<home>/code/demos/app", "stopped": "No space left on device"} -> "Copied only part of it to ~/code/demos/app before
+    it stopped: No space left on device. Keep it again makes a new copy."; {} or a whole keep -> ""."""
+    if not kept.get("partial"):
         return ""
-    return f"Uses: {uses_words(uses)}"
+    return (f"Copied only part of it to {home_form(kept.get('path') or '')} before it stopped: "
+            f"{kept.get('stopped') or 'an error'}. Keep it again makes a new copy.")
+
+
+def uses_words_of(row: dict) -> str:
+    """What a job's row says it uses, in words: "the web", "the web and your mail" (odie.workers.tools.uses_words)."""
+    from odie.workers.tools import uses_words
+    return uses_words(row.get("uses") or "web")
+
+
+def uses_line(row: dict) -> str:
+    """What the card says the job may reach besides the folders it may read (its "May read" line), and whether its
+    commands reach the internet (odie.workers.shell.network_for):
+      the web only                -> "Uses: the web, and its commands can reach the internet"
+      the web and a named folder  -> "Uses: the web; its commands stay offline (it may read your folders)"
+      the web and his mail        -> "Uses: the web and your mail; its commands stay offline (it may read your apps)"
+      an older row's "folder" -> "Uses: the folders you named, no web" (as it was started)"""
+    from odie.workers import sandbox, shell
+    uses = row.get("uses") or "web"
+    read_dirs = jobs.loads(row.get("read_dirs_json"))
+    words = f"Uses: {uses_words_of(row)}"
+    if uses in ("folder", "none"):
+        return words
+    if shell.network_for(uses, read_dirs) == sandbox.INTERNET:
+        return f"{words}, and its commands can reach the internet"
+    if uses.startswith("app"):
+        return f"{words}; its commands stay offline (it may read your apps)"
+    return f"{words}; its commands stay offline (it may read your folders)"
 
 
 def home_form(path: str) -> str:
@@ -150,14 +186,43 @@ def cards(store, pid: str, now: datetime) -> list[dict]:
 
 
 def done_today(store, pid: str, now: datetime) -> list[dict]:
-    """This owner's jobs that finished cleanly today, for Done today: {"id", "title", "why": "done 10:42", "closed"}."""
+    """This owner's jobs that finished cleanly today, for Done today: {"id", "title", "why": "done 10:42", "closed"};
+    and the ones he kept today, saying where they went: "why": "kept in ~/code/demos/app (10:47)". A job with a keep
+    waiting is a card instead (needs_a_card)."""
+    from odie.workers import keep as job_keep
     start = datetime.combine(now.date(), time(0, 0), now.tzinfo)
     out = []
     for row in jobs.of_owner(store, pid, 30):
+        if row["started_by"] != "you":
+            continue
+        kept = jobs.kept_of(row)
+        if kept.get("at") and not kept.get("partial"):
+            kept_at = datetime.fromisoformat(kept["at"].replace("Z", "+00:00"))
+            if kept_at >= start:
+                at = kept_at.astimezone(now.tzinfo).strftime("%H:%M")
+                out.append({"id": row["id"], "title": row["title"], "why": f"{kept_line(kept)} ({at})",
+                            "closed": kept["at"]})
+            continue
         ended = _ended(row)
         clean = row["status"] == "done" and row["outcome"] != "blocked" and not jobs.needed(row)
-        if not clean or ended is None or ended < start or row["started_by"] != "you":
+        if not clean or ended is None or ended < start or job_keep.offered(row):
             continue
         at = ended.astimezone(now.tzinfo).strftime("%H:%M")
         out.append({"id": row["id"], "title": row["title"], "why": f"done {at}", "closed": row["ended_at"]})
     return out
+
+
+def kept_line(kept: dict) -> str:
+    """Where a kept job went, as its row says it: {"path": "<home>/code/demos/app"} -> "kept in
+    ~/code/demos/app"; with 2 links left out -> "kept in ~/code/demos/app; left out 2 links that point outside
+    it"."""
+    from pathlib import Path
+
+    from odie.workers.keep import Kept
+    where = Kept(Path(kept.get("path") or ""))
+    where.links_left_out = int(kept.get("links_left_out") or 0)
+    where.others_left_out = int(kept.get("others_left_out") or 0)
+    where.git_reset = bool(kept.get("git_reset"))
+    where.venvs_left_out = [str(v) for v in kept.get("venvs_left_out") or []]
+    line = where.line(home_form)
+    return line[0].lower() + line[1:]

@@ -55,4 +55,12 @@ describe("a chat turn", () => {
     for await (const _ of streamChat("hi", [], "chat-2026-10-28")) { /* read it all */ }
     expect(JSON.parse(String(fetch.mock.calls[0][1]?.body))).toEqual({ text: "hi", images: [], session_id: "chat-2026-10-28" });
   });
+
+  it("says when a tap sent the words for him (a button's or a card's), so they never count as his typing", async () => {
+    const fetch = vi.fn(async (_url: string, _init?: RequestInit) => new Response("data: {\"type\": \"done\", \"text\": \"ok\"}\n\n", { status: 200 }));
+    vi.stubGlobal("fetch", fetch);
+    const { streamChat } = await import("./sse");
+    for await (const _ of streamChat("Open the email from Asha", [], undefined, undefined, "tap")) { /* read it all */ }
+    expect(JSON.parse(String(fetch.mock.calls[0][1]?.body))).toEqual({ text: "Open the email from Asha", images: [], via: "tap" });
+  });
 });

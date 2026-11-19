@@ -33,7 +33,7 @@ import subprocess
 from datetime import datetime
 from pathlib import Path
 
-from odie.loops import cards, clock, consolidate, findings, ledger, pr_test, recipes, shortcut
+from odie.loops import cards, ci_runs, clock, consolidate, findings, ledger, pr_test, recipes, shortcut
 
 REPO = Path(__file__).resolve().parent.parent.parent
 EVAL_DIR = REPO / "evals" / "loops"
@@ -239,6 +239,7 @@ async def one_check(store, case: dict, chk: dict, at: datetime, pid: str, turn, 
     check.mails = await fetcher.new_mail()
     check.mail_read = True
     check.events = await fetcher.upcoming_events()
+    await ci_runs.resolve(check.mails)  # the case's fake gh answers
     check.loop_of = shortcut.attach_known(store, pid, check.mails, at)
     check.script = chk.get("script") or {}
     writes: list[dict] = []

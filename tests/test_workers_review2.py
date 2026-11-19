@@ -1,5 +1,5 @@
 """The second security review (19 Nov 2026), outside the sandbox itself: taint lasts the chat, a job reads only the
-folders of his the owner named (and then gets no web), the allow card shows everything its tap allows and the tap
+folders of his the owner named (with the web since simpler Workers, the same day), the allow card shows everything its tap allows and the tap
 allows only that (a hash of what was shown; files an allowed command runs, bound by their hash), and the text rules a
 Worker adds. Every folder here is under tmp_path, standing in for the home."""
 from __future__ import annotations
@@ -22,6 +22,7 @@ async def test_a_job_started_turns_after_reading_mail_is_still_tainted(world):
     from odie.signin import guard as signin_guard
     from odie.workers.tools import make_worker_tools
     signin_guard.remember_read(store, "chat-2026-11-19", "your mail")  # turn 1 read a mail
+    store.audit("user", "message", result_summary="go ahead", session_id="chat-2026-11-19")
     Scripted.script = [("report", {"outcome": "ready", "text": "ok"})]
     got = await make_worker_tools(store)[0].func("Go ahead", "Do what we said.", tool_context=Ctx("chat-2026-11-19"))
     assert jobs.get(store, got["job_id"])["taint"] == "mail"  # turn 2's "go ahead"
@@ -31,6 +32,7 @@ async def test_a_web_page_read_earlier_in_the_chat_taints_later_jobs_and_a_new_c
     store, _, _ = world
     from odie.workers.tools import make_worker_tools
     job_taint.note_call(store, "chat-2026-11-19", "web_fetch", None)
+    store.audit("user", "message", result_summary="summarise it in the background", session_id="chat-2026-11-19")
     Scripted.stall = True
     start_job = make_worker_tools(store)[0]
     tainted = await start_job.func("A", "x", tool_context=Ctx("chat-2026-11-19"))
@@ -70,7 +72,7 @@ def test_a_named_folder_is_checked_by_code(world, fake_home):
     assert readable_dir("/etc", "read /etc")[0] is None
 
 
-async def test_a_job_with_a_named_folder_records_it_shows_it_and_gets_no_web(world, fake_home):
+async def test_a_job_with_a_named_folder_records_it_and_shows_it(world, fake_home):
     store, _, _ = world
     from odie.agent import turn
     from odie.workers.tools import make_worker_tools
@@ -83,8 +85,6 @@ async def test_a_job_with_a_named_folder_records_it_shows_it_and_gets_no_web(wor
         turn.USER_TEXT.reset(token)
     assert got["may_read"] == [str((fake_home / "work" / "app").resolve())]
     assert await until(lambda: jobs.get(store, got["job_id"])["status"] == "done")
-    names = sorted(f.name for t in Scripted.seen[0].config.tools for f in t.function_declarations)
-    assert names == ["read_file", "report", "run_shell", "write_file"]  # his folder or the web, never both
     assert "read-only" in str(Scripted.seen[0].config.system_instruction)
 
 

@@ -183,12 +183,12 @@ def test_an_allowed_retry_lets_exactly_that_through(world, tmp_path):
     guard = worker.guard_for(store, job, chat)
     assert guard(Tool("run_shell"), {"command": "rm ~/Documents/old.txt", "cwd": str(job.folder)}, None) is None
     assert guard(Tool("run_shell"), {"command": "cat ~/.env", "cwd": str(job.folder)}, None) is not None
-    both = "rm ~/Documents/old.txt && npm install left-pad"
+    both = "rm ~/Documents/old.txt && npm publish"
     jobs.set_allowed(store, job.id, [{"tool": "run_shell", "command": both, "cwd": str(job.folder),
                                       "why": "deletes or stops something"}])
     guard = worker.guard_for(store, jobs.from_row(jobs.get(store, job.id)), chat)
     refused = guard(Tool("run_shell"), {"command": both, "cwd": str(job.folder)}, None)
-    assert refused["error"].startswith("Not run: it installs software")  # the reason his tap didn't cover
+    assert refused["error"].startswith("Not run: it sends data out")  # the reason his tap didn't cover
 
 
 # ── a run, end to end ────────────────────────────────────────────────────────
@@ -210,7 +210,7 @@ async def test_a_worker_runs_the_shell_in_its_folder_reports_and_the_chat_hears_
     assert pushes[0][2] == job.id
     first = Scripted.seen[0]
     names = sorted(f.name for t in first.config.tools for f in t.function_declarations)
-    assert names == ["read_file", "report", "run_shell", "web_fetch", "web_search", "write_file"]
+    assert names == ["clone_repo", "read_file", "report", "run_shell", "web_fetch", "web_search", "write_file"]
     assert str(first.config.system_instruction).startswith("You are a Worker")
     assert str(job.folder) in str(first.config.system_instruction)
     second = Scripted.seen[1]
