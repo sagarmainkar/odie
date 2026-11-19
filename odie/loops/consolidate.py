@@ -46,6 +46,8 @@ def strong_refs(found: dict) -> list[str]:
     """The IDs of a finding the shortcut may match on: its mail, its event, its pull request, and its mail thread (an
     open loop only). Never a note (a digest names many things) or a loose order number. ["mail:m1", "thread:t1",
     "note:Inbox/d.md", "order:A-1", "example/app#49"] -> ["mail:m1", "thread:t1", "example/app#49"]."""
+    if found.get("weak"):
+        return []  # about a mail a search found: evidence text only (odie.loops.findings.read_new)
     return [ref for ref in found["refs"] if ledger.is_open_ref(ref)]
 
 
@@ -422,9 +424,9 @@ def verdict_for(store, pid: str, now: datetime, found: dict, answer: dict | None
         if loop is not None and loop["state"] not in ledger.OPEN:
             return "quiet", loop, answer
         if loop is not None:
-            if verdict == "closes":
+            if verdict == "closes" and not found.get("weak"):
                 return "close", loop, answer
-            return "add", loop, answer
+            return "add", loop, answer  # a weak finding never closes a loop: it only adds its words
     if verdict == "new":
         hinted = closed_hint(hint)
         if hinted is not None:

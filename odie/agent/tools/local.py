@@ -83,6 +83,12 @@ def make_local_tools(store: Store, tz: str, source_done=None) -> list[FunctionTo
         row = store.one("select * from tasks where id=?", (int(task_id),))
         if row is None or not may_see(row, personality_of(store, tool_context)):
             return f"No task #{task_id}."  # a personality's task doesn't exist for any other chat
+        from odie.loops import chat_done, ledger
+        loop = loop_of_reminder(task_id)
+        if loop is not None:  # a reminder Odie made for a loop: decided before anything is written
+            verdict, words = chat_done.decide(store, loop, tool_context)
+            if verdict == chat_done.REFUSE:
+                return words
         fields: dict = {}
         if status in ("open", "waiting", "done", "dropped"):
             fields["status"] = status
@@ -102,16 +108,10 @@ def make_local_tools(store: Store, tz: str, source_done=None) -> list[FunctionTo
             fields.pop("delivered_at", None)
         if not fields and not snooze_until:
             return "Nothing to update."
-        from odie.loops import chat_done, ledger
-        loop = loop_of_reminder(task_id)
-        changes_the_loop = loop is not None and changes_a_loop(status, next_check, snooze_until)
-        if changes_the_loop:  # a loop's reminder: changing it changes the loop (approved by his tap already)
-            verdict, words = chat_done.decide(store, loop, tool_context)
-            if verdict == chat_done.REFUSE:
-                return words
         if fields:
             store.update_task(int(task_id), **fields)
-        if changes_the_loop and status in ("done", "dropped"):
+        closes_the_loop = loop is not None and loop["state"] in ledger.OPEN and status in ("done", "dropped")
+        if closes_the_loop:  # (his tap approved it: the require_confirmation card)
             chat_done.close(store, loop, datetime.now(zone), notes or f"its reminder {status}")
         msg = f"Task #{task_id} '{row['title']}': " + ", ".join(f"{k}={v}" for k, v in fields.items() if k != "delivered_at")
         if snooze_until:
@@ -138,30 +138,24 @@ def make_local_tools(store: Store, tz: str, source_done=None) -> list[FunctionTo
         return datetime.now(zone).strftime(f"%A %-d %B %Y, %H:%M ({tz})")
 
     def loop_of_reminder(task_id) -> dict | None:
-        """The open loop this task is Odie's reminder for, or None (his own task, or a loop that is closed)."""
+        """The loop, open or closed, that this task is Odie's reminder for, or None for his own task (no source)."""
         from odie.loops import ledger
         loop = ledger.pointing_at(store, int(task_id))
-        if loop is None or loop["state"] not in ledger.OPEN:
+        if loop is None:
             return None
         row = store.one("select source_kind from tasks where id=?", (int(task_id),))
         if row is None or row["source_kind"] not in ledger.ODIES_TASKS:
             return None
         return loop
 
-    def changes_a_loop(status, next_check, snooze_until) -> bool:
-        """Whether a task_update changes what its loop is: ticked or dropped (the loop's Done), or moved (next check,
-        snooze). Notes alone change nothing of the loop. status "done" -> True; snooze_until -> True; notes -> False."""
-        return status in ("done", "dropped") or bool(next_check) or bool(snooze_until)
-
-    def update_needs_tap(task_id: int = 0, status: str | None = None, next_check: str | None = None,
-                         snooze_until: str | None = None, tool_context=None, **_) -> bool:
-        """Does this task_update need his tap? Every time it ticks, drops or moves a reminder Odie made for an open
-        loop (odie.loops.chat_done.decide: TAP); a refused one needs none (it doesn't run). His own tasks never ask.
-        "done" on the vote loop's reminder -> the approval card; "snooze" on it -> the card; "done" on his own
-        "Pay rent" -> no card; notes on the vote's reminder -> no card."""
+    def update_needs_tap(task_id: int = 0, tool_context=None, **_) -> bool:
+        """Does this task_update need his tap? Every time it changes a reminder Odie made for a loop, whatever it
+        changes (status of any kind, a time, notes) and whether the loop is open or closed (odie.loops.chat_done
+        .decide: TAP); one refused anyway (a pull request, the terminal, a background run) needs none: it doesn't run.
+        His own tasks never ask. "open" on the vote loop's reminder -> the card; "done" on his "Pay rent" -> no card."""
         from odie.loops import chat_done
         loop = loop_of_reminder(task_id)
-        if loop is None or not changes_a_loop(status, next_check, snooze_until):
+        if loop is None:
             return False
         verdict, _words = chat_done.decide(store, loop, tool_context)
         return verdict == chat_done.TAP

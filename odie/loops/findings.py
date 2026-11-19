@@ -121,10 +121,19 @@ def mail_fields(mail, statuses: dict) -> dict:
     return fields
 
 
+def read_new(check, mail) -> bool:
+    """Whether a mail is one this check read as new (its inbox since the last check) or the user's own sent mail: only
+    those make a finding's IDs strong. A mail search_mail or sent_to found is readable context, but a finding about it
+    is weak: evidence text only (it can't join a loop by its ID, nor close one)."""
+    new = {m.id for m in (getattr(check, "mails", None) or [])}
+    sent = {m.id for m in check.sent}
+    return mail.id in new or mail.id in sent
+
+
 def own_ref_ok(ref: str, check) -> bool:
-    """Whether a finding's own ref (what it is about) may stand: a mail or an event this check read, one of the notes
-    his Watch for names ("note:…", never a strong ID), or none at all. A task, a thread, a mail or an event it didn't
-    read, or anything else, can't: such a finding is refused.
+    """Whether a finding's own ref (what it is about) may stand: a mail or an event this check read, a note ("note:…",
+    kept as text: never a strong ID, whatever note it names), or none at all. A task, a thread, a mail or an event it
+    didn't read, or anything else, can't: such a finding is refused.
       "mail:m1" (read) -> True;  "task:12" -> False;  "thread:tAsha" -> False;  "event:e9" (not read) -> False;
       "note:Inbox/digest.md" -> True;  "" -> True"""
     if not ref:
@@ -181,7 +190,9 @@ def one(item: dict, check) -> dict | None:
     named = item.get("refs") if isinstance(item.get("refs"), list) else [item.get("refs")]
     refs += named_refs(named, check, github_mail)
     refs = list(dict.fromkeys(refs))[:REFS_MOST]
-    return {"ref": ref, "title": title, "from_github": github_mail, "from_thread": bool(item.get("from_thread")), "kind": str(item.get("kind") or "").strip()[:40],
+    weak = mail is not None and not read_new(check, mail)
+    return {"ref": ref, "title": title, "from_github": github_mail, "from_thread": bool(item.get("from_thread")),
+            "weak": weak, "kind": str(item.get("kind") or "").strip()[:40],
             "why": str(item.get("why") or "").strip()[:rep.WHY_MAX], "owner": owner_of(item.get("owner")),
             "due": when_of(item.get("due")), "remind_at": when_of(item.get("remind_at")),
             "done": str(item.get("done") or "").strip()[:DONE_MOST], "stage": str(item.get("stage") or "").strip()[:40],
@@ -204,26 +215,13 @@ def merged(first: dict, second: dict) -> dict:
     return out
 
 
-def kinds_agree(a: str, b: str) -> bool:
-    """Whether two kinds, in the model's words, name the same kind of thing: "bill" and "electricity bill" -> True;
-    "order" and "order" -> True; "bill" and "event" -> False; a missing kind agrees with nothing."""
-    first, second = same_words(a), same_words(b)
-    if not first or not second:
-        return False
-    return first == second or first in second.split() or second in first.split()
-
-
 def one_thing(first: dict, second: dict) -> bool:
-    """Whether two findings about the same mail or event are one thing: the same title written the same way, or one
-    is track_thread's note on the other (a stage, a due date) AND their kinds agree. A mail asking two things gives
-    two findings, and both stay.
-      "School PTM Saturday" and "Pay school term fee" (report) -> False
-      track_thread's "Pay term fee" (bill) and the report's "PTM on Saturday" (event) -> False
-      track_thread's "Order: desk lamp (shipped)" (order) and the report's "Order: lamp" (order) -> True"""
-    if same_words(first["title"]) == same_words(second["title"]):
-        return True
-    one_is_a_thread_note = first["from_thread"] != second["from_thread"]
-    return one_is_a_thread_note and kinds_agree(first["kind"], second["kind"])
+    """Whether two findings about the same mail or event are one thing: only when their titles are the same written
+    the same way. Anything else stays two (joining a same-thing duplicate worded differently is stage 2's job).
+      "School PTM Saturday" and "Pay school term fee" -> False
+      track_thread's "Pay Amex card" and the report's "Pay Visa card", one statement mail -> False
+      track_thread's "Order: desk lamp" and the report's "Order: desk lamp" -> True"""
+    return same_words(first["title"]) == same_words(second["title"])
 
 
 def collect(check) -> list[dict]:

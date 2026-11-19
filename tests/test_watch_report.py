@@ -136,8 +136,8 @@ def test_bad_labels_are_dropped_not_the_finding(isolated_settings):
 
 
 def test_two_findings_about_one_mail_are_one(isolated_settings):
-    check = a_check(MAILS, report_items=[{"ref": "mail:m2", "title": "Order: lamp", "why": "arrives Friday",
-                                          "pile": "orders", "kind": "order"}])
+    check = a_check(MAILS, report_items=[{"ref": "mail:m2", "title": "Order: desk lamp", "why": "arrives Friday",
+                                          "pile": "orders", "kind": "order"}])  # the same title: one thing
     check.threads_found.append(findings.from_thread("mail:m2", "order", "Order: desk lamp", "shipped", "2026-10-10", ""))
     got = findings.collect(check)
     assert len(got) == 1 and got[0]["owner"] == "them" and got[0]["kind"] == "order"

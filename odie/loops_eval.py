@@ -17,6 +17,38 @@ from pathlib import Path
 from odie.blocks_eval import commit_of_repo, copy_key, file_stem, key_name_for, owner_env_file, use_throwaway_home
 
 
+def keeps_for_eval(name: str) -> bool:
+    """Stage 1's allow-list for the eval, less every tool of this Mac (its Mail, Calendar, Reminders: mac_*): the eval's
+    sources are the cases' made-up mail and events (EvalFetcher), and its calendar the recording fakes, so nothing of
+    the owner's own is ever read or written. "calendar_create_event" (the fake) -> True; "mac_calendar_add" -> False."""
+    from odie.watch import check as watch_check
+    return watch_check.stage1_keeps(name) and not name.startswith("mac_")
+
+
+async def declared_names(tools: list) -> set[str]:
+    """The tool names a turn would be told about (toolsets asked with no skill loaded)."""
+    from types import SimpleNamespace
+
+    from google.adk.tools.base_toolset import BaseToolset
+    context = SimpleNamespace(state={}, agent_name="odie_tracker", invocation_id="eval-check")
+    names = set()
+    for t in tools:
+        if isinstance(t, BaseToolset):
+            names |= {x.name for x in await t.get_tools(context)}
+        else:
+            names.add(t.name)
+    return names
+
+
+def refuse_mac(guard):
+    """The watch's guard with every tool of this Mac refused too (a second lock beside keeps_for_eval)."""
+    def eval_guard(tool, args, tool_context):
+        if tool.name.startswith("mac_"):
+            return {"error": "Not in the eval: this Mac's own apps are never used."}
+        return guard(tool, args, tool_context)
+    return eval_guard
+
+
 async def run_all(provider: str, model: str, cases: list[dict], root: Path) -> list[dict]:
     from zoneinfo import ZoneInfo
 
@@ -34,10 +66,14 @@ async def run_all(provider: str, model: str, cases: list[dict], root: Path) -> l
     runner = OdieRunner(store)
     runner.review_every = 10**6
     await runner.load_plugins()
+    named = await declared_names(runner.stage_tools([], watch_check.MAY_WRITE, keeps_for_eval))
+    mine = sorted(n for n in named if n.startswith("mac_"))
+    if mine:  # never: the eval must not reach this Mac's Mail, Calendar or Reminders
+        raise SystemExit(f"Stopped: stage 1 would be handed this Mac's own tools: {', '.join(mine)}")
 
     async def turn(prompt, tools, instruction, script=None):
-        await runner.background_turn(prompt, timeout=280, tools=tools, instruction=instruction, guard=watch_check.guard,
-                                     keep=watch_check.stage1_keeps)
+        await runner.background_turn(prompt, timeout=280, tools=tools, instruction=instruction,
+                                     guard=refuse_mac(watch_check.guard), keep=keeps_for_eval)
 
     async def think(prompt, instruction, script=None):  # the real model: a case's script is for the tests only
         return await runner.background_turn(prompt, timeout=120, instruction=instruction, bare=True)

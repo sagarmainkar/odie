@@ -84,8 +84,11 @@ MAYBE = frozenset({"read_note",  # a note or folder a Watch for entry names (not
                    "load_skill"})  # only to reach the connected calendar app it writes to (calendar_skills)
 # Fields of a calendar write, at any depth, that would invite, email or show someone else: never from the watch.
 INVITES = re.compile(r"attend|guest|people|recipient|invit|particip|notif|send_?updates|organi[sz]er|email|visibility|"
-                     r"conferenc", re.I)
-EVENT_ID = ("event_id", "eventId", "id", "event")  # where a calendar update names the event it changes
+                     r"conferenc|^cc$|^to$|share", re.I)
+# A field naming which calendar: none is allowed (no setting names a calendar for the watch's entries, 19 Nov 2026),
+# so every entry goes to the default calendar, never a shared family or team one.
+CALENDAR_PICK = re.compile(r"^calendar(_?id|_?name)?$", re.I)
+EVENT_ID = re.compile(r"^(event_?id|id|event)$", re.I)  # where a calendar update names the event it changes
 
 
 class Stage1:
@@ -108,40 +111,54 @@ class Stage1:
         self.vault = Path(folder).expanduser() if folder else None
         self.notes = notes_named(watch, self.vault)
         self.loadable = set(calendar_skills(store, owner))
-        self.events = set()
+        self.events = set()  # filled by this check's bills_and_orders (odie.watch.tools)
 
 
-def path_words(watch: str) -> list[str]:
-    """The words of his Watch for that could be paths: each whitespace-separated word (trailing punctuation off), and
-    whatever he put in backticks or double quotes (so a path with spaces can be written). Web addresses aren't.
-    'relay "2-Areas/My Money/" and People/Asha.md.' -> ["2-Areas/My Money/", "relay", …, "People/Asha.md"]"""
-    text = _ADDRESS.sub(" ", watch or "")
-    quoted = re.findall(r"`([^`]+)`|\"([^\"]+)\"", text)
-    out = [a or b for a, b in quoted]
-    bare = re.sub(r"`[^`]*`|\"[^\"]*\"", " ", text)
-    out += [w.rstrip(".,;:)!?") for w in bare.split()]
-    return [w.strip() for w in out if w.strip()]
+def exact_path(vault: Path, written: str) -> Path | None:
+    """The path he wrote, inside his vault, when each part names an entry exactly as it is on disk (case and all), or
+    None: "People/Asha.md" with People/Asha.md there -> that path; "people/Asha.md" -> None (the folder is People);
+    "Inbox/../x.md" -> None."""
+    here = vault
+    for part in [p for p in written.split("/") if p]:
+        if part in (".", ".."):
+            return None
+        try:
+            names = {entry.name for entry in here.iterdir()}
+        except OSError:
+            return None
+        if part not in names:
+            return None
+        here = here / part
+    if here == vault or here.is_symlink():
+        return None
+    return here
 
 
 def notes_named(watch: str, vault: Path | None) -> set[str]:
-    """The notes and folders his Watch for names, exactly as he wrote them: a whole word, or quoted text, that is a
-    folder in his vault (with or without its "/") grants that folder ("Inbox" -> "Inbox/"); one that is a .md file
-    there grants that file alone. Nothing else grants anything: never a part of a word, never the folder a named file
-    sits in. No vault -> nothing.
-      "watch 2-Areas/My Money/ weekly" -> nothing ("2-Areas/My" and "Money/" aren't folders);
-      'watch "2-Areas/My Money/"' -> {"2-Areas/My Money/"};  "notes under 0-Inbox/iCloud" -> {"0-Inbox/iCloud/"};
-      "who is People/Asha.md" -> {"People/Asha.md"} (not People/);  "and/or", "24/7", "./" -> nothing"""
+    """The notes and folders his Watch for names, exactly as he wrote them: a whole word that contains "/" or ends in
+    ".md", or text he quoted (backticks or double quotes), whose every part is there in his vault with the same case.
+    A folder grants that folder; a .md file grants that file alone. Nothing else grants anything: never a plain word
+    ("tell me when people reply" -> nothing, though a folder People/ exists), never part of a word, never the folder a
+    named file sits in. No vault -> nothing.
+      "watch 2-Areas/My Money/ weekly" -> nothing;  'watch "2-Areas/My Money/"' -> {"2-Areas/My Money/"};
+      "notes under 0-Inbox/iCloud" -> {"0-Inbox/iCloud/"};  "who is People/Asha.md" -> {"People/Asha.md"};
+      '"People"' -> {"People/"};  "people/Asha.md" -> nothing (the folder is People);  "and/or", "24/7", "./" -> nothing"""
     if vault is None:
         return set()
+    text = _ADDRESS.sub(" ", watch or "")
+    quoted = [a or b for a, b in re.findall(r"`([^`]+)`|\"([^\"]+)\"", text)]
+    bare = re.sub(r"`[^`]*`|\"[^\"]*\"", " ", text).split()
+    bare = [w.rstrip(".,;:)!?") for w in bare]
+    candidates = [w.strip() for w in quoted] + [w for w in bare if "/" in w or w.endswith(".md")]
     root = vault.resolve()
     out = set()
-    for word in path_words(watch):
-        if word.startswith(("/", "~", ".")) or ".." in word.split("/"):
+    for word in candidates:
+        if not word or word.startswith(("/", "~")):
             continue
-        where = (vault / word).resolve()
-        if where == root or root not in where.parents:
+        where = exact_path(vault, word)
+        if where is None or root not in where.resolve().parents:
             continue
-        if where.is_dir() and not (vault / word).is_symlink():
+        if where.is_dir():
             out.add(word.rstrip("/") + "/")
         elif word.endswith(".md") and where.is_file():
             out.add(word)
@@ -189,15 +206,43 @@ def invites(args, found: list[str] | None = None) -> list[str]:
     return out
 
 
+def event_ids(args, found: list[str] | None = None) -> list[str]:
+    """Every value under an event-id-like key, at any depth: {"event_id": "a", "id": "b"} -> ["a", "b"];
+    {"event": {"id": "a"}} -> ["a"]; {"summary": "x"} -> []."""
+    out = [] if found is None else found
+    if isinstance(args, dict):
+        for name, value in args.items():
+            if EVENT_ID.match(str(name)) and isinstance(value, (str, int)):
+                out.append(str(value))
+            event_ids(value, out)
+    elif isinstance(args, list):
+        for value in args:
+            event_ids(value, out)
+    return out
+
+
 def updates_a_listed_event(args: dict) -> bool:
-    """Whether a calendar update names an event bills_and_orders listed in this check (a bill's or an order's), so
-    mail words can never be written into a meeting other people see. {"event_id": "bill-ev-1"} with it listed ->
-    True; {"event_id": "team-meeting"} -> False; no event id -> False."""
-    for name in EVENT_ID:
-        value = (args or {}).get(name)
-        if isinstance(value, str) and value in STAGE1.events:
-            return True
-    return False
+    """Whether a calendar update names only events bills_and_orders listed in this check (a bill's or an order's), so
+    mail words can never be written into a meeting other people see: at least one event id, and every id it names
+    listed. {"event_id": "bill-ev-1"} with it listed -> True; {"event_id": "team-meeting", "id": "bill-ev-1"} (a
+    decoy) -> False; {"event": {"id": "team-meeting"}} -> False; no event id -> False."""
+    named = event_ids(args)
+    return bool(named) and all(value in STAGE1.events for value in named)
+
+
+def picks_a_calendar(args, found: list[str] | None = None) -> list[str]:
+    """The fields of a calendar write, at any depth, that pick which calendar it goes to: {"calendarId": "family@…"}
+    -> ["calendarId"]; {"calendar_name": "Family"} -> ["calendar_name"]; {"summary": "x"} -> []."""
+    out = [] if found is None else found
+    if isinstance(args, dict):
+        for name, value in args.items():
+            if CALENDAR_PICK.match(str(name)) and value not in (None, "", [], {}):
+                out.append(str(name))
+            picks_a_calendar(value, out)
+    elif isinstance(args, list):
+        for value in args:
+            picks_a_calendar(value, out)
+    return out
 
 
 def stage1_keeps(name: str) -> bool:
@@ -206,6 +251,9 @@ def stage1_keeps(name: str) -> bool:
     return name in WATCH_TOOLS or name in MAY_WRITE or name in MAYBE
 
 
+# One per process, reset at the start of every check (run_check: STAGE1.reset). Only one check runs at a time: the
+# background runs its parts one after another under one lock (odie.background.Background), and the evals run their
+# cases one by one.
 STAGE1 = Stage1()
 
 
@@ -225,6 +273,10 @@ def guard(tool, args, tool_context) -> dict | None:
         if found:
             return {"error": f"Not from the watch: {', '.join(found)} would invite, email or show someone. Add the "
                              "event without guests."}
+        picked = picks_a_calendar(args)
+        if picked:
+            return {"error": f"Not from the watch: {', '.join(picked)} picks a calendar. Its entries go to the default "
+                             "calendar."}
         if "update" in name and not updates_a_listed_event(args):
             return {"error": "Only an event bills_and_orders listed in this check can be changed from the watch."}
         return None

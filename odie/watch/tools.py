@@ -42,8 +42,8 @@ class Check:
         self.sent: list[Mail] = []  # the user's sent mail that closed nothing in code (odie.watch.sent)
         self.report: dict | None = None
         self.ahead: list[Event] = []  # the events bills_and_orders read (45 days), which a finding may name
-        self.threads_found: list[dict] = []
-        self.bill_ids: set[int] = set()  # the reminders bills_and_orders listed: the only ones close_reminder closes  # track_thread's findings, in the order written (odie.loops.findings)
+        self.threads_found: list[dict] = []  # track_thread's findings, in the order written (odie.loops.findings)
+        self.bill_ids: set[int] = set()  # the reminders bills_and_orders listed: the only ones close_reminder closes
         self.loop_of: dict[str, int] = {}  # mails code already attached to an open loop (odie.loops.shortcut)
         self.read = False  # the check has read the mail or the events
         self.mail_read = False  # the check has read its new mail (run_check reads it before the turn)

@@ -84,16 +84,17 @@ class FixedToolsSkillToolset(SkillToolset):
         if readonly_context is None or not self._provided_toolsets:
             return []
         loaded = self._active_skills(readonly_context.state, readonly_context.agent_name, readonly_context.invocation_id)
-        wanted: list[str] = []
+        wanted: list[tuple[str, str]] = []  # (skill, tool name), in loading order
         for name in loaded:
             skill = await self._get_or_fetch_skill(name, readonly_context.invocation_id)
             if skill is not None:
-                wanted += skill.frontmatter.metadata.get("adk_additional_tools") or []
+                wanted += [(name, t) for t in skill.frontmatter.metadata.get("adk_additional_tools") or []]
         if not wanted:
             return []
         listed = await asyncio.gather(*(ts.get_tools_with_prefix(readonly_context) for ts in self._provided_toolsets),
                                       return_exceptions=True)
         by_name = {}
+        by_app: dict[tuple[str, str], object] = {}  # (the app's skill, tool name) -> that app's own tool
         for got in listed:
             if isinstance(got, Exception):  # an app that can't list its tools right now: the others still come
                 log.warning("an app's tools couldn't be listed: %s", got)
@@ -102,7 +103,20 @@ class FixedToolsSkillToolset(SkillToolset):
                 raise got
             for t in got:
                 by_name.setdefault(t.name, t)
-        return [by_name[n] for n in wanted if n in by_name]
+                server = getattr(t, "_odie_server", None)
+                if server:
+                    by_app.setdefault((f"mcp-{server}", t.name), t)
+        return [tool for tool in (app_tool(by_app, by_name, skill, n) for skill, n in wanted) if tool is not None]
+
+
+def app_tool(by_app: dict, by_name: dict, skill: str, name: str):
+    """The tool a loaded app's skill means by this name: that app's own when it has one (two apps can both list
+    calendar_create_event; the skill that was loaded decides which), else the first app listing the name, else None.
+    ("mcp-work", "calendar_create_event") with work and home both listing it -> work's."""
+    own = by_app.get((skill, name))
+    if own is not None:
+        return own
+    return by_name.get(name)
 
 
 def loaded_skills_state(agent_name: str, skills) -> dict:

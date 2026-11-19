@@ -245,8 +245,8 @@ def test_a_file_named_grants_that_file_only(vault):
 
 
 def test_words_that_only_look_like_paths_grant_nothing(vault):
-    assert check.notes_named("- and/or 24/7 ./ Inbox", vault) == {"Inbox/"}
-    assert check.notes_named("- and/or 24/7 ./", vault) == set()
+    assert check.notes_named("- and/or 24/7 ./ Inbox", vault) == set()  # a plain word never grants (fourth pass)
+    assert check.notes_named('- and/or 24/7 ./ "Inbox"', vault) == {"Inbox/"}
 
 
 # ── C: any change the model makes to a loop from chat needs his tap ──
@@ -273,7 +273,7 @@ async def test_task_update_on_a_loops_reminder_always_asks_his_own_task_never(st
     for args in ({"status": "done"}, {"status": "dropped"}, {"snooze_until": "2026-11-21T09:00"},
                  {"next_check": "2026-11-21T09:00"}):
         assert asks(task_id=tid, tool_context=ctx, **args) is True, args
-    assert asks(task_id=tid, notes="called", tool_context=ctx) is False
+    assert asks(task_id=tid, notes="called", tool_context=ctx) is True  # any change (fourth pass)
     assert asks(task_id=own, status="done", tool_context=ctx) is False
 
 
@@ -324,7 +324,7 @@ def test_a_thread_note_and_a_report_finding_about_two_things_stay_two(store):
     assert {f["title"] for f in findings.collect(chk)} == {"PTM on Saturday 10:00", "Pay term fee Rs 12,000"}
     same = fake_check(store, [school], [{"ref": "mail:m9", "title": "Term fee due 30 Nov", "kind": "bill"}])
     same.threads_found.append(findings.from_thread("mail:m9", "bill", "Pay term fee Rs 12,000", "due", "2026-11-30", ""))
-    assert len(findings.collect(same)) == 1  # the same kind: the thread's own update
+    assert len(findings.collect(same)) == 2  # other words: two, stage 2 joins them (fourth pass: titles only)
 
 
 # ── F: rollback, then the upgrade again ──

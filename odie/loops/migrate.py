@@ -1,6 +1,11 @@
 """The upgrade to phase 3 of the proactive design (19 Nov 2026): what the watch kept in three places becomes loops, one
 per real thing, so a Done is remembered whatever source mentions the thing again.
 
+THE RULE: the upgrade never changes whether a thing is open — except the one re-made reminder (remade) — and never
+puts two different open things in one loop. Each old thing becomes its own loop in its own state; it joins another
+loop only when both are the same open or the same closed thing (the same mail, the same event), or when it is a pull
+request's old thread or card item and the PR's open loop already holds its exact thread (evidence only).
+
   the watch's threads (tasks, source_kind 'watch'), open or closed in the last CARRY_DAYS -> a loop each, pointing at
       its task (a bill's or a deadline's reminder still rings as it always did)
   the Needs-you items of watch.card[:<owner>] -> a loop each, or joined to the loop of the same thing: the same mail,
@@ -134,13 +139,16 @@ def all_loops(store, pid: str) -> list[dict]:
     return [ledger._row(r) for r in store.query(f"select * from loops where {mine} order by id", values)]
 
 
+UPGRADE = "upgrade"  # the evidence source of a thing the upgrade made a loop from
+JOINED = "upgrade-join"  # the evidence source of a thing the upgrade added to another loop
+
+
 def carried_into(store, pid: str, ident: str) -> dict | None:
-    """The loop an earlier run carried this very thing into (its "task:<id>", or a card item's own ref, in the loop's
-    refs or evidence), whatever its state now: so a second run finds it and never makes a second loop."""
-    for loop in all_loops(store, pid):
-        if ident in loop["refs"]:
-            return loop
-    row = store.one("select loop_id from loop_events where ref = ? order by id limit 1", (ident,))
+    """The loop an earlier run carried this very thing into, found ONLY by the upgrade's own evidence row (source
+    upgrade or upgrade-join, ref = its "task:<id>" or a card item's ref) — never by a loop's refs, which other things
+    share. So a second run finds it and never makes a second loop, and never mistakes another loop for it."""
+    row = store.one("select loop_id from loop_events where source in (?, ?) and ref = ? order by id limit 1",
+                    (UPGRADE, JOINED, ident))
     if row is None:
         return None
     loop = ledger.get(store, row["loop_id"])
@@ -149,20 +157,54 @@ def carried_into(store, pid: str, ident: str) -> dict | None:
     return loop
 
 
-def join_target(store, pid: str, refs: list[str], is_open: bool) -> dict | None:
-    """The loop another old thing joins by the same mail or the same pull request, never by a mail thread alone (one
-    biller's thread holds every month's bill, and other bills too): an open thing only an OPEN loop (never one he or
-    Odie closed); a closed thing any loop. The oldest that matches; None for none.
-      Nov's open bill in thread T, Oct's loop (closed) holding T -> None;  the gas bill's item in T, Nov's open
-      electricity loop holding T -> None;  an open card item for mail:r1, the open reply thread holding mail:r1 ->
-      that loop;  the old "PR #46" item from GitHub, the PR's loop holding example/app#46 -> that loop"""
-    wanted = {r for r in refs if r and not r.startswith("thread:")}  # a thread holds a biller's every month
+def made_it(store, loop: dict, ident: str) -> bool:
+    """Whether the upgrade made this loop FROM this thing (its first evidence), not merely added it there. Only a loop
+    a thing made may take that thing's Done or Later."""
+    row = store.one("select ref, source from loop_events where loop_id=? order by id limit 1", (loop["id"],))
+    return row is not None and row["source"] == UPGRADE and row["ref"] == ident
+
+
+def pr_loop_holding(store, pid: str, thread: str) -> dict | None:
+    """The OPEN pull request loop (a playbook) that already holds this exact mail thread (code put it there from
+    GitHub's own mail in phase 1), or None: the one thread join the upgrade makes, evidence only, whatever the old
+    thing's state (a ticked old item never closes the PR's loop). A card item names its thread, or its mail ref is
+    the thread's id (Gmail's first mail of a thread)."""
+    if not thread:
+        return None
     for loop in all_loops(store, pid):
-        if is_open and loop["state"] not in ledger.OPEN:
-            continue
-        if wanted & set(loop["refs"]):
+        if loop["playbook"] and loop["state"] in ledger.OPEN and f"thread:{thread}" in loop["refs"]:
             return loop
     return None
+
+
+def same_thing_loop(store, pid: str, ref: str, is_open: bool) -> dict | None:
+    """The loop the upgrade made from another old thing about the same exact mail or event, when both are open or both
+    are closed; None when their states differ (then each keeps its own loop and its own state).
+      an open card item and an open watch thread on mail:r1 -> the thread's loop
+      a ticked card item ("PTM") and an open thread ("Pay term fee") on one mail -> None: two loops
+      an open card item and a closed thread on one mail -> None: the item is a card of its own"""
+    if not ref.startswith(("mail:", "event:")):
+        return None
+    for loop in all_loops(store, pid):
+        if ref not in loop["refs"] or loop["playbook"]:
+            continue
+        made = store.one("select 1 from loop_events where loop_id=? and source=?", (loop["id"], UPGRADE))
+        if made is None:
+            continue
+        if (loop["state"] in ledger.OPEN) == is_open:
+            return loop
+    return None
+
+
+def join_evidence(store, loop: dict, run, at: datetime, ident: str, fact: str, refs: list[str]) -> None:
+    """Adds an old thing to a loop as evidence (the upgrade-join row that finds it again), with its refs; nothing of
+    the loop's state, title, result or Later changes."""
+    if loop["playbook"]:
+        refs = []  # a pull request's loop keeps its own refs
+    new = [r for r in refs if r not in loop["refs"]]
+    if new:
+        ledger.add_refs(store, loop["id"], run.now, new)
+    ledger.add_event(store, loop["id"], at, JOINED, ident, fact)
 
 
 def has_evidence(store, loop_id: int, ref: str) -> bool:
@@ -230,17 +272,17 @@ def carry_threads(store, pid: str, run: Run) -> None:
         if facts.get("thread"):
             refs.append(f"thread:{facts['thread']}")
         refs = [r for r in refs if r]
-        is_open = row["status"] in ("open", "waiting")
-        found = carried_into(store, pid, f"task:{row['id']}") or join_target(store, pid, refs[1:], is_open)
+        ident = f"task:{row['id']}"
         stage = row["detail"] or ""
         fact = f"Followed by the watch: {row['title']}"
         if stage:
             fact += f" ({stage})"
-        if found is not None:
-            if f"task:{row['id']}" not in found["refs"]:
-                ledger.add_refs(store, found["id"], run.now, refs)
-                ledger.add_event(store, found["id"], local(row["created_at"], run.now), "upgrade", f"task:{row['id']}", fact)
-                run.say(f"merge watch thread #{row['id']} {row['title']!r} into loop #{found['id']} {found['title']!r}")
+        if carried_into(store, pid, ident) is not None:
+            continue  # carried by an earlier run
+        pr = pr_loop_holding(store, pid, str(facts.get("thread") or ""))
+        if pr is not None:  # a pull request's old thread: evidence on its open loop
+            join_evidence(store, pr, run, local(row["created_at"], run.now), ident, fact, refs)
+            run.say(f"merge watch thread #{row['id']} {row['title']!r} into loop #{pr['id']} {pr['title']!r}")
             continue
         card = {"pile": THREAD_PILE.get(kind_key, "alerts")}
         if facts.get("thread"):
@@ -281,17 +323,32 @@ def item_ref(row) -> str:
     return ""
 
 
+def same_due(row, seed) -> bool:
+    """Whether two reminders have one due time: both have one, and it is the same. Neither has one -> False (no due
+    is not "the same due")."""
+    return bool(row["due_at"]) and row["due_at"] == seed["due_at"]
+
+
 def joins(row, seed) -> bool:
     """Whether a closed reminder is the same thing as a group's first reminder: the same mail or event; or the same
-    title written the same way with the same due time, when at least one of the two names no single item (a digest
-    note, a calendar text). Two items that differ are two things, whatever their titles.
+    title written the same way with the same due time (both have one), when at least one of the two names no single
+    item (a digest note, a calendar text). Two items that differ are two things, whatever their titles.
       two digests' "Vote…" for one due time -> True;  the event's "Vote…" and a digest's "Vote…", one due -> True
       "Pay credit card bill" from one bank's mail and from another's, same due -> False
-      "Pay rent" of October and of November (other due times) -> False"""
+      "Renew the parking permit" twice from one note, no due on either -> False"""
     mine, theirs = item_ref(row), item_ref(seed)
     if mine and theirs:
         return mine == theirs
-    return same_words(row["title"]) == same_words(seed["title"]) and row["due_at"] == seed["due_at"]
+    return same_words(row["title"]) == same_words(seed["title"]) and same_due(row, seed)
+
+
+def same_thing_for_remade(sibling, current) -> bool:
+    """The stricter test the re-made rule needs: the same mail or event; or, when NEITHER names a single item, the same
+    title and the same due time. A digest's "Pay credit card bill" he ticked is not the bank mail's open one."""
+    mine, theirs = item_ref(sibling), item_ref(current)
+    if mine or theirs:
+        return bool(mine) and mine == theirs
+    return same_words(sibling["title"]) == same_words(current["title"]) and same_due(sibling, current)
 
 
 def groups_of(rows: list) -> list[list]:
@@ -324,7 +381,8 @@ def his(row) -> bool:
 
 def remade(group: list, now: datetime):
     """The open reminder of a group that the old watch made again after he had finished the same thing, or None: a
-    sibling he finished (his) with the same due time, completed before the open one was made. The vote ticked at
+    sibling he finished (his) with the same due time, the same thing by same_thing_for_remade, completed before the
+    open one was made. The vote ticked at
     09:10, made again at 10:33 for the same 08:30 deadline -> that open one; next month's bill (another due time) ->
     None; only a "Heads-up" ticked -> None."""
     opened = [r for r in group if r["status"] in ("open", "waiting")]
@@ -333,7 +391,9 @@ def remade(group: list, now: datetime):
     current = opened[0]
     made = local(current["created_at"], now)
     for sibling in group:
-        if sibling is current or not his(sibling) or sibling["due_at"] != current["due_at"]:
+        if sibling is current or not his(sibling) or not same_due(sibling, current):
+            continue
+        if not same_thing_for_remade(sibling, current):
             continue
         if local(sibling["completed_at"], now) < made:
             return current
@@ -376,6 +436,7 @@ def carry_reminders(store, pid: str, run: Run) -> None:
             if found is not None:
                 run.say(f"merge {len(group)} closed reminder(s) " + " ".join(f"#{r['id']}" for r in group)
                         + f" into loop #{found['id']} {found['title']!r} (the same thing, both closed)")
+        made_now = found is None
         if found is None:
             lid = make_loop(store, pid, run, lead["title"], "reminder", "you", refs, local(group[0]["created_at"], run.now),
                             f"Reminder #{group[0]['id']}: {group[0]['title']}", f"task:{group[0]['id']}",
@@ -391,6 +452,8 @@ def carry_reminders(store, pid: str, run: Run) -> None:
                 ledger.add_event(store, found["id"], local(r["created_at"], run.now), "upgrade", f"task:{r['id']}",
                                  f"Reminder #{r['id']}: {r['title']} ({r['status']}, from {r['source_ref']})")
         found = ledger.get(store, found["id"])
+        if not made_now:
+            continue  # carried before: the upgrade never changes whether a thing is open (THE RULE)
         again = remade(group, run.now)
         if again is not None:
             store.update_task(again["id"], status="done", notes="Ticked by the upgrade: re-made after you finished it")
@@ -440,13 +503,16 @@ def item_card(item: dict) -> dict:
 
 
 def carry_items(store, pid: str, run: Run) -> None:
-    """The Needs-you items of the owner's watch card (step 2 of this module's notes)."""
+    """The Needs-you items of the owner's watch card (step 2 of this module's notes, and THE RULE above): each makes
+    its own loop in its own state, or joins the loop of the same thing in the same state (same_thing_loop), or a pull
+    request's open loop holding its thread (evidence only). Only a loop an item made takes its Done or its Later."""
     from odie.watch.owner import key
     card = store.get_setting(key("watch.card", pid)) or {}
     for item in card.get("needs_you") or []:
         ref = str(item.get("ref") or "")
         if not ref:
             continue
+        is_open = not item.get("done")
         refs = [ref]
         if item.get("thread"):
             refs.append(f"thread:{item['thread']}")
@@ -460,8 +526,19 @@ def carry_items(store, pid: str, run: Run) -> None:
         fact = f"On the card: {title}"
         if item.get("why"):
             fact += f": {item['why']}"
-        found = carried_into(store, pid, ref) or join_target(store, pid, refs, not item.get("done"))
+        found = carried_into(store, pid, ref)
         if found is None:
+            target = pr_loop_holding(store, pid, str(item.get("thread") or "") or ref.removeprefix("mail:"))
+            if target is None:
+                target = same_thing_loop(store, pid, ref, is_open)
+            if target is not None:
+                join_evidence(store, target, run, at, ref, fact, refs)
+                if not target["playbook"]:
+                    fields = item_card(item)
+                    ledger.merge_card(store, target["id"], run.now,
+                                      {k: v for k, v in fields.items() if k not in target["card"]})
+                run.say(f"merge card item {ref} {title!r} into loop #{target['id']} {target['title']!r}")
+                continue  # a joined loop takes nothing of the item's Done or Later
             pile = str(item.get("pile") or "alerts")
             due = findings.when_of(item.get("due"))
             lid = make_loop(store, pid, run, title, PILE_KIND.get(pile, "needs you"), "you", refs, at, fact, ref,
@@ -469,23 +546,21 @@ def carry_items(store, pid: str, run: Run) -> None:
             ledger.update(store, lid, run.now, result=str(item.get("why") or "")[:300])
             found = ledger.get(store, lid)
             run.say(f"create loop #{lid} {title!r} from card item {ref}")
-        elif not has_evidence(store, found["id"], ref):
-            ledger.add_refs(store, found["id"], run.now, [r for r in refs if r not in found["refs"]])
-            ledger.add_event(store, found["id"], at, "upgrade", ref, fact)
-            if not found["playbook"]:
-                fields = item_card(item)
-                ledger.merge_card(store, found["id"], run.now, {k: v for k, v in fields.items() if k not in found["card"]})
-                if item.get("why") and not found["result"]:
-                    ledger.update(store, found["id"], run.now, result=str(item["why"])[:300])
-            run.say(f"merge card item {ref} {title!r} into loop #{found['id']} {found['title']!r}")
-        found = ledger.get(store, found["id"])  # (carried by an earlier run too: its Done and Later still apply)
-        if item.get("done") and found["state"] in ledger.OPEN and not found["playbook"]:
+        if not made_it(store, found, ref):
+            continue
+        # Each of the card's taps is carried once (a second run carries one made since, never one carried before:
+        # a Done he reopened under the new code stays reopened).
+        done_mark, later_mark = f"card-done:{ref}", f"card-later:{ref}"
+        if item.get("done") and found["state"] in ledger.OPEN and not has_evidence(store, found["id"], done_mark):
             close_as(store, found["id"], "you", "Done", at)
+            ledger.add_event(store, found["id"], at, JOINED, done_mark, "Ticked on the old card")
             run.say(f"  remember loop #{found['id']} as finished by you (ticked on the card)")
             continue
         until = zoned(item.get("hidden_until"), run.now)
-        if until and found["state"] in ledger.OPEN and not found.get("hidden_until"):
+        carried_later = has_evidence(store, found["id"], later_mark)
+        if until and found["state"] in ledger.OPEN and not found.get("hidden_until") and not carried_later:
             ledger.update(store, found["id"], run.now, hidden_until=until)
+            ledger.add_event(store, found["id"], run.now, JOINED, later_mark, f"Later on the old card: {until[:16]}")
             run.say(f"  keep Later on loop #{found['id']} until {until[:16]}")
 
 
@@ -510,35 +585,40 @@ def carry_flags(store, pid: str, run: Run) -> None:
         store.set_setting(flagged_key, [*added, *flagged][:500])
 
 
-def finished_meanwhile(store, pid: str, loop: dict) -> bool:
-    """Whether he finished a put-aside loop while the older code ran: a reminder of Odie's it points at was ticked or
-    dropped, or an old card item it carried is now done. The rent reminder ticked under the old code -> True; the
-    school fee's reminder still open -> False."""
-    for task_id in ledger.reminders_of(loop):
-        row = store.one("select status, source_kind from tasks where id=?", (task_id,))
-        if row is not None and row["source_kind"] in ledger.ODIES_TASKS and row["status"] in ("done", "dropped"):
+def finished_meanwhile(store, pid: str, loop: dict, kept: dict) -> bool:
+    """Whether he finished a put-aside loop while the older code ran: one of the reminders that were open when it was
+    put aside is now ticked or dropped, or one of its card items that were not done then is done now. What was
+    already done before the rollback (a reminder that rang and he acted on, a Done he then reopened) never counts.
+      the rent reminder, open at the rollback, ticked under the old code -> True
+      a reminder already done before the rollback, the loop still open -> False"""
+    for task_id in kept.get("reminders") or []:
+        row = store.one("select status from tasks where id=?", (int(task_id),))
+        if row is not None and row["status"] in ("done", "dropped"):
             return True
     from odie.watch.owner import key
     card = store.get_setting(key("watch.card", pid)) or {}
-    carried = {e["ref"] for e in ledger.events(store, loop["id"]) if e["ref"]}
-    return any(item.get("done") and item.get("ref") in carried for item in card.get("needs_you") or [])
+    still_open_then = set(kept.get("items") or [])
+    return any(item.get("done") and item.get("ref") in still_open_then for item in card.get("needs_you") or [])
 
 
 def bring_back(store, pid: str, run: Run) -> None:
     """After a rollback, the upgrade again: each loop put aside (closed by "rollback") opens again where it was, or,
     when he finished it meanwhile (finished_meanwhile), closes as his Done. What the older code tracked in between is
     carried over by the usual steps (they find what they carried before by its task or item)."""
-    states = store.get_setting(ROLLBACK) or {}
+    records = store.get_setting(ROLLBACK) or {}
     for loop in all_loops(store, pid):
         if loop["closed_by"] != ROLLBACK_CLOSER:
             continue
         at = run.now.isoformat(timespec="seconds")
-        if finished_meanwhile(store, pid, loop):
+        kept = records.get(str(loop["id"])) or {}
+        if isinstance(kept, str):
+            kept = {"state": kept}
+        if finished_meanwhile(store, pid, loop, kept):
             store.execute("update loops set closed_by=?, closed_why=?, closed_at=?, updated_at=? where id=?",
                           (ledger.CLOSED_BY_USER, "Done (while the older Odie ran)", at, at, loop["id"]))
             run.say(f"keep loop #{loop['id']} {loop['title']!r} closed: you finished it while the older Odie ran")
             continue
-        state = states.get(str(loop["id"])) or ledger.state_after_reopen(loop)
+        state = kept.get("state") or ledger.state_after_reopen(loop)
         store.execute("update loops set state=?, closed_by=null, closed_why=null, closed_at=null, updated_at=? "
                       "where id=?", (state, at, loop["id"]))
         run.say(f"bring back loop #{loop['id']} {loop['title']!r} ({state})")
@@ -553,6 +633,8 @@ def run(store, now: datetime) -> list[str]:
     try:
         for pid in owners(store):
             bring_back(store, pid, notes)
+        store.set_setting(ROLLBACK, {})  # brought back: the next rollback starts from an empty record
+        for pid in owners(store):
             carry_threads(store, pid, notes)
             carry_reminders(store, pid, notes)
             carry_items(store, pid, notes)
@@ -584,28 +666,56 @@ ROLLBACK = "loops.rollback"  # {loop id: the state it had} for the loops before_
 ROLLBACK_CLOSER = ledger.PUT_ASIDE
 
 
+AFTER_ROLLBACK = "Start the older Odie now. If the newer one starts first, run this again."
+
+
+def open_reminders(store, loop: dict) -> list[int]:
+    """The reminders of Odie's this loop points at that are open now."""
+    out = []
+    for task_id in ledger.reminders_of(loop):
+        row = store.one("select status, source_kind from tasks where id=?", (task_id,))
+        if row is not None and row["source_kind"] in ledger.ODIES_TASKS and row["status"] in ("open", "waiting"):
+            out.append(task_id)
+    return out
+
+
+def open_items(store, pid: str, loop: dict) -> list[str]:
+    """The old card items this loop carried that are not done now."""
+    from odie.watch.owner import key
+    card = store.get_setting(key("watch.card", pid)) or {}
+    carried = {e["ref"] for e in ledger.events(store, loop["id"]) if e["ref"] and e["source"] in (UPGRADE, JOINED)}
+    return [str(i.get("ref")) for i in card.get("needs_you") or [] if not i.get("done") and i.get("ref") in carried]
+
+
 def before_rollback(store, now: datetime) -> list[str]:
     """Readies the database for the code from before this upgrade (it knew loops only for pull requests, and read the
     Needs-you items from watch.card), so it shows nothing twice and nothing he closed:
       every open loop that isn't a pull request's is put aside (closed by "rollback", which the old code doesn't
-        list and the new one never takes for his Done; the state it had kept in ROLLBACK) — its reminders are left as
-        they are, so they still ring;
+        list and the new one never takes for his Done). ROLLBACK keeps, per loop, the state it had and what of its
+        old self was still open at this moment (its open reminders, its card items not done), so the next upgrade
+        counts only what he finishes from now on (finished_meanwhile); its reminders are left as they are;
       every old card item whose loop is closed gets done: true, so the old code doesn't bring it back;
       the upgrade's version is cleared, so the next start of the new code upgrades again (bring_back).
-    One transaction; returns what it did, line by line."""
+    One transaction; returns what it did, line by line, ending with what to do next. Twice -> the same."""
     lines: list[str] = []
     at = now.isoformat(timespec="seconds")
     store.execute("begin immediate")
     try:
-        put_aside = dict(store.get_setting(ROLLBACK) or {})
-        for row in store.query("select id, title, state, personality from loops where playbook = '' and "
+        earlier = dict(store.get_setting(ROLLBACK) or {})
+        record = {}
+        for row in store.query("select id from loops where closed_by = ?", (ROLLBACK_CLOSER,)):
+            if str(row["id"]) in earlier:  # put aside by a run of this step that the older Odie hasn't followed yet
+                record[str(row["id"])] = earlier[str(row["id"])]
+        for row in store.query("select id from loops where playbook = '' and "
                                "state in ('new','working','ready','waiting') order by id"):
-            put_aside[str(row["id"])] = row["state"]
+            loop = ledger.get(store, row["id"])
+            record[str(loop["id"])] = {"state": loop["state"], "reminders": open_reminders(store, loop),
+                                       "items": open_items(store, loop["personality"], loop)}
             store.execute("update loops set state='closed', closed_by=?, closed_why=?, closed_at=?, updated_at=? "
-                          "where id=?", (ROLLBACK_CLOSER, f"Put aside before a rollback (was {row['state']})",
-                                         at, at, row["id"]))
-            lines.append(f"put aside loop #{row['id']} {row['title']!r} (was {row['state']})")
-        store.set_setting(ROLLBACK, put_aside)
+                          "where id=?", (ROLLBACK_CLOSER, f"Put aside before a rollback (was {loop['state']})",
+                                         at, at, loop["id"]))
+            lines.append(f"put aside loop #{loop['id']} {loop['title']!r} (was {loop['state']})")
+        store.set_setting(ROLLBACK, record)
         store.execute("delete from settings where key=?", (KEY,))  # the next start of the new code upgrades again
         for pid in owners(store):
             from odie.watch.owner import key
@@ -616,7 +726,7 @@ def before_rollback(store, now: datetime) -> list[str]:
                 if item.get("done"):
                     continue
                 loop = carried_into(store, pid, str(item.get("ref") or ""))
-                if loop is None or loop["state"] in ledger.OPEN or str(loop["id"]) in put_aside:
+                if loop is None or loop["state"] in ledger.OPEN or loop["closed_by"] == ROLLBACK_CLOSER:
                     continue
                 item["done"] = True
                 changed = True
@@ -628,6 +738,7 @@ def before_rollback(store, now: datetime) -> list[str]:
     except BaseException:
         store.execute("rollback")
         raise
+    lines.append(AFTER_ROLLBACK)
     return lines
 
 

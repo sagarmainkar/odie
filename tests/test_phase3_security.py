@@ -50,7 +50,7 @@ class FakeFetcher:
 
 def fake_check(store, mails, items):
     return SimpleNamespace(fetcher=FakeFetcher(store, mails), sent=[], events=[], ahead=[], threads_found=[],
-                           report={"findings": items, "line": "", "done": []})
+                           mails=mails, report={"findings": items, "line": "", "done": []})  # this check's new mail
 
 
 STRANGER = Mail(id="s1", frm="Mallory <m@evil.example>", subject="Re: your PR", at="2026-11-19T04:00:00Z",

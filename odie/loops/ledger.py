@@ -22,6 +22,10 @@ REOPEN_DAYS = 7  # a closed loop may be reopened this long after its close
 # The reminders a loop may close with it: the ones Odie made (for a loop, a watch thread of old, a reminder with a source
 # ref the watch added). His own (no source kind) are never touched.
 ODIES_TASKS = ("loop", "watch", "ref")
+# Of those, the ones only Odie ever made: 'ref' (a reminder with a source) came from the old watch AND from chat's
+# task_add, with nothing to tell them apart (both origin 'agent'); since phase 3 only chat makes one. So Odie's own
+# closes (stage 2's "closes", the ladder's drop) tick only these; his Done ticks the 'ref' ones too.
+ODIE_ONLY = ("loop", "watch")
 # The fields code may change on a loop (update); the rest change only through open/attach/close/reopen.
 CHANGEABLE = frozenset({"title", "kind", "owner", "state", "next_step", "playbook", "priority", "due_at",
                         "next_check_at", "hidden_until", "has_news", "result", "brief", "link", "nudges", "attempts",
@@ -287,13 +291,17 @@ def reminder_done(store, task_id: int, now: datetime) -> int | None:
 
 
 def close_its_reminder(store, loop: dict | None) -> None:
-    """A closed loop's reminder closes with it, when Odie made it (ODIES_TASKS), so it never rings for something
-    finished. His own reminder is never touched."""
+    """A closed loop's reminder closes with it, so it never rings for something finished: on his Done, any reminder
+    Odie may have made (ODIES_TASKS); on Odie's own close, only those Odie alone makes (ODIE_ONLY). His own task (no
+    source) is never touched."""
     if loop is None:
         return
+    kinds = ODIES_TASKS
+    if loop.get("closed_by") not in BY_HIM:
+        kinds = ODIE_ONLY  # Odie's own close never ticks a reminder he may have asked for in chat
     for task_id in reminders_of(loop):
         row = store.one("select id, status, source_kind from tasks where id=?", (task_id,))
-        if row is None or row["status"] not in ("open", "waiting") or row["source_kind"] not in ODIES_TASKS:
+        if row is None or row["status"] not in ("open", "waiting") or row["source_kind"] not in kinds:
             continue
         store.update_task(task_id, status="done")
 
