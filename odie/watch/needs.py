@@ -7,6 +7,7 @@ hidden until 09:00 the next morning, then back). What a button does is decided h
   "chat": send the value as the user's chat request ("Show the draft for loop #3");
   "dismiss": Sunday's "Still care?" card's "Drop them", a "Track this?" offer's No (POST /api/watch/done with its ref);
   "track": a "Track this?" offer's Track (POST /api/offers/<id>/track: a loop of his, with its reminder);
+  "now_accept" / "now_edit": Odie's proposed Now list taken as it is (POST /api/now/<id>/accept), or opened to change;
   "loop_done": a loop's Done (POST /api/loops/<id>/done);
   "done_task" / "snooze_task": tick a task off, or move it to tomorrow 09:00;
   "later": put the card off until 09:00 the next morning (POST /api/needs_you/later with the card's ref).
@@ -35,9 +36,11 @@ def cards(store, now: datetime, owner: str = ODIE) -> list[dict]:
     open tasks. Everyday Odie's Pulse (owner ""), or a personality's: its own loops and tasks, never the everyday ones
     (they are on Odie's)."""
     from odie.loops import cards as loop_cards
+    from odie.loops import now as now_list
     from odie.loops import offers
     out = loop_cards.cards(store, owner, now)  # one card per ready loop, first
     out += offers.cards(store, owner, now)  # "Track this?": his own words from chat, tracked only on his tap
+    out += now_list.cards(store, owner)  # "Update your Now?": Odie's weekly proposal, changed only on his tap
     from odie.workers import cards as job_cards
     out += job_cards.cards(store, owner, now)  # a job that failed, got stuck or needed his OK
     a_loops = loops_reminders(store, owner)

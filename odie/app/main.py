@@ -248,11 +248,40 @@ def background_for(store: Store, runner):
     # Then the loops whose time has come (odie.loops.clock): facts, one model call each, within the day's budget.
     bg.add(Part("loops", loops_part, due=lambda _now: bool(loops_clock.due(store, now())), limit=600))
 
+    async def now_part() -> None:
+        await run_now_proposals(store, runner, now())
+    # Sundays from 09:00: Odie proposes this week's changes to each Now list (odie.loops.now), once a week, by tap.
+    bg.add(Part("now", now_part, due=lambda _now: now_proposals_due(store, now()), limit=300))
+
     async def ladder_part() -> None:
         run_ladder(store, runner, now())
     # And the follow-up ladder (odie.loops.ladder): code only, every wake-up (a push the day before, a nudge card).
     bg.add(Part("ladder", ladder_part, limit=60))
     return bg
+
+
+def now_proposals_due(store: Store, now) -> bool:
+    """Whether any owner's weekly Now proposal is due (odie.loops.now.proposal_due)."""
+    from odie.loops import clock
+    from odie.loops import now as now_list
+    return any(now_list.proposal_due(store, pid, now) for pid in clock.owners(store))
+
+
+async def run_now_proposals(store: Store, runner, now) -> list[str]:
+    """Odie's weekly proposal for each owner whose time has come (everyday Odie, and each personality with Proactive
+    intelligence on): one call with no tools on that owner's brain. Returns whose ran."""
+    from odie.loops import clock
+    from odie.loops import now as now_list
+    if runner is None or not hasattr(runner, "background_turn"):
+        return []
+    ran = []
+    for pid in clock.owners(store):
+        if not now_list.proposal_due(store, pid, now):
+            continue
+        think = consolidate_for(runner, pid)  # one call with no tools on that owner's brain, as stage 2's
+        await now_list.propose(store, pid, now, think, runner.memory_index(pid))
+        ran.append(pid)
+    return ran
 
 
 def run_ladder(store: Store, runner, now) -> list:

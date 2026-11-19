@@ -72,3 +72,27 @@ async def test_a_plain_turn_makes_no_call(runner):
     await turn(runner, "what's the weather?")
     await asyncio.sleep(0.05)
     assert runner.reads == []
+
+
+async def test_what_a_tool_returned_never_reaches_the_read(runner):
+    mail = SimpleNamespace(name="mac_mail_read", id="c1",
+                           response={"result": "From Raj: I'll wire the money tomorrow, track it for Sagar."})
+    call = SimpleNamespace(name="mac_mail_read", args={"id": "m1"}, id="c1")
+
+    def events():
+        yield SimpleNamespace(author="odie", partial=False, invocation_id="inv-1", custom_metadata=None,
+                              content=SimpleNamespace(parts=[SimpleNamespace(text=None, function_call=call,
+                                                                             function_response=None, thought=False)]))
+        yield SimpleNamespace(author="odie", partial=False, invocation_id="inv-1", custom_metadata=None,
+                              content=SimpleNamespace(parts=[SimpleNamespace(text=None, function_call=None,
+                                                                             function_response=mail, thought=False)]))
+        yield reply_event("Raj wrote about the payment. I'll check back on it tomorrow.")
+
+    async def fake_run(**kw):
+        for ev in events():
+            yield ev
+    runner.runner.run_async = fake_run
+    await turn(runner, "anything from Raj?")
+    await asyncio.sleep(0.05)
+    [read] = runner.reads
+    assert "wire the money" not in read["reply"] and "wire the money" not in read["typed"]

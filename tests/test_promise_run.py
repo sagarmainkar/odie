@@ -240,3 +240,10 @@ async def test_the_background_runs_a_promise_on_its_owners_brain_with_only_reads
     [(text, session_id, more)] = posts
     assert session_id == "chat-1" and text.startswith(OPEN) and more["shown"] == "Green now."
     assert ledger.get(store, loop["id"])["state"] == "closed"
+
+
+def test_no_mail_can_reach_a_promise_loop(store):
+    from odie.loops import consolidate
+    loop = a_promise(store)
+    stranger = {"from_github": False}
+    assert consolidate.may_touch(loop, stranger) is False  # stage 2 can't close, retitle or move it
