@@ -134,6 +134,9 @@ def next_due(store, now: datetime) -> str | None:
 
 
 def forget(store, pid: str) -> None:
-    """A personality was deleted: its watch's card, state and sources and its switch go."""
-    for name in (*WATCH_KEYS, PROACTIVE):
+    """A personality was deleted: its watch's card, state and sources and its switch go, with its Now list, Odie's
+    proposal for it and the week it was made (odie.loops.now), and its "Track this?" offers (odie.loops.offers)."""
+    from odie.loops import now as now_list
+    from odie.loops import offers
+    for name in (*WATCH_KEYS, PROACTIVE, now_list.KEY, now_list.PROPOSAL, now_list.PROPOSED_WEEK, offers.KEY):
         store.execute("delete from settings where key=?", (key(name, pid),))

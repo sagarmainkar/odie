@@ -248,11 +248,40 @@ def background_for(store: Store, runner):
     # Then the loops whose time has come (odie.loops.clock): facts, one model call each, within the day's budget.
     bg.add(Part("loops", loops_part, due=lambda _now: bool(loops_clock.due(store, now())), limit=600))
 
+    async def now_part() -> None:
+        await run_now_proposals(store, runner, now())
+    # Sundays from 09:00: Odie proposes this week's changes to each Now list (odie.loops.now), once a week, by tap.
+    bg.add(Part("now", now_part, due=lambda _now: now_proposals_due(store, now()), limit=300))
+
     async def ladder_part() -> None:
         run_ladder(store, runner, now())
     # And the follow-up ladder (odie.loops.ladder): code only, every wake-up (a push the day before, a nudge card).
     bg.add(Part("ladder", ladder_part, limit=60))
     return bg
+
+
+def now_proposals_due(store: Store, now) -> bool:
+    """Whether any owner's weekly Now proposal is due (odie.loops.now.proposal_due)."""
+    from odie.loops import clock
+    from odie.loops import now as now_list
+    return any(now_list.proposal_due(store, pid, now) for pid in clock.owners(store))
+
+
+async def run_now_proposals(store: Store, runner, now) -> list[str]:
+    """Odie's weekly proposal for each owner whose time has come (everyday Odie, and each personality with Proactive
+    intelligence on): one call with no tools on that owner's brain. Returns whose ran."""
+    from odie.loops import clock
+    from odie.loops import now as now_list
+    if runner is None or not hasattr(runner, "background_turn"):
+        return []
+    ran = []
+    for pid in clock.owners(store):
+        if not now_list.proposal_due(store, pid, now):
+            continue
+        think = consolidate_for(runner, pid)  # one call with no tools on that owner's brain, as stage 2's
+        await now_list.propose(store, pid, now, think, runner.memory_index(pid))
+        ran.append(pid)
+    return ran
 
 
 def run_ladder(store: Store, runner, now) -> list:
@@ -270,7 +299,8 @@ def run_ladder(store: Store, runner, now) -> list:
 
 
 async def run_loops(store: Store, runner, now) -> list:
-    """Stage 4 for the due loops (odie.loops.clock): each thinks with its owner's brain, with no tools at all."""
+    """Stage 4 for the due loops (odie.loops.clock): each thinks with its owner's brain, with no tools at all. A promise
+    Odie made in chat runs one turn on its owner's brain with only the tools that read (odie.loops.promise_run)."""
     from odie.loops import clock
     if runner is None or not hasattr(runner, "background_turn"):
         return []
@@ -284,7 +314,40 @@ async def run_loops(store: Store, runner, now) -> list:
         def push(title, body):
             watch_pushed(store, runner, title, body, owner=pid)
         return push
-    return await clock.run(store, now, think_for, push_for)
+
+    def act_for(pid: str):
+        async def act(prompt: str, instruction: str, keep, guard) -> str:
+            return await runner.background_turn(prompt, timeout=280, instruction=instruction, owner=pid, keep=keep,
+                                                guard=guard)
+        return act
+
+    async def tell(session_id: str, text: str) -> bool:
+        return await promise_follow_up(store, runner, session_id, text, now)
+    return await clock.run(store, now, think_for, push_for, act_for=act_for, tell=tell)
+
+
+async def promise_follow_up(store: Store, runner, session_id: str, text: str, now=None) -> bool:
+    """A promise Odie kept (odie.loops.promise_run): its follow-up in the chat the promise was made in. The model reads
+    it fenced, since it may hold what the turn read (mail, a page); the app shows it as written. Like a job's report,
+    it taints the chat for Workers (odie.workers.taint). At night it is posted as a quiet message (no banner on the
+    Mac). Returns False, posting nothing, when the chat's personality was deleted meanwhile."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from odie import personalities
+    from odie.agent.callbacks import wrap_untrusted
+    from odie.loops import promise_run
+    from odie.workers import taint as job_taint
+    if now is None:
+        now = datetime.now(ZoneInfo(config.settings.timezone))
+    if not session_id or personalities.is_erased(store, session_id):
+        return False
+    kind = "reply"
+    if promise_run.night(now):
+        kind = "system"  # quiet: the Mac shows no banner for it
+    await runner.post_message(wrap_untrusted(text), session_id=session_id, kind=kind, shown=text)
+    job_taint.note(store, session_id, job_taint.JOB)  # its words came from a run: later jobs from here are tainted
+    return True
 
 
 async def personality_watch(store: Store, runner, now) -> str | None:

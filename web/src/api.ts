@@ -23,7 +23,7 @@ export async function postJSON<T>(url: string, body: unknown): Promise<T> {
 }
 export async function putJSON<T>(url: string, body: unknown): Promise<T> {
   const r = await fetch(withPick(url), { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  if (!r.ok) throw new Error(errorWords(r.status, await r.json().catch(() => null)));
   return r.json();
 }
 export async function deleteJSON<T>(url: string): Promise<T> {

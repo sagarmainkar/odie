@@ -4,15 +4,19 @@ import type { Media } from "./media";
 /** What a card's button does, decided by the server (odie/watch/needs.py, odie/loops/cards.py). "later": put the card
  *  off until 09:00 tomorrow (POST /api/needs_you/later with its ref); "open": open the page the server built (a pull
  *  request); "loop_done": a loop's Done (POST /api/loops/<id>/done); "job_keep": a finished job's "Keep it in
- *  <folder>" (POST /api/jobs/<id>/keep: the server copies the result into the folder he named). */
+ *  <folder>" (POST /api/jobs/<id>/keep: the server copies the result into the folder he named); "track": a "Track
+ *  this?" card's Track (POST /api/offers/<id>/track); "now_accept": Odie's proposed Now list taken as it is (POST
+ *  /api/now/<id>/accept); "now_edit": the Now list opened with the proposed lines, to change and save. */
 export type NeedAction = { label: string; action: "chat" | "dismiss" | "done_task" | "snooze_task" | "later" | "open" | "loop_done"
-  | "job_retry" | "job_allow" | "job_clear" | "job_keep" | "merge" | "recipe_use" | "recipe_no" | "show_output" | "split"; value: string | number };
+  | "job_retry" | "job_allow" | "job_clear" | "job_keep" | "merge" | "recipe_use" | "recipe_no" | "show_output" | "split"
+  | "track" | "now_accept" | "now_edit"; value: string | number };
 
 /** Every button action this app handles; a newer server may send one it doesn't know yet. "split" only ever comes in
  *  a card's small menu ("more"), never as one of its three buttons, so an app that doesn't know it shows nothing. */
 const KNOWN_ACTIONS: ReadonlySet<string> = new Set<NeedAction["action"]>([
   "chat", "dismiss", "done_task", "snooze_task", "later", "open", "loop_done",
   "job_retry", "job_allow", "job_clear", "job_keep", "merge", "recipe_use", "recipe_no", "show_output", "split",
+  "track", "now_accept", "now_edit",
 ]);
 
 /** Whether this app knows what a card's button does: "job_allow" -> true; "job_pause" (from a newer server) -> false,
@@ -23,11 +27,14 @@ export function knowsAction(action: string): boolean {
 
 /** What a card says while its button's call runs, for the moves that must keep the card in place until the server
  *  answers: "merge" -> "Merging…"; "job_keep" -> "Copying…"; "recipe_use", "job_allow", "job_retry" -> "Working…";
+ *  "track" -> "Tracking…" (its loop's card takes its place); "now_accept" -> "Saving…";
  *  anything else (Done, Later: harmless, their card goes at once) -> "". */
 export function busyWord(action: string): string {
   if (action === "merge") return "Merging…";
   if (action === "job_keep") return "Copying…";
   if (action === "recipe_use" || action === "job_allow" || action === "job_retry") return "Working…";
+  if (action === "track") return "Tracking…";
+  if (action === "now_accept") return "Saving…";
   return "";
 }
 
@@ -36,6 +43,7 @@ export function busyWord(action: string): string {
 export type Need = { ref: string; title: string; why: string; brief?: string; icon: IconName; badge: string; ask: string; main: NeedAction; other: NeedAction; later?: NeedAction;
   evidence?: Evidence[]; output?: string;  // a loop's card: Why? (its evidence) and, for a tested PR, the failures
   more?: NeedAction[];  // a loop's small menu: Split (a merge was wrong)
+  lines?: string[];  // Odie's proposed Now list: its lines, shown as a list
   steps?: JobStep[]; allow_hash?: string; may_read?: string[]; uses?: string };  // a job's card: every step it needed, plain words first; what its tap allows; folders of his it may read
 
 /** One line of a loop's "Why?": when, where from, what was seen; its id names it for Split. */

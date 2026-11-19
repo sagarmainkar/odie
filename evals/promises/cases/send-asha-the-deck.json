@@ -1,0 +1,21 @@
+{
+  "id": "send-asha-the-deck",
+  "about": "He says he will send Asha the deck tomorrow: an offer.",
+  "typed": "I'll send Asha the deck tomorrow, it's nearly done",
+  "reply": "Nice. Shout if you want a last read-through.",
+  "script": {
+    "odie": [],
+    "you": [
+      {
+        "what": "Send Asha the deck",
+        "when": "2026-11-20T09:00:00+05:30",
+        "said": "I'll send Asha the deck tomorrow"
+      }
+    ]
+  },
+  "expect": {
+    "promises": 0,
+    "offers": 1,
+    "offer_due": "2026-11-20"
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "id": "reminder-already-made",
+  "about": "He asks for a reminder; the turn made it; nothing doubles it.",
+  "typed": "remind me Friday at 9 to renew the passport",
+  "reply": "Done. I'll remind you on Friday at 09:00 to renew the passport.",
+  "made": [
+    {
+      "title": "Renew the passport",
+      "due_at": "2026-11-20T09:00:00+05:30"
+    }
+  ],
+  "script": {
+    "odie": [
+      {
+        "what": "Remind about the passport",
+        "when": "2026-11-20T09:00:00+05:30",
+        "said": "I'll remind you on Friday at 09:00"
+      }
+    ],
+    "you": [
+      {
+        "what": "Renew the passport",
+        "when": "2026-11-20T09:00:00+05:30",
+        "said": "remind me Friday at 9 to renew the passport"
+      }
+    ]
+  },
+  "expect": {
+    "promises": 0,
+    "offers": 0
+  }
+}

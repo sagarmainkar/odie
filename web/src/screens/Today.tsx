@@ -2,6 +2,7 @@ import { getPick, setPick, usePick } from "../pick";
 import { usePickedPersona } from "../persona";
 import { lightOf } from "../light";
 import { OnIt } from "../components/OnIt";
+import { NowList, type NowEdit } from "../components/NowList";
 import { asksToTurnOn, otherLine, pulseKicker, stillPicked, type JobDone, type LoopDone, type OnIt as OnItItem, type Other } from "../pulse";
 import type { Proactive } from "../proactive";
 import { AnimatePresence, motion } from "framer-motion";
@@ -100,6 +101,8 @@ export function Today() {
   const [needs, setNeeds] = useState<Need[] | null>(null);
   const [checked, setChecked] = useState("");  // under "Needs you": when the watch last checked, or what isn't working
   const [notes, setNotes] = useState<WatchNote[]>([]);  // what the watch told the user in the last day
+  const [nowEdit, setNowEdit] = useState<NowEdit | null>(null);  // the Now list opened with Odie's proposed lines
+  const [nowRead, setNowRead] = useState(0);  // bumped when the Now list changed elsewhere (Accept on its card)
   const loadNeeds = useCallback((): Promise<void> => {
     const askedFor = getPick();
     void postJSON("/api/watch/seen", {}).catch(() => {});
@@ -118,7 +121,7 @@ export function Today() {
     }).catch(() => {});
   }, []);
   // Another pick: its own Pulse, never the last one's cards while it loads.
-  useEffect(() => { setNeeds(null); setOnIt([]); setLoopsDone([]); setJobsDone([]); setFailed(""); setOthers([]); setProactive(null); setItsEvents([]); setWatchClosed([]); setApprovals([]); }, [pick]);
+  useEffect(() => { setNeeds(null); setOnIt([]); setLoopsDone([]); setJobsDone([]); setFailed(""); setOthers([]); setProactive(null); setItsEvents([]); setWatchClosed([]); setApprovals([]); setNowEdit(null); }, [pick]);
   // The picked one's cards waiting for a tap (a personality's Pulse shows its own, as its avatar does).
   const loadApprovals = useCallback(() => {
     const askedFor = getPick();
@@ -159,6 +162,7 @@ export function Today() {
       if (opensSafely(String(a.value))) window.open(String(a.value), "_blank", "noopener");
       return;
     }
+    if (a.action === "now_edit") { setNowEdit({ lines: need.lines ?? [], proposal: Number(a.value) }); return; }
     if (!busyWord(a.action)) setNeeds((items) => (items ?? []).filter((x) => x.ref !== need.ref));
     setFailed("");
     try {
@@ -174,6 +178,8 @@ export function Today() {
       if (a.action === "merge") await postJSON(`/api/loops/${a.value}/merge`, {});
       if (a.action === "recipe_use") await postJSON("/api/recipes/use", { repo: a.value });
       if (a.action === "recipe_no") await postJSON("/api/recipes/no", { repo: a.value });
+      if (a.action === "track") await postJSON(`/api/offers/${a.value}/track`, {});
+      if (a.action === "now_accept") { await postJSON(`/api/now/${a.value}/accept`, {}); setNowRead((n) => n + 1); }
     } catch (e) { setFailed(e instanceof Error ? e.message : String(e)); }
     await loadTasks();
   }
@@ -202,6 +208,10 @@ export function Today() {
       empty={pick && !proactive?.on ? "Nothing waiting. Its own reminders and cards show here." : undefined} />
     </>
   );
+  // The picked one's Now list. Saving it answers Odie's proposal card, so the cards are read again; an Accept on that
+  // card re-reads the list (the key).
+  const nowList = <NowList key={`${pick}:${nowRead}:${nowEdit?.proposal ?? ""}`} who={picked.name} editWith={nowEdit}
+    onSaved={() => void loadTasks()} onClosed={() => setNowEdit(null)} />;
   if (pick) {
     return (
       <div className="h-full overflow-y-auto overflow-x-hidden no-scrollbar px-[18px] lg:px-8 safe-top pb-[110px] flex flex-col gap-[18px] [overflow-wrap:anywhere]">
@@ -229,6 +239,7 @@ export function Today() {
           </div>
           <div className="contents lg:flex lg:flex-col lg:gap-[18px]">
             <div className="rise" style={delay(0.1)}><OnIt items={onIt} who={picked.name} onStop={(id) => stopJob(id)} /></div>
+            <div className="rise" style={delay(0.11)}>{nowList}</div>
             {itsEvents.length > 0 && (
               <section className="glass rounded-card px-4 py-3 rise" style={delay(0.12)} aria-label="Coming up">
                 <div className="text-ui font-bold text-ink-2 mb-1">Coming up</div>
@@ -286,6 +297,8 @@ export function Today() {
           <div className="rise" style={delay(0.08)}>{needsYou}</div>
 
           <div className="rise" style={delay(0.09)}><OnIt items={onIt} who={picked.name} onStop={(id) => stopJob(id)} /></div>
+
+          <div className="rise" style={delay(0.095)}>{nowList}</div>
 
           <div className="rise" style={delay(0.1)}><UpNext items={up?.items ?? null} loading={upLoading} /></div>
 

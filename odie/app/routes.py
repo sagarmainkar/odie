@@ -2532,6 +2532,96 @@ async def loop_merge(loop_id: int, request: Request) -> dict[str, Any]:
     return {"ok": True, "closed": why}
 
 
+@router.post("/offers/{offer_id}/track")
+async def offer_track(offer_id: int, request: Request) -> dict[str, Any]:
+    """A "Track this?" card's Track: his tap makes the loop (his, with its due time and a reminder at that time,
+    odie.loops.offers.track). Only the picked one's own waiting offer (else 404); the terminal's key can't reach this
+    route (odie.devices.terminal_may), and no model has a tool for it."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from odie.loops import offers
+    store = request.app.state.store
+    loop_id = offers.track(store, _personality(request), offer_id, datetime.now(ZoneInfo(config.settings.timezone)))
+    if loop_id is None:
+        raise HTTPException(404, "That card isn't there any more.")
+    store.audit("user", "offer_track", result_summary=f"offer {offer_id} -> loop #{loop_id}")
+    return {"ok": True, "loop": loop_id}
+
+
+class NowIn(BaseModel):
+    lines: list[str]
+    proposal: int | None = None  # he edited Odie's proposal and saved: it is answered
+
+
+def _local_now():
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    return datetime.now(ZoneInfo(config.settings.timezone))
+
+
+@router.get("/now")
+async def now_get(request: Request) -> dict[str, Any]:
+    """The picked one's Now list (odie.loops.now) and Odie's proposal waiting for an answer, if any."""
+    from odie.loops import now as now_list
+    store = request.app.state.store
+    pid = _personality(request)
+    proposal = now_list.open_proposal(store, pid)
+    return {"lines": now_list.lines(store, pid), "proposal": proposal, "most": now_list.MOST_LINES}
+
+
+@router.put("/now")
+async def now_put(body: NowIn, request: Request) -> dict[str, Any]:
+    """His Now list as he wrote it (add, remove, reword, reorder): his tap in the app is the only way it is written.
+    422 with words he can read when it is too long or holds a secret. With `proposal`: Odie's proposal he edited is
+    answered too."""
+    from odie.loops import now as now_list
+    store = request.app.state.store
+    pid = _personality(request)
+    try:
+        kept = now_list.save(store, pid, body.lines, _local_now())
+    except ValueError as e:
+        raise HTTPException(422, str(e)) from e
+    if body.proposal is not None:
+        now_list.edited(store, pid, body.proposal)
+    store.audit("user", "now_saved", result_summary=f"{len(kept)} lines")
+    return {"ok": True, "lines": kept}
+
+
+@router.post("/now/draft")
+async def now_draft(request: Request) -> dict[str, Any]:
+    """"Draft it for me": Odie drafts the list from what it remembers, his own words this week and the week's loops
+    (one call with no tools, on the picked one's brain). Nothing is saved: the app shows the draft to edit and Save."""
+    from odie import brains
+    from odie.loops import now as now_list
+    store = request.app.state.store
+    runner = request.app.state.runner
+    pid = _personality(request)
+
+    async def think(prompt: str, instruction: str) -> str:
+        return await runner.background_turn(prompt, timeout=120, instruction=instruction, bare=True, owner=pid)
+    try:
+        drafted = await now_list.draft(store, pid, _local_now(), think, runner.memory_index(pid))
+    except brains.BrainGone as e:
+        raise HTTPException(409, str(e)) from e
+    if drafted is None:
+        raise HTTPException(409, "I couldn't draft it just now. Write a line or two, or try again.")
+    return {"lines": drafted}
+
+
+@router.post("/now/{proposal_id}/accept")
+async def now_accept(proposal_id: int, request: Request) -> dict[str, Any]:
+    """Accept on Odie's proposal card: its lines, as kept with the proposal (never sent by the app), become the Now
+    list. Only the picked one's own waiting proposal (else 404); the terminal's key can't reach this route."""
+    from odie.loops import now as now_list
+    store = request.app.state.store
+    pid = _personality(request)
+    if not now_list.accept(store, pid, proposal_id, _local_now()):
+        raise HTTPException(404, "That card isn't there any more.")
+    store.audit("user", "now_accepted", result_summary=f"proposal {proposal_id}")
+    return {"ok": True, "lines": now_list.lines(store, pid)}
+
+
 class RecipeIn(BaseModel):
     repo: str
 
@@ -2704,18 +2794,28 @@ async def job_clear(job_id: str, request: Request) -> dict[str, Any]:
 
 @router.post("/watch/done")
 async def watch_done(body: WatchDoneIn, request: Request) -> dict[str, Any]:
-    """A card's "dismiss", on the picked one's Pulse: Sunday's "Still care?" card drops the loops in it; a loop's ref
-    ("loop:3"), or the mail or event an open loop holds (an older app's card), is that loop's Done (remembered)."""
+    """A card's "dismiss", on the picked one's Pulse: Sunday's "Still care?" card drops the loops in it; a "Track
+    this?" offer's No forgets it ("offer:3"); No on Odie's proposed Now list ("now:2") keeps the list; a loop's ref ("loop:3"), or the mail or event an open loop holds (an older
+    app's card), is that loop's Done (remembered)."""
     from datetime import datetime
     from zoneinfo import ZoneInfo
 
     from odie.loops import cards as loop_cards
-    from odie.loops import ledger
+    from odie.loops import ledger, offers
+    from odie.loops import now as now_list
     store = request.app.state.store
     pid = _personality(request)
     now = datetime.now(ZoneInfo(config.settings.timezone))
     if body.ref == loop_cards.BATCH:
         return {"ok": True, "dropped": loop_cards.drop_batch(store, pid, now)}
+    offer_id = offers.number_of(body.ref)
+    if offer_id is not None:  # a "Track this?" card's No: nothing is tracked
+        offers.decline(store, pid, offer_id)
+        return {"ok": True}
+    proposal_id = now_list.number_of(body.ref)
+    if proposal_id is not None:  # No on Odie's proposed Now list: it stays as it is
+        now_list.decline(store, pid, proposal_id)
+        return {"ok": True}
     loop = None
     if body.ref.startswith("loop:") and body.ref[len("loop:"):].isdigit():
         loop = ledger.get(store, int(body.ref[len("loop:"):]))

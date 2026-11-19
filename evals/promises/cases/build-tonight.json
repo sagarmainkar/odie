@@ -1,0 +1,21 @@
+{
+  "id": "build-tonight",
+  "about": "Odie says it will look at the build again tonight: its loop, due 21:00.",
+  "typed": "is the build green?",
+  "reply": "Not yet: one test failed on the last run. I'll look at the build again tonight.",
+  "script": {
+    "odie": [
+      {
+        "what": "Look at the build again",
+        "when": "2026-11-19T21:00:00+05:30",
+        "said": "I'll look at the build again tonight"
+      }
+    ],
+    "you": []
+  },
+  "expect": {
+    "promises": 1,
+    "offers": 0,
+    "promise_due": "2026-11-19T21"
+  }
+}

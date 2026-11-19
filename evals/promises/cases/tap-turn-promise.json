@@ -1,0 +1,26 @@
+{
+  "id": "tap-turn-promise",
+  "about": "A card's tap sent the words; Odie promises to look again: its loop, never an offer.",
+  "typed": "",
+  "reply": "CI is still running on the PR. I'll look again tonight.",
+  "script": {
+    "odie": [
+      {
+        "what": "Look at the PR's CI again",
+        "when": "2026-11-19T21:00:00+05:30",
+        "said": "I'll look again tonight"
+      }
+    ],
+    "you": [
+      {
+        "what": "Check now",
+        "said": "Check now"
+      }
+    ]
+  },
+  "expect": {
+    "promises": 1,
+    "offers": 0,
+    "promise_due": "2026-11-19T21"
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "id": "doing-it-now",
+  "about": "\"I'll draft it now\" is done in this reply: no promise.",
+  "typed": "draft a reply to Asha saying yes",
+  "reply": "I'll draft it now:\n\nHi Asha, yes, that works for me. See you Friday.",
+  "script": {
+    "odie": [],
+    "you": []
+  },
+  "expect": {
+    "promises": 0,
+    "offers": 0
+  }
+}

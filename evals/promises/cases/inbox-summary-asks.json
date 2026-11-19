@@ -1,0 +1,20 @@
+{
+  "id": "inbox-summary-asks",
+  "about": "A summary of mail asks things of him: those are the watch's, not his words.",
+  "typed": "summarise my inbox",
+  "reply": "Two things: Asha asks you to send the deck by Friday, and the bank wants you to update your KYC this week.",
+  "script": {
+    "odie": [],
+    "you": [
+      {
+        "what": "Send Asha the deck",
+        "when": "2026-11-20T09:00:00+05:30",
+        "said": "send the deck by Friday"
+      }
+    ]
+  },
+  "expect": {
+    "promises": 0,
+    "offers": 0
+  }
+}
