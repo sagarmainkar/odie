@@ -201,3 +201,42 @@ async def test_a_chain_that_keeps_re_forking_is_frozen_and_killed(job, new_sessi
     await asyncio.sleep(1.5)
     after = (job / "alive.txt").read_text() if (job / "alive.txt").exists() else ""
     assert before == after  # nothing of it is running any more
+
+
+# ── a Mac with Xcode: git, make, cc and python3 in /usr/bin load the real tool from Xcode's Developer folder ──
+
+def _select(tmp_path, monkeypatch, target):
+    link = tmp_path / "xcode_select_link"
+    link.symlink_to(target)
+    monkeypatch.setattr(sandbox, "XCODE_LINK", str(link))
+    monkeypatch.delenv("DEVELOPER_DIR", raising=False)
+
+
+def test_xcodes_developer_folder_is_readable_when_it_is_the_selected_one(tmp_path, monkeypatch):
+    developer = tmp_path / "Applications" / "Xcode_26.6.app" / "Contents" / "Developer"
+    developer.mkdir(parents=True)
+    _select(tmp_path, monkeypatch, developer)
+    assert sandbox.developer_reads() == [str(developer.resolve())]
+    text = sandbox.profile(tmp_path / "job", home=tmp_path / "home")
+    assert f'(subpath "{developer.resolve()}")' in text
+    assert f'(subpath "{developer.resolve().parents[1]}")' not in text  # the Developer folder, not the whole app
+
+
+def test_the_command_line_tools_need_nothing_more(tmp_path, monkeypatch):
+    _select(tmp_path, monkeypatch, "/Library/Developer/CommandLineTools")
+    assert sandbox.developer_reads() == []
+
+
+def test_a_selected_folder_that_is_no_developer_folder_opens_nothing(tmp_path, monkeypatch):
+    odd = tmp_path / "Documents"
+    odd.mkdir()
+    _select(tmp_path, monkeypatch, odd)
+    assert sandbox.developer_reads() == []
+    monkeypatch.setenv("DEVELOPER_DIR", str(odd))
+    assert sandbox.developer_reads() == []
+
+
+def test_no_selection_at_all_opens_nothing(tmp_path, monkeypatch):
+    monkeypatch.setattr(sandbox, "XCODE_LINK", str(tmp_path / "missing"))
+    monkeypatch.delenv("DEVELOPER_DIR", raising=False)
+    assert sandbox.developer_reads() == []

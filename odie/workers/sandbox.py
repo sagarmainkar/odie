@@ -4,7 +4,8 @@ and then ran is its own code, which no text rule reads. The sandbox holds whatev
 else:
 
   - reads: the system (/System, /usr, /bin, /sbin, /Library, /private/etc, /private/var/db, /private/var/select, /dev),
-    Homebrew and /usr/local, the toolchains under the home (TOOLCHAINS: the uv-managed Pythons, ~/.local/bin, Rust's),
+    Homebrew and /usr/local, Xcode's Developer folder when it is the selected one (developer_reads), the toolchains
+    under the home (TOOLCHAINS: the uv-managed Pythons, ~/.local/bin, Rust's),
     read-only; the job's own folder; and any folder the owner named for this job (read_dirs), read-only. Nothing else
     under the home: no keys, no app tokens, no Documents, not Odie. File metadata (a path's existence and size) stays
     readable everywhere, which tools need to find their way; a folder's listing and a file's contents do not;
@@ -62,6 +63,31 @@ def _subpaths(paths) -> str:
     return " ".join(f"(subpath {_quoted(p)})" for p in paths)
 
 
+XCODE_LINK = "/private/var/db/xcode_select_link"  # where `xcode-select` keeps the selected developer folder
+
+
+def developer_reads() -> list[str]:
+    """The selected developer folder, when it lies outside the system paths, read-only. /usr/bin/git, make, cc and
+    python3 are small launchers that load the real tool from there, so a Mac with Xcode selected needs it readable or
+    every job fails with "xcrun: error: unable to load libxcrun".
+      Xcode selected: /Applications/Xcode.app/Contents/Developer -> [that folder] (not the rest of the app)
+      the Command Line Tools: /Library/Developer/CommandLineTools -> [] (already under /Library)
+      nothing selected, or a folder that is no ….app/Contents/Developer -> []"""
+    chosen = os.environ.get("DEVELOPER_DIR") or XCODE_LINK
+    try:
+        folder = Path(chosen).resolve(strict=True)
+    except OSError:
+        return []
+    ends_as_developer = folder.parts[-2:] == ("Contents", "Developer")
+    inside_an_app = folder.parent.parent.suffix == ".app"
+    if not folder.is_dir() or not (ends_as_developer and inside_an_app):
+        return []
+    already = any(folder == Path(known) or Path(known) in folder.parents for known in SYSTEM_READS)
+    if already:
+        return []
+    return [str(folder)]
+
+
 def toolchain_reads(home: Path | None = None) -> list[str]:
     """The toolchain folders under the home that exist here, read-only."""
     if home is None:
@@ -106,7 +132,7 @@ def profile(folder: Path, read_dirs: list[str] | tuple = (), network: str = NONE
     if home is None:
         home = Path.home()
     job = str(Path(folder).resolve())
-    reads = [*SYSTEM_READS, *(str(Path(d).resolve()) for d in read_dirs)]
+    reads = [*SYSTEM_READS, *developer_reads(), *(str(Path(d).resolve()) for d in read_dirs)]
     mach = " ".join(f"(global-name {_quoted(m)})" for m in MACH_ALLOWED)
     denied_exec = " ".join(f"(literal {_quoted(p)})" for p in EXEC_DENIED)
     lines = [
@@ -125,7 +151,7 @@ def profile(folder: Path, read_dirs: list[str] | tuple = (), network: str = NONE
         "(allow file-ioctl)",
         "(allow system-socket)",
         "(allow file-read-metadata)",
-        '(allow file-read* (literal "/") (literal "/private") (literal "/private/var"))',
+        f'(allow file-read* (literal "/") (literal "/private") (literal "/private/var") (literal {_quoted(XCODE_LINK)}))',
         f"(allow file-read* {_subpaths(reads)})",
         *denials_after_named(read_dirs, home),
         f"(allow file-read* {_subpaths([*toolchain_reads(home), job])})",
