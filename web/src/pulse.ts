@@ -50,3 +50,33 @@ export function asksToTurnOn(state: { offered: boolean; on: boolean } | null | u
 export function stillPicked(askedFor: string, pickedNow: string): boolean {
   return askedFor === pickedNow;
 }
+
+/** Newspaper's date line above the masthead: the full date in the user's language, with the year, as a paper prints
+ *  it (shown in capitals by the page). (19 Nov 2026, "en-GB") -> "Thursday 19 November 2026"; "en-US" ->
+ *  "Thursday, November 19, 2026". */
+export function mastheadDate(day: Date, locale: string): string {
+  return day.toLocaleDateString(locale, { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+}
+
+/** Whose Pulse the date line names: nobody on everyday Odie's (the masthead already says "Pulse"), the personality
+ *  on its own one.
+ *    ("", "Thursday 19 November 2026", "Odie")    -> "Thursday 19 November 2026"
+ *    ("abc", "Thursday 19 November 2026", "Iris") -> "Iris · Thursday 19 November 2026" */
+export function mastheadDateLine(pick: string, date: string, name: string): string {
+  if (!pick) return date;
+  return `${name} · ${date}`;
+}
+
+/** The counts under Newspaper's masthead, from what the page already holds; a count of nothing is left out.
+ *    {needs: 4, onIt: 1, done: 6} -> ["4 need you", "1 on it", "6 done today"]
+ *    {needs: 1, onIt: 0, done: 2} -> ["1 needs you", "2 done today"]
+ *    all nothing                  -> ["Nothing needs you"] */
+export function datelineParts(counts: { needs: number; onIt: number; done: number }): string[] {
+  const parts: string[] = [];
+  if (counts.needs === 1) parts.push("1 needs you");
+  if (counts.needs > 1) parts.push(`${counts.needs} need you`);
+  if (counts.onIt > 0) parts.push(`${counts.onIt} on it`);
+  if (counts.done > 0) parts.push(`${counts.done} done today`);
+  if (parts.length === 0) parts.push("Nothing needs you");
+  return parts;
+}

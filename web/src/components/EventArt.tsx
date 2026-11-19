@@ -36,7 +36,7 @@ export function EventArt({ kind, size = 120 }: { kind: string; size?: number }) 
   const id = useId().replace(/[^a-zA-Z0-9]/g, "");
   const g = (n: string) => `url(#${id}${n})`;
   return (
-    <svg width={size} height={size} viewBox="0 0 120 120" aria-hidden="true">
+    <svg className="event-art" width={size} height={size} viewBox="0 0 120 120" aria-hidden="true">
       <defs>
         <linearGradient id={`${id}a`} x1="0" y1="0" x2="1" y2="1"><stop offset="0" stopColor="#ffffff" /><stop offset="1" stopColor="#dfe3ee" /></linearGradient>
         <linearGradient id={`${id}teal`} x1="0" y1="0" x2="1" y2="1"><stop offset="0" stopColor="#5fd3c4" /><stop offset="1" stopColor="#2a8fb0" /></linearGradient>

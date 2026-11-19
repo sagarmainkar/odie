@@ -56,7 +56,7 @@ function CreativityCard({ creativity, isClaude, sharedWith }: { creativity: Crea
   return (
     <div className="glass rounded-card p-4 flex flex-col gap-2">
       <div className="flex items-center justify-between">
-        <label htmlFor="creativity" className="text-small leading-5 font-bold text-muted">Creativity</label>
+        <label htmlFor="creativity" className="section-label text-small leading-5 font-bold text-muted">Creativity</label>
         <span className="text-small leading-5 text-muted tabular-nums">{creativityLabel(value)}</span>
       </div>
       <input id="creativity" type="range" min={creativity.min} max={creativity.max} step={creativity.step} value={value}
@@ -166,7 +166,7 @@ export function Brain() {
       )}
       {current && !current.gone && state !== "none" && (
         <div className="glass rounded-card p-4 flex flex-col gap-1">
-          <div className="text-small leading-5 font-bold text-muted">{heading}{current.same_as_odie ? ` · ${SAME_AS_ODIE}` : ""}</div>
+          <div className="section-label text-small leading-5 font-bold text-muted">{heading}{current.same_as_odie ? ` · ${SAME_AS_ODIE}` : ""}</div>
           <ModelName id={current.model} className="text-title leading-[22px] font-medium block" />
           <div className="flex items-center gap-2 text-small leading-[18px] text-muted">
             <span className={`w-1.5 h-1.5 rounded-full ${state === "unreachable" || current.leaves_mini ? "bg-gold" : "bg-moss"}`} />
