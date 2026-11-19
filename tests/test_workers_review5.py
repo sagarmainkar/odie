@@ -277,7 +277,10 @@ def test_the_real_tools_still_run_in_the_sandbox(tmp_path):
     job.mkdir(parents=True)
     out = sh(job, "uv --version; python3 -c 'import ssl; print(\"PY_OK\")'; git --version; node --version && echo NODE_OK; "
                   "npm --version && echo NPM_OK", Path.home())
-    assert "uv " in out and "PY_OK" in out and "git version" in out
+    assert "PY_OK" in out and "git version" in out
+    from odie.agent.tools.shell import SHELL_PATH
+    if shutil.which("uv", path=SHELL_PATH):  # a CI runner installs uv outside the fixed PATH
+        assert "uv " in out
     if shutil.which("node"):
         assert "NODE_OK" in out and "NPM_OK" in out
 
