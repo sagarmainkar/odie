@@ -209,18 +209,20 @@ async def run_case(runner, store, case: dict, now: datetime) -> dict:
     writes: list[dict] = []
     tools = watch_tools(check) + calendar_fakes(writes)
     instruction = watch_check._instruction(case.get("watch_for", ""))
+    watch_check.STAGE1.reset(store, "", case.get("watch_for", ""))  # what this check may reach, as live
     started = time.monotonic()
     error = ""
     try:
         await runner.background_turn(PROMPT, timeout=TURN_SECONDS, tools=tools, instruction=instruction,
-                                     guard=watch_check.guard, free=FREE)
+                                     guard=watch_check.guard, free=FREE, keep=watch_check.stage1_keeps)
         if check.report is None:  # as the live watch: one nudge, with what the check read
             await runner.background_turn(watch_check.nudge_text(check), timeout=TURN_SECONDS, tools=tools,
-                                         instruction=instruction, guard=watch_check.guard, free=FREE)
+                                         instruction=instruction, guard=watch_check.guard, free=FREE,
+                                         keep=watch_check.stage1_keeps)
     except Exception as e:  # noqa: BLE001 (a failed case is recorded, the rest still run)
         error = f"{type(e).__name__}: {e}"[:200]
     found = findings.collect(check)  # placed by the shortcut alone: this eval scores stage 1
-    consolidate.apply(store, "", now, found, {}, consolidate.hints(store, "", found))
+    consolidate.apply(store, "", now, found, {}, consolidate.hints(store, "", found, now))
     fetcher = check.fetcher
     added = store.query("select title from tasks order by id")[given:]
     threads_after = threads_now(store)

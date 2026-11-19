@@ -1,14 +1,12 @@
 {
   "date": "2026-11-19",
-  "odie_commit": "06f0de1",
+  "odie_commit": "9971a54",
   "provider": "ollama",
   "model": "deepseek-v4.1-flash:1017-cloud",
   "totals": {
-    "right": 81,
-    "of": 82,
-    "wrong": [
-      "someone-elses-pr: you-dev/app#72 has no card"
-    ]
+    "right": 27,
+    "of": 27,
+    "wrong": []
   },
   "results": [
     {
@@ -28,62 +26,7 @@
       }
     },
     {
-      "id": "bill-then-paid",
-      "error": "",
-      "ran": [],
-      "score": {
-        "right": 2,
-        "of": 2,
-        "wrong": [],
-        "loops": 1
-      }
-    },
-    {
-      "id": "deck-by-friday-then-a-call",
-      "error": "",
-      "ran": [],
-      "score": {
-        "right": 4,
-        "of": 4,
-        "wrong": [],
-        "loops": 1
-      }
-    },
-    {
-      "id": "dismissed-event-stays-gone",
-      "error": "",
-      "ran": [],
-      "score": {
-        "right": 3,
-        "of": 3,
-        "wrong": [],
-        "loops": 1
-      }
-    },
-    {
       "id": "done-pr-gets-mail",
-      "error": "",
-      "ran": [],
-      "score": {
-        "right": 2,
-        "of": 2,
-        "wrong": [],
-        "loops": 1
-      }
-    },
-    {
-      "id": "done-then-a-new-ask",
-      "error": "",
-      "ran": [],
-      "score": {
-        "right": 3,
-        "of": 3,
-        "wrong": [],
-        "loops": 2
-      }
-    },
-    {
-      "id": "forward-leaves-reply-open",
       "error": "",
       "ran": [],
       "score": {
@@ -96,18 +39,12 @@
     {
       "id": "fourteen-mails-one-pr",
       "error": "",
-      "ran": [],
-      "score": {
-        "right": 2,
-        "of": 2,
-        "wrong": [],
-        "loops": 1
-      }
-    },
-    {
-      "id": "heads-up-for-an-event",
-      "error": "",
-      "ran": [],
+      "ran": [
+        [
+          3,
+          "ready"
+        ]
+      ],
       "score": {
         "right": 2,
         "of": 2,
@@ -120,7 +57,7 @@
       "error": "",
       "ran": [
         [
-          11,
+          4,
           "ready"
         ]
       ],
@@ -136,7 +73,7 @@
       "error": "",
       "ran": [
         [
-          12,
+          5,
           "drop"
         ]
       ],
@@ -150,28 +87,12 @@
     {
       "id": "lone-merged-mail",
       "error": "",
-      "ran": [
-        [
-          13,
-          "drop"
-        ]
-      ],
+      "ran": [],
       "score": {
         "right": 1,
         "of": 1,
         "wrong": [],
-        "loops": 1
-      }
-    },
-    {
-      "id": "meeting-moved",
-      "error": "",
-      "ran": [],
-      "score": {
-        "right": 3,
-        "of": 3,
-        "wrong": [],
-        "loops": 1
+        "loops": 0
       }
     },
     {
@@ -186,49 +107,11 @@
       }
     },
     {
-      "id": "newsletter-is-nothing",
-      "error": "",
-      "ran": [],
-      "score": {
-        "right": 1,
-        "of": 1,
-        "wrong": [],
-        "loops": 0
-      }
-    },
-    {
-      "id": "old-pr-card-and-loop",
-      "error": "",
-      "ran": [
-        [
-          16,
-          "ready"
-        ]
-      ],
-      "score": {
-        "right": 3,
-        "of": 3,
-        "wrong": [],
-        "loops": 1
-      }
-    },
-    {
-      "id": "order-shipped-then-delivered",
-      "error": "",
-      "ran": [],
-      "score": {
-        "right": 4,
-        "of": 4,
-        "wrong": [],
-        "loops": 1
-      }
-    },
-    {
       "id": "own-pr-ci-failing",
       "error": "",
       "ran": [
         [
-          18,
+          7,
           "ready"
         ]
       ],
@@ -244,11 +127,11 @@
       "error": "",
       "ran": [
         [
-          19,
+          8,
           "test"
         ],
         [
-          19,
+          8,
           "ready"
         ]
       ],
@@ -264,7 +147,7 @@
       "error": "",
       "ran": [
         [
-          20,
+          9,
           "ready"
         ]
       ],
@@ -280,7 +163,7 @@
       "error": "",
       "ran": [
         [
-          21,
+          10,
           "ask"
         ]
       ],
@@ -292,113 +175,17 @@
       }
     },
     {
-      "id": "personality-inbox",
-      "error": "",
-      "ran": [],
-      "score": {
-        "right": 3,
-        "of": 3,
-        "wrong": [],
-        "loops": 1
-      }
-    },
-    {
-      "id": "promise-from-them",
-      "error": "",
-      "ran": [],
-      "score": {
-        "right": 3,
-        "of": 3,
-        "wrong": [],
-        "loops": 1
-      }
-    },
-    {
-      "id": "reply-from-the-phone",
-      "error": "",
-      "ran": [],
-      "score": {
-        "right": 2,
-        "of": 2,
-        "wrong": [],
-        "loops": 1
-      }
-    },
-    {
-      "id": "reply-owed-no-due-date",
-      "error": "",
-      "ran": [],
-      "score": {
-        "right": 4,
-        "of": 4,
-        "wrong": [],
-        "loops": 1
-      }
-    },
-    {
-      "id": "security-notice",
-      "error": "",
-      "ran": [],
-      "score": {
-        "right": 3,
-        "of": 3,
-        "wrong": [],
-        "loops": 1
-      }
-    },
-    {
-      "id": "sign-in-code-is-nothing",
-      "error": "",
-      "ran": [],
-      "score": {
-        "right": 1,
-        "of": 1,
-        "wrong": [],
-        "loops": 0
-      }
-    },
-    {
       "id": "someone-elses-pr",
       "error": "",
-      "ran": [],
-      "score": {
-        "right": 2,
-        "of": 3,
-        "wrong": [
-          "you-dev/app#72 has no card"
-        ],
-        "loops": 1
-      }
-    },
-    {
-      "id": "thanks-closes-nothing",
-      "error": "",
-      "ran": [],
+      "ran": [
+        [
+          11,
+          "ready"
+        ]
+      ],
       "score": {
         "right": 3,
         "of": 3,
-        "wrong": [],
-        "loops": 1
-      }
-    },
-    {
-      "id": "two-invoices-one-biller",
-      "error": "",
-      "ran": [],
-      "score": {
-        "right": 3,
-        "of": 3,
-        "wrong": [],
-        "loops": 2
-      }
-    },
-    {
-      "id": "two-mails-one-order",
-      "error": "",
-      "ran": [],
-      "score": {
-        "right": 2,
-        "of": 2,
         "wrong": [],
         "loops": 1
       }
@@ -408,11 +195,11 @@
       "error": "",
       "ran": [
         [
-          32,
-          "wait"
+          12,
+          "drop"
         ],
         [
-          33,
+          13,
           "wait"
         ]
       ],
@@ -421,17 +208,6 @@
         "of": 3,
         "wrong": [],
         "loops": 2
-      }
-    },
-    {
-      "id": "vote-event-digest-event",
-      "error": "",
-      "ran": [],
-      "score": {
-        "right": 4,
-        "of": 4,
-        "wrong": [],
-        "loops": 1
       }
     }
   ]

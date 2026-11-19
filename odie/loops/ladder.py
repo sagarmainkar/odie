@@ -54,13 +54,30 @@ def stale(loop: dict, now: datetime) -> bool:
 
 
 def quiet_since(store, loop: dict) -> datetime:
-    """When anything last happened on a loop: its newest evidence, or its due date when that is later (an order
-    expected Friday isn't quiet before Friday)."""
+    """When anything last happened on a loop: its newest evidence, when it was first shown (an upgrade shows every
+    carried loop at the upgrade, so none nudges at the first tick after it), or its due date when that is later (an
+    order expected Friday isn't quiet before Friday)."""
     row = store.one("select max(at) at from loop_events where loop_id=?", (loop["id"],))
     last = datetime.fromisoformat((row and row["at"]) or loop["created_at"])
-    if loop.get("due_at"):
-        last = max(last, datetime.fromisoformat(loop["due_at"]))
+    for later in (loop.get("shown_at"), loop.get("due_at")):
+        if later:
+            last = max(last, datetime.fromisoformat(later))
     return last
+
+
+def own_reminder_rings_first(store, loop: dict, now: datetime) -> bool:
+    """Whether the loop's own open reminder rings between now and its due time, so the day-before push would say the
+    same thing twice. The vote due Saturday 17:00 with its reminder on Friday 09:00 -> True; no reminder -> False."""
+    if not loop.get("due_at"):
+        return False
+    due = datetime.fromisoformat(loop["due_at"])
+    for task_id in ledger.reminders_of(loop):
+        row = store.one("select status, due_at from tasks where id=?", (task_id,))
+        if row is None or row["status"] not in ("open", "waiting") or not row["due_at"]:
+            continue
+        if now <= datetime.fromisoformat(row["due_at"]) <= due:
+            return True
+    return False
 
 
 def wants_a_nudge(store, loop: dict, now: datetime) -> bool:
@@ -109,7 +126,7 @@ def run(store, now: datetime, push_for=None) -> list[tuple[int, str]]:
                     done.append((loop["id"], "dropped"))
                     continue
                 skip = night(now) or cards.hidden(loop, now) or has_step(store, loop["id"], DUE_PUSH)
-                if not skip and due_soon(loop, now):
+                if not skip and due_soon(loop, now) and not own_reminder_rings_first(store, loop, now):
                     done.append((loop["id"], push_due(store, loop, now, push)))
                 continue
             if wants_a_nudge(store, loop, now):

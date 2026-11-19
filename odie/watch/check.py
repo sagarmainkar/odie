@@ -73,70 +73,132 @@ def fetch_allowed_after_mail(tool_name: str, args: dict) -> bool:
     return url in {a.rstrip("/") for a in WATCH_FOR_ADDRESSES}
 
 
-# Stage 1 reads other people's text, so it gets no private context (proactive design §3): no memory, no search of his
-# chats and notes, none of his tasks beyond the bill and order reminders bills_and_orders lists. A reminder is a
-# finding's remind_at (stage 2 makes it, once per thing), never task_add. A note may be read only when a Watch for
-# entry names it, as a web address may be fetched.
-PRIVATE_READS = frozenset({"fetch_memory", "search_everything", "related_notes", "task_list", "task_add", "remember",
-                           "index", "index_status"})
-_NOTE_PATH = re.compile(r"[\w./~-]*[\w-]/[\w./ -]*\.md|[\w./~-]+/")
+# Stage 1 reads strangers' mail, so it may call ONLY these (proactive design §3: no private context, no way out). The
+# whole list is here; anything else, including any tool added to chat later, is refused (guard) and isn't even handed
+# to the model (stage1_keeps, OdieRunner.background_turn(keep=…)).
+WATCH_TOOLS = frozenset({"what_you_sent", "new_mail", "upcoming_events", "read_mail", "read_thread", "search_mail",
+                         "sent_to", "save_attachment", "bills_and_orders", "track_thread", "close_reminder", "report"})
+# ...and MAY_WRITE (a calendar event for a bill, never with guests), and these three, each only as allowed below:
+MAYBE = frozenset({"read_note",  # a note or folder a Watch for entry names (note_allowed)
+                   "web_fetch",  # an address a Watch for entry names (fetch_allowed_after_mail)
+                   "load_skill"})  # only to reach the connected calendar app it writes to (calendar_skills)
+# Fields of a calendar write that would send someone an invitation or an email: never from the watch.
+INVITES = re.compile(r"attend|guest|invit|particip|notif|send_?updates|organi[sz]er|email", re.I)
+_NOTE_TOKEN = re.compile(r"[\w.~-][\w./~-]*/")  # no spaces: "relay Inbox/ and" names Inbox/
+_NOTE_FILE = re.compile(r"[\w.~-][\w./~-]*\.md")
 
 
-def notes_named(watch: str) -> set[str]:
-    """The note paths and folders a Watch for entry names: "- Digests: relay Inbox/digest.md" -> {"Inbox/digest.md"};
-    "- Notes in Daily/ every morning" -> {"Daily/"}; "- Passport: tell me" -> set()."""
-    without_addresses = _ADDRESS.sub(" ", watch or "")  # a web address is not a note
-    return {found.strip().rstrip(".,;") for found in _NOTE_PATH.findall(without_addresses)}
+class Stage1:
+    """What one check's turn may reach beyond its own tools, set by run_check before the turn (from his Watch for
+    and the sources it checks): the web addresses and notes his Watch for names, his vault, the skills of the calendar
+    apps it writes to."""
+
+    def __init__(self):
+        self.addresses = WATCH_FOR_ADDRESSES
+        self.notes: set[str] = set()
+        self.vault: Path | None = None
+        self.loadable: set[str] = set()
+
+    def reset(self, store, owner: str, watch: str = "") -> None:
+        from odie.vault import settings as vault_settings
+        self.addresses.clear()
+        self.addresses.update(addresses_in(watch))
+        folder = vault_settings.get(store).get("dir")
+        self.vault = Path(folder).expanduser() if folder else None
+        self.notes = notes_named(watch, self.vault)
+        self.loadable = set(calendar_skills(store, owner))
+
+
+def notes_named(watch: str, vault: Path | None) -> set[str]:
+    """The notes and folders a Watch for entry names that are really there in his vault: a path to a .md file that
+    exists, or a path ending in "/" that is a folder there. No vault -> nothing.
+      "- Digests: relay Inbox/ and Daily/digest.md" with Inbox/ a folder and no Daily/ -> {"Inbox/"}
+      "and/or", "24/7", "./" -> nothing (no such folder, or not a path)"""
+    if vault is None:
+        return set()
+    text = _ADDRESS.sub(" ", watch or "")  # a web address is not a note
+    candidates = {t.strip().rstrip(".,;") for t in _NOTE_FILE.findall(text)}
+    candidates |= {t.strip() for t in _NOTE_TOKEN.findall(text)}
+    root = vault.resolve()
+    out = set()
+    for token in candidates:
+        if not token or token.startswith(("/", "~", ".")) or ".." in token.split("/"):
+            continue
+        where = (vault / token).resolve()
+        if root not in where.parents:
+            continue
+        is_folder = token.endswith("/") and where.is_dir()
+        is_note = token.endswith(".md") and where.is_file()
+        if is_folder or is_note:
+            out.add(token)
+    return out
 
 
 def note_allowed(args: dict) -> bool:
-    """Whether read_note may run in the watch: only for a note a Watch for entry names (WATCH_FOR_NOTES), or one in a
-    folder it names. "Inbox/digest.md" named -> True; "Daily/2026-11-19.md" with "Daily/" named -> True;
-    "People/Asha.md" -> False."""
+    """Whether read_note may run in the watch: only for a note that is a file in his vault, inside a note or folder
+    his Watch for names (STAGE1.notes), compared as resolved paths, never by a title or an alias.
+      "Inbox/digest.md" with "Inbox/" named -> True;  "Inbox/x" (x.md there) -> True;  "People/Asha.md" -> False;
+      "Inbox/../People/Asha.md", "/Inbox/x.md", "~/x.md" -> False;  "Asha" (an alias) -> False"""
     note = str((args or {}).get("note") or "").strip()
-    if not note:
+    vault = STAGE1.vault
+    if not note or vault is None or note.startswith(("/", "~")) or ".." in note.split("/"):
         return False
-    for named in WATCH_FOR_NOTES:
-        if note == named or (named.endswith("/") and note.startswith(named)):
+    root = vault.resolve()
+    target = None
+    for candidate in (note, note + ".md"):
+        place = vault / candidate
+        if candidate.endswith(".md") and place.is_file() and not place.is_symlink():
+            target = place.resolve()
+            break
+    if target is None or root not in target.parents:
+        return False
+    for named in STAGE1.notes:
+        allowed = (vault / named).resolve()
+        if target == allowed or allowed in target.parents:
             return True
     return False
 
 
-WATCH_FOR_NOTES: set[str] = set()  # set by run_check before each turn, from the Watch for text
+def invites(args: dict) -> list[str]:
+    """The fields of a calendar write that would invite or email someone, with a value: {"summary": "Pay bill",
+    "attendees": ["x@y"]} -> ["attendees"]; {"summary": "Pay bill"} -> []; {"attendees": []} -> []."""
+    return [name for name, value in (args or {}).items() if INVITES.search(name) and value not in (None, "", [], {})]
+
+
+def stage1_keeps(name: str) -> bool:
+    """Whether a chat tool is handed to stage 1's model at all: its own tools, the calendar writes, and the three it may
+    use under conditions. "new_mail" -> True; "recall", "make_research", "watch_close" -> False."""
+    return name in WATCH_TOOLS or name in MAY_WRITE or name in MAYBE
+
+
+STAGE1 = Stage1()
 
 
 def guard(tool, args, tool_context) -> dict | None:
-    """before_tool_callback for the watch's turn: what a background check refuses (odie.trackers.guard), and also
-    changing memory, the shell, handing files over, closing tasks and the browser; and, as stage 1 reads other
-    people's text, everything private (PRIVATE_READS) and any note a Watch for entry doesn't name.
-    Example: new_mail -> None (runs); update_memory -> refused; browser_open -> refused (the browser keeps signed-in
-    sites); task_update -> refused (the watch closes a paid bill's reminder with its own close_reminder);
-    calendar_create_event, calendar_update_event -> None (MAY_WRITE); web_fetch, web_search, find_images -> refused
-    from the turn's first call, unless it fetches an address the user wrote in a Watch for entry
-    (fetch_allowed_after_mail): code reads the mail before the turn and its words are in the turn from the start
-    (loop evidence, the catch-up, the nudge), so a mail's hidden instructions could otherwise carry what the check
-    read out to a web address. track, stop_tracker -> refused: a tracker made from mail text would later fetch the
-    web on its own. fetch_memory, search_everything, task_list -> refused (private); task_add -> refused (a reminder
-    is a finding's remind_at); read_note of a note a Watch for entry names -> runs, any other -> refused."""
-    from odie.trackers import guard as trackers_guard
-    if tool.name in MAY_WRITE:
+    """before_tool_callback for the watch's turn (stage 1, which reads strangers' mail): an allow-list.
+      its own tools (WATCH_TOOLS) -> None (runs)
+      calendar_create_event / calendar_update_event / mac_calendar_add -> runs, unless a field would invite or email
+        someone (attendees, guests…): refused
+      read_note -> only a note his Watch for names (note_allowed); web_fetch -> only an address his Watch for names
+        (fetch_allowed_after_mail); load_skill -> only a calendar app's skill it writes to (STAGE1.loadable)
+      anything else -> refused: recall, fetch_memory, watch_item, task_add, make_research, a new chat tool, …"""
+    name = tool.name
+    if name in WATCH_TOOLS:
         return None
-    if tool.name in PRIVATE_READS:
-        return {"error": "Not in the watch: it reads other people's text, so it gets nothing private. Write a "
-                         "finding (a reminder is its remind_at); Odie matches it to what it knows after the check."}
-    if tool.name == "read_note" and not note_allowed(args):
-        return {"error": "Only a note a Watch for entry names can be read in the watch."}
-    if tool.name in REACHES_OUT and not fetch_allowed_after_mail(tool.name, args):
-        return {"error": "Not after reading mail in this check: write it as a finding instead."}
-    refused = trackers_guard(tool, args, tool_context)
-    if refused:
-        return refused
-    not_for_the_watch = tool.name in ("update_memory", "forget_memory", "run_shell", "hand_over", "task_update",
-                                      "watch_close", "track", "stop_tracker")
-    is_browser = tool.name.startswith("browser_")
-    if not_for_the_watch or is_browser:
-        return {"error": "Not allowed in the background watch: write it as a finding instead."}
-    return None
+    if name in MAY_WRITE:
+        found = invites(args)
+        if found:
+            return {"error": f"Not from the watch: {', '.join(found)} would invite or email someone. Add the event "
+                             "without guests."}
+        return None
+    if name == "read_note" and note_allowed(args):
+        return None
+    if name == "web_fetch" and fetch_allowed_after_mail(name, args):
+        return None
+    if name == "load_skill" and str((args or {}).get("skill_name") or "") in STAGE1.loadable:
+        return None
+    return {"error": "Not in the background watch: it reads other people's mail, so it may only read the mail and "
+                     "calendar and write findings. Write a finding instead."}
 
 
 def calendar_skills(store, owner: str = "") -> list[str]:
@@ -291,17 +353,15 @@ async def run_check(store, now: datetime, turn, push, memory=None, memory_index:
     waiting, _tries = consolidate.take_pending(store, owner)
     if not has_news(check, catching_up) and not watches_a_page(watch):
         if waiting and think is not None:  # a stage 2 that failed last time: its findings, alone
-            await consolidate.consolidate(store, owner, now, [], think, context)
+            placed = await consolidate.consolidate(store, owner, now, [], think, context)
+            push_new_cards(store, now, placed, bool(fetcher.first), owner, ping)
         card_events = await fetcher.events_ahead(CARD_DAYS)
         rep.nothing_new(store, now, card_events, fetcher.statuses, owner)
         fetcher.commit()
         say_failing()
         return "quiet"
     tools = watch_tools(check)
-    WATCH_FOR_ADDRESSES.clear()
-    WATCH_FOR_ADDRESSES.update(addresses_in(watch))
-    WATCH_FOR_NOTES.clear()
-    WATCH_FOR_NOTES.update(notes_named(watch))
+    STAGE1.reset(store, owner, watch)
     instruction = _instruction(watch)
     prompt = "Run the watch check."  # the background turn puts the time before it (odie.app.runner.background_turn)
     if catching_up:
@@ -358,7 +418,7 @@ async def place(store, owner: str, now: datetime, found: list[dict], think, cont
     if think is None:
         if not found:
             return consolidate.Applied()
-        shortcut_hints = consolidate.hints(store, owner, found)
+        shortcut_hints = consolidate.hints(store, owner, found, now)
         return consolidate.apply(store, owner, now, found, {}, shortcut_hints)
     return await consolidate.consolidate(store, owner, now, found, think, context)
 
@@ -413,8 +473,8 @@ def tell_done(store, now: datetime, done: list[dict], applied, owner: str, ping)
             continue
         done_title = "Odie: done"
         if owner:
-            done_title = pushes.title_for(store, owner, "Done")
-        ping(done_title, message[:160])
+            done_title = "Done"  # titled "Mira · Done" by pushes.title_for
+        pushes.started_by_odie(store, now, owner, done_title, message, ping)  # within the day's shared three
 
 
 def worth_telling(item: dict, media: list, added_task: bool) -> bool:

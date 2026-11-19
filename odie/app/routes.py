@@ -160,6 +160,9 @@ async def chat(body: ChatIn, request: Request):
         kw["session_id"] = session_id
     if body.via:
         kw["via"] = body.via
+    device = devices.device_for(store, request.cookies.get(devices.COOKIE))
+    if devices.is_terminal(device):  # the odie command's key: a terminal turn, whatever the body says
+        kw["via"] = "terminal"
     turn = request.app.state.runner.chat(body.text, thinking=body.thinking, images=body.images or None, **kw)
     return _sse(detached(turn, on_orphaned_done=answered_while_away))
 

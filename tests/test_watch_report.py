@@ -142,3 +142,8 @@ def test_two_findings_about_one_mail_are_one(isolated_settings):
     got = findings.collect(check)
     assert len(got) == 1 and got[0]["owner"] == "them" and got[0]["kind"] == "order"
     assert got[0]["stage"] == "shipped" and got[0]["card"]["pile"] == "orders"
+
+
+def test_an_events_finding_takes_the_events_start_as_its_due(isolated_settings):
+    got = findings.collect(a_check(MAILS, EVENTS, [{"ref": "event:e1", "title": "Standup", "kind": "event"}]))
+    assert got[0]["due"] == "2026-10-08T15:00+05:30"

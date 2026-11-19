@@ -43,32 +43,57 @@ def instruction() -> str:
 
 
 def strong_refs(found: dict) -> list[str]:
-    """The IDs of a finding the shortcut matches on: its mail, the mail's thread, an event, a pull request (not a
-    loose order number the model wrote). ["mail:m1", "thread:t1", "order:A-1", "example/app#49"] -> all but order:A-1."""
-    out = []
-    for ref in found["refs"]:
-        is_prefixed = ref.split(":", 1)[0] in ("mail", "thread", "event", "task", "note")
-        if is_prefixed or github.parse(ref) is not None:
-            out.append(ref)
-    return out
+    """The IDs of a finding the shortcut may match on: its mail, its event, its pull request, and its mail thread (an
+    open loop only). Never a note (a digest names many things) or a loose order number. ["mail:m1", "thread:t1",
+    "note:Inbox/d.md", "order:A-1", "example/app#49"] -> ["mail:m1", "thread:t1", "example/app#49"]."""
+    return [ref for ref in found["refs"] if ledger.is_open_ref(ref)]
 
 
-def hints(store, pid: str, found: list[dict]) -> dict[str, dict]:
-    """What the same-ID shortcut knows about each finding: {"F1": {"open": 3}} (an open loop holds one of its IDs),
-    {"F2": {"finished": 2}} (a loop he finished holds one), {"F3": {"finding": "F1"}} (it shares an ID with an
-    earlier finding of this check), or {} for none."""
+def may_touch(loop: dict, found: dict) -> bool:
+    """Whether a finding may reach this loop at all: a pull request's loop (a playbook) only from GitHub's own mail.
+    A stranger's mail naming #49 -> False for #49's loop; GitHub's notification -> True; any other loop -> True."""
+    if loop["playbook"]:
+        return bool(found.get("from_github"))
+    return True
+
+
+def hint_for(store, pid: str, f: dict, now: datetime) -> dict:
+    """What the same-ID shortcut knows about one finding (see hints)."""
+    refs = strong_refs(f)
+    held: dict[int, dict] = {}
+    for ref in refs:
+        for lp in ledger.holding(store, pid, ref, ledger.OPEN):
+            if may_touch(lp, f):
+                held[lp["id"]] = {"loop": lp, "ref": ref}
+    if len(held) == 1:
+        [(lid, got)] = held.items()
+        return {"open": lid, "ref": got["ref"]}
+    if len(held) > 1:
+        return {"several": sorted(held)}
+    for by_him, name in ((True, "finished"), (False, "odie_closed")):
+        closed = [lp for lp in ledger.closed_holders(store, pid, refs, now, by_him) if may_touch(lp, f)]
+        if closed:
+            ref = sorted(set(refs) & set(closed[0]["refs"]))[0]
+            return {name: closed[0]["id"], "ref": ref}
+    return {}
+
+
+def hints(store, pid: str, found: list[dict], now: datetime | None = None) -> dict[str, dict]:
+    """What the same-ID shortcut knows about each finding:
+      {"open": 3, "ref": …}        exactly one open loop holds one of its IDs (a thread counts here)
+      {"several": [3, 4]}          more than one does: the model decides (no answer -> a new loop)
+      {"finished": 2, "ref": …}    a loop he closed, still remembered, holds its mail, event or pull request
+      {"odie_closed": 5, "ref": …} a loop Odie closed (delivered, the ladder's drop) holds it
+      {"finding": "F1"}            it shares an ID with an earlier finding of this check
+      {}                           none
+    A pull request's loop is never hinted for a finding that isn't GitHub's own mail."""
+    if now is None:
+        now = datetime.now().astimezone()
     out: dict[str, dict] = {}
     seen: dict[str, str] = {}
     for f in found:
+        hint = hint_for(store, pid, f, now)
         refs = strong_refs(f)
-        hint: dict = {}
-        held = ledger.find_by_refs(store, pid, refs)
-        if held is not None:
-            hint = {"open": held["id"], "ref": sorted(set(refs) & set(held["refs"]))[0]}
-        else:
-            stopped = ledger.find_done_by_user(store, pid, refs)
-            if stopped is not None:
-                hint = {"finished": stopped["id"], "ref": sorted(set(refs) & set(stopped["refs"]))[0]}
         if not hint:
             earlier = next((seen[r] for r in refs if r in seen), None)
             if earlier is not None:
@@ -81,24 +106,38 @@ def hints(store, pid: str, found: list[dict]) -> dict[str, dict]:
 
 def hint_words(hint: dict) -> str:
     """A hint as the prompt says it: {"open": 3, "ref": "thread:t1"} -> "loop #3 holds thread:t1"; {"finished": 2,
-    "ref": "event:u1"} -> "the user finished #2, which holds event:u1"; {"finding": "F1"} -> "shares an ID with F1"."""
+    "ref": "event:u1"} -> "the user finished #2, which holds event:u1"; {"odie_closed": 5, "ref": "event:u7"} -> "Odie
+    closed #5, which holds event:u7"; {"several": [3, 4]} -> "loops #3, #4 hold its IDs"; {"finding": "F1"} -> "shares
+    an ID with F1"."""
     if "open" in hint:
         return f"loop #{hint['open']} holds {hint['ref']}"
+    if "several" in hint:
+        return "loops " + ", ".join(f"#{n}" for n in hint["several"]) + " hold its IDs"
     if "finished" in hint:
         return f"the user finished #{hint['finished']}, which holds {hint['ref']}"
+    if "odie_closed" in hint:
+        return f"Odie closed #{hint['odie_closed']}, which holds {hint['ref']}"
     if "finding" in hint:
         return f"shares an ID with {hint['finding']}"
     return ""
 
 
 def his_tasks(store, pid: str) -> list:
-    """His own open reminders and to-dos (not the ones Odie made for a loop): the ledger reads them so it never opens
-    a second loop for something he already noted."""
+    """His own open reminders and to-dos, and any reminder with a source that no loop points at (one he asked for in
+    chat about a mail): stage 2 reads them so it never opens a second loop for something he already noted. A reminder
+    Odie made for a loop is that loop's, so it isn't listed."""
     mine, values = ledger._whose(pid)
     rows = store.query(f"select id, title, due_at, source_kind from tasks where status in ('open','waiting') and {mine} "
                        "order by id desc", values)
-    own = [r for r in rows if (r["source_kind"] or "") not in ledger.ODIES_TASKS]
-    return own[:TASKS_SHOWN]
+    out = []
+    for r in rows:
+        kind = r["source_kind"] or ""
+        if kind in ("loop", "watch"):
+            continue
+        if kind == "ref" and ledger.pointing_at(store, r["id"]) is not None:
+            continue
+        out.append(r)
+    return out[:TASKS_SHOWN]
 
 
 def prompt_for(store, pid: str, now: datetime, found: list[dict], shortcut: dict[str, dict], context: dict) -> str:
@@ -115,7 +154,7 @@ def prompt_for(store, pid: str, now: datetime, found: list[dict], shortcut: dict
         task_lines.append(text)
     parts = [f"Findings from this check:\n{wrap_untrusted(chr(10).join(finding_lines))}",
              f"Open loops:\n{wrap_untrusted(chr(10).join(open_lines) or '(none)')}",
-             f"Loops the user finished with Done (last {ledger.FINISHED_DAYS} days):\n"
+             f"Loops closed lately (the user's Done, or Odie's, remembered {ledger.REMEMBER_DAYS} days or until due):\n"
              f"{wrap_untrusted(chr(10).join(done_lines) or '(none)')}",
              f"The user's own reminders and to-dos:\n{wrap_untrusted(chr(10).join(task_lines) or '(none)')}",
              f"Watch for:\n{context.get('watch') or '(nothing)'}",
@@ -215,16 +254,16 @@ def make_reminder(store, pid: str, now: datetime, loop_id: int, title: str, at: 
 
 
 def move_reminder(store, loop: dict, at: str) -> bool:
-    """Moves a loop's own reminder (one Odie made) to a new time, so it rings again then. False when it has none."""
-    task_id = ledger.reminder_of(loop)
-    if task_id is None:
-        return False
-    row = store.one("select status, source_kind, due_at from tasks where id=?", (task_id,))
-    if row is None or row["source_kind"] not in ledger.ODIES_TASKS or row["status"] not in ("open", "waiting"):
-        return False
-    if row["due_at"] != at:
-        store.update_task(task_id, due_at=at, delivered_at=None)
-    return True
+    """Moves the loop's newest OPEN reminder that Odie made to a new time, so it rings then. False when it has none
+    open (then the caller makes one). Two reminders, the newer ticked -> the open older one moves; none open -> False."""
+    for task_id in ledger.reminders_of(loop):
+        row = store.one("select status, source_kind, due_at from tasks where id=?", (task_id,))
+        if row is None or row["source_kind"] not in ledger.ODIES_TASKS or row["status"] not in ("open", "waiting"):
+            continue
+        if row["due_at"] != at:
+            store.update_task(task_id, due_at=at, delivered_at=None)
+        return True
+    return False
 
 
 def open_from(store, pid: str, now: datetime, found: dict, answer: dict, done: Applied, after: dict | None) -> int:
@@ -232,7 +271,7 @@ def open_from(store, pid: str, now: datetime, found: dict, answer: dict, done: A
     title = str(answer.get("title") or found["title"]).strip()[:findings.TITLE_MOST]
     kind = str(answer.get("kind") or found["kind"] or "").strip()[:40]
     owner = findings.owner_of(answer.get("owner"), found["owner"])
-    due = findings.when_of(answer.get("due")) or found["due"]
+    due = found["due"] or findings.when_of(answer.get("due"))  # the finding's own date first
     priority = str(answer.get("priority") or "").strip().lower()
     if priority not in ledger.PRIORITIES:
         priority = "normal"
@@ -259,9 +298,25 @@ def open_from(store, pid: str, now: datetime, found: dict, answer: dict, done: A
     return lid
 
 
+def news_for(store, now: datetime, loop: dict, found: dict, done: Applied) -> None:
+    """GitHub's own mail about a pull request's loop: its evidence and "has news", nothing else. Stage 4 reads GitHub's
+    facts and decides (only those close it); no finding retitles it, closes it or changes its card."""
+    already = {e["ref"] for e in ledger.events(store, loop["id"]) if e["ref"]}
+    if found["ref"] not in already:
+        ledger.attach(store, loop["id"], now, source_of(found), found["ref"], evidence_of(found), refs=found["refs"])
+    else:
+        ledger.update(store, loop["id"], now, has_news=1)
+    done.changed.append(loop["id"])
+
+
 def add_to(store, now: datetime, loop: dict, found: dict, answer: dict, done: Applied) -> None:
-    """A finding that is the same as an open loop: its evidence (once per source item), its refs and card fields; the
-    model's new due, owner, title or priority; his move becomes a card; its reminder moved, or made when it has none."""
+    """A finding that is the same as an open loop: its evidence (once per source item), its refs and card fields; its
+    own due date (never one stage 2 makes up), the model's owner or priority; his move becomes a card; its open
+    reminder moved, or one made when none is open. The title stays: a finding never renames a loop. A pull request's
+    loop only gets news (news_for)."""
+    if loop["playbook"]:
+        news_for(store, now, loop, found, done)
+        return
     lid = loop["id"]
     already = {e["ref"] for e in ledger.events(store, lid) if e["ref"]}
     if found["ref"] and found["ref"] in already:
@@ -269,19 +324,15 @@ def add_to(store, now: datetime, loop: dict, found: dict, answer: dict, done: Ap
     else:
         ledger.attach(store, lid, now, source_of(found), found["ref"], evidence_of(found), refs=found["refs"])
     fields: dict = {}
-    due = findings.when_of(answer.get("due")) or found["due"]
+    due = found["due"]
     if due and due != loop["due_at"]:
         fields["due_at"] = due
     owner = findings.owner_of(answer.get("owner"), loop["owner"])
-    if loop["playbook"]:
-        owner = loop["owner"]  # a pull request stays Odie's to follow
     if owner != loop["owner"]:
         fields["owner"] = owner
-    if answer.get("title"):
-        fields["title"] = str(answer["title"]).strip()[:findings.TITLE_MOST]
     if found["why"]:
         fields["result"] = found["why"]
-    became_ready = owner == "you" and loop["state"] == "waiting" and not loop["playbook"]
+    became_ready = owner == "you" and loop["state"] == "waiting"
     if became_ready:
         fields["state"] = "ready"
         fields["shown_at"] = now.isoformat(timespec="seconds")
@@ -289,7 +340,7 @@ def add_to(store, now: datetime, loop: dict, found: dict, answer: dict, done: Ap
         ledger.update(store, lid, now, **fields)
     ledger.merge_card(store, lid, now, found["card"])
     if found["remind_at"] and not move_reminder(store, loop, found["remind_at"]):
-        make_reminder(store, loop["personality"], now, lid, fields.get("title") or loop["title"], found["remind_at"])
+        make_reminder(store, loop["personality"], now, lid, loop["title"], found["remind_at"])
         done.reminders += 1
     done.changed.append(lid)
     if found["push"] and became_ready:
@@ -309,48 +360,65 @@ def attach_quietly(store, now: datetime, loop: dict, found: dict, done: Applied)
 
 
 def close_from(store, now: datetime, loop: dict, found: dict, answer: dict, done: Applied) -> None:
-    """A finding that shows an open loop is finished: its evidence first, then the close citing it."""
+    """A finding that shows an open loop is finished: its evidence first, then the close citing it. A pull request's
+    loop is never closed by a finding: it only gets news (GitHub's facts close it, in stage 4)."""
+    if loop["playbook"]:
+        news_for(store, now, loop, found, done)
+        return
     add_to(store, now, loop, {**found, "remind_at": None, "push": False}, {}, Applied())
     why = str(answer.get("why") or found["done"] or evidence_of(found)).strip()
     ledger.close(store, loop["id"], now, "odie", why)
     done.closed.append(loop["id"])
 
 
-def mine(store, pid: str, value) -> dict | None:
-    """The loop a number names, when it is this owner's; None for another's, a missing one or no number."""
+def mine(store, pid: str, value, found: dict, now: datetime) -> dict | None:
+    """The loop a number in an answer names, when the finding may reach it: this owner's, open or still remembered,
+    and not a pull request's loop unless the finding is GitHub's own mail. Anything else -> None (as no answer)."""
     n = number(value)
     if n is None:
         return None
     loop = ledger.get(store, n)
-    if loop is None or loop["personality"] != pid:
+    if loop is None or loop["personality"] != pid or not may_touch(loop, found):
+        return None
+    if loop["state"] not in ledger.OPEN and not ledger.remembered(loop, now):
         return None
     return loop
 
 
-def verdict_for(store, pid: str, found: dict, answer: dict | None, hint: dict) -> tuple[str, dict | None, dict]:
+def closed_hint(hint: dict) -> int | None:
+    """The closed loop a hint names (his Done, or Odie's close), or None."""
+    return hint.get("finished") or hint.get("odie_closed")
+
+
+def verdict_for(store, pid: str, now: datetime, found: dict, answer: dict | None,
+                hint: dict) -> tuple[str, dict | None, dict]:
     """What code does with one finding, from the model's answer and the shortcut's hint, with the rails (this
     module's notes). Returns (what, the loop it is about or None, the answer to use):
-      "same"/"closes" an open loop of his -> ("add" / "close", that loop)
-      "same" or "closes" a closed loop -> ("quiet", that loop)
-      "new" while a finished loop holds its own ID, no "after" -> ("quiet", the finished loop)
-      "new" with "after": N (a finished loop) -> ("new", that finished loop)  (a new ask, said so in its Why)
-      "new" while an open loop holds its pull request -> ("add", that loop)
-      "nothing" -> ("skip", None), but never for a pull request or issue (stage 4 reads GitHub and decides; as no
-      answer);  "same" as his own task -> ("skip", None)
-      no answer, or a loop that isn't his -> by the hint: open -> add (close, when the finding says it's done),
-      finished -> quiet; else ("new", None)"""
+      "nothing" -> ("skip", None); for GitHub's mail about a PR an open loop holds -> ("add", that loop): news only
+      "same as his own task" -> ("skip", None)
+      "same"/"closes" an open loop it may reach -> ("add" / "close", that loop)
+      "same"/"closes" a closed loop still remembered -> ("quiet", that loop)
+      "new" while the hint names a closed loop -> ("new", that loop) only when "after" names that very loop, else
+          ("quiet", that loop): a sloppy "new" can't bring back what he finished
+      "new" (or an answer naming a loop it can't reach) while an open loop holds its pull request -> ("add", that
+          loop): one loop per pull request
+      no answer (or a loop it can't reach) -> by the hint: open -> add (close, when the finding says it's done);
+          closed -> quiet; several -> new; else ("new", None)"""
     answer = answer or {}
     verdict = answer.get("is", "")
-    names_a_pr = any(github.parse(r) is not None for r in found["refs"])
-    if verdict == "nothing" and names_a_pr:
-        verdict = ""  # a pull request is the playbook's to judge from GitHub's facts (stage 4), never dropped here
-        answer = {}
     if verdict == "nothing":
+        held = ledger.get(store, hint["open"]) if "open" in hint else None
+        if held is not None and held["playbook"] and found.get("from_github"):
+            return "add", held, {}
         return "skip", None, answer
     if verdict == "same" and number(answer.get("task")) is not None and not answer.get("loop"):
         return "skip", None, answer
+    pr_refs = [r for r in found["refs"] if github.parse(r) is not None]
+    same_pr = None
+    if found.get("from_github") and pr_refs:  # looked up now: an earlier finding of this check may have opened it
+        same_pr = ledger.find_by_refs(store, pid, pr_refs)
     if verdict in ("same", "closes"):
-        loop = mine(store, pid, answer.get("loop"))
+        loop = mine(store, pid, answer.get("loop"), found, now)
         if loop is not None and loop["state"] not in ledger.OPEN:
             return "quiet", loop, answer
         if loop is not None:
@@ -358,25 +426,30 @@ def verdict_for(store, pid: str, found: dict, answer: dict | None, hint: dict) -
                 return "close", loop, answer
             return "add", loop, answer
     if verdict == "new":
-        after = mine(store, pid, answer.get("after"))
+        hinted = closed_hint(hint)
+        if hinted is not None:
+            if number(answer.get("after")) == hinted:
+                return "new", ledger.get(store, hinted), answer
+            return "quiet", ledger.get(store, hinted), answer
+        after = mine(store, pid, answer.get("after"), found, now)
         if after is not None and after["state"] not in ledger.OPEN:
             return "new", after, answer
-        if "finished" in hint:
-            return "quiet", ledger.get(store, hint["finished"]), answer
-        same_pr = ledger.find_by_refs(store, pid, [r for r in found["refs"] if github.parse(r) is not None])
-        if same_pr is not None:  # looked up now: an earlier finding of this check may have opened it
+        if same_pr is not None:
             return "add", same_pr, answer
         return "new", None, answer
+    if same_pr is not None:  # one loop per pull request, whatever loop number the answer named
+        return "add", same_pr, {}
     if "open" in hint and found["done"]:
         return "close", ledger.get(store, hint["open"]), {}  # its own ID ties it, and the check saw it finished
     if "open" in hint:
         return "add", ledger.get(store, hint["open"]), {}
-    if "finished" in hint:
-        return "quiet", ledger.get(store, hint["finished"]), {}
+    if closed_hint(hint) is not None:
+        return "quiet", ledger.get(store, closed_hint(hint)), {}
     return "new", None, {}
 
 
-def apply(store, pid: str, now: datetime, found: list[dict], answers: dict[str, dict], shortcut: dict[str, dict]) -> Applied:
+def apply(store, pid: str, now: datetime, found: list[dict], answers: dict[str, dict],
+          shortcut: dict[str, dict]) -> Applied:
     """Writes stage 2's answers to the ledger (verdict_for decides each). A finding "same as F1" goes where F1 went."""
     done = Applied()
     for f in found:
@@ -384,13 +457,15 @@ def apply(store, pid: str, now: datetime, found: list[dict], answers: dict[str, 
         same_as = str(answer.get("finding") or shortcut.get(f["id"], {}).get("finding") or "")
         if answer.get("is") in ("same", None, "") and not answer.get("loop") and same_as in done.placed:
             target = ledger.get(store, done.placed[same_as])
-            if target["state"] in ledger.OPEN:
+            if target["state"] in ledger.OPEN and may_touch(target, f):
                 add_to(store, now, target, f, answer, done)
-            else:
+                done.placed[f["id"]] = target["id"]
+                continue
+            if may_touch(target, f):
                 attach_quietly(store, now, target, f, done)
-            done.placed[f["id"]] = target["id"]
-            continue
-        what, loop, used = verdict_for(store, pid, f, answer or None, shortcut.get(f["id"], {}))
+                done.placed[f["id"]] = target["id"]
+                continue
+        what, loop, used = verdict_for(store, pid, now, f, answer or None, shortcut.get(f["id"], {}))
         if what == "skip":
             continue
         if what == "add" and loop is not None:
@@ -432,7 +507,7 @@ async def consolidate(store, pid: str, now: datetime, found: list[dict], think, 
     found = renumber([*waiting, *found])
     if not found:
         return Applied()
-    shortcut = hints(store, pid, found)
+    shortcut = hints(store, pid, found, now)
     prompt = prompt_for(store, pid, now, found, shortcut, context)
     answers = None
     for attempt in range(2):  # asked once more when the answer can't be read

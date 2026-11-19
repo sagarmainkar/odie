@@ -1140,7 +1140,7 @@
     }
   },
   {
-    "description": "The user's Done on a card, said in chat (they handled it, or don't want it): Odie stops following it and\nremembers it's finished. why: in the user's words (\"not interested\", \"replied from my phone\").",
+    "description": "The user's Done on a card, said in chat (they handled it, or don't want it): Odie stops following it and\nremembers it's finished. why: in the user's words (\"not interested\", \"replied from my phone\"). Never a pull\nrequest's card (he taps Done on it), never from a background check or the terminal.",
     "name": "watch_close",
     "parameters_json_schema": {
       "properties": {

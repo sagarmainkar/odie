@@ -29,23 +29,39 @@ def refs_of(mail) -> list[str]:
     return out
 
 
+def from_github(mail) -> bool:
+    """Whether a mail is GitHub's own notification (its sender is GitHub's address): only such a mail may touch a pull
+    request's loop. "Asha <notifications@github.com>" -> True; "Mallory <m@evil.example>" saying "merged" -> False."""
+    return github.is_from_github(getattr(mail, "frm", "") or "")
+
+
+def may_join(loop: dict, mail) -> bool:
+    """Whether a mail may be added to this loop by its ID: a pull request's loop (a playbook) only takes GitHub's own
+    mail; any other loop takes any mail of its thread. A stranger's reply in a PR's thread -> False."""
+    if loop["playbook"]:
+        return from_github(mail)
+    return True
+
+
 def attach_known(store, pid: str, mails: list, now: datetime) -> dict[str, int]:
-    """Attaches each mail whose ID an open loop of this owner already holds, as evidence, and returns which loop each
-    went to: {mail id: loop id}. A 15th mail about example/app#49, loop 3 holding it -> {"m15": 3}, loop 3 has news;
-    a mail nobody holds -> not in the result (the model reads it as new); a mail about a loop the user closed with
-    Done -> kept on that loop quietly (no news, no card), and in the result."""
+    """Attaches each mail whose ID exactly one open loop of this owner holds (its thread, its pull request), as
+    evidence, and returns which loop each went to: {mail id: loop id}. A 15th mail about example/app#49, loop 3 holding
+    it -> {"m15": 3}, loop 3 has news; a mail nobody holds -> not in the result (the model reads it as new); GitHub's
+    mail about a pull request he closed with Done (and still remembered, ledger.remembered) -> kept on that loop quietly
+    (no news, no card). A closed loop is never matched by a thread alone, and a pull request's loop never by a
+    stranger's mail."""
     went: dict[str, int] = {}
     for mail in mails:
         refs = refs_of(mail)
         if not refs:
             continue
         loop = ledger.find_by_refs(store, pid, refs)
-        if loop is not None:
+        if loop is not None and may_join(loop, mail):
             ledger.attach(store, loop["id"], now, "mail", f"mail:{mail.id}", mail.subject[:200], refs=refs)
             went[mail.id] = loop["id"]
             continue
-        stopped = ledger.find_done_by_user(store, pid, refs)
-        if stopped is not None:  # the user said Done: kept as evidence, no news, no card
+        stopped = ledger.find_done_by_user(store, pid, refs, now)
+        if stopped is not None and may_join(stopped, mail):  # he said Done: kept as evidence, no news, no card
             ledger.attach(store, stopped["id"], now, "mail", f"mail:{mail.id}", mail.subject[:200], refs=refs,
                           news=False)
             went[mail.id] = stopped["id"]

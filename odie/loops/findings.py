@@ -47,20 +47,59 @@ def when_of(value) -> str | None:
     return parse_when(text, ZoneInfo(config.settings.timezone))
 
 
-def named_refs(values) -> list[str]:
-    """The refs a finding names that code can use: GitHub names that check out (written the canonical way), and
-    prefixed IDs (mail:, event:, thread:, note:, order:, invoice:). ["example/app#49", "app 49", "order:A-1"] ->
-    ["example/app#49", "order:A-1"]."""
+def same_words(title: str) -> str:
+    """A title as code compares it: lower case, letters and digits only. "Vote: Northwind — closes 21 Nov" and
+    "Vote: Northwind – closes 21 Nov" -> the same; "Pay rent" and "Pay the rent" -> not."""
+    return re.sub(r"[^a-z0-9]+", " ", (title or "").lower()).strip()
+
+
+REFS_MOST = 5  # refs a finding may carry: a mail names a thing, not a list of things
+
+
+def read_by_this_check(check) -> set[str]:
+    """The IDs this check itself read, which a finding may name as strong refs: its mails (new, searched, its own
+    thread's, what the user sent), their threads, and the events it read. Code knows these; the model can't add one."""
+    out = set()
+    for mail in check.sent:
+        out.add(f"mail:{mail.id}")
+        if mail.thread:
+            out.add(f"thread:{mail.thread}")
+    for e in [*check.events, *check.ahead]:
+        out.add(f"event:{e.id}")
+    return out
+
+
+def named_refs(values, check, mail_from_github: bool) -> list[str]:
+    """The refs a finding names that code keeps: a mail, a thread or an event only when this check read it; a GitHub
+    name only from GitHub's own notification mail; a note, order or invoice name as it is (never a strong ID).
+      ["mail:m1"] (read this check) -> kept;  ["mail:bill77"] (never read) -> dropped;
+      ["example/app#49"] from GitHub's mail -> kept, from a stranger's -> dropped;  ["order:A-1"] -> kept"""
     out = []
+    read = read_by_this_check(check)
     for value in values or []:
         text = str(value).strip()
         parsed = github.parse(text)
         if parsed is not None:
-            out.append(str(parsed))
+            if mail_from_github:
+                out.append(str(parsed))
             continue
-        if NAMED_REF.match(text):
+        if not NAMED_REF.match(text):
+            continue
+        kind = text.split(":", 1)[0]
+        if kind == "mail" and check.fetcher.read_mail(text[len("mail:"):]) is not None:
+            out.append(text)
+        elif kind in ("mail", "thread", "event"):
+            if text in read or (kind == "thread" and thread_read(check, text[len("thread:"):])):
+                out.append(text)
+        else:
             out.append(text)
     return out
+
+
+def thread_read(check, thread: str) -> bool:
+    """Whether a mail this check read is in this thread (its new mail, by the fetcher's own list)."""
+    mails = getattr(check, "mails", None) or []
+    return any(m.thread == thread for m in mails)
 
 
 def from_thread(ref: str, kind: str, title: str, stage: str, due: str, why: str) -> dict:
@@ -68,7 +107,7 @@ def from_thread(ref: str, kind: str, title: str, stage: str, due: str, why: str)
     an order, owner them, due 22 Nov, stage shipped; stage "done" with why "delivered 23 Oct" -> a finding that
     says it's done."""
     words, owner = THREAD_KINDS.get(kind, (kind, "you"))
-    item = {"ref": ref, "title": title, "kind": words, "owner": owner, "due": due, "stage": stage}
+    item = {"ref": ref, "title": title, "kind": words, "owner": owner, "due": due, "stage": stage, "from_thread": True}
     if (stage or "").strip().lower() in CLOSING:
         item["done"] = why or stage
     return item
@@ -113,56 +152,69 @@ def one(item: dict, check) -> dict | None:
     event = None
     if ref.startswith("event:"):
         event = next((e for e in [*check.events, *check.ahead] if f"event:{e.id}" == ref), None)
+        if event is None:
+            return None  # an event this check didn't read
     if event is not None:
         card["badges"] = rep.badges_of(event.sources or [event.source], check.fetcher.statuses)
         card["when"] = event.start
+        if not item.get("due"):
+            item = {**item, "due": event.start}  # the calendar's own time: an event is due when it starts
+    github_mail = mail is not None and shortcut.from_github(mail)
     if mail is not None:
         card.update(mail_fields(mail, check.fetcher.statuses))
-        refs += shortcut.refs_of(mail)
-    refs += named_refs(item.get("refs") if isinstance(item.get("refs"), list) else [item.get("refs")])
-    return {"ref": ref, "title": title, "kind": str(item.get("kind") or "").strip()[:40],
+        refs += shortcut.refs_of(mail)  # its thread, and the pull request GitHub's own mail names: code's
+    named = item.get("refs") if isinstance(item.get("refs"), list) else [item.get("refs")]
+    refs += named_refs(named, check, github_mail)
+    refs = list(dict.fromkeys(refs))[:REFS_MOST]
+    return {"ref": ref, "title": title, "from_github": github_mail, "from_thread": bool(item.get("from_thread")), "kind": str(item.get("kind") or "").strip()[:40],
             "why": str(item.get("why") or "").strip()[:rep.WHY_MAX], "owner": owner_of(item.get("owner")),
             "due": when_of(item.get("due")), "remind_at": when_of(item.get("remind_at")),
             "done": str(item.get("done") or "").strip()[:DONE_MOST], "stage": str(item.get("stage") or "").strip()[:40],
-            "push": bool(item.get("push")), "refs": list(dict.fromkeys(refs)), "card": card}
+            "push": bool(item.get("push")), "refs": refs, "card": card}
 
 
 def merged(first: dict, second: dict) -> dict:
-    """Two findings about the same mail as one: the later one's words win where it has them, refs and card fields
+    """Two findings about the same thing as one: the later one's words win where it has them, refs and card fields
     from both. A track_thread "order shipped, due 22 Nov" and a report item "Order: lamp" for the same mail -> one."""
     out = dict(first)
     for name in ("title", "kind", "why", "due", "remind_at", "done", "stage"):
         if second.get(name):
             out[name] = second[name]
     out["push"] = first["push"] or second["push"]
-    out["refs"] = list(dict.fromkeys([*first["refs"], *second["refs"]]))
+    out["refs"] = list(dict.fromkeys([*first["refs"], *second["refs"]]))[:REFS_MOST]
     out["card"] = {**first["card"], **second["card"]}
+    out["from_thread"] = first["from_thread"] and second["from_thread"]
     if second.get("owner") and second["owner"] != "you":
         out["owner"] = second["owner"]
     return out
 
 
+def one_thing(first: dict, second: dict) -> bool:
+    """Whether two findings about the same mail or event are one thing: the same title written the same way, or one of
+    them is track_thread's note on the other (a stage, a due date). A mail asking two things gives two findings, and
+    both stay. "School PTM Saturday" and "Pay school term fee" from one mail -> False; track_thread's "Order: desk
+    lamp (shipped)" and the report's "Order: lamp" for that mail -> True."""
+    if same_words(first["title"]) == same_words(second["title"]):
+        return True
+    return first["from_thread"] != second["from_thread"]
+
+
 def collect(check) -> list[dict]:
     """Every finding of this check, read and numbered F1, F2…: track_thread's first, then the report's; two about the
-    same mail (or event) are merged into one."""
+    same mail (or event) are merged only when they are one thing (one_thing)."""
     raw = [*check.threads_found]
     if check.report is not None:
         raw += check.report.get("findings", [])
-    by_ref: dict[str, dict] = {}
     out: list[dict] = []
     for item in raw:
         found = one(item, check)
         if found is None:
             continue
-        key = found["ref"]
-        if key and key in by_ref:
-            whole = merged(by_ref[key], found)
-            out[out.index(by_ref[key])] = whole
-            by_ref[key] = whole
+        twin = next((f for f in out if found["ref"] and f["ref"] == found["ref"] and one_thing(f, found)), None)
+        if twin is not None:
+            out[out.index(twin)] = merged(twin, found)
             continue
         out.append(found)
-        if key:
-            by_ref[key] = found
     for n, found in enumerate(out, start=1):
         found["id"] = f"F{n}"
     return out

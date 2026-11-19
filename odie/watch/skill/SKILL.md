@@ -29,9 +29,9 @@ thing, whatever source it came from), so write what you find, plainly, even when
 5. Follow what needs following with `track_thread`: a reply owed (kind reply, due when the sender wants an answer, else in
    2 days), a bill (kind bill), an order (kind order), a deadline (kind deadline). When a mail shows one is done (a
    delivery, a payment), `track_thread` it "done" with why.
-6. When a Watch for entry asks you to do something (a deck from a PDF, a heads-up), do it: `save_attachment` for files,
-   the documents skill for decks. A reminder is a finding with remind_at (when it must ring): Odie adds it, unless
-   the user already has it or finished it, so don't list it under done. You can make things inside Odie, never send,
+6. When a Watch for entry asks you to do something (keep a PDF, a heads-up), do it: `save_attachment` for files (decks
+   are made in chat). A reminder is a finding with remind_at (when it must ring): Odie adds it unless the user already
+   has it or finished it, so don't list it under done. You can make things inside Odie, never send,
    reply, delete, buy or change the user's accounts; if something needs that, make it a finding.
 7. Always finish with `report`, even when a tool was refused or failed (skip it and go on). Each finding:
    - ref (the mail or event it's from), a short title in the user's words, kind in your words, and why: one line,
@@ -65,10 +65,9 @@ events, so you never add a second one.
 - Example, a bill: "Your electricity bill of Rs 4,280 is due on 09-Nov-2026" -> `calendar_create_event` "Pay
   electricity bill — ₹4,280" on 9 Nov, 09:00 to 09:20; then `track_thread` it (kind bill, stage due, due 2026-11-08).
   A deadline or an appointment a mail names goes on the calendar the same way.
-- Example, a payment: "Payment of Rs 4,280 received, consumer 1702…" -> `track_thread` it (kind bill, "done", why
-  "paid: confirmation mail 21 Oct"): Odie closes the bill of the same biller and the same amount. If `bills_and_orders` lists a reminder for it,
-  `close_reminder` it, and
-  `calendar_update_event` its event's title to "✓ Paid · Pay electricity bill — ₹4,280". A different amount or
+- Example, a payment: "Payment of Rs 4,280 received, consumer 1702…" -> always `track_thread` it (kind bill, "done",
+  why "paid: confirmation mail 21 Oct"), even when `bills_and_orders` lists nothing: Odie closes the bill of the same
+  biller and the same amount. If it lists a reminder for it, `close_reminder` it, and `calendar_update_event` its event's title to "✓ Paid · Pay electricity bill — ₹4,280". A different amount or
   biller closes nothing: make it a finding if it looks wrong.
 - Example, an order: "Your order of Wireless Earbuds has shipped, arriving Friday" -> an all-day
   `calendar_create_event` "Order: Wireless Earbuds" on Friday and `track_thread` it (kind order, stage shipped). Later mail

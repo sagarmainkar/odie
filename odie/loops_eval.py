@@ -3,7 +3,8 @@ watch turn and the real stage 4, on a throwaway home, with a fake gh answering f
 it points every Odie folder at the throwaway home before anything loads Odie's settings.
 
     scripts/loops_eval.sh ollama/deepseek-v4.1-flash:1017-cloud
-    scripts/loops_eval.sh anthropic/claude-sonnet-5-5 fourteen-mails-one-pr    (one case by id)"""
+    scripts/loops_eval.sh anthropic/claude-sonnet-5-5 fourteen-mails-one-pr    (one case by id)
+    scripts/loops_eval.sh ollama/deepseek-v4.1-flash:1017-cloud --tag=phase3   (kept under its own file name)"""
 from __future__ import annotations
 
 import asyncio
@@ -35,7 +36,8 @@ async def run_all(provider: str, model: str, cases: list[dict], root: Path) -> l
     await runner.load_plugins()
 
     async def turn(prompt, tools, instruction, script=None):
-        await runner.background_turn(prompt, timeout=280, tools=tools, instruction=instruction, guard=watch_check.guard)
+        await runner.background_turn(prompt, timeout=280, tools=tools, instruction=instruction, guard=watch_check.guard,
+                                     keep=watch_check.stage1_keeps)
 
     async def think(prompt, instruction, script=None):  # the real model: a case's script is for the tests only
         return await runner.background_turn(prompt, timeout=120, instruction=instruction, bare=True)
@@ -57,6 +59,11 @@ def main(argv: list[str]) -> int:
     if not argv or "/" not in argv[0]:
         print("usage: scripts/loops_eval.sh <provider>/<model> [case ids…]")
         return 2
+    tag = ""
+    for arg in list(argv):
+        if arg.startswith("--tag="):  # a run kept under its own name: <date>-<provider>-<model>-<tag>.json
+            tag = arg[len("--tag="):]
+            argv = [a for a in argv if a != arg]
     provider, model = argv[0].split("/", 1)
     keys_from = owner_env_file()
     root = Path(tempfile.mkdtemp(prefix="odie-loops-eval-"))
@@ -73,7 +80,10 @@ def main(argv: list[str]) -> int:
     date = datetime.now().strftime("%Y-%m-%d")
     run = {"date": date, "odie_commit": commit_of_repo(), "provider": provider, "model": model,
            "totals": loops_eval.totals(results), "results": results}
-    out = loops_eval.EVAL_DIR / f"{file_stem(date, provider, model)}.json"
+    stem = file_stem(date, provider, model)
+    if tag:
+        stem += f"-{tag}"
+    out = loops_eval.EVAL_DIR / f"{stem}.json"
     out.write_text(json.dumps(run, ensure_ascii=False, indent=2) + "\n")
     t = run["totals"]
     print(f"right {t['right']}/{t['of']} -> {out}")

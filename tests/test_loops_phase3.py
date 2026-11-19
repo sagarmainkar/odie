@@ -47,7 +47,7 @@ def test_an_older_database_gains_the_card_column(tmp_path, isolated_settings):
     assert ledger.get(s, 1)["card"] == {}
 
 
-def test_finished_lists_what_he_closed_with_done_in_the_last_month(store):
+def test_finished_lists_what_was_closed_and_is_still_remembered(store):
     mine = ledger.open_loop(store, "", NOW - timedelta(days=3), "Vote: Northwind ballot", "reminder", owner="you",
                             refs=["event:uid1"])
     ledger.done(store, mine, NOW - timedelta(days=1))
@@ -55,8 +55,9 @@ def test_finished_lists_what_he_closed_with_done_in_the_last_month(store):
     ledger.close(store, odies, NOW, "odie", "delivered 19 Nov")
     old = ledger.open_loop(store, "", NOW - timedelta(days=60), "Old", "reminder", owner="you")
     ledger.done(store, old, NOW - timedelta(days=40))
-    assert [lp["id"] for lp in ledger.finished(store, "", NOW)] == [mine]
+    assert [lp["id"] for lp in ledger.finished(store, "", NOW)] == [odies, mine]  # Odie's closes are shown too
     assert "finished by you" in ledger.finished_line(ledger.get(store, mine))
+    assert "closed by Odie" in ledger.finished_line(ledger.get(store, odies))
 
 
 def test_a_loops_reminder_is_the_task_it_points_at(store):

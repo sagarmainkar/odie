@@ -173,10 +173,12 @@ def test_done_after_the_upgrade_sticks_for_the_digest_and_the_event(store):
               "refs": ["note:Inbox/Digest 2026-11-19.md"], "card": {}}
     event = {**digest, "ref": "event:uid1", "refs": ["event:uid1"]}
 
-    async def no_answers(prompt, instruction):
-        return '{"answers": []}'
-    got = asyncio.run(consolidate.consolidate(store, "", NOW, [digest, event], no_answers, {}))
-    assert got.opened == [] and got.reminders == 0 and len(got.quiet) == 2
+    vote = holding(store, "event:uid1")[0]
+
+    async def matches_the_digest(prompt, instruction):  # a note is a container: matching it is the model's
+        return '{"answers": [{"f": "F1", "is": "same", "loop": %d}]}' % vote["id"]
+    got = asyncio.run(consolidate.consolidate(store, "", NOW, [digest, event], matches_the_digest, {}))
+    assert got.opened == [] and got.reminders == 0 and got.quiet == [vote["id"], vote["id"]]
 
 
 def test_it_runs_once_and_twice_changes_nothing(store):

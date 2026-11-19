@@ -171,7 +171,7 @@ async def test_new_mail_about_a_pull_request_he_closed_with_done_makes_no_new_lo
 async def test_a_merged_loop_that_gets_new_mail_is_the_models_call(store):
     lid = ledger.open_loop(store, "", NOW, "app #50", "pull request", refs=["example/app#50"])
     ledger.close(store, lid, NOW, "odie", "merged 18 Nov 09:00")
-    assert ledger.find_done_by_user(store, "", ["example/app#50"]) is None  # not quietly absorbed
+    assert ledger.find_done_by_user(store, "", ["example/app#50"], NOW) is None  # not quietly absorbed
 
 
 # ── M6: gh's timeout waits for the process it stopped ──

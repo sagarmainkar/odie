@@ -45,13 +45,17 @@ def test_watch_item_shows_the_loop_its_draft_and_why(store):
     assert "isn't on Pulse" in tools_for(store)["watch_item"](ref="mail:zz")
 
 
-def test_watch_close_is_his_done_and_is_remembered(store):
+def test_watch_close_is_his_done_remembered_and_shown_in_done_today(store):
+    from types import SimpleNamespace
     lid = a_loop(store)
-    said = tools_for(store)["watch_close"](ref=f"loop:{lid}", why="not interested")
+    in_the_app = SimpleNamespace(session=SimpleNamespace(id="chat-1"), state={})
+    said = tools_for(store)["watch_close"](ref=f"loop:{lid}", why="not interested", tool_context=in_the_app)
     assert "Closed" in said
     loop = ledger.get(store, lid)
-    assert loop["state"] == "closed" and loop["closed_by"] == "you" and loop["closed_why"] == "not interested"
-    assert ledger.closed_since(store, "", NOW.replace(hour=0)) == []  # his, so not in Done today
+    assert loop["state"] == "closed" and loop["closed_by"] == ledger.CLOSED_IN_CHAT
+    assert loop["closed_why"] == "not interested"
+    assert [lp["id"] for lp in ledger.closed_since(store, "", NOW.replace(hour=0))] == [lid]  # Done today, Reopen
+    assert ledger.find_done_by_user(store, "", ["mail:m1"], NOW)["id"] == lid  # remembered as his
 
 
 def test_watch_close_needs_a_reason_and_a_known_card(store):

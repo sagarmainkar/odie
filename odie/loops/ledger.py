@@ -13,7 +13,10 @@ OPEN = ("new", "working", "ready", "waiting")
 OWNERS = ("odie", "you", "them")
 PRIORITIES = ("high", "normal", "low")
 CLOSED_BY_USER = "you"
-FINISHED_DAYS = 30  # loops he closed with Done stay in stage 2's view this long ("same as the one he finished")
+CLOSED_IN_CHAT = "you in chat"  # his Done said in chat (odie.loops.chat_done): his, and shown in Done today
+BY_HIM = (CLOSED_BY_USER, CLOSED_IN_CHAT)
+REMEMBER_DAYS = 30  # a closed loop is remembered this long after its close, or until its due time, whichever is later
+FINISHED_DAYS = REMEMBER_DAYS  # (the name stage 2's prompt uses)
 REOPEN_DAYS = 7  # a closed loop may be reopened this long after its close
 # The reminders a loop may close with it: the ones Odie made (for a loop, a watch thread of old, a reminder with a source
 # ref the watch added). His own (no source kind) are never touched.
@@ -97,33 +100,86 @@ def open_loops(store, pid: str) -> list[dict]:
     return [_row(r) for r in rows]
 
 
-def find_by_refs(store, pid: str, refs: list[str]) -> dict | None:
-    """The owner's open loop that already holds one of these refs (the same pull request, the same mail thread), or
-    None: the same-ID shortcut (design §3). ["example/app#49"] with loop 3 holding it -> loop 3; ["thread:t9"] held by
-    nobody -> None; a closed loop holding it -> None (a new thing about a closed one is a new loop, or a reopen)."""
-    wanted = {r for r in refs if r}
-    for loop in open_loops(store, pid):
-        if wanted & set(loop["refs"]):
-            return loop
-    return None
+def is_item_ref(ref: str) -> bool:
+    """Whether a ref names one item exactly, so a closed loop may be matched by it: a mail, an event or a pull request
+    or issue. "mail:m1", "event:uid1", "example/app#49" -> True; "thread:t1" (a whole conversation: next month's bill
+    lands in it too), "note:Inbox/digest.md" (one digest names many things), "task:12" -> False."""
+    from odie.loops import github
+    if ref.startswith(("mail:", "event:")):
+        return True
+    return github.parse(ref) is not None
 
 
-def find_done_by_user(store, pid: str, refs: list[str]) -> dict | None:
-    """The owner's loop the user closed with Done that holds one of these refs, or None. Later mail about it is kept
-    as evidence, quietly: Done means "stop following", so it opens no new loop and no card. A loop Odie closed by
-    evidence (merged) is not one: news about it is the model's to judge.
-      ["example/app#49"], #49 closed with Done -> that loop;  #50 closed as merged -> None;  #49 still open -> None"""
-    wanted = {r for r in refs if r}
-    if not wanted:
-        return None
+def is_open_ref(ref: str) -> bool:
+    """Whether a ref may match an OPEN loop: an item ref, or its mail thread. "thread:t1" -> True; "note:x" -> False
+    (a container: never a strong ID); "task:12" -> False."""
+    return is_item_ref(ref) or ref.startswith("thread:")
+
+
+def holding(store, pid: str, ref: str, states: tuple) -> list[dict]:
+    """The owner's loops in these states that hold this ref, newest first."""
     mine, values = _whose(pid)
-    rows = store.query(f"select * from loops where state in ('closed','dropped') and closed_by = ? and {mine} "
-                       "order by id desc", (CLOSED_BY_USER, *values))
-    for row in rows:
-        loop = _row(row)
-        if wanted & set(loop["refs"]):
-            return loop
+    marks = ",".join("?" for _ in states)
+    rows = store.query(f"select * from loops where state in ({marks}) and refs_json like ? and {mine} order by id desc",
+                       (*states, f'%"{ref}"%', *values))
+    return [lp for lp in (_row(r) for r in rows) if ref in lp["refs"]]
+
+
+def find_by_refs(store, pid: str, refs: list[str]) -> dict | None:
+    """The owner's ONE open loop that holds one of these refs (the same pull request, the same mail thread), or None:
+    the same-ID shortcut (design §3). A ref two open loops hold matches neither: the model decides. A note or task ref
+    never matches.
+      ["example/app#49"] with loop 3 holding it -> loop 3;  ["thread:t9"] held by nobody -> None;
+      ["mail:school1"] held by loops 4 and 5 -> None;  a closed loop holding it -> None"""
+    for ref in refs:
+        if not ref or not is_open_ref(ref):
+            continue
+        found = holding(store, pid, ref, OPEN)
+        if len(found) == 1:
+            return found[0]
     return None
+
+
+def remembered(loop: dict, now: datetime) -> bool:
+    """Whether a closed loop is still remembered: for REMEMBER_DAYS after its close, or until its due time has passed,
+    whichever is later. Ticked yesterday -> True; ticked 40 days ago for a concert next month -> True; ticked 40 days
+    ago, nothing ahead -> False; a birthday's loop a year on -> False (its event id shows again)."""
+    closed_at = loop.get("closed_at")
+    if not closed_at:
+        return False
+    until = datetime.fromisoformat(closed_at) + timedelta(days=REMEMBER_DAYS)
+    due = loop.get("due_at")
+    if due:
+        due_at = datetime.fromisoformat(due)
+        if due_at.tzinfo is None:
+            due_at = due_at.replace(tzinfo=now.tzinfo)
+        until = max(until, due_at)
+    return now <= until
+
+
+def closed_holders(store, pid: str, refs: list[str], now: datetime, by_him: bool) -> list[dict]:
+    """The owner's remembered closed loops holding one of these item refs (never a thread or a note), newest first:
+    his (Done) when by_him, else Odie's (evidence, the ladder's drop)."""
+    out: dict[int, dict] = {}
+    for ref in refs:
+        if not ref or not is_item_ref(ref):
+            continue
+        for lp in holding(store, pid, ref, ("closed", "dropped")):
+            is_his = lp["closed_by"] in BY_HIM
+            if is_his == by_him and remembered(lp, now):
+                out[lp["id"]] = lp
+    return sorted(out.values(), key=lambda lp: lp["id"], reverse=True)
+
+
+def find_done_by_user(store, pid: str, refs: list[str], now: datetime) -> dict | None:
+    """The owner's loop he closed (Done, on a card or in chat) that holds one of these item refs and is still
+    remembered (remembered), or None. Later news about it is kept as evidence, quietly. The newest when several hold it.
+      ["example/app#49"], #49 closed with Done yesterday -> that loop;  #50 closed as merged -> None;
+      ["thread:t1"] -> None (a thread is never enough for a closed loop);  closed 40 days ago, no due ahead -> None"""
+    found = closed_holders(store, pid, refs, now, by_him=True)
+    if not found:
+        return None
+    return found[0]
 
 
 def attach(store, loop_id: int, now: datetime, source: str, ref: str, fact: str, refs: list[str] | None = None,
@@ -292,8 +348,8 @@ def laters(store, loop_id: int) -> int:
 def split(store, loop_id: int, event_ids: list[int], now: datetime) -> int:
     """A wrong merge undone (design §3): the chosen evidence moves to a new loop of its own, with the refs it brought,
     and the old loop stops holding those refs (so the shortcut no longer sends them there). Both keep a line saying so.
-    The new loop takes the old one's kind and owner, its title from the first moved line; his (owner you) is a card at
-    once. No evidence chosen, or none of this loop's -> ValueError."""
+    The new loop takes the old one's kind and owner, its title from the first moved line and nothing of the old card
+    (draft, amount, suggestion: they were the other thing's); his (owner you) is a card at once. No evidence chosen, or none of this loop's -> ValueError."""
     loop = get(store, loop_id)
     if loop is None:
         raise ValueError("no such loop")
@@ -307,7 +363,7 @@ def split(store, loop_id: int, event_ids: list[int], now: datetime) -> int:
         state = "ready"
     title = moving[0]["fact"][:120]
     new_id = open_loop(store, loop["personality"], now, title, loop["kind"], owner=loop["owner"], refs=moved_refs,
-                       priority=loop["priority"], state=state, card=loop["card"], result=moving[0]["fact"][:300])
+                       priority=loop["priority"], state=state, result=moving[0]["fact"][:300])  # its own card: no copy
     for e in moving:
         store.execute("update loop_events set loop_id=? where id=?", (new_id, e["id"]))
     kept = [r for r in loop["refs"] if r not in set(moved_refs)]
@@ -318,20 +374,22 @@ def split(store, loop_id: int, event_ids: list[int], now: datetime) -> int:
 
 
 def finished(store, pid: str, now: datetime) -> list[dict]:
-    """The owner's loops he closed with Done in the last FINISHED_DAYS, newest first: stage 2 reads them so a later
-    mention of the same thing, from any source, is "the one he finished" and attaches quietly."""
+    """The owner's closed loops still remembered (remembered), newest first: his Done ones and the ones Odie closed.
+    Stage 2 reads them, so a later mention of the same thing, from any source, attaches quietly."""
     mine, values = _whose(pid)
-    since = now - timedelta(days=FINISHED_DAYS)
-    rows = store.query(f"select * from loops where state in ('closed','dropped') and closed_by = ? and {mine} "
-                       "order by closed_at desc", (CLOSED_BY_USER, *values))
-    return [_row(r) for r in rows if datetime.fromisoformat(r["closed_at"]) >= since]
+    rows = store.query(f"select * from loops where state in ('closed','dropped') and {mine} order by closed_at desc",
+                       values)
+    return [lp for lp in (_row(r) for r in rows) if remembered(lp, now)]
 
 
 def finished_line(loop: dict) -> str:
-    """One loop he finished, as stage 2 reads it: "#2 Vote: Northwind ballot · reminder · finished by you 19 Nov 09:10
-    · refs event:uid1"."""
+    """One closed loop as stage 2 reads it: "#2 Vote: Northwind ballot · reminder · finished by you 19 Nov 09:10 · refs
+    event:uid1"; one Odie closed: "… · closed by Odie 18 Nov 21:04 · …"."""
     when = datetime.fromisoformat(loop["closed_at"])
-    bits = [f"#{loop['id']} {loop['title']}", loop["kind"] or "?", f"finished by you {when.day} {when.strftime('%b %H:%M')}"]
+    who = "finished by you"
+    if loop["closed_by"] not in BY_HIM:
+        who = "closed by Odie"
+    bits = [f"#{loop['id']} {loop['title']}", loop["kind"] or "?", f"{who} {when.day} {when.strftime('%b %H:%M')}"]
     if loop["refs"]:
         bits.append("refs " + ", ".join(loop["refs"][:4]))
     return " · ".join(bits)
@@ -342,7 +400,7 @@ def closed_since(store, pid: str, since: datetime) -> list[dict]:
     The ones the user closed with Done are left out (he knows)."""
     mine, values = _whose(pid)
     rows = store.query(f"select * from loops where state in ('closed','dropped') and closed_by != ? and {mine} "
-                       "order by closed_at desc", (CLOSED_BY_USER, *values))
+                       "order by closed_at desc", (CLOSED_BY_USER, *values))  # his tap on a card he knows; a chat close shows
     return [_row(r) for r in rows if datetime.fromisoformat(r["closed_at"]) >= since]
 
 

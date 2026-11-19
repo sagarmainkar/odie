@@ -1106,8 +1106,11 @@ class OdieRunner:
         await lock.acquire()
         turn_token = private_token = read_token = compact_token = model_token = None
         was_private = False
+        from odie.agent import turns
         try:
             session_id = await self._ensure_session(session_id)
+            if via == "terminal":  # a program typed it: tools that act as him refuse (odie.loops.chat_done)
+                turns.mark(session_id, turns.TERMINAL)
             if thinking is None:
                 from odie import thinking as chat_thinking
                 thinking = chat_thinking.settle(self.store, session_id)
@@ -1238,6 +1241,8 @@ class OdieRunner:
                         turn_words.MODEL.reset(model_token)
                 except ValueError:  # iterated from another context: it ends with that context
                     pass
+            if via == "terminal":
+                turns.unmark(session_id)
             lock.release()
         self._stop.discard(session_id)
         if stopped:
@@ -1477,7 +1482,7 @@ class OdieRunner:
     async def background_turn(self, prompt: str, timeout: float = 300, tools: list | None = None,
                               instruction: str | None = None, guard=None, bare: bool = False,
                               free: frozenset[str] = frozenset(), skills: tuple[str, ...] | list[str] = (),
-                              owner: str = "") -> str:
+                              owner: str = "", keep=None) -> str:
         """One agent turn nobody watches (a tracker check, a watch check): the model, Odie's current tools (plus
         `tools`), a fresh in-memory session, and a guard that refuses anything needing the user's tap. Returns the reply.
         bare: no tools at all (a signed-in tracker's check reads text only). free: tool names that run without the
@@ -1485,7 +1490,8 @@ class OdieRunner:
         turn starts, so their apps' tools are there at once (the watch's calendar app: it never calls load_skill).
         owner: a personality the turn runs for (its own mail watch): its brain thinks (odie.brains; BrainGone when it
         can't), and the turn's session is its own while it runs, so only its apps are listed and may run. "" is
-        everyday Odie, as always."""
+        everyday Odie, as always. keep(name): when given, only Odie's tools it keeps are handed to the model (the watch's
+        allow-list, odie.watch.check.stage1_keeps); the guard stays the second lock."""
         from google.adk.agents import LlmAgent
         from google.adk.sessions import InMemorySessionService
 
@@ -1499,6 +1505,8 @@ class OdieRunner:
         now = datetime.now(self.tz).strftime("%A %d %B %Y, %H:%M")
         from odie.agent.free import free_tools
         chat_only = [t for t in self.agent.tools if not getattr(t, "_odie_signin", False)]  # signing in is the user's, in chat
+        if keep is not None:  # the watch's turn reads strangers' mail: only the tools it may call are handed over
+            chat_only = [t for t in chat_only if keep(getattr(t, "name", ""))]
         whole_instruction = (f"{instruction}\n\n" if instruction else "") + BACKGROUND_INSTRUCTION
 
         def as_written(_context) -> str:
@@ -1515,6 +1523,8 @@ class OdieRunner:
         from odie.skills import loaded_skills_state
         state = loaded_skills_state(agent.name, skills)
         sess = await sessions.create_session(app_name="odie_tracker", user_id=s.user_id, state=state)
+        from odie.agent import turns
+        turns.mark(sess.id, turns.BACKGROUND)  # nobody is there to tap: tools that act as him refuse (odie.loops.chat_done)
         if owner:
             personalities.running_for(sess.id, owner)
         from odie.agent.usage import CACHE
@@ -1530,6 +1540,7 @@ class OdieRunner:
             await asyncio.wait_for(go(), timeout)
         finally:
             personalities.done_running(sess.id)
+            turns.unmark(sess.id)
             import odie.browser as ob
             if ob._shared is not None:  # browser_open's tab is the session id: close its cookie-free context
                 try:

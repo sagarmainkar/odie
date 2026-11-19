@@ -102,11 +102,18 @@ def make_local_tools(store: Store, tz: str, source_done=None) -> list[FunctionTo
             fields.pop("delivered_at", None)
         if not fields and not snooze_until:
             return "Nothing to update."
+        from odie.loops import chat_done, ledger
+        loop = None
+        if status == "done":
+            loop = ledger.pointing_at(store, int(task_id))
+        if loop is not None and loop["state"] in ledger.OPEN:  # a loop's reminder: ticking it is the loop's Done
+            verdict, words = chat_done.decide(store, loop, tool_context)
+            if verdict == chat_done.REFUSE:
+                return words
         if fields:
             store.update_task(int(task_id), **fields)
-        if status == "done":
-            from odie.loops import ledger
-            ledger.reminder_done(store, int(task_id), datetime.now(zone))  # a loop's reminder: the loop is Done too
+        if loop is not None and loop["state"] in ledger.OPEN:
+            chat_done.close(store, loop, datetime.now(zone), notes or "ticked its reminder")
         msg = f"Task #{task_id} '{row['title']}': " + ", ".join(f"{k}={v}" for k, v in fields.items() if k != "delivered_at")
         if snooze_until:
             msg += f" snoozed until {parse_when(snooze_until, zone)}"
@@ -131,4 +138,18 @@ def make_local_tools(store: Store, tz: str, source_done=None) -> list[FunctionTo
         """Current date and time in the user's timezone."""
         return datetime.now(zone).strftime(f"%A %-d %B %Y, %H:%M ({tz})")
 
-    return [FunctionTool(f) for f in (task_add, task_update, task_list, now)]
+    def update_needs_tap(task_id: int = 0, status: str | None = None, tool_context=None, **_) -> bool:
+        """Does this task_update need his tap? Only when it ticks off a reminder an open loop points at, in a chat that
+        has read outside text (odie.loops.chat_done.decide: TAP). "done" on his own "Pay rent" -> no; on the vote
+        loop's reminder in a clean chat -> no (his words); the same after the chat read a mail -> the approval card."""
+        from odie.loops import chat_done, ledger
+        if status != "done":
+            return False
+        loop = ledger.pointing_at(store, int(task_id))
+        if loop is None or loop["state"] not in ledger.OPEN:
+            return False
+        verdict, _words = chat_done.decide(store, loop, tool_context)
+        return verdict == chat_done.TAP
+
+    return [FunctionTool(task_add), FunctionTool(task_update, require_confirmation=update_needs_tap),
+            FunctionTool(task_list), FunctionTool(now)]

@@ -244,6 +244,7 @@ async def one_check(store, case: dict, chk: dict, at: datetime, pid: str, turn, 
     writes: list[dict] = []
     tools = watch_tools(check) + calendar_fakes(writes)
     instruction = watch_check._instruction(case.get("watch_for", ""))
+    watch_check.STAGE1.reset(store, pid, case.get("watch_for", ""))  # what this check may reach, as live
     error = ""
     try:
         await turn(PROMPT, tools, instruction, check.script)

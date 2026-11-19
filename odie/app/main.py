@@ -225,7 +225,8 @@ def background_for(store: Store, runner):
 
         async def turn(prompt, tools, instruction):
             return await runner.background_turn(prompt, timeout=280, tools=tools, instruction=instruction, guard=watch.guard,
-                                                free=watch.MAY_WRITE, skills=watch.calendar_skills(store))
+                                                free=watch.MAY_WRITE, skills=watch.calendar_skills(store),
+                                                keep=watch.stage1_keeps)
 
         def push(title, body):
             watch_pushed(store, runner, title, body)
@@ -298,7 +299,8 @@ async def personality_watch(store: Store, runner, now) -> str | None:
 
     async def turn(prompt, tools, instruction):
         return await runner.background_turn(prompt, timeout=280, tools=tools, instruction=instruction, guard=watch.guard,
-                                            free=watch.MAY_WRITE, skills=watch.calendar_skills(store, pid), owner=pid)
+                                            free=watch.MAY_WRITE, skills=watch.calendar_skills(store, pid), owner=pid,
+                                            keep=watch.stage1_keeps)
 
     def push(title, body):
         watch_pushed(store, runner, title, body, owner=pid)

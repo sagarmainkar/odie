@@ -24,7 +24,7 @@ def finding(ref, title, **kw):
     out = {"ref": ref, "title": title, "kind": kw.pop("kind", "reminder"), "why": kw.pop("why", ""),
            "owner": kw.pop("owner", "you"), "due": kw.pop("due", None), "remind_at": kw.pop("remind_at", None),
            "done": kw.pop("done", ""), "stage": "", "push": kw.pop("push", False),
-           "refs": kw.pop("refs", [ref]), "card": kw.pop("card", {})}
+           "refs": kw.pop("refs", [ref]), "card": kw.pop("card", {}), "from_github": kw.pop("from_github", False)}
     assert not kw
     return out
 
@@ -132,15 +132,16 @@ async def test_closes_cites_its_evidence_and_closes_the_reminder(store):
 async def test_one_loop_per_pull_request_whatever_the_model_says(store):
     lid = ledger.open_loop(store, "", NOW, "app #49", "pull request", refs=["example/app#49"], playbook="github-pr")
     mail = finding("mail:g2", "app #49: new commits", kind="pull request", owner="odie",
-                   refs=["mail:g2", "example/app#49"])
+                   refs=["mail:g2", "example/app#49"], from_github=True)
     got = await consolidate.consolidate(store, "", NOW, [mail], scripted([{"f": "F1", "is": "new"}]), {})
     assert got.opened == [] and got.changed == [lid]
 
 
 async def test_a_pull_request_finding_gets_the_playbook_and_two_mails_about_it_are_one(store):
     one = finding("mail:g1", "app #50 review requested", kind="pull request", owner="you", push=True,
-                  refs=["mail:g1", "example/app#50"])
-    two = finding("mail:g2", "app #50 new commits", kind="pull request", owner="odie", refs=["mail:g2", "example/app#50"])
+                  refs=["mail:g1", "example/app#50"], from_github=True)
+    two = finding("mail:g2", "app #50 new commits", kind="pull request", owner="odie", refs=["mail:g2", "example/app#50"],
+                  from_github=True)
     got = await consolidate.consolidate(store, "", NOW, [one, two], scripted([]), {})
     assert len(got.opened) == 1
     loop = ledger.get(store, got.opened[0])
@@ -208,8 +209,11 @@ async def test_a_loop_number_of_another_personality_is_not_used(store):
     assert len(ledger.events(store, hers)) == 0
 
 
-async def test_a_pull_request_is_never_nothing_here(store):
-    mail = finding("mail:g1", "app #71 checks passed", kind="pull request", owner="odie",
-                   refs=["mail:g1", "example/app#71"])
-    got = await consolidate.consolidate(store, "", NOW, [mail], scripted([{"f": "F1", "is": "nothing"}]), {})
-    assert len(got.opened) == 1 and ledger.get(store, got.opened[0])["playbook"] == "github-pr"
+async def test_one_loop_per_pr_even_when_answers_name_loops_that_dont_exist(store):
+    mails = [finding(f"mail:g{n}", "app #50", kind="pull request", owner="odie", from_github=True,
+                     refs=[f"mail:g{n}", "example/app#50"]) for n in range(1, 4)]
+    for n, f in enumerate(mails, start=1):
+        f["id"] = f"F{n}"
+    answers = [{"f": "F1", "is": "new"}, {"f": "F2", "is": "same", "loop": 999}, {"f": "F3", "is": "same"}]
+    got = await consolidate.consolidate(store, "", NOW, mails, scripted(answers), {})
+    assert store.one("select count(*) n from loops")["n"] == 1 and len(got.opened) == 1

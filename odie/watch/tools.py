@@ -189,17 +189,11 @@ def watch_tools(check: Check) -> list[FunctionTool]:
         events = [e.brief() for e in ahead if bills.is_bill_or_order(e.title)]
         return {"result": json.dumps({"reminders": reminders, "events": events}, ensure_ascii=False)}
 
-    def knows_the_thread(ref: str) -> bool:
-        """Whether Odie already follows this ref, so a finding about it needs no mail from this check: "mail:o1" held
-        by an open loop -> True; "mail:unknown9", never seen and never followed -> False."""
-        from odie.loops import ledger
-        return ledger.find_by_refs(check.fetcher.store, check.fetcher.owner, [ref]) is not None
-
     def track_thread(ref: str, kind: str, title: str, stage: str, due: str = "", why: str = "") -> dict:
         """Follow something until it's done: an order, a bill, a reply the user owes or a deadline, from its mail.
-        ref: "mail:<id>". kind: order, bill, reply or deadline. stage: where it is now ("placed", "shipped", "owed",
-        "due"), or "done" / "dropped" when the mail shows it finished, with why (which mail showed it). due: when it's
-        due or expected, as 2026-10-24. Odie matches it to what it already follows after the check."""
+        ref: "mail:<id>" of a mail this check read. kind: order, bill, reply or deadline. stage: where it is now
+        ("placed", "shipped", "owed", "due"), or "done" / "dropped" when the mail shows it finished, with why (which
+        mail showed it). due: when it's due or expected, as 2026-10-24. Odie matches it to what it already follows."""
         from odie.loops import findings
         if kind not in findings.THREAD_KINDS:
             return {"result": f"Unknown kind {kind!r}: a thread is an order, a bill, a reply or a deadline."}
@@ -207,12 +201,9 @@ def watch_tools(check: Check) -> list[FunctionTool]:
         if closing and not (why or "").strip():
             return {"result": "Say why it's closed: which mail showed it, or what the user did."}
         mail = check.fetcher.read_mail(ref[len("mail:"):]) if ref.startswith("mail:") else None
-        if mail is None and not knows_the_thread(ref):
+        if mail is None:  # only a mail this check itself read: never one it merely names
             return {"result": f"This check doesn't know {ref}: find the mail with search_mail (or read it from "
-                              "new_mail) first, so the thread can be read again later."}
-        if mail is None and ref.startswith("mail:"):  # a mail Odie follows, named by its ref: known to this check now
-            check.fetcher.remember(Mail(id=ref[len("mail:"):], frm="", subject=title, at="", snippet="",
-                                        attachments=[], source=""))
+                              "new_mail) first."}
         check.threads_found.append(findings.from_thread(ref, kind, title, stage, due, why))
         return {"result": f"Noted: {title.strip()} ({stage.strip() or kind})."}
 
@@ -220,7 +211,22 @@ def watch_tools(check: Check) -> list[FunctionTool]:
         """Close an open bill or order reminder because a mail shows it's done: a payment confirmation for the same
         biller and amount, or a delivery. why: which mail showed it, e.g. "paid: MSEDCL confirmation mail 21 Oct". The
         user sees why on Today and can reopen it."""
-        return {"result": bills.close(check.fetcher.store, task_id, why, check.fetcher.owner)}
+        said = bills.close(check.fetcher.store, task_id, why, check.fetcher.owner)
+        if said.startswith("Closed"):
+            closed_its_loop(task_id, why)
+        return {"result": said}
+
+    def closed_its_loop(task_id: int, why: str) -> None:
+        """A paid bill's reminder closed: when a loop points at it (not a pull request's), the loop closes too, by
+        Odie with the reason, so its card doesn't stay behind."""
+        from odie.loops import ledger
+        store = check.fetcher.store
+        loop = ledger.pointing_at(store, int(task_id))
+        if loop is None or loop["state"] not in ledger.OPEN or loop["playbook"]:
+            return
+        if loop["personality"] != check.fetcher.owner:
+            return
+        ledger.close(store, loop["id"], check.fetcher.now, "odie", why)
 
     def report(findings: list[dict] | None = None, line: str = "", done: list[dict] | None = None,
                needs_you: list[dict] | None = None) -> dict:

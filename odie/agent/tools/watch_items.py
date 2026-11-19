@@ -85,16 +85,31 @@ def make_watch_item_tools(store: Store) -> list[FunctionTool]:
 
     def watch_close(ref: str, why: str, tool_context: ToolContext | None = None) -> str:
         """The user's Done on a card, said in chat (they handled it, or don't want it): Odie stops following it and
-        remembers it's finished. why: in the user's words ("not interested", "replied from my phone")."""
+        remembers it's finished. why: in the user's words ("not interested", "replied from my phone"). Never a pull
+        request's card (he taps Done on it), never from a background check or the terminal."""
+        from odie.loops import chat_done
         reason = (why or "").strip()
         if not reason:
             return "Say why it's closed, in the user's words."
         loop = find(ref, personality_of(store, tool_context))
         if loop is None or loop["state"] not in ledger.OPEN:
             return NOT_ON_TODAY
+        verdict, words = chat_done.decide(store, loop, tool_context)
+        if verdict == chat_done.REFUSE:
+            return words
         now = datetime.now(ZoneInfo(config.settings.timezone))
-        ledger.close(store, loop["id"], now, ledger.CLOSED_BY_USER, reason)
-        ledger.update(store, loop["id"], now, tapped="done")
+        chat_done.close(store, loop, now, reason)
         return f"Closed loop #{loop['id']}: {reason}."
 
-    return [FunctionTool(watch_item), FunctionTool(watch_close)]
+    def close_needs_tap(ref: str = "", why: str = "", tool_context=None, **_) -> bool:
+        """Does closing this card in chat need his tap? Yes when the chat has read outside text (mail, web pages, a
+        job's report: odie.loops.chat_done.decide says TAP). "close the venue card" in a clean chat -> no card;
+        the same after the chat read a mail -> the approval card. A refused close needs no tap (it doesn't run)."""
+        from odie.loops import chat_done
+        loop = find(ref, personality_of(store, tool_context))
+        if loop is None or loop["state"] not in ledger.OPEN:
+            return False
+        verdict, _words = chat_done.decide(store, loop, tool_context)
+        return verdict == chat_done.TAP
+
+    return [FunctionTool(watch_item), FunctionTool(watch_close, require_confirmation=close_needs_tap)]
