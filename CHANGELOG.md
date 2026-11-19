@@ -1,5 +1,22 @@
 # Changelog
 
+## v0.3.0 (2026-11-19)
+
+Odie starts to work on its own: it keeps a list of open things, follows them up, and does long jobs in the background.
+
+- **Pulse** replaces Today as the main screen: what needs you, what Odie is on, what was done today, and what is coming up. Every card has the same three buttons: the main action, Done, and Later. Every card Odie makes has a "Why?" that shows the evidence behind it.
+- **Loops.** Everything the mail and calendar check finds is one loop: one card per thing, however many mails, events or notes mention it. Done stays Done: the same mail or event never comes back after it. A card you closed can be reopened for 7 days from "Done today", and Split in a card's "…" menu turns part of one into a card of its own. Mail you send closes the things it answers.
+- **Follow-ups.** A push the day before something is due, one nudge after three quiet days when it is someone else's move, and a "waiting on you" line on cards you leave. Odie's own pushes share a limit of three a day.
+- **Workers.** A long job (code to write and run, a test, a check with many steps) runs in the background in its own folder, inside a macOS sandbox that denies everything outside it. Up to three at once, 45 minutes each. Ask in chat to see, stop or re-run them; the report lands in the chat.
+- **Your pull requests.** Odie follows pull requests on your own repositories from GitHub's mail: it tests one in the sandbox and offers Merge on a card, pinned to the commit it tested. Others' pull requests get a short brief. Settings has "signed commits only" for the stricter case.
+- **Personalities.** A different voice for Odie, with its own conversations, its own Pulse and, when you turn on "Proactive intelligence" for it, its own mail and calendar check. Tools, apps and skills stay the same.
+- **The mail check is walled off.** It now runs in two steps. The first reads mail and calendar with a fixed list of tools and nothing private: no memory, no other chats, no research, decks or videos, and calendar entries with no guests. The second has no tools and only matches what was found to your loops. A stranger's mail cannot close or rename a pull request's card.
+- **Asking in chat to mark a card done** now shows a one-tap card to confirm. Nothing is approved from the terminal, as before.
+- More shell commands ask first: every `git push`, GitHub writes and deletes, every `odie` command, and cloud publish tools. A cancelled command stops its whole process group.
+- The app picks up a new version by itself and says "New version" when one is waiting.
+- **Upgrading** moves your reminders and cards into the new list once, at the first start. It is all-or-nothing and safe to repeat. To see what it would do first: `python -m odie.loops.migrate --dry-run --db <a copy of your database>`. Before going back to an older version, run it with `--before-rollback`.
+- Odie for Mac keeps working unchanged; its next update adds Reopen and Split.
+
 ## v0.2.46 (2026-11-15)
 
 - `odie threads` lists the most recently active threads first, pinned or not (★ still marks a pin), so `odie threads -n 10` gives the ten newest. The app keeps pins on top.
