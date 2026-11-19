@@ -106,10 +106,17 @@ export function NeedsYou({ items, footer, closed, notes = [], loopsDone = [], jo
               <span className="flex-1 min-w-0">
                 <span className="block text-body leading-[21px] font-semibold break-words">{n.title}</span>
                 {n.why && <span className="text-small leading-[18px] text-muted mt-0.5 line-clamp-2">{n.why}</span>}
-                {n.brief && <span className="text-small leading-[18px] text-ink-2 mt-1 line-clamp-3">{n.brief}</span>}
+                {n.brief && !n.lines?.length && <span className="text-small leading-[18px] text-ink-2 mt-1 line-clamp-3">{n.brief}</span>}
                 {n.badge && <span className={`chip ${badgeTone(n.badge) === "warn" ? "chip-warn" : "chip-soft"} mt-1.5 inline-flex`}>{n.badge}</span>}
               </span>
             </button>
+            {!!n.lines?.length && (
+              <ol className="min-[430px]:ml-12 flex flex-col gap-1 rounded-tile bg-well px-3 py-2" aria-label="Proposed lines">
+                {n.lines.map((line, i) => (
+                  <li key={i} className="flex gap-2 text-small leading-[18px] text-ink-2"><span className="text-dim tabular-nums w-3 shrink-0">{i + 1}</span><span className="break-words min-w-0">{line}</span></li>
+                ))}
+              </ol>
+            )}
             {n.uses && <div className="min-[430px]:ml-12 text-small leading-[18px] text-muted">{n.uses}</div>}
             {!!n.may_read?.length && (
               <div className="min-[430px]:ml-12 text-small leading-[18px] text-muted break-all">
