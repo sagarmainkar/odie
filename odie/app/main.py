@@ -270,7 +270,8 @@ def run_ladder(store: Store, runner, now) -> list:
 
 
 async def run_loops(store: Store, runner, now) -> list:
-    """Stage 4 for the due loops (odie.loops.clock): each thinks with its owner's brain, with no tools at all."""
+    """Stage 4 for the due loops (odie.loops.clock): each thinks with its owner's brain, with no tools at all. A promise
+    Odie made in chat runs one turn on its owner's brain with only the tools that read (odie.loops.promise_run)."""
     from odie.loops import clock
     if runner is None or not hasattr(runner, "background_turn"):
         return []
@@ -284,7 +285,28 @@ async def run_loops(store: Store, runner, now) -> list:
         def push(title, body):
             watch_pushed(store, runner, title, body, owner=pid)
         return push
-    return await clock.run(store, now, think_for, push_for)
+
+    def act_for(pid: str):
+        async def act(prompt: str, instruction: str, keep, guard) -> str:
+            return await runner.background_turn(prompt, timeout=280, instruction=instruction, owner=pid, keep=keep,
+                                                guard=guard)
+        return act
+
+    async def tell(session_id: str, text: str) -> None:
+        await promise_follow_up(store, runner, session_id, text)
+    return await clock.run(store, now, think_for, push_for, act_for=act_for, tell=tell)
+
+
+async def promise_follow_up(store: Store, runner, session_id: str, text: str) -> None:
+    """A promise Odie kept (odie.loops.promise_run): its follow-up in the chat the promise was made in. The model reads
+    it fenced, since it may hold what the turn read (mail, a page); the app shows it as written. A thread erased since
+    (its personality deleted) -> today's everyday chat."""
+    from odie import personalities
+    from odie.agent.callbacks import wrap_untrusted
+    sid = session_id or None
+    if sid is not None and personalities.is_erased(store, sid):
+        sid = None
+    await runner.post_message(wrap_untrusted(text), session_id=sid, kind="reply", shown=text)
 
 
 async def personality_watch(store: Store, runner, now) -> str | None:

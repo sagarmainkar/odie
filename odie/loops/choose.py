@@ -76,15 +76,18 @@ def parse_choice(text: str) -> dict | None:
 
 
 def prompt_for(loop: dict, evidence: list[dict], facts: dict, tested: dict | None = None, older: dict | None = None,
-               diff: str = "") -> str:
+               diff: str = "", now_text: str = "") -> str:
     """What the model reads: the loop in one line, its recent evidence and the fresh facts, each fenced (the title
     and the evidence carry mail subjects, the facts GitHub titles: other people's words). With a test of the head
-    commit: its result and output's tail, and the diff, fenced too. With a test of an older commit: a line saying so."""
+    commit: its result and output's tail, and the diff, fenced too. With a test of an older commit: a line saying so.
+    now_text: his Now list (odie.loops.now), his own words, so the model can judge what is worth his attention."""
     said = "\n".join(f"- {e['at'][:16]} {e['source']}: {e['fact']}" for e in evidence[-EVIDENCE_LINES:])
     shown = {k: v for k, v in facts.items() if k != "paths"}
     shown["files_changed"] = (facts.get("paths") or [])[:40]
     text = (f"Loop:\n{wrap_untrusted(ledger.line(loop, evidence))}\n\nEvidence so far:\n{wrap_untrusted(said or '(none)')}\n\n"
             f"Facts from GitHub just now:\n{wrap_untrusted(json.dumps(shown, ensure_ascii=False))}\n\n")
+    if now_text:
+        text += f"What matters to the user now (his Now list):\n{now_text}\n\n"
     if tested is not None:
         result = {k: tested.get(k) for k in ("command", "exit", "passed", "failed", "ok", "error")}
         text += (f"Odie tested the head commit {tested['sha'][:7]} (code ran it; these are facts):\n"
@@ -152,7 +155,9 @@ async def choose(store, loop: dict, now: datetime, think, push=None) -> str:
     if not budget.spend(store, now):
         return "over budget"
     try:
-        prompt = prompt_for(loop, ledger.events(store, loop["id"]), facts, tested, older, diff)
+        from odie.loops import now as now_list
+        prompt = prompt_for(loop, ledger.events(store, loop["id"]), facts, tested, older, diff,
+                            now_list.text(store, loop["personality"]))
         answer = await think(prompt, book.text)
     except Exception as e:  # noqa: BLE001 (a failed call is a muddle, never a crash of the clock)
         return muddle(store, loop, now, f"The model didn't answer: {type(e).__name__}", link)

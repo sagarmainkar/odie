@@ -941,6 +941,28 @@ class OdieRunner:
         self._review_task = asyncio.create_task(run_review(memory, pending, index_text, on_change=self._memory_changed,
                                                            store=self.store, brain=brain))
 
+    def _read_for_promises(self, session_id: str, text: str, reply: str, via: str | None, private: bool,
+                           since: str) -> None:
+        """After a chat turn: Odie's own promises and his commitments (odie.loops.chat_read), read in the background so
+        the reply never waits. Only when the turn may hold one (chat_read.should_read, chat_read.worth_reading); his
+        words only when he typed or dictated them (a tap's never)."""
+        from odie import personalities
+        from odie.blocks.answers import without_form_answers
+        from odie.loops import chat_read
+        pid = personalities.of_session(self.store, session_id)
+        if not chat_read.should_read(self.store, pid, via, private):
+            return
+        typed = ""
+        if via is None:
+            typed = without_form_answers(text)
+        if not chat_read.worth_reading(typed, reply):
+            return
+        made = chat_read.made_this_turn(self.store, pid, since)
+
+        async def think(prompt: str, instruction: str) -> str:
+            return await self.background_turn(prompt, timeout=120, instruction=instruction, bare=True, owner=pid)
+        self._spawn(chat_read.read(self.store, session_id, datetime.now(self.tz), typed, reply, think, made))
+
     def _memory_changed(self) -> None:
         """The memory file changed (update_memory, the review): when it's in the vault, the notes index re-reads it.
         The system prompt keeps the memory titles it started the chat with: rebuilding it mid-chat would change the
@@ -1261,6 +1283,7 @@ class OdieRunner:
             await self.post_message(unsaved_note, session_id=session_id)
         if not was_private:  # a turn that read a signed-in page never feeds the memory review
             self._note_turn(session_id, text, "".join(final))
+        self._read_for_promises(session_id, text, "".join(final), via, was_private, turn_started)
         yield {"type": "done", "text": "".join(final), "session_id": session_id}  # the thread, also when a card ended it
 
     def request_stop(self, session_id: str) -> None:

@@ -1,11 +1,12 @@
 """Pulse's "Needs you" (23 Oct 2026; a view of the ledger since 19 Nov 2026, proactive design phase 3): one list of
 cards. First the loops that need the user (odie.loops.cards: everything the watch found, one card per real thing),
-then jobs that need him, then his own open reminders, dues and to-dos, soonest due first (a reminder Odie made for a
+then the "Track this?" offers from chat (odie.loops.offers), then jobs that need him, then his own open reminders, dues and to-dos, soonest due first (a reminder Odie made for a
 loop is that loop's, never a card of its own). Every card has the same three buttons (18 Nov 2026): its one move
 ("main"), Done ("other": off the list and no longer followed, whether it was done or won't be) and Later ("later":
 hidden until 09:00 the next morning, then back). What a button does is decided here, the app only carries it out:
   "chat": send the value as the user's chat request ("Show the draft for loop #3");
-  "dismiss": Sunday's "Still care?" card's "Drop them" (POST /api/watch/done with its ref);
+  "dismiss": Sunday's "Still care?" card's "Drop them", a "Track this?" offer's No (POST /api/watch/done with its ref);
+  "track": a "Track this?" offer's Track (POST /api/offers/<id>/track: a loop of his, with its reminder);
   "loop_done": a loop's Done (POST /api/loops/<id>/done);
   "done_task" / "snooze_task": tick a task off, or move it to tomorrow 09:00;
   "later": put the card off until 09:00 the next morning (POST /api/needs_you/later with the card's ref).
@@ -34,7 +35,9 @@ def cards(store, now: datetime, owner: str = ODIE) -> list[dict]:
     open tasks. Everyday Odie's Pulse (owner ""), or a personality's: its own loops and tasks, never the everyday ones
     (they are on Odie's)."""
     from odie.loops import cards as loop_cards
+    from odie.loops import offers
     out = loop_cards.cards(store, owner, now)  # one card per ready loop, first
+    out += offers.cards(store, owner, now)  # "Track this?": his own words from chat, tracked only on his tap
     from odie.workers import cards as job_cards
     out += job_cards.cards(store, owner, now)  # a job that failed, got stuck or needed his OK
     a_loops = loops_reminders(store, owner)

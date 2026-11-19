@@ -2532,6 +2532,23 @@ async def loop_merge(loop_id: int, request: Request) -> dict[str, Any]:
     return {"ok": True, "closed": why}
 
 
+@router.post("/offers/{offer_id}/track")
+async def offer_track(offer_id: int, request: Request) -> dict[str, Any]:
+    """A "Track this?" card's Track: his tap makes the loop (his, with its due time and a reminder at that time,
+    odie.loops.offers.track). Only the picked one's own waiting offer (else 404); the terminal's key can't reach this
+    route (odie.devices.terminal_may), and no model has a tool for it."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from odie.loops import offers
+    store = request.app.state.store
+    loop_id = offers.track(store, _personality(request), offer_id, datetime.now(ZoneInfo(config.settings.timezone)))
+    if loop_id is None:
+        raise HTTPException(404, "That card isn't there any more.")
+    store.audit("user", "offer_track", result_summary=f"offer {offer_id} -> loop #{loop_id}")
+    return {"ok": True, "loop": loop_id}
+
+
 class RecipeIn(BaseModel):
     repo: str
 
@@ -2704,18 +2721,23 @@ async def job_clear(job_id: str, request: Request) -> dict[str, Any]:
 
 @router.post("/watch/done")
 async def watch_done(body: WatchDoneIn, request: Request) -> dict[str, Any]:
-    """A card's "dismiss", on the picked one's Pulse: Sunday's "Still care?" card drops the loops in it; a loop's ref
-    ("loop:3"), or the mail or event an open loop holds (an older app's card), is that loop's Done (remembered)."""
+    """A card's "dismiss", on the picked one's Pulse: Sunday's "Still care?" card drops the loops in it; a "Track
+    this?" offer's No forgets it ("offer:3"); a loop's ref ("loop:3"), or the mail or event an open loop holds (an older
+    app's card), is that loop's Done (remembered)."""
     from datetime import datetime
     from zoneinfo import ZoneInfo
 
     from odie.loops import cards as loop_cards
-    from odie.loops import ledger
+    from odie.loops import ledger, offers
     store = request.app.state.store
     pid = _personality(request)
     now = datetime.now(ZoneInfo(config.settings.timezone))
     if body.ref == loop_cards.BATCH:
         return {"ok": True, "dropped": loop_cards.drop_batch(store, pid, now)}
+    offer_id = offers.number_of(body.ref)
+    if offer_id is not None:  # a "Track this?" card's No: nothing is tracked
+        offers.decline(store, pid, offer_id)
+        return {"ok": True}
     loop = None
     if body.ref.startswith("loop:") and body.ref[len("loop:"):].isdigit():
         loop = ledger.get(store, int(body.ref[len("loop:"):]))

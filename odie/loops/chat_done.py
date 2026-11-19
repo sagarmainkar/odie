@@ -17,10 +17,12 @@ def decide(store, loop: dict, tool_context) -> tuple[str, str]:
     Any such change from chat needs his tap, every time: a chat's context always carries titles that came from mail.
       a pull request's loop (a playbook)            -> REFUSE: GitHub's facts close it, or his tap on its card
       a turn from the terminal, or a background run -> REFUSE: only he may, in the app
-      any chat in the app                           -> TAP: the approval card, his tap"""
+      any chat in the app                           -> TAP: the approval card, his tap
+      Odie's promise ("never mind, don't check the build tonight") -> TAP, as any chat"""
     from odie.agent import turns
     from odie.agent.context import session_id_of
-    if loop["playbook"]:
+    from odie.loops import promise_run
+    if loop["playbook"] and loop["playbook"] != promise_run.PLAYBOOK:
         return REFUSE, "Not in chat: a pull request closes from GitHub's facts, or tap Done on its card."
     session_id = session_id_of(tool_context)
     if not session_id or turns.kind_of(session_id) in (turns.TERMINAL, turns.BACKGROUND):

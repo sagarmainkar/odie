@@ -338,19 +338,14 @@ def _instruction(watch: str) -> str:
     return f"{body}\n\n## Watch for\n{watch or '(nothing yet)'}"
 
 
-NOW_TOPIC = "Now"
-
-
-def now_list(memory) -> str:
-    """The user's Now list (≤7 lines of what matters this month, written on his tap; phase 4 builds its proposals),
-    for stage 2's priorities; "" when there is none."""
-    try:
-        topic = memory.load().topic(NOW_TOPIC)
-    except Exception:  # noqa: BLE001 (no memory file yet)
-        return ""
-    if topic is None or not topic.entries:
-        return ""
-    return "\n".join(f"- {e.title}: {e.body.strip()}" for e in topic.entries[:7])
+def context_for(store, owner: str, memory, memory_index: str) -> dict:
+    """What stage 2 reads besides the findings: his Watch for (from the shared memory), his Now list (the owner's own,
+    kept in the store: odie.loops.now) and what Odie remembers of him."""
+    from odie.loops import now as now_list
+    watch = ""
+    if memory is not None:
+        watch = watch_for(memory)
+    return {"watch": watch, "now": now_list.text(store, owner), "memory": memory_index}
 
 
 def nudge_text(check) -> str:
@@ -435,12 +430,8 @@ async def run_check(store, now: datetime, turn, push, memory=None, memory_index:
     def say_failing() -> None:
         for app in failing:  # Pulse's Needs you says it too, until the app works again
             ping(pushes.title_for(store, owner, f"{app} stopped working"), "Fix it in Settings → Connected apps.")
-    watch = ""
-    now_text = ""
-    if memory is not None:
-        watch = watch_for(memory)
-        now_text = now_list(memory)
-    context = {"watch": watch, "now": now_text, "memory": memory_index}
+    context = context_for(store, owner, memory, memory_index)
+    watch = context["watch"]
     waiting, _tries = consolidate.take_pending(store, owner)
     if not has_news(check, catching_up) and not watches_a_page(watch):
         if waiting and think is not None:  # a stage 2 that failed last time: its findings, alone
