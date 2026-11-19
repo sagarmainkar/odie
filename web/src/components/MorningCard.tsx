@@ -26,7 +26,8 @@ function Part({ step, className = "", children }: { step: number; className?: st
   return <div className={`rise ${className}`} style={{ animationDelay: `${step * 60}ms` }}>{children}</div>;
 }
 
-/** Odie's morning hello, B1 ("Odie talks first"): who and when, the greeting, Odie's paragraphs, then the glance
+/** Odie's morning hello, B1 ("Odie talks first"): who and when, the greeting, Odie's paragraphs and the two lines
+ * from the ledger (what waits on him, what is due today: written by code), then the glance
  * (weather, tiles, the nudge, mail, the last few days) and the chips. An empty part isn't drawn. Not a chat message:
  * it is never sent to the model; a chip's tap sends its words as the user's message. */
 export function MorningCard({ card, onChip }: { card: Card; onChip: (text: string) => void }) {
@@ -49,6 +50,15 @@ export function MorningCard({ card, onChip }: { card: Card; onChip: (text: strin
       {card.say.length > 0 && (
         <Part step={2} className="flex flex-col gap-2 mb-1">
           {card.say.map((words, i) => <p key={i} className="text-body leading-[1.55] text-ink-2">{words}</p>)}
+        </Part>
+      )}
+      {!!card.ledger?.length && (
+        <Part step={2} className="mb-1">
+          <div className="flex flex-col gap-1" aria-label="From your open loops">
+            {card.ledger.map((line, i) => (
+              <p key={i} className="text-ui leading-[1.45] text-ink-2 font-medium break-words"><span className="text-muted" aria-hidden="true">· </span>{line}</p>
+            ))}
+          </div>
         </Part>
       )}
       {card.weather && <Part step={3}><WeatherStrip w={card.weather} /></Part>}

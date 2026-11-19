@@ -1,0 +1,14 @@
+{
+  "id": "two-people-two-replies",
+  "about": "Replies owed to two different people about different things are not one thing.",
+  "loops": [
+    {"key": "asha", "title": "Reply to Asha about the budget", "kind": "reply owed", "owner": "you", "days_ago": 1,
+     "evidence": [{"source": "mail", "fact": "Asha asks for the budget numbers"}]},
+    {"key": "dev", "title": "Reply to Dev about the budget", "kind": "reply owed", "owner": "you", "days_ago": 1,
+     "evidence": [{"source": "mail", "fact": "Dev asks whether his team's travel fits the budget"}]}
+  ],
+  "tomorrow": [],
+  "now_list": [],
+  "script": {"digest": "Asha and Dev both wait for budget answers."},
+  "expect": {"not_merged": [["asha", "dev"]], "untouched": ["asha", "dev"]}
+}

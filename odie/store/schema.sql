@@ -118,6 +118,19 @@ create table if not exists loop_events (
 );
 create index if not exists loop_events_loop on loop_events(loop_id);
 
+-- his taps on loop cards (proactive design §8, phase 5): one row per tap, kept apart from the evidence. Learning reads
+-- them by the loop's kind (odie.loops.learn); the day's taps are context for stages 2 and 4. personality NULL = Odie's.
+create table if not exists loop_taps (
+  id integer primary key autoincrement,
+  loop_id integer not null,
+  personality text,
+  kind text not null default '',
+  tap text not null,
+  at text not null
+);
+create index if not exists loop_taps_loop on loop_taps(loop_id);
+create index if not exists loop_taps_at on loop_taps(at);
+
 -- Workers (odie.workers, Workers design 18 Nov 2026): one row per background job, and one per tool call it made.
 -- kind: task (a Worker the user started from chat) or pr_test (code runs a pull request's tests for a loop).
 -- personality NULL = everyday Odie's. needed_json: what the Worker was refused (would need a tap); allowed_json: what

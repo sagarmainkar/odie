@@ -8,9 +8,13 @@ hidden until 09:00 the next morning, then back). What a button does is decided h
   "dismiss": Sunday's "Still care?" card's "Drop them", a "Track this?" offer's No (POST /api/watch/done with its ref);
   "track": a "Track this?" offer's Track (POST /api/offers/<id>/track: a loop of his, with its reminder);
   "now_accept" / "now_edit": Odie's proposed Now list taken as it is (POST /api/now/<id>/accept), or opened to change;
+  "quiet_accept": a Quiet rule the evening review proposed, written (POST /api/quiet/<id>/accept);
+  "learn_undo": "Fewer cards for X" undone: that kind is cards again (POST /api/learned/<id>/undo);
   "loop_done": a loop's Done (POST /api/loops/<id>/done);
   "done_task" / "snooze_task": tick a task off, or move it to tomorrow 09:00;
   "later": put the card off until 09:00 the next morning (POST /api/needs_you/later with the card's ref).
+A loop's card also has a small menu ("more"), which the Mac app doesn't read yet: "split", "less_like_this" (his Quiet
+rule: POST /api/loops/<id>/less) and "forget" (the loop and its evidence deleted: POST /api/loops/<id>/forget).
 Every card also says where it belongs and how it should be shown (25 Oct 2026, for the Mac app's buckets):
   "pile": one of report.PILES ("bills", "orders", "alerts", ...);
   "since": when the card started needing the user, as ISO with an offset ("2026-10-21T09:00:00+05:30"), or "";
@@ -36,11 +40,13 @@ def cards(store, now: datetime, owner: str = ODIE) -> list[dict]:
     open tasks. Everyday Odie's Pulse (owner ""), or a personality's: its own loops and tasks, never the everyday ones
     (they are on Odie's)."""
     from odie.loops import cards as loop_cards
+    from odie.loops import learn, offers, quiet
     from odie.loops import now as now_list
-    from odie.loops import offers
     out = loop_cards.cards(store, owner, now)  # one card per ready loop, first
     out += offers.cards(store, owner, now)  # "Track this?": his own words from chat, tracked only on his tap
     out += now_list.cards(store, owner)  # "Update your Now?": Odie's weekly proposal, changed only on his tap
+    out += quiet.proposal_cards(store, owner)  # "Quiet these?": the evening review's proposal, a rule only on his tap
+    out += learn.notice_cards(store, owner)  # "Fewer cards for X": said once, with Undo
     from odie.workers import cards as job_cards
     out += job_cards.cards(store, owner, now)  # a job that failed, got stuck or needed his OK
     a_loops = loops_reminders(store, owner)

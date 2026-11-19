@@ -1,0 +1,15 @@
+{
+  "id": "stale-order",
+  "about": "An order Odie has followed for six weeks with no news since it shipped: stale. The fresh reply is not.",
+  "loops": [
+    {"key": "lamp", "title": "Order: desk lamp", "kind": "order", "owner": "them", "state": "waiting", "days_ago": 42,
+     "evidence": [{"source": "mail", "fact": "Your desk lamp has shipped", "days_ago": 41}]},
+    {"key": "priya", "title": "Reply to Priya about Saturday", "kind": "reply owed", "owner": "you", "days_ago": 0,
+     "evidence": [{"source": "mail", "fact": "Priya asks if Saturday lunch still works", "days_ago": 0}]}
+  ],
+  "tomorrow": [],
+  "now_list": [],
+  "script": {"stale": [{"loop": "lamp", "why": "shipped six weeks ago, no news since"}],
+             "digest": "Priya waits for an answer about Saturday."},
+  "expect": {"stale": ["lamp"], "untouched": ["priya"]}
+}

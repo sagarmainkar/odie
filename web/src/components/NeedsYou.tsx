@@ -1,6 +1,6 @@
 import { AnimatePresence, motion } from "framer-motion";
 import { useRef, useState } from "react";
-import { badgeTone, busyWord, buttonsOf, knowsAction, splitReady, tileColour, type Need, type NeedAction, type WatchNote } from "../needs";
+import { badgeTone, busyWord, buttonsOf, knowsAction, menuItems, splitReady, tileColour, type Need, type NeedAction, type WatchNote } from "../needs";
 import { mediaUrl } from "../media";
 import { Orb } from "./Orb";
 import { Icon, Tile } from "./Tile";
@@ -16,18 +16,21 @@ const ask = (q: string) => {
 
 /** A Pulse's "Needs you": one card per thing to act on (a loop of Odie's ledger: whatever the watch found, one card per
  * real thing), Odie's jobs, and the user's own reminders. Each card has its move, Done and (mostly) Later. A loop's card
- * also has "Why?" (its evidence, each line with its time), shown in place, and a small "⋯" menu with Split: when two
- * things were wrongly made one, he picks the lines that belong to the other and they become a card of their own. A
+ * also has "Why?" (its evidence, each line with its time), shown in place, and a small "⋯" menu: Split (when two
+ * things were wrongly made one, he picks the lines that belong to the other and they become a card of their own),
+ * Less like this (his Quiet rule) and Forget this (asked first: the loop and its evidence are deleted). A
  * tested pull request's card has "Show failures" when tests fail. What was done folds into one "done today" line: the
  * watch's notes (with any files), what it closed and Odie's loops closed (with Reopen), and jobs that finished.
  * open: start unfolded (tests). */
-export function NeedsYou({ items, footer, closed, notes = [], loopsDone = [], jobsDone = [], onAct, onReopen, onReopenLoop, onSplit, open = false, empty }: {
+export function NeedsYou({ items, footer, closed, notes = [], loopsDone = [], jobsDone = [], onAct, onReopen, onReopenLoop, onSplit, onMenu, open = false, empty }: {
   items: Need[] | null; footer: string; closed: WatchClosedItem[]; notes?: WatchNote[]; loopsDone?: LoopDone[]; jobsDone?: JobDone[];
   onAct: (need: Need, act: NeedAction) => Promise<void> | void; onReopen: (id: number) => void; onReopenLoop?: (id: number) => void;
-  onSplit?: (loopId: number, eventIds: number[]) => Promise<void> | void; open?: boolean; empty?: string;
+  onSplit?: (loopId: number, eventIds: number[]) => Promise<void> | void;
+  onMenu?: (need: Need, act: NeedAction) => Promise<void> | void;  // Less like this, Forget this
+  open?: boolean; empty?: string;
 }) {
   const [showClosed, setShowClosed] = useState(open);
-  const [unfolded, setUnfolded] = useState<Record<string, "why" | "output" | "menu" | "split" | undefined>>({});
+  const [unfolded, setUnfolded] = useState<Record<string, "why" | "output" | "menu" | "split" | "forget" | undefined>>({});
   const [picked, setPicked] = useState<Record<string, number[]>>({});  // ref -> the Why? lines picked for Split
   const [wholeStep, setWholeStep] = useState<Record<string, boolean>>({});  // "<ref>:<i>" -> the step's command shown whole
   const [needsNewer, setNeedsNewer] = useState<Record<string, boolean>>({});  // ref -> a tapped button this app doesn't know
@@ -35,7 +38,7 @@ export function NeedsYou({ items, footer, closed, notes = [], loopsDone = [], jo
   const running = useRef(new Set<string>());  // the same, at once: a double tap's second click comes before a redraw
   useListChanged((items ?? []).map((n) => n.ref).join(" "));
   useListChanged(`${closed.map((c) => c.id).join(" ")} | ${loopsDone.map((l) => l.id).join(" ")}`);  // Reopen rows move up too
-  const toggle = (ref: string, what: "why" | "output" | "menu" | "split") => setUnfolded((u) => ({ ...u, [ref]: u[ref] === what ? undefined : what }));
+  const toggle = (ref: string, what: "why" | "output" | "menu" | "split" | "forget") => setUnfolded((u) => ({ ...u, [ref]: u[ref] === what ? undefined : what }));
   const pick = (ref: string, id: number) => setPicked((m) => {
     const now = m[ref] ?? [];
     return { ...m, [ref]: now.includes(id) ? now.filter((x) => x !== id) : [...now, id] };
@@ -55,6 +58,30 @@ export function NeedsYou({ items, footer, closed, notes = [], loopsDone = [], jo
       running.current.delete(n.ref);
       setBusy((m) => {
         const rest = { ...m };
+        delete rest[n.ref];
+        return rest;
+      });
+    }
+  };
+  // The card's small menu: Split opens its chooser, Forget asks first; Less like this goes at once (his rule shows in
+  // Pulse's Quiet list, where he can delete it). Busy like Merge until the server answers and the list is re-read.
+  const menuTap = (n: Need, m: NeedAction) => {
+    if (!pulseTaps.ok()) return;
+    if (m.action === "split") { toggle(n.ref, "split"); return; }
+    if (m.action === "forget") { toggle(n.ref, "forget"); return; }
+    void menuRun(n, m);
+  };
+  const menuRun = async (n: Need, m: NeedAction | undefined) => {
+    if (!m || !onMenu || running.current.has(n.ref)) return;
+    running.current.add(n.ref);
+    setBusy((b) => ({ ...b, [n.ref]: m.action }));
+    try {
+      await onMenu(n, m);
+      setUnfolded((u) => ({ ...u, [n.ref]: undefined }));
+    } finally {
+      running.current.delete(n.ref);
+      setBusy((b) => {
+        const rest = { ...b };
         delete rest[n.ref];
         return rest;
       });
@@ -156,11 +183,21 @@ export function NeedsYou({ items, footer, closed, notes = [], loopsDone = [], jo
             )}
             {unfolded[n.ref] === "menu" && (
               <div className="min-[430px]:ml-12 flex flex-wrap gap-2" role="menu">
-                {(n.more ?? []).filter((m) => m.action === "split" && (n.evidence?.length ?? 0) > 1).map((m) => (
-                  <button key={m.action} type="button" role="menuitem" onClick={() => toggle(n.ref, "split")}
-                    className="pill h-8 px-3 text-small">{m.label}…</button>
+                {menuItems(n.more, n.evidence?.length ?? 0).map((m) => (
+                  <button key={m.action} type="button" role="menuitem" onClick={() => menuTap(n, m)} disabled={!!busy[n.ref]}
+                    className="pill h-8 px-3 text-small disabled:opacity-60">{m.action === "less_like_this" ? m.label : `${m.label}…`}</button>
                 ))}
-                {(n.evidence?.length ?? 0) <= 1 && <span className="text-small text-muted">Nothing to split: it has one line of evidence.</span>}
+                {menuItems(n.more, n.evidence?.length ?? 0).length === 0 && <span className="text-small text-muted">Nothing to split: it has one line of evidence.</span>}
+              </div>
+            )}
+            {unfolded[n.ref] === "forget" && (
+              <div className="min-[430px]:ml-12 flex flex-col gap-2" role="alertdialog" aria-label="Forget this">
+                <div className="text-small text-muted">Forget this card and everything Odie kept about it? It can't be brought back.</div>
+                <div className="flex gap-2">
+                  <button type="button" disabled={!!busy[n.ref]} onClick={() => void menuRun(n, n.more?.find((m) => m.action === "forget"))}
+                    className="pill pill-solid h-8 px-3 text-small shadow-none disabled:opacity-60">{busy[n.ref] === "forget" ? "Forgetting…" : "Forget it"}</button>
+                  <button type="button" onClick={() => toggle(n.ref, "forget")} className="pill h-8 px-3 text-small">Cancel</button>
+                </div>
               </div>
             )}
             {unfolded[n.ref] === "split" && (

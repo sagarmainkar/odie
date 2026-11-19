@@ -1,0 +1,16 @@
+{
+  "id": "two-bills-stay-two",
+  "about": "Two electricity bills from the same biller (October and November) are two things, never merged.",
+  "loops": [
+    {"key": "oct", "title": "Pay the electricity bill (October)", "kind": "bill", "owner": "you", "days_ago": 20,
+     "card": {"amount": {"value": 2140, "currency": "INR"}, "sender": "billing@power.example"},
+     "evidence": [{"source": "mail", "fact": "October electricity bill: ₹2,140, due 25 Nov"}]},
+    {"key": "nov", "title": "Pay the electricity bill (November)", "kind": "bill", "owner": "you", "days_ago": 1,
+     "card": {"amount": {"value": 1980, "currency": "INR"}, "sender": "billing@power.example"},
+     "evidence": [{"source": "mail", "fact": "November electricity bill: ₹1,980, due 24 Dec"}]}
+  ],
+  "tomorrow": [],
+  "now_list": [],
+  "script": {"digest": "Two electricity bills wait: October's is due on the 25th."},
+  "expect": {"not_merged": [["oct", "nov"]], "untouched": ["nov"]}
+}

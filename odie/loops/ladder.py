@@ -15,13 +15,14 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from odie.loops import cards, clock, ledger
+from odie.loops import cards, clock, ledger, quiet
 
 HELLO_AFTER = timedelta(days=2)
 DROP_AFTER = timedelta(days=14)
 QUIET_FOR = timedelta(days=3)
 DUE_PUSH_WITHIN = timedelta(hours=24)
 DUE_PUSH = "due-push"  # the evidence ref that says the day-before push was made (or held)
+DROP_WHY = "No move in 14 days: dropped (kept for 30 days)"  # the day-14 drop's reason (learning reads it)
 
 
 def night(now: datetime) -> bool:
@@ -121,11 +122,12 @@ def run(store, now: datetime, push_for=None) -> list[tuple[int, str]]:
                 continue
             if loop["owner"] == "you" and loop["state"] == "ready":
                 if stale(loop, now):
-                    ledger.close(store, loop["id"], now, "odie", "No move in 14 days: dropped (kept for 30 days)",
+                    ledger.close(store, loop["id"], now, "odie", DROP_WHY,
                                  state="dropped")
                     done.append((loop["id"], "dropped"))
                     continue
                 skip = night(now) or cards.hidden(loop, now) or has_step(store, loop["id"], DUE_PUSH)
+                skip = skip or quiet.digest_only(store, loop)  # a digest line never pushes
                 if not skip and due_soon(loop, now) and not own_reminder_rings_first(store, loop, now):
                     done.append((loop["id"], push_due(store, loop, now, push)))
                 continue
@@ -139,11 +141,45 @@ def hello_lines(store, pid: str, now: datetime) -> list[str]:
     """The morning hello's lines from the ladder: his cards waiting since day 2, oldest first. "Reply to Asha (waiting
     on you 3 days)"; a card shown this morning isn't one yet."""
     out = []
-    ready = [lp for lp in ledger.open_loops(store, pid) if lp["state"] == "ready" and lp["owner"] == "you"]
+    ready = [lp for lp in ledger.open_loops(store, pid)
+             if lp["state"] == "ready" and lp["owner"] == "you" and not quiet.digest_only(store, lp)]
     for loop in ready:
         shown = datetime.fromisoformat(loop.get("shown_at") or loop["created_at"])
         waited = now - shown
         if waited < HELLO_AFTER:
             continue
         out.append(f"{loop['title']} (waiting on you {waited.days} days)")
+    return out
+
+
+def due_today(store, pid: str, now: datetime) -> list[str]:
+    """This owner's open loops due today (not digest lines), each "title" or "title 15:00" when it has a time of day:
+    ["Electricity bill", "Call with Asha 15:00"]."""
+    out = []
+    for loop in ledger.open_loops(store, pid):
+        due = loop.get("due_at")
+        if not due or quiet.digest_only(store, loop):
+            continue
+        at = datetime.fromisoformat(due).astimezone(now.tzinfo)
+        if at.date() != now.date():
+            continue
+        text = loop["title"]
+        if (at.hour, at.minute) != (0, 0):
+            text += f" {at.strftime('%H:%M')}"
+        out.append(text)
+    return out
+
+
+def ledger_lines(store, pid: str, now: datetime) -> list[str]:
+    """The morning hello's two ledger lines (design §8), written by code: "Waiting on you: Reply to Asha (3 days)"
+    (his cards since day 2) and "Due today: Electricity bill, Call with Asha 15:00"; a line with nothing in it is left
+    out."""
+    from odie.loops.digest import names
+    out = []
+    waiting = [line.replace(" (waiting on you ", " (") for line in hello_lines(store, pid, now)]
+    if waiting:
+        out.append(f"Waiting on you: {names(waiting)}")
+    due = due_today(store, pid, now)
+    if due:
+        out.append(f"Due today: {names(due)}")
     return out

@@ -253,6 +253,11 @@ def background_for(store: Store, runner):
     # Sundays from 09:00: Odie proposes this week's changes to each Now list (odie.loops.now), once a week, by tap.
     bg.add(Part("now", now_part, due=lambda _now: now_proposals_due(store, now()), limit=300))
 
+    async def evening_part() -> None:
+        await run_evening(store, runner, now())
+    # From 19:30, once a day per owner: learning from taps, the evening review's one call, the digest (odie.loops.review).
+    bg.add(Part("evening", evening_part, due=lambda _now: bool(review_owners_due(store, now())), limit=600))
+
     async def ladder_part() -> None:
         run_ladder(store, runner, now())
     # And the follow-up ladder (odie.loops.ladder): code only, every wake-up (a push the day before, a nudge card).
@@ -280,6 +285,28 @@ async def run_now_proposals(store: Store, runner, now) -> list[str]:
             continue
         think = consolidate_for(runner, pid)  # one call with no tools on that owner's brain, as stage 2's
         await now_list.propose(store, pid, now, think, runner.memory_index(pid))
+        ran.append(pid)
+    return ran
+
+
+def review_owners_due(store: Store, now) -> list[str]:
+    """The owners whose evening review is due (odie.loops.review.owners_due)."""
+    from odie.loops import review
+    return review.owners_due(store, now)
+
+
+async def run_evening(store: Store, runner, now) -> list[str]:
+    """Each owner's evening whose time has come (everyday Odie, and each personality with Proactive intelligence on):
+    learning from taps, then the review's one call with no tools on that owner's brain, then the digest and its push
+    (only when something needs him), which opens that owner's Pulse. Returns whose ran."""
+    from odie.loops import review
+    if runner is None or not hasattr(runner, "background_turn"):
+        return []
+    ran = []
+    for pid in review.owners_due(store, now):
+        def push(title, body, owner=pid):
+            watch_pushed(store, runner, title, body, owner=owner)
+        await review.run(store, pid, now, consolidate_for(runner, pid), push)
         ran.append(pid)
     return ran
 

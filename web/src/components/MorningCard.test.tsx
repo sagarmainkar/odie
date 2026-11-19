@@ -44,6 +44,19 @@ async function mount(node: React.ReactNode) {
   return { host, root, done: () => act(() => root.unmount()) };
 }
 
+describe("the hello's two ledger lines (phase 5)", () => {
+  it("shows what waits on him and what is due today, written by code", () => {
+    const html = renderToStaticMarkup(<MorningCard card={{ ...card, ledger: ["Waiting on you: Reply to Priya (3 days)", "Due today: Phone bill"] }} onChip={() => {}} />);
+    expect(html).toContain('aria-label="From your open loops"');
+    expect(html).toContain("Waiting on you: Reply to Priya (3 days)");
+    expect(html).toContain("Due today: Phone bill");
+  });
+  it("shows nothing for them when the route sends none (an older server)", () => {
+    const html = renderToStaticMarkup(<MorningCard card={card} onChip={() => {}} />);
+    expect(html).not.toContain("From your open loops");
+  });
+});
+
 describe("the morning hello card", () => {
   it("draws Odie's words, the weather, the tiles, the nudge and each row", () => {
     const html = draw(card);
