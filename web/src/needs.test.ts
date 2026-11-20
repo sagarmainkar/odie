@@ -32,7 +32,7 @@ describe("a card's open button", () => {
     expect(opensSafely("https://github.com.evil.example/a/b/pull/1")).toBe(false);
   });
   it("knows phase 5's actions and keeps a menu to what it can carry out", () => {
-    for (const a of ["quiet_accept", "learn_undo", "less_like_this", "forget"]) expect(knowsAction(a)).toBe(true);
+    for (const a of ["quiet_accept", "learn_undo", "notice_undo", "less_like_this", "forget"]) expect(knowsAction(a)).toBe(true);
     expect(busyWord("quiet_accept")).toBe("Saving…");
     const more: NeedAction[] = [{ label: "Split", action: "split", value: 3 }, { label: "Less like this", action: "less_like_this", value: 3 },
       { label: "Forget this", action: "forget", value: 3 }, { label: "Snooze", action: "snooze_loop" as NeedAction["action"], value: 3 }];

@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from odie.app.runner import CHECK_PREFIX
+from odie.app.runner import CHECK_PREFIX, came_via_terminal
 from odie.threads import _clean, _text
 
 EXCHANGE_CAP = 2000
@@ -24,6 +24,7 @@ class ChatLine:
     day: str  # ISO date of the message in the user's timezone
     author: str  # "you" or "odie"
     text: str
+    via: str = ""  # "terminal" when the odie command typed it for him (never his own words)
 
 
 @dataclass(frozen=True)
@@ -43,8 +44,11 @@ def _line_from_event(session_id: str, ts: float, event_data: str, tz) -> ChatLin
     author, text = _text(event_data)
     if not text or text.startswith(CHECK_PREFIX):
         return None
+    via = ""
     if author == "user":
         who = "you"
+        if came_via_terminal(text):
+            via = "terminal"
     else:
         if text.startswith("("):
             return None
@@ -53,7 +57,7 @@ def _line_from_event(session_id: str, ts: float, event_data: str, tz) -> ChatLin
     if not clean:
         return None
     day = datetime.fromtimestamp(ts, tz).date().isoformat()
-    return ChatLine(session_id, ts, day, who, clean)
+    return ChatLine(session_id, ts, day, who, clean, via)
 
 
 def chat_lines(sessions_db: Path, app: str, user: str, since: float, until: float, tz) -> list[ChatLine]:

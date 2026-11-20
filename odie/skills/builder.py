@@ -103,7 +103,11 @@ def _skill_md(name: str, description: str, instructions: str, blocks: list[str])
     return f"---\nname: {name}\ndescription: {json.dumps(desc, ensure_ascii=False)}\n{meta}---\n{instructions.strip()}\n"
 
 
-async def draft(name: str, description: str, instructions: str, tools_code: str = "", blocks: list[str] | None = None) -> str:
+LOOP_FILE = ".loop"  # in a draft's staging folder: the "Learn this?" card it was drafted for (odie.loops.learning)
+
+
+async def draft(name: str, description: str, instructions: str, tools_code: str = "", blocks: list[str] | None = None,
+                for_loop: int = 0) -> str:
     blocks = list(blocks or [])
     if p := name_problem(name):
         return p
@@ -113,6 +117,8 @@ async def draft(name: str, description: str, instructions: str, tools_code: str 
     shutil.rmtree(d, ignore_errors=True)
     d.mkdir(parents=True)
     (d / "SKILL.md").write_text(_skill_md(name, description, instructions, blocks))
+    if for_loop:
+        (d / LOOP_FILE).write_text(str(int(for_loop)))
     probs: list[str] = []
     if tools_code.strip():
         (d / "tools.py").write_text(tools_code)
@@ -132,6 +138,16 @@ async def draft(name: str, description: str, instructions: str, tools_code: str 
         replaces = f" This replaces your {name} skill's SKILL.md and tools.py" + (f"; keeps your other files: {', '.join(kept)}" if kept else "") + "."
     return (f"Ready to install: {name}, {kind}.{replaces} Call install_skill(name='{name}', version='{staged_version(name)}'). The user "
             "gets an approval card showing the skill; nothing is installed until they tap Approve.")
+
+
+def taught_loop(staged: Path) -> int:
+    """The "Learn this?" loop a draft was made for (its LOOP_FILE), or 0: none, or not a number."""
+    text = ""
+    if (staged / LOOP_FILE).exists():
+        text = (staged / LOOP_FILE).read_text().strip()
+    if not text.isdigit():
+        return 0
+    return int(text)
 
 
 def _kept_files(name: str) -> list[str]:
@@ -192,6 +208,8 @@ async def install(name: str, version: str = "") -> str:
     if version != staged_version(name):
         return ("The draft changed after this install was asked for, so it wasn't installed. Call install_skill again "
                 "with the version draft_skill gave last; the user approves that one.")
+    loop_id = taught_loop(src)
+    (src / LOOP_FILE).unlink(missing_ok=True)
     dest = user_dir() / name
     user_dir().mkdir(parents=True, exist_ok=True)
     if dest.is_dir():  # an update: replace what the card showed, keep the user's other files
@@ -217,6 +235,9 @@ async def install(name: str, version: str = "") -> str:
         return (f"Installed {name}, but it didn't load: {why}. Fix it with draft_skill and install again "
                 "(that asks the user once more).")
     store.audit("agent", "skill_installed", result_summary=name)
+    if loop_id:
+        from odie.loops import learning
+        learning.taught(store, loop_id, name)
     tools = f" Its tools: {', '.join(entry.tools)}." if entry.tools else ""
     return (f"The user approved it and {name} is installed now; it's on and loads on demand.{tools} Tell them it's ready "
             "(no more taps needed), with one example request to try.")

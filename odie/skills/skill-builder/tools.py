@@ -21,12 +21,14 @@ async def read_skill(name: str) -> str:
     return f"No skill named '{name}'."
 
 
-async def draft_skill(name: str, description: str, instructions: str, tools_code: str = "", blocks: list[str] | None = None) -> str:
+async def draft_skill(name: str, description: str, instructions: str, tools_code: str = "", blocks: list[str] | None = None,
+                      for_loop: int = 0) -> str:
     """Write a skill into staging and check it (its code is read, never run). name: lowercase-with-hyphens.
     description: one line, what it does and when to use it. instructions: the SKILL.md body in Markdown.
     tools_code: the whole tools.py, or "" for an instructions-only skill. blocks: the block kinds it draws.
+    for_loop: the loop number when the user tapped Teach on a "Learn this?" card (the request names it), else 0.
     Returns "Ready to install" or the problems to fix; call again with fixes until it's ready."""
-    return await builder.draft(name, description, instructions, tools_code, blocks)
+    return await builder.draft(name, description, instructions, tools_code, blocks, for_loop)
 
 
 async def install_skill(name: str, version: str) -> str:

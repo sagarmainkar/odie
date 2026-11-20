@@ -686,6 +686,7 @@ class OdieRunner:
         self.review_every = config.settings.review_every_turns
         # (user, assistant) pairs since the last review, kept apart for each personality ("" = everyday Odie)
         self._turns: dict[str, list[tuple[str, str]]] = {}
+        self._typed: dict[str, list[str]] = {}  # his own typed words of the turns waiting for the memory review
         self._review_for = ""  # whose turns the running review reads (so deleting a personality can stop a review of it)
         self._review_task: asyncio.Task | None = None
         self.agent = build_agent(store, instruction=self._prompt_of, memory=self.memory,
@@ -863,6 +864,7 @@ class OdieRunner:
         """A personality was deleted: drop its turns waiting for a memory review, and stop a review of its turns that
         is still running (it would write its memory file back)."""
         self._turns.pop(personality, None)
+        self._typed.pop(personality, None)
         review = self._review_task
         reviewing_it = review is not None and not review.done() and self._review_for == personality
         if reviewing_it:
@@ -895,6 +897,14 @@ class OdieRunner:
             own = ""
         return personalities.joined_index(own, shared)
 
+    def rules_text(self, personality: str = "") -> str:
+        """His rules, every one in full, for a chat's system prompt (odie.memory.rules): everyday Odie's from the shared
+        memory; a personality's own first, then the shared ones."""
+        from odie.memory import rules
+        if not personality:
+            return rules.block(self.memory)
+        return rules.block(self.memory_of(personality), self.memory)
+
     def prefetch(self, text: str, personality: str = "") -> str:
         """The remembered entries that fit this message, for its [memories] block: from the shared memory, and for a
         personality from its own memory first."""
@@ -916,19 +926,24 @@ class OdieRunner:
         personality = personalities.of_session(self.store, session_id_of(tool_context))
         return self.memory_of(personality)
 
-    def _note_turn(self, session_id: str, user: str, assistant: str) -> None:
+    def _note_turn(self, session_id: str, user: str, assistant: str, typed: str = "") -> None:
         """Every N user turns, review the conversation for things worth remembering (background). Turns are counted
         and reviewed apart for each personality, and what a review finds goes into the memory of whoever the thread
-        belongs to: a private thing said to Mira is never reviewed into the shared memory."""
+        belongs to: a private thing said to Mira is never reviewed into the shared memory. `typed`: his own typed words
+        this turn ("" for a tap's or the terminal's): only those can carry a rule (odie.memory.rules)."""
         from odie import personalities
         personality = personalities.of_session(self.store, session_id)
         if personality and personalities.get(self.store, personality) is None:
             return  # it was deleted while this turn ran: nothing of it is kept
         pending = self._turns.setdefault(personality, [])
         pending.append((user, assistant))
+        his = self._typed.setdefault(personality, [])
+        if typed:
+            his.append(typed)
         if len(pending) < self.review_every:
             return
         self._turns[personality] = []
+        self._typed[personality] = []
         if self._review_task is not None and not self._review_task.done():
             return  # one review at a time
         try:
@@ -939,7 +954,8 @@ class OdieRunner:
         index_text = self.memory_index(personality)
         self._review_for = personality
         self._review_task = asyncio.create_task(run_review(memory, pending, index_text, on_change=self._memory_changed,
-                                                           store=self.store, brain=brain))
+                                                           store=self.store, brain=brain, typed=his,
+                                                           pid=personality))
 
     def _read_for_promises(self, session_id: str, text: str, reply: str, via: str | None, private: bool,
                            since: str) -> None:
@@ -1049,7 +1065,8 @@ class OdieRunner:
             soul = self.load_soul()
         day_summary = self.day_summary(now)
         static = build_static_prompt(now, soul, self.memory_index(personality), gated=self.gated, who=who,
-                                     day_summary=day_summary, summary_day=morning_day(now))
+                                     day_summary=day_summary, summary_day=morning_day(now),
+                                     rules=self.rules_text(personality))
         text = persona.apply_name(static, who.assistant)
         built = SessionPrompt(text=text, caps=who.caps, day_summary=day_summary, day=today)
         self._prompts[session_id] = built
@@ -1282,7 +1299,11 @@ class OdieRunner:
         if unsaved:  # its own stored message, so it's in history too (the false claim stays visible above it)
             await self.post_message(unsaved_note, session_id=session_id)
         if not was_private:  # a turn that read a signed-in page never feeds the memory review
-            self._note_turn(session_id, text, "".join(final))
+            typed = ""
+            if via is None:  # he typed or dictated it: a tap's words, or the terminal's, never carry a rule
+                from odie.blocks.answers import without_form_answers
+                typed = without_form_answers(text)
+            self._note_turn(session_id, text, "".join(final), typed)
         self._read_for_promises(session_id, text, "".join(final), via, was_private, turn_started)
         yield {"type": "done", "text": "".join(final), "session_id": session_id}  # the thread, also when a card ended it
 

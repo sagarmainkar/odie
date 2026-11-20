@@ -10,7 +10,7 @@ the Quiet rules and today's taps, and answers in a fixed schema. Code applies th
             Odie (Reopen in Done today)
   quiet     a Quiet rule proposed as a card; only his tap writes it (odie.loops.quiet)
   now       a Now list proposed as the Now card; only his tap changes it (odie.loops.now)
-  skills    an idea for a skill, recorded for phase 6 (TODO phase 6: Odie proposes it as a loop)
+  skills    an idea for a skill, recorded: the morning learning check reads it (odie.loops.learning)
   digest    the evening digest's words (odie.loops.digest checks them)
 
 Rails: only this owner's OPEN loops, by number; a pull request's or a promise's loop (a playbook) gets priority
@@ -440,7 +440,7 @@ def propose(store, pid: str, now: datetime, answer: dict, done: Applied) -> None
 
 
 def skill_ideas(store, pid: str) -> list[dict]:
-    """The skill ideas the review recorded (phase 6 will propose them as loops)."""
+    """The skill ideas the review recorded (the morning learning check reads the last few)."""
     return list(store.get_setting(_key(pid, SKILL_IDEAS)) or [])
 
 
