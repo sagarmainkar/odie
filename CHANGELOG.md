@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.3.1 (2026-11-19)
+
+- **Try a repo in the sandbox.** Ask Odie to try someone's repository and a Worker clones, installs, builds and runs it inside its own sandbox folder, with no tap. A job's commands reach the internet only when the job can read nothing of yours; a job that reads your folders keeps an offline shell.
+- **Keep it.** A finished job offers "Keep it in ~/…" for the folder you named: one tap copies the result there. It never overwrites, runs nothing, keeps links inside the copy, keeps only git's data (no hooks or settings), and leaves a Python environment out with a line on how to make it again.
+- After a chat has read mail or a web page, a Worker's brief is your own typed words. Words a button sends for you never count as typed.
+- The sandbox no longer reads Homebrew's data and settings or your own scripts in `~/.local/bin`.
+- On a Mac with Xcode, jobs and pull request tests find git, make and Python again.
+- A GitHub "run failed" mail is news for its pull request, and a card is Odie's only when Odie has work for it.
+
 ## v0.3.0 (2026-11-19)
 
 Odie starts to work on its own: it keeps a list of open things, follows them up, and does long jobs in the background.
