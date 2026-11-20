@@ -205,7 +205,13 @@ async def test_a_pay_card_comes_even_right_after_a_sign_in_card(store):
     assert pay["media"]["title"] == "Your turn to pay on example-power.in" and "turn to pay" in pay["result"]
     path, _ = media.get(pay["media"]["id"])
     assert json.loads(path.read_bytes())["state"] == "pay"
-    assert "media" not in again and "already in the chat" in again["result"]  # one Pay card, not two
+    assert "media" not in again and "already in the chat" in again["result"]  # one Pay card per turn, not two
+    token = turn.USER_TEXT.set("give me the pay card again")
+    try:
+        asked = await tool.run_async(args={"why": "x", "pay": True}, tool_context=ctx)
+    finally:
+        turn.USER_TEXT.reset(token)
+    assert asked["media"]["title"] == "Your turn to pay on example-power.in"  # a new ask: a new card, no 5-minute wait
 
 
 def test_a_google_only_sign_in_page_says_do_it_on_the_page(store):

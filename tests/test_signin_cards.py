@@ -252,3 +252,13 @@ async def test_a_form_that_grows_while_typing_still_gets_the_right_boxes(browser
     await browser.fill_card("chat", CARD)
     got = await values(browser, "chat")
     assert got["exp"] == "03/29" and got["cvv"] == "" and got["cardnumber"] == "4242424242424242"
+
+
+@chrome
+async def test_a_click_past_the_page_edge_lands_on_the_page(browser, site):
+    """The desk's page view can send a click from a picture of the old size (right after Take control): Chrome refused
+    it with "Position out of bounds". It lands at the edge instead."""
+    await browser.open("chat", f"http://127.0.0.1:{site}/pay")
+    await go_live(browser, "chat")
+    await browser.live_input("chat", {"t": "tap", "x": 5000, "y": 5000})
+    await browser.live_input("chat", {"t": "drag", "x0": 200, "y0": 700, "x1": 200, "y1": 9000})

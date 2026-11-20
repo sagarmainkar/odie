@@ -136,10 +136,12 @@ def fresh_signin_boxes():
     from odie.signin import box, guard
     box._boxes.clear()
     browser_tools._carded.clear()
+    browser_tools._carded_turn.clear()
     guard.READ.clear()  # the signed-in pages a chat read (a tracker's page comes from here)
     yield
     box._boxes.clear()
     browser_tools._carded.clear()
+    browser_tools._carded_turn.clear()
     guard.READ.clear()
 
 
