@@ -192,6 +192,7 @@ export function Today() {
       if (a.action === "now_accept") { await postJSON(`/api/now/${a.value}/accept`, {}); setNowRead((n) => n + 1); }
       if (a.action === "quiet_accept") { await postJSON(`/api/quiet/${a.value}/accept`, {}); setQuietRead((n) => n + 1); }
       if (a.action === "learn_undo") { await postJSON(`/api/learned/${a.value}/undo`, {}); setQuietRead((n) => n + 1); }
+      if (a.action === "notice_undo") await postJSON("/api/notices/undo", { ref: a.value });
     } catch (e) { setFailed(e instanceof Error ? e.message : String(e)); }
     await loadTasks();
   }

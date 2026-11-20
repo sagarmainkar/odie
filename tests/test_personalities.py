@@ -414,7 +414,7 @@ async def test_the_review_reads_and_writes_the_thread_owners_memory(runner, monk
     runner.review_every = 2
     reviewed = {}
 
-    async def fake_review(memory, turns, index_text, on_change=None, store=None, brain=None):
+    async def fake_review(memory, turns, index_text, on_change=None, store=None, brain=None, typed=None, pid=""):
         reviewed.update(path=memory.path, turns=turns)
         return []
 

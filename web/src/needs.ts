@@ -8,11 +8,13 @@ import type { Media } from "./media";
  *  this?" card's Track (POST /api/offers/<id>/track); "now_accept": Odie's proposed Now list taken as it is (POST
  *  /api/now/<id>/accept); "now_edit": the Now list opened with the proposed lines, to change and save; "quiet_accept":
  *  a Quiet rule the evening review proposed, written (POST /api/quiet/<id>/accept); "learn_undo": "Fewer cards for X"
- *  undone (POST /api/learned/<id>/undo). In a loop card's small menu only: "split", "less_like_this" (his Quiet rule:
+ *  undone (POST /api/learned/<id>/undo); "notice_undo": a "Rule saved" or "Put away: X" notice undone (POST
+ *  /api/notices/undo with the card's ref: the rule removed, or the skill back). In a loop card's small menu only: "split", "less_like_this" (his Quiet rule:
  *  POST /api/loops/<id>/less) and "forget" (the loop and its evidence deleted: POST /api/loops/<id>/forget). */
 export type NeedAction = { label: string; action: "chat" | "dismiss" | "done_task" | "snooze_task" | "later" | "open" | "loop_done"
   | "job_retry" | "job_allow" | "job_clear" | "job_keep" | "merge" | "recipe_use" | "recipe_no" | "show_output" | "split"
-  | "track" | "now_accept" | "now_edit" | "quiet_accept" | "learn_undo" | "less_like_this" | "forget"; value: string | number };
+  | "track" | "now_accept" | "now_edit" | "quiet_accept" | "learn_undo" | "notice_undo" | "less_like_this" | "forget";
+  value: string | number };
 
 /** Every button action this app handles; a newer server may send one it doesn't know yet. "split", "less_like_this"
  *  and "forget" only ever come in a card's small menu ("more"), never as one of its three buttons, so an app that
@@ -20,7 +22,7 @@ export type NeedAction = { label: string; action: "chat" | "dismiss" | "done_tas
 const KNOWN_ACTIONS: ReadonlySet<string> = new Set<NeedAction["action"]>([
   "chat", "dismiss", "done_task", "snooze_task", "later", "open", "loop_done",
   "job_retry", "job_allow", "job_clear", "job_keep", "merge", "recipe_use", "recipe_no", "show_output", "split",
-  "track", "now_accept", "now_edit", "quiet_accept", "learn_undo", "less_like_this", "forget",
+  "track", "now_accept", "now_edit", "quiet_accept", "learn_undo", "notice_undo", "less_like_this", "forget",
 ]);
 
 /** The menu items this app can carry out, in the server's order: Split only with more than one line of evidence

@@ -1,5 +1,5 @@
 """Tools the skill-builder skill brings: guide, read, draft (checked, nothing runs), install (needs the user's tap)."""
-from google.adk.tools import FunctionTool
+from google.adk.tools import FunctionTool, ToolContext
 
 from odie.skills import builder
 
@@ -21,18 +21,25 @@ async def read_skill(name: str) -> str:
     return f"No skill named '{name}'."
 
 
-async def draft_skill(name: str, description: str, instructions: str, tools_code: str = "", blocks: list[str] | None = None) -> str:
+async def draft_skill(name: str, description: str, instructions: str, tools_code: str = "", blocks: list[str] | None = None,
+                      for_loop: int = 0) -> str:
     """Write a skill into staging and check it (its code is read, never run). name: lowercase-with-hyphens.
     description: one line, what it does and when to use it. instructions: the SKILL.md body in Markdown.
     tools_code: the whole tools.py, or "" for an instructions-only skill. blocks: the block kinds it draws.
+    for_loop: the loop number when the user tapped Teach on a "Learn this?" card (the request names it), else 0.
     Returns "Ready to install" or the problems to fix; call again with fixes until it's ready."""
-    return await builder.draft(name, description, instructions, tools_code, blocks)
+    return await builder.draft(name, description, instructions, tools_code, blocks, for_loop)
 
 
-async def install_skill(name: str, version: str) -> str:
+async def install_skill(name: str, version: str, tool_context: ToolContext | None = None) -> str:
     """Install a drafted skill that draft_skill said is ready, with the version it gave. The user sees an approval card
     with the skill's text and code; it installs (and its code is allowed) only when the user taps Approve."""
-    return await builder.install(name, version)
+    from odie import personalities
+    from odie.agent.context import session_id_of
+    owner = ""
+    if builder.hooks.get("store") is not None:
+        owner = personalities.of_session(builder.hooks["store"], session_id_of(tool_context))
+    return await builder.install(name, version, owner)
 
 
 TOOLS = [FunctionTool(skill_guide), FunctionTool(read_skill), FunctionTool(draft_skill),

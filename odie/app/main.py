@@ -258,6 +258,11 @@ def background_for(store: Store, runner):
     # From 19:30, once a day per owner: learning from taps, the evening review's one call, the digest (odie.loops.review).
     bg.add(Part("evening", evening_part, due=lambda _now: bool(review_owners_due(store, now())), limit=600))
 
+    async def learning_part() -> None:
+        await run_learning(store, runner, now())
+    # From 08:30, once a day per owner, after the morning hello: what yesterday's chats teach (odie.loops.learning).
+    bg.add(Part("learning", learning_part, due=lambda _now: bool(learning_owners_due(store, now())), limit=600))
+
     async def ladder_part() -> None:
         run_ladder(store, runner, now())
     # And the follow-up ladder (odie.loops.ladder): code only, every wake-up (a push the day before, a nudge card).
@@ -308,6 +313,32 @@ async def run_evening(store: Store, runner, now) -> list[str]:
             watch_pushed(store, runner, title, body, owner=owner)
         await review.run(store, pid, now, consolidate_for(runner, pid), push)
         ran.append(pid)
+    return ran
+
+
+def learning_owners_due(store: Store, now) -> list[str]:
+    """The owners whose morning learning check is due (odie.loops.learning.owners_due)."""
+    from odie.loops import learning
+    return learning.owners_due(store, now)
+
+
+async def run_learning(store: Store, runner, now) -> list[str]:
+    """Each owner's morning learning check whose time has come: one call with no tools on that owner's brain, reading
+    yesterday's chats; then the learned skills unused too long are put away (once a day, with everyday Odie's).
+    Returns whose ran."""
+    from odie.loops import learning
+    if runner is None or not hasattr(runner, "background_turn"):
+        return []
+    ran = []
+    for pid in learning.owners_due(store, now):
+        memory = runner.memory_of(pid)
+        await learning.run(store, pid, now, consolidate_for(runner, pid), memory, runner.memory_index(pid))
+        ran.append(pid)
+        if not pid:
+            await learning.fade_unused(store, now)
+    changed = getattr(runner, "_memory_changed", None)
+    if ran and changed is not None:
+        changed()  # a rule may have been saved: the notes index re-reads the memory
     return ran
 
 

@@ -2623,6 +2623,34 @@ async def learned_undo(entry_id: int, request: Request) -> dict[str, Any]:
     return {"ok": True}
 
 
+@router.post("/notices/undo")
+async def notice_undo(body: WatchDoneIn, request: Request) -> dict[str, Any]:
+    """Undo on a notice, by the card's ref: "rule:3" removes that rule from the picked one's memory
+    (odie.memory.rules); "faded:2" brings a put-away skill back (odie.skills.fade, everyday Odie's Pulse only). 404
+    when there is no such notice, or it can't be undone any more."""
+    from odie.memory import rules
+    from odie.skills import builder, fade
+    store = request.app.state.store
+    pid = _personality(request)
+    rule_id = rules.number_of(body.ref)
+    if rule_id is not None:
+        memory = request.app.state.runner.memory_of(pid)
+        if not rules.undo(store, memory, pid, rule_id):
+            raise HTTPException(404, "That card isn't there any more.")
+        store.audit("user", "rule_undone", result_summary=body.ref)
+        return {"ok": True}
+    faded_id = fade.number_of(body.ref)
+    if faded_id is not None and not pid:
+        name = fade.restore(store, faded_id, _local_now(), builder.user_dir())
+        if name is None:
+            raise HTTPException(404, "That skill can't be brought back: its folder is gone or the name is taken.")
+        if builder.hooks.get("reload"):
+            await builder.hooks["reload"]()
+        store.audit("user", "skill_restored", result_summary=name)
+        return {"ok": True, "skill": name}
+    raise HTTPException(404, "That card isn't there any more.")
+
+
 @router.get("/digest")
 async def digest_get(request: Request) -> dict[str, Any]:
     """What Pulse shows on opening (odie.loops.digest.for_pulse): today's evening digest (with the review's changes,
@@ -2945,6 +2973,16 @@ async def watch_done(body: WatchDoneIn, request: Request) -> dict[str, Any]:
     notice_id = learn.number_of(body.ref)
     if notice_id is not None:  # OK on "Fewer cards for X": said; the kind stays in the digest
         learn.said(store, pid, notice_id)
+        return {"ok": True}
+    from odie.memory import rules
+    rule_id = rules.number_of(body.ref)
+    if rule_id is not None:  # OK on "Rule saved": said; the rule stays
+        rules.said(store, pid, rule_id)
+        return {"ok": True}
+    from odie.skills import fade
+    faded_id = fade.number_of(body.ref)
+    if faded_id is not None:  # OK on "Put away: X": said; the skill stays put away
+        fade.said(store, faded_id)
         return {"ok": True}
     quiet_id = quiet.number_of(body.ref)
     if quiet_id is not None:  # No on a Quiet rule the evening review proposed

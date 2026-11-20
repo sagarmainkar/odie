@@ -10,6 +10,8 @@ hidden until 09:00 the next morning, then back). What a button does is decided h
   "now_accept" / "now_edit": Odie's proposed Now list taken as it is (POST /api/now/<id>/accept), or opened to change;
   "quiet_accept": a Quiet rule the evening review proposed, written (POST /api/quiet/<id>/accept);
   "learn_undo": "Fewer cards for X" undone: that kind is cards again (POST /api/learned/<id>/undo);
+  "notice_undo": a "Rule saved" or "Put away: X" notice undone: the rule removed, or the skill back (POST
+    /api/notices/undo with the card's ref);
   "loop_done": a loop's Done (POST /api/loops/<id>/done);
   "done_task" / "snooze_task": tick a task off, or move it to tomorrow 09:00;
   "later": put the card off until 09:00 the next morning (POST /api/needs_you/later with the card's ref).
@@ -47,6 +49,11 @@ def cards(store, now: datetime, owner: str = ODIE) -> list[dict]:
     out += now_list.cards(store, owner)  # "Update your Now?": Odie's weekly proposal, changed only on his tap
     out += quiet.proposal_cards(store, owner)  # "Quiet these?": the evening review's proposal, a rule only on his tap
     out += learn.notice_cards(store, owner)  # "Fewer cards for X": said once, with Undo
+    from odie.memory import rules
+    out += rules.notice_cards(store, owner)  # "Rule saved": said once, with Undo
+    if owner == ODIE:
+        from odie.skills import fade
+        out += fade.notice_cards(store)  # "Put away: X" (a learned skill unused 30 days): said once, with Undo
     from odie.workers import cards as job_cards
     out += job_cards.cards(store, owner, now)  # a job that failed, got stuck or needed his OK
     a_loops = loops_reminders(store, owner)

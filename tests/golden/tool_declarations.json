@@ -148,7 +148,7 @@
     }
   },
   {
-    "description": "Write a skill into staging and check it (its code is read, never run). name: lowercase-with-hyphens.\ndescription: one line, what it does and when to use it. instructions: the SKILL.md body in Markdown.\ntools_code: the whole tools.py, or \"\" for an instructions-only skill. blocks: the block kinds it draws.\nReturns \"Ready to install\" or the problems to fix; call again with fixes until it's ready.",
+    "description": "Write a skill into staging and check it (its code is read, never run). name: lowercase-with-hyphens.\ndescription: one line, what it does and when to use it. instructions: the SKILL.md body in Markdown.\ntools_code: the whole tools.py, or \"\" for an instructions-only skill. blocks: the block kinds it draws.\nfor_loop: the loop number when the user tapped Teach on a \"Learn this?\" card (the request names it), else 0.\nReturns \"Ready to install\" or the problems to fix; call again with fixes until it's ready.",
     "name": "draft_skill",
     "parameters_json_schema": {
       "properties": {
@@ -183,6 +183,11 @@
           ],
           "default": null,
           "title": "Blocks"
+        },
+        "for_loop": {
+          "default": 0,
+          "title": "For Loop",
+          "type": "integer"
         }
       },
       "required": [

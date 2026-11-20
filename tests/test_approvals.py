@@ -314,12 +314,12 @@ async def test_run_shell_tool_is_gated_and_bounded(tmp_path):
 
 async def test_decide_returns_at_once_while_the_turn_resumes_in_the_background(isolated_settings, tmp_path):
     import asyncio
-    import time
     done = []
+    go_on = asyncio.Event()
 
     class SlowRunner(FakeRunner):
         async def resume_approval(self, aid, approve):
-            await asyncio.sleep(0.5)  # the resumed turn can take minutes for real
+            await go_on.wait()  # the resumed turn can take minutes for real: here it waits until the test lets it
             done.append(aid)
             return {"text": "ok"}
 
@@ -328,9 +328,12 @@ async def test_decide_returns_at_once_while_the_turn_resumes_in_the_background(i
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
         async with app.router.lifespan_context(app):
             aid = s.create_approval("chat-x", "inv", "req", "run_shell", {"command": "ls"}, summary="Run ls", detail={}, provenance=[])
-            t = time.monotonic()
-            r = await c.post(f"/api/approvals/{aid}/decide", json={"approve": True})
-            assert r.status_code == 200 and r.json()["status"] == "approved" and time.monotonic() - t < 0.3
+            # 5 s only so a decide that waited for the held turn fails instead of hanging
+            r = await asyncio.wait_for(c.post(f"/api/approvals/{aid}/decide", json={"approve": True}), 5)
+            # the answer came while the turn is still held: decide never waits for it (no stopwatch, so a slow machine
+            # can't fail it)
+            assert r.status_code == 200 and r.json()["status"] == "approved" and done == []
+            go_on.set()
             for _ in range(50):
                 if done:
                     break

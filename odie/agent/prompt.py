@@ -191,13 +191,15 @@ def day_summary_intro(summary_day: str) -> str:
 
 
 def build_static_prompt(now: datetime, soul: str | None, memory_index: str, gated: bool = False, who: Who = Who(),
-                        day_summary: str = "", summary_day: str = "") -> str:
+                        day_summary: str = "", summary_day: str = "", rules: str = "") -> str:
     """The system prompt, built once per chat. The morning's day summary (when there is one) goes LAST, after the
     memory titles, so everything before it stays the same for the cache; a summary comes with `summary_day`, the ISO
     morning it was written. It is fixed for the chat: a summary that arrives mid-chat reaches the next chat, or this
     one after Runner.invalidate_prompt."""
     from odie.blocks import visuals_prompt
     parts = [*_opening(soul, who), rules_text(who, gated), visuals_prompt(), day_block(now)]
+    if rules.strip():  # his rules (odie.memory.rules), each in full: always followed, unlike the memories listed by title
+        parts.append("The user's rules (they set these; always follow them):\n" + rules.strip())
     if memory_index.strip():
         parts.append("What you remember (titles by topic; use fetch_memory for the text, recall to look wider):\n" + memory_index.strip())
     if day_summary.strip():

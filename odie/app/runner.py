@@ -63,6 +63,17 @@ def strip_trailer(text: str) -> str:
 VIA_TERMINAL = "\n[sent from the terminal: a program on this Mac (an AI agent or a script) typed this for the user]"
 
 
+# Added to the hidden context of a message a button or card in the app sent for him (via "tap"), so a later reader of
+# the stored chat (odie.loops.learning) never takes a card's words, which may come from mail, as his typing.
+VIA_TAP = "\n[sent by a tap in the app: a button or card wrote this, not the user]"
+
+
+def came_via_tap(text: str) -> bool:
+    """Whether a stored user message was sent by a tap: its hidden context carries VIA_TAP.
+      "Help me prepare for X\n\n[context: …]\n[sent by a tap …]" -> True;  typed -> False"""
+    return VIA_TAP in text
+
+
 def came_via_terminal(text: str) -> bool:
     """Whether a stored user message was sent by the odie command: its hidden context carries VIA_TERMINAL.
       "hi\n\n[context: now 09:30 …]"                                -> False (typed in the app)
@@ -643,6 +654,7 @@ class SessionPrompt:
     caps: frozenset  # what this install could do when it was built (the trailer's wording follows it)
     day_summary: str  # the morning's summary it carries ("" when it carries none: the trailer then brings the brief)
     day: str  # the local day it was built on: a thread that lives for days gets a new one each day
+    rules_version: int = 0  # his rules as they were (odie.memory.rules.version): a rule saved or undone rebuilds it
 
 
 class OdieRunner:
@@ -686,6 +698,7 @@ class OdieRunner:
         self.review_every = config.settings.review_every_turns
         # (user, assistant) pairs since the last review, kept apart for each personality ("" = everyday Odie)
         self._turns: dict[str, list[tuple[str, str]]] = {}
+        self._typed: dict[str, list[str]] = {}  # his own typed words of the turns waiting for the memory review
         self._review_for = ""  # whose turns the running review reads (so deleting a personality can stop a review of it)
         self._review_task: asyncio.Task | None = None
         self.agent = build_agent(store, instruction=self._prompt_of, memory=self.memory,
@@ -863,6 +876,7 @@ class OdieRunner:
         """A personality was deleted: drop its turns waiting for a memory review, and stop a review of its turns that
         is still running (it would write its memory file back)."""
         self._turns.pop(personality, None)
+        self._typed.pop(personality, None)
         review = self._review_task
         reviewing_it = review is not None and not review.done() and self._review_for == personality
         if reviewing_it:
@@ -895,6 +909,14 @@ class OdieRunner:
             own = ""
         return personalities.joined_index(own, shared)
 
+    def rules_text(self, personality: str = "") -> str:
+        """His rules, every one in full, for a chat's system prompt (odie.memory.rules): everyday Odie's from the shared
+        memory; a personality's own first, then the shared ones."""
+        from odie.memory import rules
+        if not personality:
+            return rules.block(self.memory)
+        return rules.block(self.memory_of(personality), self.memory)
+
     def prefetch(self, text: str, personality: str = "") -> str:
         """The remembered entries that fit this message, for its [memories] block: from the shared memory, and for a
         personality from its own memory first."""
@@ -916,19 +938,24 @@ class OdieRunner:
         personality = personalities.of_session(self.store, session_id_of(tool_context))
         return self.memory_of(personality)
 
-    def _note_turn(self, session_id: str, user: str, assistant: str) -> None:
+    def _note_turn(self, session_id: str, user: str, assistant: str, typed: str = "") -> None:
         """Every N user turns, review the conversation for things worth remembering (background). Turns are counted
         and reviewed apart for each personality, and what a review finds goes into the memory of whoever the thread
-        belongs to: a private thing said to Mira is never reviewed into the shared memory."""
+        belongs to: a private thing said to Mira is never reviewed into the shared memory. `typed`: his own typed words
+        this turn ("" for a tap's or the terminal's): only those can carry a rule (odie.memory.rules)."""
         from odie import personalities
         personality = personalities.of_session(self.store, session_id)
         if personality and personalities.get(self.store, personality) is None:
             return  # it was deleted while this turn ran: nothing of it is kept
         pending = self._turns.setdefault(personality, [])
         pending.append((user, assistant))
+        his = self._typed.setdefault(personality, [])
+        if typed:
+            his.append(typed)
         if len(pending) < self.review_every:
             return
         self._turns[personality] = []
+        self._typed[personality] = []
         if self._review_task is not None and not self._review_task.done():
             return  # one review at a time
         try:
@@ -939,7 +966,8 @@ class OdieRunner:
         index_text = self.memory_index(personality)
         self._review_for = personality
         self._review_task = asyncio.create_task(run_review(memory, pending, index_text, on_change=self._memory_changed,
-                                                           store=self.store, brain=brain))
+                                                           store=self.store, brain=brain, typed=his,
+                                                           pid=personality))
 
     def _read_for_promises(self, session_id: str, text: str, reply: str, via: str | None, private: bool,
                            since: str) -> None:
@@ -1037,7 +1065,9 @@ class OdieRunner:
         now = datetime.now(self.tz)
         today = now.strftime("%Y-%m-%d")
         built = self._prompts.get(session_id)
-        if built is not None and built.day == today:
+        from odie.memory import rules
+        rules_now = rules.version(self.store)
+        if built is not None and built.day == today and built.rules_version == rules_now:
             return built
         from odie import persona, personalities
         from odie.morning.round import morning_day
@@ -1049,9 +1079,10 @@ class OdieRunner:
             soul = self.load_soul()
         day_summary = self.day_summary(now)
         static = build_static_prompt(now, soul, self.memory_index(personality), gated=self.gated, who=who,
-                                     day_summary=day_summary, summary_day=morning_day(now))
+                                     day_summary=day_summary, summary_day=morning_day(now),
+                                     rules=self.rules_text(personality))
         text = persona.apply_name(static, who.assistant)
-        built = SessionPrompt(text=text, caps=who.caps, day_summary=day_summary, day=today)
+        built = SessionPrompt(text=text, caps=who.caps, day_summary=day_summary, day=today, rules_version=rules_now)
         self._prompts[session_id] = built
         return built
 
@@ -1147,6 +1178,8 @@ class OdieRunner:
             trailer += think_harder_words(selection, thinking)
             if via == "terminal":
                 trailer += VIA_TERMINAL
+            elif via == "tap":
+                trailer += VIA_TAP
             parts: list[types.Part] = []
             markers = ""
             for iid in images or []:
@@ -1282,7 +1315,11 @@ class OdieRunner:
         if unsaved:  # its own stored message, so it's in history too (the false claim stays visible above it)
             await self.post_message(unsaved_note, session_id=session_id)
         if not was_private:  # a turn that read a signed-in page never feeds the memory review
-            self._note_turn(session_id, text, "".join(final))
+            typed = ""
+            if via is None:  # he typed or dictated it: a tap's words, or the terminal's, never carry a rule
+                from odie.blocks.answers import without_form_answers
+                typed = without_form_answers(text)
+            self._note_turn(session_id, text, "".join(final), typed)
         self._read_for_promises(session_id, text, "".join(final), via, was_private, turn_started)
         yield {"type": "done", "text": "".join(final), "session_id": session_id}  # the thread, also when a card ended it
 

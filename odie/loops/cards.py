@@ -71,9 +71,11 @@ def tested_move(loop: dict, tested: dict | None) -> tuple[dict | None, str]:
 
 def icon_of(loop: dict) -> str:
     """A loop card's icon: a pull request's or issue's "terminal"; else its pile's (bills -> "rupee", personal ->
-    "heart"); from an event "cal"; from a mail "mail"; anything else "bell"."""
+    "heart"); from an event "cal"; from a mail "mail"; a "Learn this?" "spark"; anything else "bell"."""
     if loop["playbook"]:
         return "terminal"
+    if loop["kind"] == "skill":
+        return "spark"
     pile = loop["card"].get("pile", "")
     if pile in card_text.PILE_ICON:
         return card_text.PILE_ICON[pile]
@@ -115,9 +117,13 @@ def badge_of(loop: dict, now: datetime) -> str:
 
 
 def chat_move(loop: dict) -> dict:
-    """The one move of a loop that isn't GitHub's, written by code (the check wrote only its words): its draft ("Show
-    the draft for loop #3"), the move the check suggested ("Loop #3: Remind me Thursday"), else "Tell me more"."""
+    """The one move of a loop that isn't GitHub's, written by code (the check wrote only its words): a "Learn this?"
+    loop's Teach, its draft ("Show the draft for loop #3"), the move the check suggested ("Loop #3: Remind me
+    Thursday"), else "Tell me more"."""
     lid = loop["id"]
+    if loop["kind"] == "skill":  # "Learn this?" (odie.loops.learning): Teach asks the skill builder for a draft
+        from odie.loops import learning
+        return {"label": "Teach", "action": "chat", "value": learning.teach_request(loop)}
     label = str(loop["card"].get("suggestion") or "").strip()
     if loop["card"].get("draft"):
         return {"label": label or "Show the draft", "action": "chat", "value": f"Show the draft for loop #{lid}"}

@@ -114,12 +114,16 @@ async def test_trackers_run_as_a_part(isolated_settings, tmp_path):
     from zoneinfo import ZoneInfo
 
     from odie import config
-    from odie.loops import review
+    from odie.loops import learning, review
+    now = datetime.now(ZoneInfo(config.settings.timezone))
     evening = []
-    if review.owners_due(s, datetime.now(ZoneInfo(config.settings.timezone))):
+    if review.owners_due(s, now):
         evening = ["evening"]  # from 19:30 the evening review's part is due too (phase 5)
+    morning = []
+    if learning.owners_due(s, now):
+        morning = ["learning"]  # from 08:30 the morning learning check's part is due too (phase 6)
     ran = await bg.tick()  # the watch is due at once (never checked); the follow-up ladder runs every wake-up
-    assert ran == ["watch", "trackers", *evening, "ladder"] and calls == ["trackers"]
+    assert ran == ["watch", "trackers", *evening, *morning, "ladder"] and calls == ["trackers"]
 
 
 async def test_the_background_route(isolated_settings, tmp_path):

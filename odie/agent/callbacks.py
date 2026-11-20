@@ -236,6 +236,20 @@ def fields_in_order(tool, fields: set[str]) -> list[str]:
     return [f for f in order if f in fields] + sorted(fields - set(order))
 
 
+def note_skill_used(store, name: str) -> None:
+    """Notes a load_skill for the fade clock (odie.skills.fade.note_used); never stops the call."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from odie import config
+    from odie.skills import fade
+    if not name:
+        return
+    try:
+        fade.note_used(store, name, datetime.now(ZoneInfo(config.settings.timezone)))
+    except Exception:  # noqa: BLE001 (a fade note must never break a chat)
+        logging.getLogger("odie.skills").warning("could not note a skill's use", exc_info=True)
+
 class OdiePlugin(BasePlugin):
     def __init__(self, store: Store):
         super().__init__(name="odie")
@@ -319,6 +333,8 @@ class OdiePlugin(BasePlugin):
             if in_a_personalitys_thread:  # background work is everyday Odie's: the tool doesn't run here
                 self.store.audit("agent", "tool_refused", tool=tool.name, result_summary="everyday Odie's job", session_id=session_id)
                 return {"error": personalities.ODIE_ONLY}
+        if tool.name == "load_skill":  # a skill Odie learned was used: it doesn't fade (odie.skills.fade)
+            note_skill_used(self.store, str((tool_args or {}).get("skill_name") or ""))
         problem = fix_tool_args(tool, tool_args)
         if problem:
             session_id = session_id_of(tool_context)
