@@ -850,13 +850,18 @@ class Browser:
 
     async def _to_page(self, s: str, x: float, y: float) -> tuple[float, float]:
         """The phone's taps are in the shown picture's pixels; Chrome reads them in the page's own. They differ when a
-        desktop page is shown shrunk (scale ~0.4) or zoomed."""
+        desktop page is shown shrunk (scale ~0.4) or zoomed. A tap past the page's edge (a picture of the old size, just
+        after Take control) is moved onto the edge: Chrome refuses it otherwise ("Position out of bounds").
+        Example: (120, 300) at scale 0.4 -> (300, 750); (5000, 5000) on a 390x844 page -> (389, 843)."""
         try:
-            scale, ox, oy = await self._eval(s, "[visualViewport.scale, visualViewport.offsetLeft, visualViewport.offsetTop]")
+            scale, ox, oy, w, h = await self._eval(s, "[visualViewport.scale, visualViewport.offsetLeft, visualViewport.offsetTop, "
+                                                      "innerWidth, innerHeight]")
         except (BrowserError, CDPError, TimeoutError, TypeError, ValueError):
             return x, y
         scale = scale if isinstance(scale, int | float) and scale > 0 else 1
-        return ox + x / scale, oy + y / scale
+        page_x = min(max(ox + x / scale, 0), max(w - 1, 0))
+        page_y = min(max(oy + y / scale, 0), max(h - 1, 0))
+        return page_x, page_y
 
     async def _live_page(self, s: str) -> dict:
         try:

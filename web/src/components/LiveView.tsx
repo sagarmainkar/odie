@@ -138,6 +138,9 @@ function Live({ tab, site, start, chat, onClose, watch = false, who = "Odie", pa
     if (g.t === "drag" && zoom.s > 1.01) return;  // a pan of the zoomed picture, not a scroll
     if (!controlling) return;  // watching: the page is Odie's
     send(g);
+    // At a desk the keyboard is a real one: clicking the picture took the typing away from the hidden field, so the
+    // next letters went nowhere. Give it back. (A phone keeps its own keyboard button: focusing would pop it up.)
+    if (window.matchMedia?.("(pointer: fine)").matches) keys.current?.focus({ preventScroll: true });
   };
 
   async function finish(done: boolean) {
