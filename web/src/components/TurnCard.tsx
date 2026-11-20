@@ -40,6 +40,7 @@ export function TurnCard({ m }: { m: Media }) {
           {!onPage && <button onClick={() => setLive(true)} className="text-small text-muted self-start">Open the page instead</button>}
         </>
       )}
+      {done && m.tab && <button onClick={() => setLive(true)} className="text-small text-muted self-start">Open the page again</button>}
       {sheet && m.tab && (
         <SignInSheet tab={m.tab} site={site} username={username} startWith={m.state === "code" ? "code" : "login"}
           onClose={(r) => { setSheet(false); if (r?.status === "signed_in") finish(); else if (r?.status === "open_page") setLive(true); }} />

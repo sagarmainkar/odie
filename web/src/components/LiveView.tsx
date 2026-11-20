@@ -177,7 +177,7 @@ function Live({ tab, site, start, chat, onClose, watch = false, who = "Odie", pa
       <div className="flex items-center gap-2 px-3 pt-[max(10px,env(safe-area-inset-top))] pb-2">
         {watch
           ? <button onClick={() => finish(true)} disabled={finishing} className="h-10 px-3 rounded-full text-ui font-semibold text-white/85 active:bg-white/15">I signed in</button>
-          : <button onClick={() => finish(false)} disabled={finishing} className="h-10 px-3 rounded-full text-ui font-semibold text-white/85 active:bg-white/15">Cancel</button>}
+          : <button onClick={() => finish(false)} disabled={finishing} className="h-10 px-3 rounded-full text-ui font-semibold text-white/85 active:bg-white/15">{chat ? "Not now" : "Cancel"}</button>}
         <div className="flex-1 min-w-0 text-center">
           <div className="text-ui font-semibold truncate flex items-center justify-center gap-1.5">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" aria-hidden><rect x="5" y="11" width="14" height="10" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" /></svg>
@@ -186,7 +186,7 @@ function Live({ tab, site, start, chat, onClose, watch = false, who = "Odie", pa
           <div className="text-caption text-white/55 truncate">{page.loading ? "Loading…" : page.title || "Your turn: Odie can't see this"}</div>
         </div>
         <button onClick={() => finish(!watch)} disabled={finishing || phase !== "live"} className="h-10 px-4 rounded-full bg-white text-black text-ui font-bold disabled:opacity-40">
-          {finishing ? "…" : watch ? `Hand back to ${who}` : "Done"}
+          {finishing ? "…" : watch ? `Hand back to ${who}` : !chat ? "Done" : paying ? "I've paid" : "I signed in"}
         </button>
       </div>
       <div className="flex items-center gap-2 px-3 pb-2">
