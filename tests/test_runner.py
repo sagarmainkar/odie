@@ -171,7 +171,7 @@ async def test_review_triggers_every_n_turns(isolated_settings, tmp_path, monkey
     import odie.app.runner as rmod
     calls = []
 
-    async def fake_review(memory, turns, index, on_change=None, store=None, brain=None):
+    async def fake_review(memory, turns, index, on_change=None, store=None, brain=None, typed=None, pid=""):
         calls.append(len(turns))
     monkeypatch.setattr(rmod, "run_review", fake_review)
     s = Store(tmp_path / "assistant.db")

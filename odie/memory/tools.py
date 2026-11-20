@@ -82,6 +82,10 @@ def make_memory_tools(memory: MemoryFile, on_change=None,
             t = doc.topic(WATCH_FOR) if doc is not None else None
             if t is not None and len(t.entries) >= 30 and doc.find(title) is None:
                 return "You have 30 things to watch for: remove one first."
+        from odie.memory import rules
+        if rules.resolves_to_rule(own, title, topic):  # rules come only from his own words (odie.memory.rules)
+            return ("Not saved: rules are saved by Odie on their own, from the user's own words. If the user wants this "
+                    "as a rule, ask them to say it in their own words.")
         from odie.agent import turn
         if turn.private_sites():  # nothing from a signed-in page becomes a memory (signed-in browsing)
             return "Not saved: this chat read a signed-in page, and nothing from those is kept as a memory."

@@ -63,8 +63,11 @@ def parse_items(text: str, max_items: int = MAX_ITEMS) -> list[dict[str, str]]:
         title = str(it.get("title") or "").strip()
         content = str(it.get("content") or "").strip()
         if title and content:
-            items.append({"topic": str(it.get("topic") or "").strip(), "title": title, "content": content,
-                          "quote": str(it.get("quote") or "").strip()})
+            item = {"topic": str(it.get("topic") or "").strip(), "title": title, "content": content}
+            quote = str(it.get("quote") or "").strip()
+            if quote:  # a rule's: the user's exact words it rests on
+                item["quote"] = quote
+            items.append(item)
     items = [i for i in items if i["topic"].lower() != "watch for"]  # standing instructions: only the user adds those
     return items[:max_items]
 
@@ -105,10 +108,12 @@ async def run_review(memory: MemoryFile, turns: list[tuple[str, str]], index_tex
         if is_rule(it):
             if store is None:
                 continue
-            notice = rules.save(store, memory, pid, now, it["title"], it["content"], it["quote"], typed or [])
+            notice = rules.save(store, memory, pid, now, it["title"], it["content"], it.get("quote", ""), typed or [])
             if notice is not None:
                 kept.append(it)
             continue
+        if rules.resolves_to_rule(memory, it["title"], it["topic"]):
+            continue  # a fact never lands on a rule: only rules.save writes those, from his words
         try:
             memory.update(it["title"], it["content"], topic=it["topic"] or None, source="review", append=True)
         except ValueError:

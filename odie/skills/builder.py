@@ -199,8 +199,10 @@ def staged_text(name: str) -> str:
     return "\n".join(parts)
 
 
-async def install(name: str, version: str = "") -> str:
-    """Runs only after the user approved: move the draft in, trust its code, reload, and report how it loaded."""
+async def install(name: str, version: str = "", owner: str = "") -> str:
+    """Runs only after the user approved: move the draft in, trust its code, reload, and report how it loaded.
+    `owner`: whose chat approved it (everyday Odie "" or a personality's id): only that owner's "Learn this?" loop
+    is closed by it."""
     from odie.skills.registry import _code_hash, discover, trust
     src = staging_dir() / name
     if name_problem(name) or not (src / "SKILL.md").exists():
@@ -211,6 +213,7 @@ async def install(name: str, version: str = "") -> str:
     loop_id = taught_loop(src)
     (src / LOOP_FILE).unlink(missing_ok=True)
     dest = user_dir() / name
+    was_there = dest.is_dir()  # his own skill changed: it stays his, never fades
     user_dir().mkdir(parents=True, exist_ok=True)
     if dest.is_dir():  # an update: replace what the card showed, keep the user's other files
         shutil.copy2(src / "SKILL.md", dest / "SKILL.md")
@@ -237,7 +240,7 @@ async def install(name: str, version: str = "") -> str:
     store.audit("agent", "skill_installed", result_summary=name)
     if loop_id:
         from odie.loops import learning
-        learning.taught(store, loop_id, name)
+        learning.taught(store, loop_id, name, owner=owner, new=not was_there)
     tools = f" Its tools: {', '.join(entry.tools)}." if entry.tools else ""
     return (f"The user approved it and {name} is installed now; it's on and loads on demand.{tools} Tell them it's ready "
             "(no more taps needed), with one example request to try.")

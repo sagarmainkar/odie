@@ -91,9 +91,9 @@ def yesterdays_lines(store, pid: str, now: datetime) -> list:
 
 
 def his_typed(lines: list) -> list[str]:
-    """His own words among the lines: what he typed, never what the odie command typed for him. (A card's request
-    is told apart later, by its "loop #": odie.memory.rules.his_words.)"""
-    return [ln.text for ln in lines if ln.author == "you" and ln.via != "terminal"]
+    """His own words among the lines: what he typed, never what the odie command or a tap sent for him (a card's
+    words may come from mail). Form answers are already gone (odie.recall.chats cleans each line)."""
+    return [ln.text for ln in lines if ln.author == "you" and not ln.via]
 
 
 def pick(exchanges: list) -> list:
@@ -112,7 +112,7 @@ async def alike(store, pid: str, picked: list, before: str) -> dict[int, list]:
     from odie.recall.fill import recall_index
     from odie.vault.settings import embedder_for
     hidden = personalities.hidden_from(store, pid)
-    until = (datetime.fromisoformat(before) - timedelta(days=1)).date().isoformat()
+    until = (datetime.fromisoformat(before) - timedelta(days=2)).date().isoformat()  # inclusive: never yesterday
     out: dict[int, list] = {}
     try:
         index = recall_index()
@@ -353,9 +353,11 @@ def teach_request(loop: dict) -> str:
             "to approve.")
 
 
-def taught(store, loop_id: int, name: str) -> bool:
-    """His Approve installed a skill drafted for a "Learn this?" loop: the loop is done (his tap) and the skill is
-    learned, so it fades when unused. Only an open loop of kind "skill"; anything else -> False, nothing changes."""
+def taught(store, loop_id: int, name: str, owner: str = "", new: bool = True) -> bool:
+    """His Approve installed a skill drafted for a "Learn this?" loop: the loop is done (his tap) and, when the skill
+    is new, it is learned, so it fades when unused (a skill that was already his stays his). Only an open loop of kind
+    "skill" of the owner whose chat approved it; anything else -> False, nothing changes.
+      loop #4 (everyday), approved in an everyday chat -> True;  the same approved in Mira's chat -> False"""
     from zoneinfo import ZoneInfo
 
     from odie import config
@@ -363,9 +365,11 @@ def taught(store, loop_id: int, name: str) -> bool:
     loop = ledger.get(store, int(loop_id))
     if loop is None or loop["kind"] != KIND or loop["state"] not in ledger.OPEN:
         return False
+    if (loop["personality"] or "") != (owner or ""):
+        return False
     now = datetime.now(ZoneInfo(config.settings.timezone))
     ledger.close(store, loop["id"], now, ledger.CLOSED_BY_USER, f"Learned: the {name} skill is installed")
-    if not loop["card"].get("skill"):  # a new skill fades; one of his own he had Odie change stays his
+    if new:  # a new skill fades when unused; one of his own that Odie changed stays his
         fade.mark_learned(store, name, now, loop["id"])
     return True
 

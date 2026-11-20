@@ -203,12 +203,15 @@ def number(value) -> int | None:
 
 
 def mine(store, pid: str, value) -> dict | None:
-    """The loop a number names, when it is this owner's and open; anything else -> None (left alone)."""
+    """The loop a number names, when it is this owner's and open, and not a "Learn this?" (only his Approve or his
+    Done closes that one: odie.loops.learning); anything else -> None (left alone)."""
     n = number(value)
     if n is None:
         return None
     loop = ledger.get(store, n)
     if loop is None or loop["personality"] != pid or loop["state"] not in ledger.OPEN:
+        return None
+    if loop["kind"] == "skill":
         return None
     return loop
 

@@ -60,6 +60,21 @@ def faded(store) -> dict:
     return {"next": int(found.get("next") or 1), "items": list(found.get("items") or [])}
 
 
+def free_folder(name: str, now: datetime) -> Path:
+    """A folder in archive_dir no skill is in yet: the name, else the name and the day, else with a number after.
+    "trip" free -> trip;  taken -> trip-2026-11-20;  that taken too -> trip-2026-11-20-2"""
+    dest = archive_dir() / name
+    if not dest.exists():
+        return dest
+    day = now.date().isoformat()
+    dest = archive_dir() / f"{name}-{day}"
+    n = 2
+    while dest.exists():
+        dest = archive_dir() / f"{name}-{day}-{n}"
+        n += 1
+    return dest
+
+
 def fade(store, now: datetime, user_dir: Path) -> list[dict]:
     """Puts away each learned skill unused too long: its folder moves from user_dir to archive_dir (a name already
     there gets the day added), and its notice waits. Returns the notices made. A learned skill whose folder is gone
@@ -75,9 +90,7 @@ def fade(store, now: datetime, user_dir: Path) -> list[dict]:
         if not src.is_dir():
             continue
         archive_dir().mkdir(parents=True, exist_ok=True)
-        dest = archive_dir() / name
-        if dest.exists():
-            dest = archive_dir() / f"{name}-{now.date().isoformat()}"
+        dest = free_folder(name, now)
         shutil.move(str(src), str(dest))
         notice = {"id": notes["next"], "name": name, "folder": dest.name, "at": now.isoformat(timespec="seconds"),
                   "state": "on", "said": False}

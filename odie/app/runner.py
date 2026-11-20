@@ -63,6 +63,17 @@ def strip_trailer(text: str) -> str:
 VIA_TERMINAL = "\n[sent from the terminal: a program on this Mac (an AI agent or a script) typed this for the user]"
 
 
+# Added to the hidden context of a message a button or card in the app sent for him (via "tap"), so a later reader of
+# the stored chat (odie.loops.learning) never takes a card's words, which may come from mail, as his typing.
+VIA_TAP = "\n[sent by a tap in the app: a button or card wrote this, not the user]"
+
+
+def came_via_tap(text: str) -> bool:
+    """Whether a stored user message was sent by a tap: its hidden context carries VIA_TAP.
+      "Help me prepare for X\n\n[context: …]\n[sent by a tap …]" -> True;  typed -> False"""
+    return VIA_TAP in text
+
+
 def came_via_terminal(text: str) -> bool:
     """Whether a stored user message was sent by the odie command: its hidden context carries VIA_TERMINAL.
       "hi\n\n[context: now 09:30 …]"                                -> False (typed in the app)
@@ -643,6 +654,7 @@ class SessionPrompt:
     caps: frozenset  # what this install could do when it was built (the trailer's wording follows it)
     day_summary: str  # the morning's summary it carries ("" when it carries none: the trailer then brings the brief)
     day: str  # the local day it was built on: a thread that lives for days gets a new one each day
+    rules_version: int = 0  # his rules as they were (odie.memory.rules.version): a rule saved or undone rebuilds it
 
 
 class OdieRunner:
@@ -1053,7 +1065,9 @@ class OdieRunner:
         now = datetime.now(self.tz)
         today = now.strftime("%Y-%m-%d")
         built = self._prompts.get(session_id)
-        if built is not None and built.day == today:
+        from odie.memory import rules
+        rules_now = rules.version(self.store)
+        if built is not None and built.day == today and built.rules_version == rules_now:
             return built
         from odie import persona, personalities
         from odie.morning.round import morning_day
@@ -1068,7 +1082,7 @@ class OdieRunner:
                                      day_summary=day_summary, summary_day=morning_day(now),
                                      rules=self.rules_text(personality))
         text = persona.apply_name(static, who.assistant)
-        built = SessionPrompt(text=text, caps=who.caps, day_summary=day_summary, day=today)
+        built = SessionPrompt(text=text, caps=who.caps, day_summary=day_summary, day=today, rules_version=rules_now)
         self._prompts[session_id] = built
         return built
 
@@ -1164,6 +1178,8 @@ class OdieRunner:
             trailer += think_harder_words(selection, thinking)
             if via == "terminal":
                 trailer += VIA_TERMINAL
+            elif via == "tap":
+                trailer += VIA_TAP
             parts: list[types.Part] = []
             markers = ""
             for iid in images or []:

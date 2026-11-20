@@ -147,7 +147,8 @@ def prompt_for(store, pid: str, now: datetime, found: list[dict], shortcut: dict
     reminders' titles, which may have come from mail) is fenced, and so are his Now list (data: an accepted proposal
     may hold a loop's title) and his taps on cards today (a card's title); his Watch for and memory are his own."""
     finding_lines = [findings.line(f, hint_words(shortcut.get(f["id"], {}))) for f in found]
-    open_lines = [ledger.line(lp, ledger.events(store, lp["id"])) for lp in ledger.open_loops(store, pid)[-OPEN_SHOWN:]]
+    shown = [lp for lp in ledger.open_loops(store, pid) if lp["kind"] != "skill"]  # "Learn this?": not mail's business
+    open_lines = [ledger.line(lp, ledger.events(store, lp["id"])) for lp in shown[-OPEN_SHOWN:]]
     done_lines = [ledger.finished_line(lp) for lp in ledger.finished(store, pid, now)[:FINISHED_SHOWN]]
     task_lines = []
     for t in his_tasks(store, pid):
@@ -386,12 +387,15 @@ def close_from(store, now: datetime, loop: dict, found: dict, answer: dict, done
 
 def mine(store, pid: str, value, found: dict, now: datetime) -> dict | None:
     """The loop a number in an answer names, when the finding may reach it: this owner's, open or still remembered,
-    and not a pull request's loop unless the finding is GitHub's own mail. Anything else -> None (as no answer)."""
+    and not a pull request's loop unless the finding is GitHub's own mail; never a "Learn this?" loop (only his
+    Approve or his Done closes it: odie.loops.learning). Anything else -> None (as no answer)."""
     n = number(value)
     if n is None:
         return None
     loop = ledger.get(store, n)
     if loop is None or loop["personality"] != pid or not may_touch(loop, found):
+        return None
+    if loop["kind"] == "skill":
         return None
     if loop["state"] not in ledger.OPEN and not ledger.remembered(loop, now):
         return None
