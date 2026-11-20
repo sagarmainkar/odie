@@ -423,6 +423,16 @@ def make_browser_tools(store, browser_for: Callable[[], object] | None = None) -
             FunctionTool(find_clips, require_confirmation=guard.for_query(store))]
 
 
+async def _has_login_form(tab: str) -> bool:
+    """Does the tab's page have a sign-in form? Asks the running browser only (never starts one). Example: a login page
+    -> True; a pay page with a captcha and no password box -> False; no browser running -> True."""
+    import odie.browser
+    b = odie.browser._shared
+    if b is None or not hasattr(b, "has_login_form"):
+        return True
+    return await b.has_login_form(tab)
+
+
 def make_signin_tools(store) -> list[FunctionTool]:
     """browser_sign_in, offered only while signed-in browsing is on (odie.signin; spec Part 1): the user's turn."""
     async def browser_sign_in(why: str, tool_context: ToolContext, pay: bool = False) -> dict:
@@ -463,6 +473,8 @@ def make_signin_tools(store) -> list[FunctionTool]:
             return {"result": f"A Pay card for {where} is in the chat; its button opens the page in Odie, where the user "
                               "pays. Tell them in one short line that it's their turn to pay, and stop there.",
                     "media": shown}
+        if not await _has_login_form(tab):  # a captcha or a check, no login form: the card leads with the page itself
+            card = {**card, "state": "captcha"}
         shown = _save_card(card, f"{where} needs you to sign in")
         return {"result": f"A Sign in card for {where} is in the chat. Tell the user in one short line that it's their "
                           f"turn (\"Your turn: sign in to {where}.\") and stop there.",

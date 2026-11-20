@@ -1128,16 +1128,38 @@ class Browser:
             return {"status": "failed"}
         return {"status": "signed_in"}
 
+    @staticmethod
+    def _is_login_form(st: dict) -> bool:
+        """Is there a sign-in form to fill: a password box, or a username box on a page whose address or title says
+        sign in (the first of two steps)? Example: a login page -> True; "Sign in" with only an email box -> True; a
+        utility's pay page with Consumer No. and a captcha -> False."""
+        if st.get("password"):
+            return True
+        return bool(st.get("user") and st.get("asks"))
+
+    async def has_login_form(self, tab: str) -> bool:
+        """Does the tab's page have a sign-in form Odie's sign-in box could fill? Unknown (no such tab, or the page is
+        between documents) -> True, so the card offers the box as before."""
+        s = self._tabs.get(tab)
+        if s is None or self._cdp is None:
+            return True
+        try:
+            return self._is_login_form(await self._login_state(s))
+        except (BrowserError, CDPError, TimeoutError):
+            return True
+
     async def sign_in(self, tab: str, site: str, username: str, password: str) -> dict:
         """Fill a login on the tab's page (one step, or the username then the password) and send it. The values go
         only into CDP Input.insertText: never logged, never read back. {"status": signed_in, code, captcha, failed or
-        wrong_site}."""
+        wrong_site, or no_form: the page has no sign-in form, and nothing was typed}."""
         async def go(s: str) -> dict:
             st = await self._login_state(s)
             if not self._login_site_ok(str(st.get("url", "")), site):
                 return {"status": "wrong_site"}
-            if st.get("newpass") or not (st.get("user") or st.get("password")):
-                return {"status": "failed"}  # a sign-up or change-password form, or no login form at all
+            if st.get("newpass"):
+                return {"status": "failed"}  # a sign-up or change-password form
+            if not self._is_login_form(st):
+                return {"status": "no_form"}  # e.g. a no-login pay page's Consumer No. box: never typed into
             if st.get("user"):
                 if stop := await self._fill_login(s, site, "user", username):
                     return {"status": stop}
