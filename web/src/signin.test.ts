@@ -129,3 +129,9 @@ describe("pay and Google sign-in turns", () => {
     expect(paidLine("example-power.in", false)).toBe("I didn't pay on example-power.in.");
   });
 });
+
+describe("a page without a sign-in form", () => {
+  it("says nothing was typed", () => {
+    expect(loginStatusText("no_form", "mahadiscom.in")).toBe("This mahadiscom.in page has no sign-in form, so Odie typed nothing. Open the page and do it there.");
+  });
+});

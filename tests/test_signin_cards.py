@@ -112,6 +112,8 @@ def site():
                 "/shifting": page("Pay", '<label>Card number<input name="cardnumber" autocomplete="cc-number" oninput="if (!window.shown) { window.shown = 1; '
                                   'const n = document.createElement(\'label\'); n.innerHTML = \'Card holder<input name=holder>\'; this.parentNode.after(n); }"></label>'
                                   '<label>Expiry (MM/YY)<input name="exp" autocomplete="cc-exp"></label>' + CVV),
+                "/quickpay": page("View and pay your bill", '<label>Consumer No.<input name="consumerNo" value="170000000001"></label>'
+                                  '<label>Enter captcha<input name="captcha"></label>'),
                 "/shop": '<!doctype html><title>Shop</title><main><p>Things</p><button>Continue with Google</button></main>',
             }
             body = pages.get(self.path.split("?")[0], "<title>t</title><p>x</p>")
@@ -262,3 +264,15 @@ async def test_a_click_past_the_page_edge_lands_on_the_page(browser, site):
     await go_live(browser, "chat")
     await browser.live_input("chat", {"t": "tap", "x": 5000, "y": 5000})
     await browser.live_input("chat", {"t": "drag", "x0": 200, "y0": 700, "x1": 200, "y1": 9000})
+
+
+@chrome
+async def test_a_pay_page_without_a_sign_in_form_gets_nothing_typed(browser, site):
+    """Found live: the Sign in box on a utility's no-login pay page typed the username into Consumer No. (no password
+    box, so "failed"). A page with no sign-in form gets nothing, and the box offers the page instead."""
+    await browser.open("chat", f"http://127.0.0.1:{site}/quickpay")
+    assert await browser.sign_in("chat", "127.0.0.1", "asha_rao7", "pw") == {"status": "no_form"}
+    assert (await values(browser, "chat"))["consumerNo"] == "170000000001"
+    assert await browser.has_login_form("chat") is False
+    await browser.open("chat", f"http://127.0.0.1:{site}/consumer")
+    assert await browser.has_login_form("chat") is True

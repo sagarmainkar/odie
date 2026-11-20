@@ -109,7 +109,7 @@ export function heldLabel(urls: string[]): string {
   return `Show ${urls.length} images from ${named}${hosts.length > 2 ? ` and ${hosts.length - 2} more` : ""}`;
 }
 
-export type LoginStatus = "signed_in" | "code" | "captcha" | "failed" | "wrong_site" | "expired" | "vault";
+export type LoginStatus = "signed_in" | "code" | "captcha" | "failed" | "wrong_site" | "expired" | "vault" | "no_form";
 export type TurnState = "done" | "code" | "failed" | "captcha" | "vault" | "social" | "pay";
 export type SavedLogin = { site: string; username: string; saved_at: string; last_used: string | null };
 
@@ -123,6 +123,7 @@ export function loginStatusText(status: LoginStatus, site: string): string {
     case "wrong_site": return `The page isn't on ${site} any more.`;
     case "expired": return "That took too long: sign in again.";
     case "vault": return "Odie couldn't open its vault on the Mac.";
+    case "no_form": return `This ${site} page has no sign-in form, so Odie typed nothing. Open the page and do it there.`;
   }
 }
 

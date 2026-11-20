@@ -31,7 +31,7 @@ function Sheet({ tab, site, username = "", startWith = "login", onClose }: { tab
       if (status === "signed_in") { if (data.warning) window.alert(data.warning); onClose({ status, site }); return; }
       if (status === "code") { setPhase("code"); setPass(""); setNote(loginStatusText("code", site)); return; }
       setNote(loginStatusText(status, site));
-      setOpenPage(status === "captcha" || status === "wrong_site");
+      setOpenPage(status === "captcha" || status === "wrong_site" || status === "no_form");
       if (status === "expired") setPhase("login");
     } catch {
       setNote("Odie didn't answer. Try again.");

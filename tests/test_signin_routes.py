@@ -239,3 +239,26 @@ def test_cards_in_settings(store, keychain):
         assert c.get("/api/wallet/cards").json() == got
         assert c.delete(f"/api/wallet/cards/{card['id']}").json() == {"cards": []}
         assert c.delete(f"/api/wallet/cards/{card['id']}").status_code == 404
+
+
+async def test_a_page_without_a_login_form_gets_a_page_first_card(store, monkeypatch):
+    """A captcha-only pay page (no password box): the card leads with Open the page, not the Sign in box."""
+    import odie.browser
+    from odie import media
+    from odie.agent.tools.browser import make_signin_tools
+
+    class NoForm:
+        async def has_login_form(self, tab):
+            return False
+    monkeypatch.setattr(odie.browser, "_shared", NoForm())
+    state.turn_on(store, accepted=True, version=state.VERSION, now=NOW)
+    tool = make_signin_tools(store)[0]
+    ctx = SimpleNamespace(session=SimpleNamespace(id="chat-2026-11-20-4"))
+    guard.LAST_URL["chat-2026-11-20-4"] = "https://www.example-power.in/bills/view"
+    token = turn.USER_TEXT.set("pay my electricity bill")
+    try:
+        out = await tool.run_async(args={"why": "Type the captcha"}, tool_context=ctx)
+    finally:
+        turn.USER_TEXT.reset(token)
+    path, _ = media.get(out["media"]["id"])
+    assert json.loads(path.read_bytes())["state"] == "captcha"
