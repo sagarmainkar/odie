@@ -29,6 +29,12 @@ class FakeEngine:
     def hold(self, tab, holder):
         self.holds[tab] = holder
 
+    async def fill_card(self, tab, card):
+        self.calls.append(("card", tab, card["number"][-4:]))
+        return {"filled": ["number"] if self.card_boxes else []}
+
+    card_boxes = True
+
     def release(self, tab, holder=None):
         self.holds.pop(tab, None)
 
@@ -603,3 +609,28 @@ async def test_an_embedded_box_from_another_site_isnt_the_page(tmp_path, tap_sit
         assert pages and all(u.startswith(f"http://127.0.0.1:{tap_site}/") for u in pages), pages
     finally:
         await b.close()
+
+
+def test_a_saved_card_is_typed_only_for_the_driver(app, store, engine, keychain):
+    """The card bar's pick: the engine types the saved card (the phone sends only its id) and the phone hears what
+    happened; a watcher's pick, an unknown id, or a page without card boxes types nothing."""
+    from odie.signin import wallet
+    card = wallet.save(store, "4242424242424242", "03/29", "", "", NOW)
+    c = app.state.client
+    with c.websocket_connect(URL) as ws:
+        ws.send_json(WATCH)
+        ws.receive_json(), ws.receive_json()
+        ws.send_json({"t": "card", "id": card["id"]})
+        settle(ws)
+        assert not [x for x in engine.calls if x[0] == "card"]  # only watching: nothing typed
+        ws.send_json({"t": "control"})
+        assert ws.receive_json() == {"t": "control"}
+        ws.send_json({"t": "card", "id": card["id"]})
+        assert ws.receive_json() == {"t": "note", "why": "Typed Visa •••• 4242. Type the CVV yourself, then pay."}
+        assert ("card", "chat-2026-10-08", "4242") in engine.calls
+        ws.send_json({"t": "card", "id": "0000aaaa"})
+        assert ws.receive_json() == {"t": "note", "why": "That card isn't saved any more."}
+        engine.card_boxes = False
+        ws.send_json({"t": "card", "id": card["id"]})
+        assert ws.receive_json() == {"t": "note", "why": "No card boxes on this page: open the card form first."}
+    assert wallet.listing(store)[0]["last_used"] is not None

@@ -83,6 +83,14 @@ export function signedInLine(site: string, done: boolean): string {
   return done ? `I'm signed in to ${site}.` : `I didn't sign in to ${site}.`;
 }
 
+/** The chat line after the user's turn to pay (a Pay card's page view). */
+export function paidLine(site: string, done: boolean): string {
+  return done ? `Done: I paid on ${site}.` : `I didn't pay on ${site}.`;
+}
+
+/** A saved card as Settings and the page view's Card button list it (odie/signin/wallet.py): never the number. */
+export type SavedCard = { id: string; label: string; brand: string; last4: string; expiry: string; saved_at: string; last_used: string | null };
+
 export function liveUrl(tab: string, loc: { protocol: string; host: string }): string {
   return `${loc.protocol === "https:" ? "wss:" : "ws:"}//${loc.host}/api/browser/live/${encodeURIComponent(tab)}`;
 }
@@ -102,7 +110,7 @@ export function heldLabel(urls: string[]): string {
 }
 
 export type LoginStatus = "signed_in" | "code" | "captcha" | "failed" | "wrong_site" | "expired" | "vault";
-export type TurnState = "done" | "code" | "failed" | "captcha" | "vault";
+export type TurnState = "done" | "code" | "failed" | "captcha" | "vault" | "social" | "pay";
 export type SavedLogin = { site: string; username: string; saved_at: string; last_used: string | null };
 
 /** What the sign-in box says after Odie's browser tried (odie/signin/box.py). */
@@ -126,6 +134,8 @@ export function turnTitle(state: TurnState | undefined, site: string, auto: bool
     case "code": return `${site} sent you a code`;
     case "captcha": return `${site} wants a check only you can do`;
     case "vault": return "Odie couldn't open its vault on the Mac";
+    case "social": return `Sign in to ${site} on the page`;
+    case "pay": return `Your turn to pay on ${site}`;
     default: return `${site} needs you to sign in`;
   }
 }

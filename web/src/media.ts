@@ -12,7 +12,7 @@ export type Media = {
   filename?: string;  // a file: its name for the download
   deck?: Deck;  // a designed deck (odie/decks): its PowerPoint and slide pictures
   site?: string; tab?: string; why?: string;  // a "your turn" card (signed-in browsing): the site, the browser tab, why
-  state?: "done" | "code" | "failed" | "captcha" | "vault"; auto?: boolean;  // a "your turn" card: where the sign-in stands
+  state?: "done" | "code" | "failed" | "captcha" | "vault" | "social" | "pay"; auto?: boolean;  // a "your turn" card: where the sign-in stands
   label?: string;  // a link: its button (a UPI app link's "Pay in your UPI app")
   tracker_id?: number; page?: string;  // a "check this page signed in?" card (odie/trackers/signed_in.py)
   format?: "story";  // a podcast that is an audio story (a user skill can make one): its hosts are the cast

@@ -20,33 +20,36 @@ export function TurnCard({ m }: { m: Media }) {
   }, [m.state, site]);
   const finish = () => { setDone(true); sendInChat(signedInLine(site, true)); };
   const state = done ? "done" : m.state;
+  const onPage = m.state === "captcha" || m.state === "social" || m.state === "pay";  // only the user can do these, on the page itself
   return (
     <div className="glass rounded-tile p-3.5 flex flex-col gap-2.5">
       <div className="flex items-center gap-3">
         <Tile icon="lock" color={done ? "green" : "blue"} />
         <div className="flex-1 min-w-0">
-          <div className="text-body font-semibold leading-5 break-words">{turnTitle(state, site, !!m.auto && m.state === "done")}</div>
-          <div className="text-small leading-[18px] text-muted">{done ? "Odie carries on from here." : m.why}</div>
+          <div className="text-body font-semibold leading-5 break-words">{done && m.state === "pay" ? `Paid on ${site}` : turnTitle(state, site, !!m.auto && m.state === "done")}</div>
+          <div className="text-small leading-[18px] text-muted">{done ? "Odie carries on from here." : m.why}{!done && m.state === "pay" ? " Your saved card is one tap away there; you type the CVV and the OTP." : ""}</div>
         </div>
       </div>
       {!done && m.tab && (
         <>
-          {m.state === "captcha" ? (
-            <button onClick={() => setLive(true)} className="pill pill-solid h-11 text-body shadow-none">Open the page</button>
+          {onPage ? (
+            <button onClick={() => setLive(true)} className="pill pill-solid h-11 text-body shadow-none">{PAGE_BUTTON[m.state ?? ""] ?? "Open the page"}</button>
           ) : (
             <button onClick={() => setSheet(true)} className="pill pill-solid h-11 text-body shadow-none">{m.state === "code" ? "Enter the code" : "Sign in"}</button>
           )}
-          {m.state !== "captcha" && <button onClick={() => setLive(true)} className="text-small text-muted self-start">Open the page instead</button>}
+          {!onPage && <button onClick={() => setLive(true)} className="text-small text-muted self-start">Open the page instead</button>}
         </>
       )}
       {sheet && m.tab && (
         <SignInSheet tab={m.tab} site={site} username={username} startWith={m.state === "code" ? "code" : "login"}
           onClose={(r) => { setSheet(false); if (r?.status === "signed_in") finish(); else if (r?.status === "open_page") setLive(true); }} />
       )}
-      {live && m.tab && <LiveView tab={m.tab} site={site} chat onClose={(r) => { setLive(false); if (r?.done) setDone(true); }} />}
+      {live && m.tab && <LiveView tab={m.tab} site={site} chat pay={m.state === "pay"} onClose={(r) => { setLive(false); if (r?.done) setDone(true); }} />}
     </div>
   );
 }
+
+const PAGE_BUTTON: Record<string, string> = { social: "Sign in on the page", pay: "Open the page to pay" };
 
 /** A checkout tried to open a UPI app (odie/browser/engine.py upi_link): on the phone, this opens it, filled in. */
 export function PayCard({ m }: { m: Media }) {

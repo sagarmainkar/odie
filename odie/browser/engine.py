@@ -81,6 +81,7 @@ class Page:
     images: list[dict] = field(default_factory=list)  # the page's own photos: [{url, label}] (odie.browser.images)
     login: bool = False  # a visible password field: the page asks someone to sign in
     signin: bool = False  # a sign-in page: a password field, or a username field where the path or title says sign in
+    social: bool = False  # a sign-in page with "Continue with Google" (or Apple, Facebook, Microsoft): only the user can do that
 
 
 SEALED_TIMEOUT = 120  # seconds for one command on a sealed page: a heavy frame takes a while, a hung one not forever
@@ -188,9 +189,11 @@ _READ = """(() => {
   const shown = (i) => i.offsetParent !== null;
   const login = [...document.querySelectorAll("input[type=password]")].some(shown);
   const userish = [...document.querySelectorAll("input")].some((i) => shown(i) && i.type !== "password" && i.type !== "search"
-    && (/^(username|email|tel)$/.test(i.autocomplete) || /^(email|tel)$/.test(i.type) || /(e-?mail|user|login|mobile|phone)/i.test(i.name + " " + i.id)));
+    && (/^(username|email|tel)$/.test(i.autocomplete) || /^(email|tel)$/.test(i.type) || /(e-?mail|user|login|mobile|phone|consumer|customer|account|member|client)/i.test(i.name + " " + i.id)));
   const asks = /(sign[-_ ]?in|log[-_ ]?in)/i.test(location.pathname + " " + document.title);
-  return {title: document.title, url: location.href, text, login, signin: (login || userish) && asks};  // a re-auth prompt isn't one
+  const social = asks && !login && !userish && [...document.querySelectorAll("button, a, [role=button]")].some((b) => shown(b)
+    && /\\b(sign[- ]?in|log[- ]?in|continue|sign[- ]?up) with (google|apple|facebook|microsoft)\\b/i.test(b.innerText || b.getAttribute("aria-label") || ""));
+  return {title: document.title, url: location.href, text, login, signin: (login || userish || social) && asks, social};  // a re-auth prompt isn't one
 })()"""
 
 _VISIBLE = """const visible = (e) => { const r = e.getBoundingClientRect(), st = getComputedStyle(e);
@@ -252,9 +255,14 @@ _LOGIN = """((op) => {""" + _VISIBLE + """
   const isCode = (f) => f.type !== "password" && (f.autocomplete === "one-time-code"
     || /\\b(otp|one[- ]?time|verification|verify|2fa|mfa|authenticat)/.test(label(f)) || (/\\bcode\\b/.test(label(f)) && f.inputMode === "numeric"));
   const isPass = (f) => f.type === "password" && f.autocomplete !== "new-password";
-  const isUser = (f) => f.type !== "password" && f.type !== "search" && f.type !== "hidden" && !isCode(f)
-    && (/^(username|email|tel)$/.test(f.autocomplete) || /^(email|tel)$/.test(f.type) || /(e-?mail|user|login|mobile|phone)/.test(label(f)));
-  const user = inputs.find(isUser), pass = inputs.find(isPass), code = inputs.find(isCode);
+  const isUser = (f) => /^(text|email|tel|number)$/.test(f.type) && !isCode(f)
+    && (/^(username|email|tel)$/.test(f.autocomplete) || /^(email|tel)$/.test(f.type)
+        || /(e-?mail|user|login|mobile|phone|consumer|customer|account|member|client)/.test(label(f)));
+  const pass = inputs.find(isPass), code = inputs.find(isCode);
+  // No username box by its words: the plain text box just before the password (never a captcha's, a search or a code).
+  const typable = (f) => /^(text|email|tel|number)$/.test(f.type) && !isCode(f) && !/captcha|code/.test(label(f));
+  const before = pass ? inputs.slice(0, inputs.indexOf(pass)).filter((f) => typable(f) && f.form === pass.form) : [];
+  const user = inputs.find(isUser) || before[before.length - 1];
   if (op === "state") return {url: location.href, user: !!user, password: !!pass, code: !!code,
     newpass: inputs.some((f) => f.type === "password" && f.autocomplete === "new-password"),
     captcha: !!document.querySelector('iframe[src*="captcha"], iframe[src*="recaptcha"], iframe[src*="hcaptcha"], iframe[src*="challenges.cloudflare"]'),
@@ -268,6 +276,43 @@ _LOGIN = """((op) => {""" + _VISIBLE + """
   const buttons = form ? [...form.querySelectorAll("button, input[type=submit], input[type=image]")].filter((b) => b.type === "submit" || b.type === "image") : [];
   return {ok: true, url: location.href, target: form ? form.target : "",
           actions: form ? [form.action, ...buttons.filter((b) => b.hasAttribute("formaction")).map((b) => b.formAction)] : []};
+})"""
+
+# A payment page's card fields, for a saved card the user picked in the live view (odie.signin.wallet). Never a CVV.
+_CARD = """((op, i) => {""" + _VISIBLE + r"""
+  const all = [...document.querySelectorAll("input, select")].filter((f) => visible(f) && !f.disabled && !f.readOnly);
+  const label = (f) => norm([f.labels ? [...f.labels].map((l) => l.innerText).join(" ") : "", f.placeholder,
+                              f.getAttribute("aria-label"), f.name, f.id].join(" "));
+  const kind = (f) => {
+    const a = (f.autocomplete || "").toLowerCase(), l = label(f);
+    if (f.type === "password" || f.type === "hidden" || /cc-csc/.test(a) || /\b(cvv|cvc|csc|cvv2|security code)\b/.test(l)) return "";
+    if (a === "cc-number" || /card[ _-]?(no|num)|card number|cardnumber|cc[ _-]?num/.test(l)) return "number";
+    if (a === "cc-exp-month" || (/\b(month|mm)\b/.test(l) && !/\b(yy|yyyy|year)\b/.test(l))) return "month";
+    if (a === "cc-exp-year" || (/\b(year|yy|yyyy)\b/.test(l) && !/\b(mm|month)\b/.test(l))) return "year";
+    if (a === "cc-exp" || /expir|valid (thru|till|upto)|mm ?\/ ?yy/.test(l)) return "expiry";
+    if (a === "cc-name" || /name on (the )?card|card ?holder/.test(l)) return "name";
+    return "";
+  };
+  const found = all.map((f, n) => ({n, kind: kind(f), select: f.tagName === "SELECT", max: f.maxLength}))
+    .filter((x) => x.kind && (x.kind !== "month" && x.kind !== "year" || x.select || /exp|valid|card/.test(label(all[x.n])) || all[x.n].autocomplete.startsWith("cc-")))
+    .map((x, _, xs) => ({...x, k: xs.filter((y) => y.kind === x.kind && y.n < x.n).length}));  // its place among boxes of its kind
+  if (op === "find") return {url: location.href, fields: found};
+  // The form may have grown or shrunk since 'find' (a holder-name box after the number): look the box up again by kind.
+  const again = found.filter((x) => x.kind === i.kind)[i.k];
+  const f = again && all[again.n];
+  if (!f) return false;
+  if (op === "pick") {  // a list: the option whose value or words are this month or year ("03", "3", "March", "2029", "29")
+    const hit = [...f.options].find((o) => i.want.includes(o.value.trim().toLowerCase()) || i.want.includes(o.text.trim().toLowerCase()));
+    if (!hit) return false;
+    f.value = hit.value;
+    f.dispatchEvent(new Event("input", {bubbles: true}));
+    f.dispatchEvent(new Event("change", {bubbles: true}));
+    return true;
+  }
+  f.scrollIntoView({block: "center"});
+  f.focus();
+  if (f.select) f.select();
+  return true;
 })"""
 
 # A page's WebSockets can't be intercepted over DevTools: refuse the ones to this computer and the home network here.
@@ -641,7 +686,8 @@ class Browser:
         except (BrowserError, CDPError, TimeoutError):
             images = []  # a page that won't say still gets read
         return Page(url=url, title=str(got.get("title", "")), text=text, shot=base64.b64decode(shot["data"]), note=note, images=images,
-                    login=bool(got.get("login")), signin=bool(got.get("signin")))
+                    login=bool(got.get("login")), signin=bool(got.get("signin")),
+                    social=bool(got.get("social")))
 
     async def _act(self, tab: str, create: bool, fn, isolated: bool = False) -> Page:
         if tab in self._holds:
@@ -1101,6 +1147,62 @@ class Browser:
             await self._submit_login(s)
             return await self._login_result(s)
         return await self._act(tab, False, self._fenced_to(tab, site, go))
+
+    async def fill_card(self, tab: str, card: dict) -> dict:
+        """Type a saved card ({number, month, year, name}) into the payment page the user has open in the live view,
+        in the page and in its frames (a payment gateway's card box is often another site's frame). Never the CVV:
+        the user types that, and the bank's OTP. Only on https pages, and only when some frame has a card number box:
+        a page without one gets nothing. Returns {"filled": the kinds typed, sorted}. Not live -> BrowserError."""
+        s = self._tabs.get(tab)
+        if s is None or tab not in self._live or self._cdp is None:
+            raise BrowserError("The live view isn't on for this tab.")
+        month, year = int(card["month"]), int(card["year"])
+        names = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october",
+                 "november", "december"]
+        months = [f"{month:02d}", str(month), names[month - 1], names[month - 1][:3]]
+        years = [str(year), f"{year % 100:02d}"]
+        async with self._input_lock(tab):
+            frames = []
+            for session in [s, *[k for k, root in self._root.items() if root == s and k != s]]:
+                try:
+                    got = await self._eval(session, f"{_CARD}('find')") or {}
+                except (BrowserError, CDPError, TimeoutError):
+                    continue  # a worker, or a frame between documents
+                scheme = urlsplit(str(got.get("url", ""))).scheme
+                if scheme == "https" or (self.plain_http_ok and scheme == "http"):
+                    frames.append((session, got.get("fields") or []))
+            if not any(f["kind"] == "number" for _, fields in frames for f in fields):
+                return {"filled": []}
+            filled = set()
+            for session, fields in frames:
+                for f in fields:
+                    if f["kind"] in ("month", "year") and f["select"]:
+                        want = [w.lower() for w in (months if f["kind"] == "month" else years)]
+                        if await self._eval(session, f"{_CARD}('pick', {json.dumps({'kind': f['kind'], 'k': f['k'], 'want': want})})"):
+                            filled.add(f["kind"])
+                        continue
+                    text = self._card_text(f, card, month, year)
+                    if text and await self._eval(session, f"{_CARD}('focus', {json.dumps({'kind': f['kind'], 'k': f['k']})})"):
+                        await self._cdp.send("Input.insertText", {"text": text}, session=session, timeout=INPUT_TIMEOUT)
+                        filled.add(f["kind"])
+        return {"filled": sorted(filled)}
+
+    @staticmethod
+    def _card_text(field: dict, card: dict, month: int, year: int) -> str:
+        """What to type in one card box. Example: number -> "4242424242424242"; expiry -> "03/29" (or "0329" in a box
+        that holds four characters); month -> "03"; year -> "2029" (or "29" in a two-character box); name -> as saved."""
+        kind, room = field["kind"], field.get("max") or 0
+        if kind == "number":
+            return str(card["number"])
+        if kind == "expiry":
+            return f"{month:02d}{year % 100:02d}" if room == 4 else f"{month:02d}/{year % 100:02d}"
+        if kind == "month":
+            return f"{month:02d}"
+        if kind == "year":
+            return f"{year % 100:02d}" if room == 2 else str(year)
+        if kind == "name":
+            return str(card.get("name") or "")
+        return ""
 
     async def enter_code(self, tab: str, site: str, code: str) -> dict:
         """The one-time code a site sent the user, into its code field."""

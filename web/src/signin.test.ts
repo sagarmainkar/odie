@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { canTurnOn, fromBeforeInput, fromKey, gesture, heldLabel, liveUrl, loginStatusText, offConfirm, sinceText, signedInLine, toPage, turnTitle, upiDetails, upiLink } from "./signin";
+import { canTurnOn, fromBeforeInput, fromKey, gesture, heldLabel, liveUrl, loginStatusText, offConfirm, paidLine, sinceText, signedInLine, toPage, turnTitle, upiDetails, upiLink } from "./signin";
 
 describe("the disclaimer", () => {
   it("turns on only with the box ticked, on the terms the server shows now", () => {
@@ -118,5 +118,14 @@ describe("the sign-in box", () => {
     expect(offConfirm(0)).toBe("Turn off signed-in browsing? Odie signs out of every site first.");
     expect(offConfirm(1)).toBe("Turn off signed-in browsing? Odie signs out of every site and forgets 1 saved login.");
     expect(offConfirm(3)).toBe("Turn off signed-in browsing? Odie signs out of every site and forgets 3 saved logins.");
+  });
+});
+
+describe("pay and Google sign-in turns", () => {
+  it("names them, and the line after paying", () => {
+    expect(turnTitle("social", "zomato.com", false)).toBe("Sign in to zomato.com on the page");
+    expect(turnTitle("pay", "example-power.in", false)).toBe("Your turn to pay on example-power.in");
+    expect(paidLine("example-power.in", true)).toBe("Done: I paid on example-power.in.");
+    expect(paidLine("example-power.in", false)).toBe("I didn't pay on example-power.in.");
   });
 });
