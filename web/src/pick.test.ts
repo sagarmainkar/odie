@@ -21,6 +21,7 @@ describe("withPickOf", () => {
     expect(withPickOf("/api/learned/1/undo", "abc")).toBe("/api/learned/1/undo?personality=abc");
     expect(withPickOf("/api/digest/seen", "abc")).toBe("/api/digest/seen?personality=abc");
     expect(withPickOf("/api/review/4/undo", "abc")).toBe("/api/review/4/undo?personality=abc");
+    expect(withPickOf("/api/notices/undo", "abc")).toBe("/api/notices/undo?personality=abc");  // "Rule saved"'s Undo
     expect(followsPick("/api/nowhere")).toBe(false);
   });
 
