@@ -162,18 +162,21 @@ def _page_head(page) -> str:
     return "\n".join(x for x in (page.title, page.url, note) if x)
 
 
-def _ask_to_sign_in(store, tab: str, url: str) -> tuple[dict | None, str]:
+def _ask_to_sign_in(store, tab: str, url: str, social: bool = False) -> tuple[dict | None, str]:
     """A page asks the user to sign in, and Odie didn't try a saved login: the main flow shouldn't rest on the model
     remembering a rule. Returns the Sign in card to show (or None) and the note for the model.
     In a chat turn with signed-in browsing on, the card comes from here, at most once per CARD_EVERY for a tab and site;
     otherwise, with it on, the model is told to call browser_sign_in; with it off, it's told where the switch is.
     Example: amazon.in's sign-in page, first time -> a card and "it's their turn, and stop"; again a minute later ->
-    no card, "Call browser_sign_in"; signed-in browsing off -> no card, "turn it on in Settings → Browser"."""
+    no card, "Call browser_sign_in"; signed-in browsing off -> no card, "turn it on in Settings → Browser". A page
+    with only "Continue with Google" (social) -> the card says to sign in on the page itself."""
     where = sites.site_of(url)
     now = time.monotonic()
     if _live_chat_signin_on(store) and _card_due(tab, where, now):
         _carded[_card_key(tab, where)] = now  # the card comes from here, not from the model remembering to call for it
         card = {"site": where, "tab": tab, "why": f"{where} asks you to sign in", "url": url}
+        if social:  # "Continue with Google": only the user can do that, on the page itself
+            card = {**card, "state": "social", "why": f"{where} signs in with Google or Apple: do it yourself on the page."}
         return card, (f"\n(This page asks the user to sign in, and a Sign in card for {where} is in the chat. Tell them in one "
                       "short line that it's their turn, and stop. Never type a password or code, and don't offer to, even one "
                       "the page shows.)")
@@ -330,7 +333,7 @@ def make_browser_tools(store, browser_for: Callable[[], object] | None = None) -
         if left:
             head += f"\n(Signed out of {sites.site_of(page.url)}.)"
         elif auto is None and _asks_to_sign_in(page):
-            ask_card, note = _ask_to_sign_in(store, tab, page.url)
+            ask_card, note = _ask_to_sign_in(store, tab, page.url, social=getattr(page, "social", False) and not page.login)
             head += note
         if signed_in:
             head += _signed_in_notes(store, page, newly_private)
@@ -419,11 +422,13 @@ def make_browser_tools(store, browser_for: Callable[[], object] | None = None) -
 
 def make_signin_tools(store) -> list[FunctionTool]:
     """browser_sign_in, offered only while signed-in browsing is on (odie.signin; spec Part 1): the user's turn."""
-    async def browser_sign_in(why: str, tool_context: ToolContext) -> dict:
+    async def browser_sign_in(why: str, tool_context: ToolContext, pay: bool = False) -> dict:
         """Ask the user to sign in (in Odie's own sign-in box, or on the page itself), when the page open in your browser tab asks
         for a sign-in or shows a check only a person can pass. `why` is one short line for the user ("Amazon asks you
         to sign in to show your orders"). A Sign in card appears in the chat; tell the user it's their turn, then
-        stop: they'll tell you when they're done. Never type a password, card number, CVV, UPI PIN or OTP yourself."""
+        stop: they'll tell you when they're done. Never type a password, card number, CVV, UPI PIN or OTP yourself.
+        pay=true when the page now wants the payment's card or bank details: the card says it's their turn to pay, and
+        they pay on the page themselves (their saved card is one tap there; they type the CVV and the OTP)."""
         if not state.is_on(store):
             return {"error": "Signed-in browsing is off: the user can turn it on in Settings → Browser."}
         if turn.USER_TEXT.get() is None:
@@ -433,14 +438,23 @@ def make_signin_tools(store) -> list[FunctionTool]:
         if not url:
             return {"error": "Open the site first (browser_open), then ask the user to sign in there."}
         where = sites.site_of(url)
-        if not _card_due(tab, where, time.monotonic()):  # one card, not two
-            return {"result": f"The Sign in card for {where} is already in the chat. Tell the user in one short line that "
+        kind = "Pay" if pay else "Sign in"
+        carded_as = f"{where} pay" if pay else where  # a Pay card right after a Sign in card for the same site still comes
+        if not _card_due(tab, carded_as, time.monotonic()):  # one card, not two
+            return {"result": f"The {kind} card for {where} is already in the chat. Tell the user in one short line that "
                               "it's their turn, and stop."}
-        _carded[_card_key(tab, where)] = time.monotonic()
+        _carded[_card_key(tab, carded_as)] = time.monotonic()
         why_line = " ".join((why or "").split())[:200]  # one line for the card, at most 200 characters
-        if not why_line:
+        if not why_line and pay:
+            why_line = f"{where} is ready for the payment"
+        elif not why_line:
             why_line = f"{where} asks you to sign in"
         card = {"site": where, "tab": tab, "why": why_line, "url": url}
+        if pay:
+            shown = _save_card({**card, "state": "pay"}, f"Your turn to pay on {where}")
+            return {"result": f"A Pay card for {where} is in the chat. Tell the user in one short line that it's their "
+                              "turn to pay, and stop there: they pay on the page themselves.",
+                    "media": shown}
         shown = _save_card(card, f"{where} needs you to sign in")
         return {"result": f"A Sign in card for {where} is in the chat. Tell the user in one short line that it's their "
                           f"turn (\"Your turn: sign in to {where}.\") and stop there.",

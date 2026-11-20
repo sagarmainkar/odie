@@ -6,6 +6,7 @@ import { userLocale } from "../locale";
 import { getJSON } from "../api";
 import { canTurnOn, offConfirm, sinceText, type SavedLogin, type SignIn, type Site } from "../signin";
 import { LiveView } from "./LiveView";
+import { SavedCards } from "./SavedCards";
 import { Switch } from "./Switch";
 import { Tile } from "./Tile";
 
@@ -138,7 +139,7 @@ export function BrowserSection() {
               <form className="px-4 py-3 flex flex-col gap-2 border-b border-line" onSubmit={(e) => { e.preventDefault(); saveLogin(); }}>
                 <input value={adding.site} onChange={(e) => setAdding({ ...adding, site: e.target.value })} placeholder="Site (amazon.in)" aria-label="Site"
                   autoCapitalize="off" autoCorrect="off" spellCheck={false} className="h-11 rounded-full bg-well px-4 text-body outline-none" />
-                <input value={adding.username} onChange={(e) => setAdding({ ...adding, username: e.target.value })} placeholder="Email or phone" aria-label="Username"
+                <input value={adding.username} onChange={(e) => setAdding({ ...adding, username: e.target.value })} placeholder="Username" aria-label="Username"
                   autoComplete="username" autoCapitalize="off" autoCorrect="off" spellCheck={false} className="h-11 rounded-full bg-well px-4 text-body outline-none" />
                 <input value={adding.password} onChange={(e) => setAdding({ ...adding, password: e.target.value })} placeholder="Password" aria-label="Password"
                   type="password" autoComplete="current-password" className="h-11 rounded-full bg-well px-4 text-body outline-none" />
@@ -160,6 +161,7 @@ export function BrowserSection() {
                 <span className="flex-1 text-body font-medium text-warn-ink">Forget every saved login</span>
               </button>
             )}
+            <SavedCards />
             <form className="px-4 py-3 flex flex-col gap-2 border-b border-line" onSubmit={(e) => { e.preventDefault(); saveUpi(); }}>
               <label htmlFor="upi-id" className="text-body leading-5 font-medium">UPI ID for payments</label>
               <div className="flex gap-2">

@@ -14,6 +14,7 @@ import asyncio
 import contextlib
 import logging
 import math
+import re
 import secrets
 import time
 from collections.abc import Callable
@@ -35,7 +36,7 @@ def clean(msg: Any) -> dict | None:
     """The phone's input, checked: what reaches the browser, or None for anything else.
     {"t": "tap", "x": 120, "y": 300} -> the same; {"t": "forward"} -> the same; {"t": "control"} and {"t": "close"} ->
     the same (the view acts on those two itself, they never reach the page); {"t": "eval", "js": "…"} -> None;
-    {"t": "key", "k": "F12"} -> None."""
+    {"t": "key", "k": "F12"} -> None; {"t": "card", "id": "a1b2c3d4"} -> the same (a saved card to type in)."""
     if not isinstance(msg, dict):
         return None
 
@@ -51,6 +52,8 @@ def clean(msg: Any) -> dict | None:
         return {"t": t, "s": msg["s"][:TEXT_CAP]}
     if t == "key" and msg.get("k") in KEYS:
         return {"t": t, "k": msg["k"]}
+    if t == "card" and isinstance(msg.get("id"), str) and re.fullmatch(r"[0-9a-f]{8}", msg["id"]):
+        return {"t": t, "id": msg["id"]}  # a saved card's id: the server types it, the phone never holds the number
     if t in ("back", "forward", "reload", "control", "close"):
         return {"t": t}
     if t == "go" and isinstance(msg.get("url"), str) and msg["url"].strip():
@@ -187,6 +190,9 @@ class LiveViews:
                     continue
                 if view.watching:
                     continue  # watching: the page is Odie's until the user takes control
+                if step["t"] == "card":
+                    await self._fill_card(view, b, tab, step["id"])
+                    continue
                 try:
                     await b.live_input(tab, step)
                 except Exception as e:  # noqa: BLE001 (a page that didn't take a tap shouldn't end the view)
@@ -197,6 +203,35 @@ class LiveViews:
             if self._views.get(tab) is view and view.socket is ws:
                 view.socket = None
                 view.timer = asyncio.get_running_loop().create_task(self._later(view))
+
+    async def _fill_card(self, view: View, b, tab: str, card_id: str) -> None:
+        """The user picked a saved card on the page they're driving: the engine types it (never the CVV), and the
+        phone is told what happened. Example: a checkout with a card form -> "Typed Visa •••• 4242. Type the CVV,
+        then pay."; a page without card boxes -> nothing typed, and it says so."""
+        from datetime import datetime
+
+        from odie.signin import vault, wallet
+        listed = {c["id"]: c for c in wallet.listing(self.store)}
+        try:
+            card = wallet.get(self.store, card_id)
+        except vault.VaultError as e:
+            await self._send(view, {"t": "note", "why": str(e)})
+            return
+        if card is None:
+            await self._send(view, {"t": "note", "why": "That card isn't saved any more."})
+            return
+        try:
+            got = await b.fill_card(tab, card)
+        except Exception as e:  # noqa: BLE001 (a page that went away mid-fill shouldn't end the view)
+            await self._send(view, {"t": "note", "why": str(e)[:200] or "The page didn't take the card."})
+            return
+        if not got.get("filled"):
+            await self._send(view, {"t": "note", "why": "No card boxes on this page: open the card form first."})
+            return
+        label = listed[card_id]["label"]
+        site = sites.site_of(view.url)
+        wallet.used(self.store, card_id, site, datetime.now().astimezone())
+        await self._send(view, {"t": "note", "why": f"Typed {label}. Type the CVV yourself, then pay."})
 
     async def _take_control(self, view: View, b, tab: str) -> None:
         """A watcher takes control: the tab is held (Odie's next browser step on it is told the user is using the

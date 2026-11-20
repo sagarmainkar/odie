@@ -51,7 +51,7 @@ function Sheet({ tab, site, username = "", startWith = "login", onClose }: { tab
         {phase === "login" ? (
           <>
             <input className={field} name="username" autoComplete="username" autoCapitalize="off" autoCorrect="off" spellCheck={false}
-              placeholder="Email or phone" aria-label="Email or phone" value={user} onChange={(e) => setUser(e.target.value)} />
+              placeholder="Username" aria-label="Username" value={user} onChange={(e) => setUser(e.target.value)} />
             <input className={field} name="password" type="password" autoComplete="current-password" placeholder="Password"
               aria-label="Password" value={pass} onChange={(e) => setPass(e.target.value)} />
             <label className="flex items-center gap-3 text-ui">

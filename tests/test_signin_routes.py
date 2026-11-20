@@ -185,3 +185,51 @@ async def test_only_chat_has_the_sign_in_tool(store, has_browser, monkeypatch):
     await r.reload_signin()
     assert "browser_sign_in" not in names(r.agent.tools)
     await r.close()
+
+
+async def test_a_pay_card_comes_even_right_after_a_sign_in_card(store):
+    from odie import media
+    from odie.agent.tools.browser import make_signin_tools
+    state.turn_on(store, accepted=True, version=state.VERSION, now=NOW)
+    tool = make_signin_tools(store)[0]
+    ctx = SimpleNamespace(session=SimpleNamespace(id="chat-2026-11-20"))
+    guard.LAST_URL["chat-2026-11-20"] = "https://www.example-power.in/bills/pay"
+    token = turn.USER_TEXT.set("pay my electricity bill")
+    try:
+        signin = await tool.run_async(args={"why": "Sign in to see the bill"}, tool_context=ctx)
+        pay = await tool.run_async(args={"why": "The bill is ₹1,240", "pay": True}, tool_context=ctx)
+        again = await tool.run_async(args={"why": "x", "pay": True}, tool_context=ctx)
+    finally:
+        turn.USER_TEXT.reset(token)
+    assert signin["media"]["title"] == "example-power.in needs you to sign in"
+    assert pay["media"]["title"] == "Your turn to pay on example-power.in" and "turn to pay" in pay["result"]
+    path, _ = media.get(pay["media"]["id"])
+    assert json.loads(path.read_bytes())["state"] == "pay"
+    assert "media" not in again and "already in the chat" in again["result"]  # one Pay card, not two
+
+
+def test_a_google_only_sign_in_page_says_do_it_on_the_page(store):
+    from odie.agent.tools import browser as tools
+    state.turn_on(store, accepted=True, version=state.VERSION, now=NOW)
+    token = turn.USER_TEXT.set("book a table")
+    try:
+        card, note = tools._ask_to_sign_in(store, "chat-x", "https://www.example.com/login", social=True)
+    finally:
+        turn.USER_TEXT.reset(token)
+    assert card["state"] == "social" and "Google or Apple" in card["why"] and "their turn" in note
+
+
+def test_cards_in_settings(store, keychain):
+    from fastapi.testclient import TestClient
+
+    from odie.app.main import create_app
+    from tests.test_api import FakeRunner
+    with TestClient(create_app(runner=FakeRunner(), store=store)) as c:
+        bad = c.post("/api/wallet/cards", json={"number": "4242 4242 4242 4241", "expiry": "03/29"})
+        assert bad.status_code == 422 and bad.json()["detail"] == "That card number doesn't look right."
+        got = c.post("/api/wallet/cards", json={"number": "4242 4242 4242 4242", "expiry": "03/29", "name": "Asha"}).json()
+        card = got["cards"][0]
+        assert card["label"] == "Visa •••• 4242" and "4242424242424242" not in json.dumps(got)
+        assert c.get("/api/wallet/cards").json() == got
+        assert c.delete(f"/api/wallet/cards/{card['id']}").json() == {"cards": []}
+        assert c.delete(f"/api/wallet/cards/{card['id']}").status_code == 404

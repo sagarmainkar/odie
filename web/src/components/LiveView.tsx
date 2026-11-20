@@ -1,7 +1,8 @@
 import { motion } from "framer-motion";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { fromBeforeInput, fromKey, gesture, liveUrl, sendInChat, signedInLine, toPage, upiDetails, upiLink, type LiveMsg, type Point } from "../signin";
+import { getJSON } from "../api";
+import { fromBeforeInput, fromKey, gesture, liveUrl, paidLine, sendInChat, signedInLine, toPage, upiDetails, upiLink, type LiveMsg, type Point, type SavedCard } from "../signin";
 
 export type LiveResult = { site: string; done: boolean };
 
@@ -9,7 +10,7 @@ export type LiveResult = { site: string; done: boolean };
  * own keyboard. Odie's model sees none of it. `chat`: Done says so in the chat ("I'm signed in to amazon.in."), and the
  * chat carries on; from Settings it only signs in. `start`: an address to open first (Settings → Sign in to a site).
  * `watch`: opened from the chat's Watch button while Odie browses (see Live). `who`: the assistant's name for the bar. */
-export function LiveView(props: { tab: string; site: string; start?: string; chat: boolean; onClose: (r: LiveResult | null) => void; watch?: boolean; who?: string }) {
+export function LiveView(props: { tab: string; site: string; start?: string; chat: boolean; onClose: (r: LiveResult | null) => void; watch?: boolean; who?: string; pay?: boolean }) {
   return createPortal(<Live {...props} />, document.body);  // on the page itself: a card's backdrop filter would trap it
 }
 
@@ -26,7 +27,7 @@ const ENDED: Record<string, string> = {
  * (then Odie's next browser step waits). Two ways back: Hand back gives the page back and records nothing; "I signed
  * in" also records the site as one you're signed in to, as Done does, so ordering and paying there ask first.
  * who: the assistant's name for the bar. */
-function Live({ tab, site, start, chat, onClose, watch = false, who = "Odie" }: { tab: string; site: string; start?: string; chat: boolean; onClose: (r: LiveResult | null) => void; watch?: boolean; who?: string }) {
+function Live({ tab, site, start, chat, onClose, watch = false, who = "Odie", pay: paying = false }: { tab: string; site: string; start?: string; chat: boolean; onClose: (r: LiveResult | null) => void; watch?: boolean; who?: string; pay?: boolean }) {
   const [controlling, setControlling] = useState(!watch);
   const ws = useRef<WebSocket | null>(null);
   const [frame, setFrame] = useState<{ src: string; w: number; h: number } | null>(null);
@@ -37,6 +38,9 @@ function Live({ tab, site, start, chat, onClose, watch = false, who = "Odie" }: 
   const [note, setNote] = useState("");
   const [address, setAddress] = useState(start ?? "");
   const [finishing, setFinishing] = useState(false);
+  const [cards, setCards] = useState<SavedCard[]>([]);
+  const [picking, setPicking] = useState(false);
+  useEffect(() => { getJSON<{ cards: SavedCard[] }>("/api/wallet/cards").then((r) => setCards(r.cards)).catch(() => setCards([])); }, []);
   const [zoom, setZoom] = useState({ s: 1, x: 0, y: 0 });  // the app's viewport forbids native zoom: a desktop-shaped page can be pinched here
   const img = useRef<HTMLImageElement>(null);
   const keys = useRef<HTMLInputElement>(null);
@@ -46,7 +50,7 @@ function Live({ tab, site, start, chat, onClose, watch = false, who = "Odie" }: 
   const opened = useRef(false);
   const typing = useRef(false);  // the address box has the user's own words: a page change doesn't overwrite them
 
-  const send = (m: LiveMsg | { t: string }) => { if (ws.current?.readyState === WebSocket.OPEN) ws.current.send(JSON.stringify(m)); };
+  const send = (m: LiveMsg | { t: string; id?: string }) => { if (ws.current?.readyState === WebSocket.OPEN) ws.current.send(JSON.stringify(m)); };
 
   useEffect(() => {
     const sock = new WebSocket(liveUrl(tab, location));
@@ -64,6 +68,7 @@ function Live({ tab, site, start, chat, onClose, watch = false, who = "Odie" }: 
       else if (m.t === "upi") setUpi(upiLink(String(m.url)));
       else if (m.t === "control") setControlling(true);
       else if (m.t === "error") { setNote(String(m.why || "The page didn't take that.")); window.setTimeout(() => setNote(""), 3000); }
+      else if (m.t === "note") { setNote(String(m.why || "")); window.setTimeout(() => setNote(""), 6000); }
       else if (m.t === "bye") { setEnded(String(m.why)); setPhase("ended"); }
     };
     sock.onclose = (e) => {
@@ -141,7 +146,7 @@ function Live({ tab, site, start, chat, onClose, watch = false, who = "Odie" }: 
       const r = await fetch(`/api/browser/live/${encodeURIComponent(tab)}/${done ? "done" : "cancel"}`, { method: "POST" });
       const got = r.ok ? ((await r.json()) as { site?: string }) : {};
       const s = got.site || site;
-      if (r.ok && chat && s) sendInChat(signedInLine(s, done));
+      if (r.ok && chat && s) sendInChat(paying ? paidLine(s, done) : signedInLine(s, done));
       onClose(r.ok ? { site: s, done } : null);
     } catch {
       setFinishing(false);
@@ -201,8 +206,24 @@ function Live({ tab, site, start, chat, onClose, watch = false, who = "Odie" }: 
           disabled={phase !== "live"} className={bar}>
           <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="2" y="6" width="20" height="12" rx="2" /><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10" /></svg>
         </button>
+        {cards.length > 0 && (
+          <button aria-label="Fill a saved card" onClick={() => setPicking((v) => !v)} disabled={phase !== "live"} className={bar}>
+            <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="2" y="5" width="20" height="14" rx="2" /><path d="M2 10h20M6 15h4" /></svg>
+          </button>
+        )}
         {zoom.s > 1.01 && <button onClick={() => setZoom({ s: 1, x: 0, y: 0 })} className="h-10 px-3 rounded-full bg-white/12 text-small font-semibold">1×</button>}
       </div>
+      {picking && (
+        <div className="px-3 pb-2 flex flex-col gap-1.5">
+          <div className="text-caption text-white/55 px-1">Odie types the card into this page. You type the CVV.</div>
+          {cards.map((c) => (
+            <button key={c.id} onClick={() => { setPicking(false); send({ t: "card", id: c.id }); }}
+              className="h-11 rounded-full bg-white/12 px-4 text-left text-ui font-semibold active:bg-white/25 flex items-center justify-between">
+              <span>{c.label}</span><span className="text-white/55 font-normal">{c.expiry}</span>
+            </button>
+          ))}
+        </div>
+      )}
       </>
       )}
       <input ref={keys} aria-hidden tabIndex={-1} autoCapitalize="off" autoCorrect="off" autoComplete="off" spellCheck={false}

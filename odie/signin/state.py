@@ -6,12 +6,12 @@ from datetime import datetime
 
 KEY = "browser.signin"
 UPI_KEY = "payments.upi_id"  # for UPI collect requests (spec Part 4): a payment setting, not a secret, never a memory
-VERSION = 1
+VERSION = 2  # 2: saved cards, typed by Odie's browser when the user picks one
 DISCLAIMER = """**Signed-in browsing (experimental).** When it's on, you can sign in to sites in Odie's browser, and Odie can use them for you: your orders, bookings, saved addresses and the last digits of saved cards become visible to the model while it works.
 
 - **What can go wrong:** pages written by strangers (sellers, reviews, ads) can try to trick an AI into leaking what it sees or doing something you didn't ask. Odie asks before contacting any other site and before buying, paying, booking or sending, but no safeguard is perfect. Smaller local models are easier to trick.
 - **Where your data goes:** if your model runs in the cloud, what it reads is sent to that provider.
-- **What Odie never does:** type your passwords, card numbers, CVVs, UPI PINs or OTPs (you do). It never saves memories from signed-in pages, or from card, UPI or bank details.
+- **What the AI never does:** see or type your passwords, card numbers, CVVs, UPI PINs or OTPs. Odie's browser types a saved login, or a saved card when you pick it on the payment page; you type CVVs, UPI PINs and OTPs yourself. It never saves memories from signed-in pages, or from card, UPI or bank details.
 - **We suggest:** a local model, and a separate chat thread for signed-in tasks.
 
 **I understand and accept these risks.** Odie and its authors aren't responsible for any loss or security problem arising from this convenience feature."""

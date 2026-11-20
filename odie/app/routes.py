@@ -1514,6 +1514,44 @@ async def logins_forget(request: Request) -> dict[str, Any]:
     return _logins_view(store)
 
 
+class CardIn(BaseModel):
+    number: str = ""
+    expiry: str = ""
+    name: str = ""
+    label: str = ""
+
+
+@router.get("/wallet/cards")
+async def cards_list(request: Request) -> dict[str, Any]:
+    """Saved cards, without their numbers (odie.signin.wallet): Settings → Vault, and the live view's card button."""
+    from odie.signin import wallet
+    return {"cards": wallet.listing(request.app.state.store)}
+
+
+@router.post("/wallet/cards")
+async def cards_add(body: CardIn, request: Request) -> dict[str, Any]:
+    from datetime import datetime
+
+    from odie.signin import vault, wallet
+    store = request.app.state.store
+    try:
+        wallet.save(store, body.number, body.expiry, body.name, body.label, datetime.now().astimezone())
+    except ValueError as err:
+        raise HTTPException(422, str(err))
+    except vault.VaultError as err:
+        raise HTTPException(502, str(err))
+    return {"cards": wallet.listing(store)}
+
+
+@router.delete("/wallet/cards/{card_id}")
+async def cards_delete(card_id: str, request: Request) -> dict[str, Any]:
+    from odie.signin import wallet
+    store = request.app.state.store
+    if not wallet.delete(store, card_id):
+        raise HTTPException(404, "No such card")
+    return {"cards": wallet.listing(store)}
+
+
 # --- Setup: the checklist and the setup conversation (keys go to the key routes, never here) ---
 class SetupChatIn(BaseModel):
     text: str
