@@ -197,6 +197,14 @@ input, button, textarea { font-family: inherit; }
 /* The large view of a block (components/Enlarge.tsx): the same block, bigger type, wide tables scroll sideways */
 .enlarged .md, .enlarged .blocks { font-size: 17px; }
 .enlarged .blocks table, .enlarged .md table { font-size: 16px; }
+/* The report reader (components/ReportReader.tsx): a long read, so roomier type and headings that step down; a
+   report's table cells hold sentences, so they wrap, and the last column isn't a number column */
+.md.reader { font-size: 16.5px; line-height: 1.65; }
+.md.reader h1 { font-size: 25px; line-height: 31px; margin-top: 1.4em; }
+.md.reader h2 { font-size: 21px; line-height: 27px; margin-top: 1.5em; }
+.md.reader h3 { font-size: 18px; line-height: 24px; }
+.md.reader .table-wrap th, .md.reader .table-wrap td { white-space: normal; min-width: 7em; vertical-align: top; }
+.md.reader .table-wrap th:last-child, .md.reader .table-wrap td:last-child { text-align: left; font-weight: inherit; }
 .md .blocks figure.chart { margin-left: 0; margin-right: 0; }
 
 /* Streaming caret on the last element while a reply is being written */
@@ -579,6 +587,9 @@ figure.chart:not(.chart-wide) { max-width: 720px; }
 :root[data-style="paper"] .md { font-size: 17px; line-height: 1.6; }
 :root[data-style="paper"] .md h1, :root[data-style="paper"] .md h2 { font-size: 21px; line-height: 27px; font-weight: 800; }
 :root[data-style="paper"] .md h3, :root[data-style="paper"] .md h4 { font-size: 18px; line-height: 24px; font-weight: 700; }
+/* The report reader: the report's title reads as a headline, above its section heads */
+:root[data-style="paper"] .md.reader h1 { font-size: 28px; line-height: 34px; }
+:root[data-style="paper"] .md.reader h2 { font-size: 22px; line-height: 28px; }
 :root[data-style="paper"] .md a { color: var(--t-ink); text-decoration-thickness: 1px; }
 :root[data-style="paper"] .md blockquote { border-left: 2px solid var(--t-ink); color: var(--t-ink-2); font-style: italic; }
 :root[data-style="paper"] .md li::marker { color: var(--t-ink); }
