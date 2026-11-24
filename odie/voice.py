@@ -262,8 +262,9 @@ SCRIPT_PROMPT = ("Rewrite the assistant's reply below as a short script for a vo
 async def maya_script(text: str, transport: httpx.AsyncBaseTransport | None = None) -> str:
     """Local Gemma (LM Studio) turns a reply into a speech script with a few Maya1 expression tags. Stays on this computer."""
     from odie import config
+    from odie.models import lm_studio_url
     from odie.sampling import VOICE_SCRIPT_TEMPERATURE
-    base = config.settings.lm_studio_base_url
+    base = lm_studio_url()
     async with httpx.AsyncClient(timeout=90, transport=transport) as c:
         model = config.settings.model_id
         try:  # use whatever chat model LM Studio already has loaded, so this never triggers a model load

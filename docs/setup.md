@@ -200,6 +200,13 @@ Besides the keys (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `OPEN
 | `LM_STUDIO_BASE_URL` | LM Studio's address | `http://localhost:1234/v1` |
 | `OLLAMA_BASE_URL` | Ollama's address (another computer works); chat, Ollama's search and the Phonon voice all use it | `http://localhost:11434/v1` |
 | `OPENAI_BASE_URL`, `OPENROUTER_BASE_URL`, `GEMINI_BASE_URL`, `ANTHROPIC_BASE_URL` | A provider's address | the provider's own |
+
+Every provider's address can also be changed in Settings → Providers (open its row, edit the address, Test, Save): that
+writes the same `<NAME>_BASE_URL` line here, used from the next message without a restart. "Reset to default" removes the
+line. An address set in the service's own environment wins over this file, so Settings shows it but can't change it.
+
+| Name | What it changes | Default |
+|---|---|---|
 | `ODIE_TIMEZONE`, `ODIE_LOCALE`, `ODIE_CURRENCY` | The clock, number and money formats in the prompt | from the Mac |
 | `ODIE_VOICE` | `off`: Odie's own voice server (Kokoro) is never offered or started; Phonon through Ollama and OpenAI still are | on (started only while Kokoro is the chosen voice) |
 | `ODIE_TTS_MODEL`, `ODIE_STT_MODEL` | OpenAI's read-aloud and transcription models, for when OpenAI retires one | `gpt-4o-mini-tts`, `gpt-4o-mini-transcribe` |

@@ -226,7 +226,8 @@ def make_embedder(provider: str, model: str, store=None, transport=None, picture
         return HttpEmbedder("openai", model, "https://api.openai.com/v1/embeddings", {"Authorization": f"Bearer {key}"}, transport)
     if provider == "lmstudio":
         s = config.settings
-        return HttpEmbedder("lmstudio", model, s.lm_studio_base_url.rstrip("/") + "/embeddings",
+        from odie.models import lm_studio_url
+        return HttpEmbedder("lmstudio", model, lm_studio_url() + "/embeddings",
                             {"Authorization": f"Bearer {s.lm_studio_api_key}"}, transport)
     if provider == "ollama":
         return OllamaEmbedder(model, transport, pictures, url)
