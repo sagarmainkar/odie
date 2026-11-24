@@ -216,7 +216,9 @@ def test_the_watch_skill_shows_bills_payments_and_orders_by_example():
         assert name in text
     for mark, _state in bills.DONE_MARKS:  # the same marks Up next reads (bills.done_state)
         assert mark.strip() in text
-    assert "same amount" in text and "Example" in text
+    assert "Example" in text
+    # 22 Nov: a ₹4,200 early-payment receipt left the ₹4,240 bill open, because "a different amount closes nothing"
+    assert "one the bill offered" in text and "consumer or" in text and "never one to ignore" in text
 
 
 async def test_a_catch_up_that_keeps_failing_is_given_up_after_two_tries(store, tmp_path):

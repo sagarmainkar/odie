@@ -1,6 +1,6 @@
 """Bills, payments and orders, as the watch keeps them (the owner's ask, 21 Oct 2026): a bill goes on the calendar with
-a reminder; a payment confirmation for the same biller and amount closes the reminder and marks the event paid; an
-order gets an event on its delivery day that follows its status. The calendar event's title carries the done mark
+a reminder; a payment confirmation for the same biller (the bill's amount, an amount the bill offered such as an
+early-payment price, or its consumer number) closes the reminder and marks the event paid; an order gets an event on its delivery day that follows its status. The calendar event's title carries the done mark
 ("✓ Paid · …", "✓ Delivered · …", "✗ Cancelled · …"), which Up next shows as done. The watch may close a reminder only
 through close(), which says why in the reminder's notes, so Today can show it and the user can reopen it."""
 from __future__ import annotations

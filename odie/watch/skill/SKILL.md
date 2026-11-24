@@ -66,9 +66,10 @@ events, so you never add a second one.
   electricity bill — ₹4,280" on 9 Nov, 09:00 to 09:20; then `track_thread` it (kind bill, stage due, due 2026-11-08).
   A deadline or an appointment a mail names goes on the calendar the same way.
 - Example, a payment: "Payment of Rs 4,280 received, consumer 1702…" -> always `track_thread` it (kind bill, "done",
-  why "paid: confirmation mail 21 Oct"), even when `bills_and_orders` lists nothing: Odie closes the bill of the same
-  biller and the same amount. If it lists a reminder for it, `close_reminder` it, and `calendar_update_event` its event's title to "✓ Paid · Pay electricity bill — ₹4,280". A different amount or
-  biller closes nothing: make it a finding if it looks wrong.
+  why "paid: confirmation mail 21 Oct"), even when `bills_and_orders` lists nothing; never one to ignore. It closes
+  the biller's bill when the amount is one the bill offered (₹4,200 early on ₹4,240) or the consumer or account
+  number matches. A listed reminder: `close_reminder` it; its event's title -> "✓ Paid · Pay electricity bill —
+  ₹4,280" (`calendar_update_event`). Another biller or amount closes nothing.
 - Example, an order: "Your order of Wireless Earbuds has shipped, arriving Friday" -> an all-day
   `calendar_create_event` "Order: Wireless Earbuds" on Friday and `track_thread` it (kind order, stage shipped). Later mail
   about it: a new date moves the event (`calendar_update_event`) and the thread; "delivered" -> title "✓ Delivered ·
