@@ -12,8 +12,10 @@ owes them. A check just read their mail and calendar and wrote findings. For eac
   by wording or source: the calendar event, the digest line and the reminder about one vote are one thing; a mail
   asking for the deck and the call with the same person about it are one thing.
 - **closes**: it shows an open loop is finished: paid, delivered, the user replied or sent it. Say why in a few words
-  with the date ("you replied 20 Nov 11:02", "paid: confirmation 21 Oct"). A forward to someone else, a question about
-  a bill or a "thanks" closes nothing.
+  with the date ("you replied 20 Nov 11:02", "paid: confirmation 21 Oct"). A payment receipt closes an open bill of the
+  same biller only when its amount, or its consumer or account number, is written in that bill's line (title or
+  known): ₹4,200 paid on "₹4,240 due; ₹4,200 if paid early" closes it. Any other amount closes nothing: it is new. A forward to someone else, a question about a bill or
+  a "thanks" closes nothing.
 - **new**: not here yet. Unsure whether two things are one? New: a duplicate beats a wrong merge. Two invoices from one
   biller, or two orders from one shop, are two things.
 - **nothing**: needs nobody (a newsletter, a receipt with nothing due, a notice that asks nothing). A pull request or

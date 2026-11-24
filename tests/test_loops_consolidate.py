@@ -217,3 +217,34 @@ async def test_one_loop_per_pr_even_when_answers_name_loops_that_dont_exist(stor
     answers = [{"f": "F1", "is": "new"}, {"f": "F2", "is": "same", "loop": 999}, {"f": "F3", "is": "same"}]
     got = await consolidate.consolidate(store, "", NOW, mails, scripted(answers), {})
     assert store.one("select count(*) n from loops")["n"] == 1 and len(got.opened) == 1
+
+
+async def test_an_early_payment_closes_its_bill_and_a_stray_payment_never_does(store):
+    # 22 Nov: the ₹4,240 bill offered ₹4,200 if paid early; the ₹4,200 receipt was answered "nothing" and the card stayed.
+    # The bill's line now shows what Odie knows of it, and code checks a payment's numbers before a close.
+    def bill():
+        lid = ledger.open_loop(store, "", NOW, "Pay electricity bill ₹4,240", "bill", owner="you", refs=["mail:b1"],
+                               state="ready")
+        ledger.update(store, lid, NOW, result="₹4,240 due 10-Dec; ₹4,200 if paid by 30-Nov")
+        return lid
+
+    early = bill()
+    paid = finding("mail:p1", "Electricity bill — ₹4,200", kind="bill", done="paid: receipt 23 Nov, ₹4,200")
+    think = scripted([{"f": "F1", "is": "closes", "loop": early, "why": "paid ₹4,200 early"}])
+    got = await consolidate.consolidate(store, "", NOW, [paid], think, {})
+    assert got.closed == [early] and "known: ₹4,240 due 10-Dec; ₹4,200 if paid by 30-Nov" in think.calls[0]
+
+    other = bill()
+    stray = finding("mail:p2", "Electricity bill — ₹3,150", kind="bill", done="paid: receipt, consumer 170299990000")
+    got = await consolidate.consolidate(store, "", NOW, [stray],
+                                        scripted([{"f": "F1", "is": "closes", "loop": other, "why": "paid"}]), {})
+    assert got.closed == [] and ledger.get(store, other)["state"] == "ready"  # the model guessed; code said no
+    assert any(e["ref"] == "mail:p2" for e in ledger.events(store, other))  # kept on the bill as news
+
+
+def test_payment_fits_reads_amounts_and_consumer_numbers():
+    bill = {"kind": "bill", "title": "Pay bill ₹4,240", "result": "", "card": {"subject": "E-Bill of Consumer 170203832411"}}
+    assert consolidate.payment_fits({"title": "Paid", "done": "consumer 170203832411, ₹4,100"}, bill)
+    assert not consolidate.payment_fits({"title": "Paid ₹999", "done": ""}, bill)
+    assert consolidate.payment_fits({"title": "You replied", "done": "replied 20 Nov"}, {"kind": "reply owed"})
+    assert consolidate.numbers_in("Rs.4240 and ₹4,200.50") == ({"4240", "4200"}, set())

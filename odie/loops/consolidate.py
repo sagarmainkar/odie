@@ -26,6 +26,7 @@ from pathlib import Path
 
 from odie.agent.callbacks import wrap_untrusted
 from odie.loops import budget, findings, github, ledger, playbooks
+from odie.watch import bills
 
 log = logging.getLogger("odie.loops")
 SKILL = Path(__file__).parent / "skill" / "SKILL.md"  # the consolidate skill: the owner reads and edits it
@@ -478,13 +479,54 @@ def finished_twin(store, pid: str, now: datetime, found: dict) -> dict | None:
     return None
 
 
+def numbers_in(text: str) -> tuple[set[str], set[str]]:
+    """The amounts (₹, Rs or INR before them; commas and paise dropped) and the long numbers (6+ digits: consumer and
+    account numbers) in a text. "Pay bill ₹4,240; ₹4,200 if early, consumer 170203832411" ->
+    ({"4240", "4200"}, {"170203832411"}); "Lunch" -> (set(), set())."""
+    amounts = set()
+    for match in bills.AMOUNT.finditer(text or ""):
+        number = re.search(r"\d[\d,]*", match.group(0))  # after the mark: "Rs.4240" -> "4240", not ".4240"
+        digits = ""
+        if number:
+            digits = number.group(0).replace(",", "")
+        if digits:
+            amounts.add(digits)
+    long_numbers = set(re.findall(r"\d{6,}", (text or "").replace(",", "")))
+    return amounts, long_numbers
+
+
+def payment_fits(found: dict, loop: dict) -> bool:
+    """Whether a payment may close this loop, checked by code because the model guesses: when the loop is a bill and
+    the finding names an amount or a consumer number, one of them must be written in the bill (its title, what Odie
+    knows of it, its mail's subject or gist). Anything else (not a bill, a finding with no numbers) is the model's call.
+      ₹4,200 receipt, bill "₹4,240 due 10-Dec; ₹4,200 if paid by 30-Nov" -> True (the early-payment price)
+      receipt for consumer 170203832411, bill mail subject naming 170203832411 -> True
+      ₹3,150 receipt for consumer 170299990000, that same bill -> False: it adds to the bill, never closes it
+      "you replied 20 Nov" closing a reply owed -> True (not a bill)"""
+    if (loop.get("kind") or "").lower() != "bill":
+        return True
+    paid_text = " ".join([found.get("title") or "", found.get("done") or "", found.get("why") or ""])
+    paid_amounts, paid_numbers = numbers_in(paid_text)
+    if not paid_amounts and not paid_numbers:
+        return True
+    card = loop.get("card") or {}
+    bill_text = " ".join([loop.get("title") or "", loop.get("result") or "", str(card.get("subject") or ""),
+                          str(card.get("gist") or "")])
+    bill_amounts, bill_numbers = numbers_in(bill_text)
+    amount = card.get("amount") or {}
+    if isinstance(amount, dict) and amount.get("value") is not None:
+        bill_amounts.add(str(int(float(amount["value"]))))
+    return bool(paid_amounts & bill_amounts) or bool(paid_numbers & bill_numbers)
+
+
 def verdict_for(store, pid: str, now: datetime, found: dict, answer: dict | None,
                 hint: dict) -> tuple[str, dict | None, dict]:
     """What code does with one finding, from the model's answer and the shortcut's hint, with the rails (this
     module's notes). Returns (what, the loop it is about or None, the answer to use):
       "nothing" -> ("skip", None); for GitHub's mail about a PR an open loop holds -> ("add", that loop): news only
       "same as his own task" -> ("skip", None)
-      "same"/"closes" an open loop it may reach -> ("add" / "close", that loop)
+      "same"/"closes" an open loop it may reach -> ("add" / "close", that loop); a payment whose amount and
+          consumer number the bill never names -> ("add", that bill) (payment_fits)
       "same"/"closes" a closed loop still remembered -> ("quiet", that loop)
       "new" while the hint names a closed loop -> ("new", that loop) only when "after" names that very loop and the
           finding brings something that loop doesn't know (brings_news), else ("quiet", that loop): a sloppy "new"
@@ -513,7 +555,7 @@ def verdict_for(store, pid: str, now: datetime, found: dict, answer: dict | None
         if loop is not None and loop["state"] not in ledger.OPEN:
             return "quiet", loop, answer
         if loop is not None:
-            if verdict == "closes" and not found.get("weak"):
+            if verdict == "closes" and not found.get("weak") and payment_fits(found, loop):
                 return "close", loop, answer
             return "add", loop, answer  # a weak finding never closes a loop: it only adds its words
     if verdict == "new":
