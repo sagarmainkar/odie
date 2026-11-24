@@ -550,6 +550,9 @@ figure.chart:not(.chart-wide) { max-width: 720px; }
 :root[data-style="paper"] [role="radiogroup"]:has(> [role="radio"]) { border-radius: 2px; background: transparent; border: 1px solid var(--t-line-2); }
 :root[data-style="paper"] [role="radiogroup"] > [role="radio"] { border-radius: 1px; box-shadow: none; background: transparent; }
 :root[data-style="paper"] [role="radiogroup"] > [role="radio"][aria-checked="true"] { background: var(--t-solid); color: var(--t-on-solid); }
+/* Glass's sliding highlight (.seg-pill, a paper-coloured pill) would sit over the reversed button and hide its
+   paper-coloured word: Approvals once showed a blank box where "Smart" was. Paper prints the reverse alone. */
+:root[data-style="paper"] [role="radiogroup"] > [role="radio"] > .seg-pill { display: none; }
 /* Icon tiles: an ink drawing in a ruled circle instead of a glossy sphere. */
 :root[data-style="paper"] .tile { background: transparent; color: var(--t-ink); box-shadow: none; border: 1px solid var(--t-ink); }
 :root[data-style="paper"] .bubble-me { background: var(--t-bubble); border: 1px solid var(--t-line); box-shadow: none; border-radius: 2px; }

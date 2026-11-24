@@ -25,7 +25,7 @@ export function ApprovalsSection() {
             {MODES.map((m) => (
               <button key={m} role="radio" aria-checked={m === shown} disabled={mode === null && !unread} onClick={() => void choose(m)}
                 className={`relative flex-1 h-11 rounded-inner text-ui font-medium disabled:opacity-40 ${m === shown ? "text-ink" : "text-muted"}`}>
-                {m === shown && <motion.span layoutId="approvals-seg" transition={{ duration: 0.2 }} className="absolute inset-0 rounded-inner bg-surface" style={{ boxShadow: "var(--t-shadow-card)" }} />}
+                {m === shown && <motion.span layoutId="approvals-seg" transition={{ duration: 0.2 }} className="seg-pill absolute inset-0 rounded-inner bg-surface" style={{ boxShadow: "var(--t-shadow-card)" }} />}
                 <span className="relative">{MODE_COPY[m].title}</span>
               </button>
             ))}

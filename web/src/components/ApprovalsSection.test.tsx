@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { act } from "react";
+import { readFileSync } from "node:fs";
 import { createRoot } from "react-dom/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { getJSON, putJSON } from "../api";
@@ -31,6 +32,16 @@ describe("Settings → Approvals", () => {
     expect(radios(view.host)).toEqual([["Careful", "false"], ["Smart", "true"]]);
     expect(view.host.textContent).toContain("reading secrets always ask");
     expect(view.host.textContent).toContain("stop asking for that kind in that chat for 30 minutes");
+    await view.done();
+  });
+
+  it("in Newspaper, hides the sliding highlight so the reversed word shows (Smart was a blank box)", async () => {
+    vi.mocked(getJSON).mockResolvedValue({ mode: "smart" });
+    const view = await mount(<ApprovalsSection />);
+    const picked = view.host.querySelector("[role=radio][aria-checked=true]")!;
+    expect(picked.querySelector(":scope > .seg-pill")).not.toBeNull();
+    const css = readFileSync("src/styles.css", "utf8")  // vitest runs in web/;
+    expect(css).toContain(':root[data-style="paper"] [role="radiogroup"] > [role="radio"] > .seg-pill { display: none; }');
     await view.done();
   });
 
