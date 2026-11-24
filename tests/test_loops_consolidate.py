@@ -248,3 +248,22 @@ def test_payment_fits_reads_amounts_and_consumer_numbers():
     assert not consolidate.payment_fits({"title": "Paid ₹999", "done": ""}, bill)
     assert consolidate.payment_fits({"title": "You replied", "done": "replied 20 Nov"}, {"kind": "reply owed"})
     assert consolidate.numbers_in("Rs.4240 and ₹4,200.50") == ({"4240", "4200"}, set())
+
+
+async def test_a_receipt_closes_its_bill_even_when_the_model_calls_it_new(store):
+    # 24 Nov live: in a batch of 18 findings the model answered "new" for the ₹4,200 receipt; a second card opened
+    # and the bill stayed. Code now ties a payment to the one open bill of the same biller that names its numbers.
+    bill_card = {"from": "ebill@power.example.in", "subject": "E-Bill of Consumer 170200000001, Rs.4240"}
+    lid = ledger.open_loop(store, "", NOW, "Pay electricity bill ₹4,240", "bill", owner="you", refs=["mail:b1"],
+                           state="ready", card=bill_card, result="₹4,240 due 10-Dec; ₹4,200 if paid by 30-Nov")
+    receipt = finding("mail:p1", "Electricity bill paid — ₹4,200", kind="bill", done="paid: receipt 23 Nov",
+                      card={"from": "helpdesk@power.example.in", "subject": "Payment Receipt, Consumer No. 170200000001"})
+    got = await consolidate.consolidate(store, "", NOW, [receipt], scripted([{"f": "F1", "is": "new"}]), {})
+    assert got.closed == [lid] and got.opened == []
+    assert ledger.get(store, lid)["closed_why"] == "paid: receipt 23 Nov"
+
+
+def test_biller_of_and_paid_bill_need_the_same_biller():
+    assert consolidate.biller_of({"from": "A <ebill@power.example.in>"}) == "example.in"
+    assert consolidate.biller_of({"sender": "alerts@hdfcbank.co.in"}) == "hdfcbank.co.in"
+    assert consolidate.biller_of({}) == ""
