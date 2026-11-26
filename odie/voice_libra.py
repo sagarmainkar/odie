@@ -7,7 +7,10 @@ Libra hears them: the tone becomes its style and the tags are performed. Any oth
 these known markers count, so any other <something> a reply has stays as it is."""
 from __future__ import annotations
 
+import asyncio
 import re
+import tempfile
+from pathlib import Path
 
 import httpx
 
@@ -174,7 +177,47 @@ def tone_to_use(asked: str | None, text: str, settings: dict) -> str | None:
     return settings_tone(settings)
 
 
-# ── The server ──
+# ── How quickly it talks ──
+# Libra reads like a storyteller: unhurried. Odie is talked to, so its speech is played a little quicker, with the
+# pitch kept (ffmpeg's atempo). Libra's own "fast" pace changes the reading too, and has no "a little".
+SPEEDS = {"normal": 1.0, "brisk": 1.1, "quick": 1.2}
+DEFAULT_SPEED = "brisk"
+
+
+def settings_speed(settings: dict) -> str:
+    """The speed chosen in Settings → Voice → Libra: {"libra_speed": "quick"} -> "quick"; {} -> "brisk" (the
+    default, a tenth quicker); {"libra_speed": "zoom"} -> "brisk"."""
+    chosen = str(settings.get("libra_speed") or "").strip().lower()
+    if chosen in SPEEDS:
+        return chosen
+    return DEFAULT_SPEED
+
+
+async def quicken(wav: bytes, speed: str) -> bytes:
+    """`wav` played `speed` quicker with its pitch kept, through ffmpeg. "normal" (or no ffmpeg, or ffmpeg failing)
+    gives the WAV back as it was: a voice at its own speed beats no voice. "brisk" -> about 10% shorter."""
+    factor = SPEEDS.get(speed, 1.0)
+    if factor == 1.0:
+        return wav
+    # written to a file, not a pipe: a piped WAV has no lengths in its header, and the Mac app's reader refuses that
+    with tempfile.TemporaryDirectory() as folder:
+        out = Path(folder) / "quicker.wav"
+        try:
+            process = await asyncio.create_subprocess_exec(
+                "ffmpeg", "-loglevel", "error", "-i", "pipe:0", "-filter:a", f"atempo={factor}", str(out),
+                stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
+        except FileNotFoundError:
+            return wav
+        await process.communicate(wav)
+        if process.returncode != 0 or not out.exists():
+            return wav
+        return out.read_bytes()
+
+
+def has_words(spoken: str) -> bool:
+    """Whether a piece of text has anything to say: a letter or digit, or a sound tag. A lone "—" or "…" (a sentence
+    split leaves those) is nothing, and isn't sent to Libra. "Okay." -> True; "<laugh>" -> True; "—" -> False."""
+    return re.search(r"\w", spoken) is not None
 
 async def available(url: str, transport: httpx.AsyncBaseTransport | None = None) -> bool:
     """Whether a Libra server answers at `url` (its /health, one quick GET)."""
