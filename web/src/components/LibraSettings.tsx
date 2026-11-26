@@ -1,17 +1,19 @@
 import { useState } from "react";
 import type { LibraInfo } from "../voiceSettings";
-import { libraToneLabel } from "../voiceSettings";
+import { libraSpeedLabel, libraToneLabel } from "../voiceSettings";
 
 type Props = {
   libra: LibraInfo;
   chosen: boolean;  // Libra is the read-aloud engine now: the tone choice shows
-  save: (body: { libra_style?: string; libra_url?: string }) => Promise<string | null>;  // null when saved, else why not
+  save: (body: { libra_style?: string; libra_url?: string; libra_speed?: string }) => Promise<string | null>;  // null when saved, else why not
+  hear: (tone: string, speed?: string) => void;  // plays a line in this tone, at this speed (else the saved one)
+  playing: string | null;        // the tone whose line is playing now
 };
 
-/** Libra's own part of Settings → Voice: the tone a reply is read in when the model names none, and where the Libra
- *  voice server answers (this Mac, or another on the home network). The address also shows while Libra isn't
- *  answering, so it can be fixed before Libra can be chosen. */
-export function LibraSettings({ libra, chosen, save }: Props) {
+/** Libra's own part of Settings → Voice: the tone a reply is read in when the model names none (tapping one plays a
+ *  line in it), how quickly Libra talks, and where the Libra voice server answers (this Mac, or another on the home
+ *  network). The address also shows while Libra isn't answering, so it can be fixed before Libra can be chosen. */
+export function LibraSettings({ libra, chosen, save, hear, playing }: Props) {
   const [address, setAddress] = useState(libra.url);
   const [problem, setProblem] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -24,6 +26,17 @@ export function LibraSettings({ libra, chosen, save }: Props) {
   }
 
   const tones = ["", ...libra.tones];
+  const speeds = libra.speeds ?? [];
+
+  async function pickTone(tone: string) {
+    hear(tone);  // in the tap itself: a phone plays sound only from one
+    await save({ libra_style: tone });
+  }
+
+  async function pickSpeed(speed: string) {
+    hear(libra.tone, speed);  // in the tap itself, at the speed just tapped
+    await save({ libra_speed: speed });
+  }
   return (
     <>
       {chosen && (
@@ -32,15 +45,36 @@ export function LibraSettings({ libra, chosen, save }: Props) {
           <div className="glass rounded-card p-3 flex flex-col gap-3">
             <div className="text-small leading-[18px] text-muted px-1">
               Odie picks a tone for each reply and laughs or sighs where it fits; you never see the marks, you only hear
-              them. This tone is used when a reply doesn't pick one.
+              them. This tone is used when a reply doesn't pick one. Tap a tone to hear it.
             </div>
             <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="Libra tone">
               {tones.map((tone) => {
                 const on = tone === libra.tone;
                 return (
-                  <button key={tone || "none"} role="radio" aria-checked={on} onClick={() => void save({ libra_style: tone })}
+                  <button key={tone || "none"} role="radio" aria-checked={on} onClick={() => void pickTone(tone)}
+                    className={`rounded-control border px-3 h-9 text-small flex items-center gap-1.5 ${on ? "border-ember-text bg-ember-tint text-ember-text font-semibold" : "border-line text-muted"}`}>
+                    {playing === tone && <span className="spinner" />}{libraToneLabel(tone)}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </section>
+      )}
+      {chosen && speeds.length > 0 && (
+        <section className="flex flex-col gap-2">
+          <div className="section-label text-small leading-5 font-bold text-muted px-1.5">Speed</div>
+          <div className="glass rounded-card p-3 flex flex-col gap-3">
+            <div className="text-small leading-[18px] text-muted px-1">
+              Libra reads like a storyteller. A little quicker sounds more like talking.
+            </div>
+            <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="Libra speed">
+              {speeds.map((speed) => {
+                const on = speed === libra.speed;
+                return (
+                  <button key={speed} role="radio" aria-checked={on} onClick={() => void pickSpeed(speed)}
                     className={`rounded-control border px-3 h-9 text-small ${on ? "border-ember-text bg-ember-tint text-ember-text font-semibold" : "border-line text-muted"}`}>
-                    {libraToneLabel(tone)}
+                    {libraSpeedLabel(speed)}
                   </button>
                 );
               })}

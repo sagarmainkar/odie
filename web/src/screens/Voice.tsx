@@ -25,11 +25,11 @@ export function Voice() {
   const audio = useRef<HTMLAudioElement | null>(null);
   const load = () => getJSON<VoiceInfo>("/api/voice").then(setV).catch(() => {});
   useEffect(() => { load(); return () => audio.current?.pause(); }, []);
-  function play(engine: string, id: string) {
+  function play(engine: string, id: string, tone?: string, speed?: string) {
     audio.current?.pause();
-    const key = `${engine}/${id}`;
+    const key = tone ? `${engine}/${id}/${tone}` : `${engine}/${id}`;
     if (playing === key) { setPlaying(null); return; }
-    const a = new Audio(previewUrl(engine, id));
+    const a = new Audio(previewUrl(engine, id, tone, speed));
     audio.current = a; setPlaying(key);
     a.onended = () => setPlaying(null); a.onerror = () => setPlaying(null);
     void a.play().catch(() => setPlaying(null));
@@ -48,7 +48,7 @@ export function Voice() {
   }
   /** Libra's tone or address: saved, then the whole screen read again (a new address may start or stop answering).
    *  Null when saved, else the server's reason (a bad address). */
-  async function saveLibra(body: { libra_style?: string; libra_url?: string }): Promise<string | null> {
+  async function saveLibra(body: { libra_style?: string; libra_url?: string; libra_speed?: string }): Promise<string | null> {
     const r = await fetch("/api/voice", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
     if (!r.ok) {
       const answer = await r.json().catch(() => ({}));
@@ -72,15 +72,18 @@ export function Voice() {
 }
 
 type BodyProps = {
-  v: VoiceInfo; playing: string | null; play: (engine: string, id: string) => void; kept: (answer: PhononAnswer) => void;
+  v: VoiceInfo; playing: string | null; play: (engine: string, id: string, tone?: string, speed?: string) => void; kept: (answer: PhononAnswer) => void;
   forget: (voiceId: string) => void; save: (body: { engine?: string; voice?: string; reminders_spoken?: boolean }) => void;
-  saveLibra: (body: { libra_style?: string; libra_url?: string }) => Promise<string | null>;
+  saveLibra: (body: { libra_style?: string; libra_url?: string; libra_speed?: string }) => Promise<string | null>;
 };
 
 function VoiceBody({ v, playing, play, kept, forget, save, saveLibra }: BodyProps) {
   const shown = voiceSection(v);  // no engine at all: one plain line, and nothing below reads an engine that isn't there
   // Odie's own voice needs Apple Silicon; on an Intel Mac the server offers no local engine and says so here.
   const noLocal = v.local_voice === false;
+  // which Libra tone's preview is playing now, for its button's spinner: "libra/sofia/wry" -> "wry"
+  const libraPrefix = `libra/${v.voice}/`;
+  const libraPlaying = playing?.startsWith(libraPrefix) ? playing.slice(libraPrefix.length) : null;
   const about = (
     <div className="text-small leading-[18px] text-muted px-1">
       Read-aloud (the speaker under each reply).{" "}
@@ -143,7 +146,8 @@ function VoiceBody({ v, playing, play, kept, forget, save, saveLibra }: BodyProp
       ))}
 
       {eng.id === "phonon" && eng.available && <Part title="Another voice"><AnotherVoice onKept={kept} /></Part>}
-      {v.libra && showLibra(v, eng.id) && <LibraSettings key={v.libra.url} libra={v.libra} chosen={eng.id === "libra"} save={saveLibra} />}
+      {v.libra && showLibra(v, eng.id) && <LibraSettings key={v.libra.url} libra={v.libra} chosen={eng.id === "libra"} save={saveLibra}
+        hear={(tone, speed) => play("libra", v.voice, tone || "cheerful", speed)} playing={libraPlaying} />}
       {eng.id === "maya1" && <div className="text-caption leading-4 text-muted px-1.5 -mt-3">The first preview loads Maya1 (about half a minute). Replies are read with laughs, sighs and other expressions where they fit.</div>}
 
       <Part title="Reminders">
