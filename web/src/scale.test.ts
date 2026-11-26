@@ -22,6 +22,7 @@ const EXCEPTIONS: { file: string; cls: string; why: string }[] = [
   { file: "components/PieChart.tsx", cls: "rounded-[3px]", why: "a chart legend's swatch" },
   { file: "blocks/Form.tsx", cls: "rounded-[2px]", why: "the small square in a ticked box" },
   { file: "screens/Chat.tsx", cls: "rounded-[3px]", why: "the stop square in the dictation button" },
+  { file: "components/LocalTalk.tsx", cls: "rounded-[3px]", why: "the stop square in Talk's Interrupt button" },
 ];
 
 // An arbitrary pixel size or radius, with any variant in front: "text-[13px]", "lg:rounded-[26px]", "rounded-br-[8px]".

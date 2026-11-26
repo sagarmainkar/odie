@@ -296,3 +296,11 @@ async def test_approvals_mode_route_refuses_an_unknown_value(client):
     r = await client.put("/api/approvals/mode", json={"mode": "yolo"})
     assert r.status_code == 400
     assert (await client.get("/api/approvals/mode")).json() == {"mode": "smart"}
+
+
+async def test_talk_on_this_mac_is_offered_where_odies_own_voice_runs(client, monkeypatch):
+    c = client[0] if isinstance(client, tuple) else client
+    monkeypatch.delenv("ODIE_VOICE", raising=False)
+    assert "local_talk" in (await c.get("/api/capabilities")).json()["caps"]
+    monkeypatch.setenv("ODIE_VOICE", "off")  # an Intel Mac: no Silero or Parakeet to listen with
+    assert "local_talk" not in (await c.get("/api/capabilities")).json()["caps"]

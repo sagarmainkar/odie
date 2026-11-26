@@ -19,6 +19,8 @@ import { TalkMode } from "../components/TalkMode";
 import { SpeakingBars } from "../components/Orb";
 import { Avatar } from "../components/Avatar";
 import { Orb } from "../components/Orb";
+import { LocalTalk } from "../components/LocalTalk";
+import { openTalkAudio } from "../talk/hearing";
 import { Icon as Glyph, Tile } from "../components/Tile";
 import { greetingParts } from "../greeting";
 import { MorningHello } from "../components/MorningCard";
@@ -241,6 +243,8 @@ export function Chat({ orb, setOrb, showing }: { orb: OrbState; setOrb: (s: OrbS
   const [micNote, setMicNote] = useState("");  // why the mic couldn't write it down, shown under the box
   const micLevel = useRef(0);  // the voice's loudness right now, for the wave
   const [talking, setTalking] = useState(false);
+  // Talk on this Mac (LocalTalk, not the held-back OpenAI one) is open while it has its AudioContext, made in the tap
+  const [talkAudio, setTalkAudio] = useState<AudioContext | null>(null);
   // Who this chat is with: everyday Odie (""), or a personality picked in the switcher. The name, the picture, the
   // threads and every call for the chat follow it (api.ts names the pick on those calls).
   const pick = usePick();
@@ -670,7 +674,8 @@ export function Chat({ orb, setOrb, showing }: { orb: OrbState; setOrb: (s: OrbS
   const hasDraft = input.trim().length > 0 || pending.length > 0;
   // A new version of the app waits to reload while any of these is going on (freshness.ts).
   useHoldReload("stream", busy);
-  useHoldReload("voice", talking || connecting || listening || transcribing);
+  useHoldReload("voice", talking || talkAudio !== null || connecting || listening || transcribing);
+  const newestReply = [...msgs].reverse().find((m) => m.role === "odie");  // what Talk reads aloud as it streams
   useHoldReload("approval", orb === "approval");
   useHoldReload("draft", hasDraft);
   let micPlaceholder = `Ask ${name} anything`;
@@ -696,6 +701,10 @@ export function Chat({ orb, setOrb, showing }: { orb: OrbState; setOrb: (s: OrbS
         onOpen={setThread} onNewChat={() => void newChat()} reload={threadsReload} />}
       <div className="relative flex flex-col h-full flex-1 min-w-0">
         <AnimatePresence>{talking && <TalkMode onClose={() => setTalking(false)} />}</AnimatePresence>
+        <AnimatePresence>{talkAudio && (
+          <LocalTalk audio={talkAudio} onClose={() => setTalkAudio(null)} send={(words) => void send(words)}
+            replyId={newestReply?.id ?? null} replyText={newestReply?.text ?? ""} busy={busy} />
+        )}</AnimatePresence>
         <Switcher open={switcherOpen} onClose={() => setSwitcherOpen(false)} />
         <header className="chat-head chat-col sticky top-0 z-10 grid grid-cols-[auto_1fr_auto] items-center gap-2.5 px-[18px] pb-4 safe-top bg-overlay backdrop-blur-xl backdrop-saturate-150 [mask-image:linear-gradient(180deg,#000_82%,transparent)]">
           {/* On a desktop the rail has Today; an empty span holds the back button's place in the header grid. */}
@@ -930,6 +939,9 @@ export function Chat({ orb, setOrb, showing }: { orb: OrbState; setOrb: (s: OrbS
             <ThinkChip on={thinking} onTap={() => setPlusOpen(true)} />
             <span className="flex-1" />
             {/* Talk (a live voice conversation) is held back for now: the server never grants "talk", so this stays hidden. */}
+            {has(caps, "local_talk") && !has(caps, "talk") && pick === "" && (  /* Talk with Odie on this Mac */
+              <button type="button" onClick={() => { stopSpeaking(); setTalkAudio(openTalkAudio()); }} aria-label={`Talk with ${name}`} className="pill pill-flat h-[42px]"><Glyph name="wave" size={18} /> Talk</button>
+            )}
             {has(caps, "talk") && pick === "" && (  /* Talk is everyday Odie's in this build */
               <button type="button" onClick={() => { stopSpeaking(); setTalking(true); }} aria-label={`Talk with ${name}`} className="pill pill-flat h-[42px]"><Glyph name="wave" size={18} /> Speak</button>
             )}
