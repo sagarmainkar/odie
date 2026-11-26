@@ -6,6 +6,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 
+from odie import voice_libra
+
 ALL_CAPS = frozenset({"mail", "calendar", "money", "vault", "google"})
 
 
@@ -65,6 +67,14 @@ def rule(text: str, needs: tuple = (), any_of: tuple = (), unless: tuple = (), i
 
 _r = rule
 
+LIBRA_RULE = (
+    "- Your replies are read aloud in an expressive voice. In a conversational reply you may open with one tone "
+    "marker, <tone:NAME>, NAME one of " + ", ".join(voice_libra.TONES) + ", and add at most three sound tags where "
+    "the sound would really happen: " + " ".join(f"<{t}>" for t in voice_libra.CHAT_TAGS) + ". Nobody sees them; "
+    "they only shape the voice, so never mention or explain them. Use none in tables, lists, visual blocks, code or "
+    "replies that are plain information, and never invent other tags."
+)
+
 
 
 RULES: list[Rule] = [
@@ -93,6 +103,7 @@ RULES: list[Rule] = [
     _r('- Charts: for a stock, index, currency or gold, or how a company is doing, load the stocks skill first. To chart numbers you already have (spending by category, a few values over time), write one yourself: ```odie-chart then {{"type": "line" or "bar", "title": "...", "x": [labels], "series": [{{"name": "...", "data": [numbers]}}], "unit": "{currency}"}} then ```. Never show chart data as plain JSON or a code block of any other kind.', id="charts"),
     _r("- To draw a flow, a sequence, a mind map or a schedule, write a ```mermaid fence (flowchart, sequenceDiagram, mindmap, gantt).", id="diagrams"),
     _r("- Itineraries, day plans, comparisons, top-N or best-X picks, steps to follow, packing or to-do lists, EMI, loan, SIP or budget what-ifs, and safety or money warnings read best drawn: answer here in chat with the visual blocks below (timeline, table, ranked list, checklist, calculator, callout, tiles, chart), not Markdown tables or lists, with a line or two of text. What-ifs go in the calculator: the phone works the numbers out exactly, so don't do the sums yourself. Make a file (a deck, a Word document, a PDF) only when the user asks for a file, deck, slides or document; after making one, answer follow-ups in chat unless they ask for another file.", id="visuals"),
+    _r(LIBRA_RULE, needs=("libra_voice",), id="libra-voice"),
     _r("- After answering, offer once to track something that will change (trackers) or to make a recurring ask a skill (skill-builder).", id="track"),
     _r("- Images: you may only show image URLs that a tool returned (web_search lists them under 'Images found'); never write or guess an image URL. To show several, write ```odie-images on its own line, then {{\"title\": \"...\", \"images\": [{{\"url\": \"...\", \"caption\": \"...\", \"source\": \"site name\"}}]}}, then ``` on its own line. One image can be a normal Markdown image. If no tool returned images, say so instead of showing any.", unless=("browser",), id="images"),
     _r("- Images: you may only show image URLs that a tool returned: find_images (free photos and web photos, each with its credit), a browser page's 'Images on this page', or web_search's 'Images found'; never write or guess an image URL. For a named place, hotel, restaurant or product, prefer its own page's photos; for covers and moods, find_images' free photos. To show several, write ```odie-images on its own line, then {{\"title\": \"...\", \"images\": [{{\"url\": \"...\", \"caption\": \"...\", \"source\": \"site name\"}}]}}, then ``` on its own line. One image can be a normal Markdown image. If no tool returned images, say so instead of showing any.", needs=("browser",), id="images-browser"),

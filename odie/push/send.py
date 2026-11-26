@@ -27,7 +27,9 @@ def _private_key_file(vapid: dict) -> str:
 def send_to_all(store: Store, title: str, body: str, url: str = "/", tag: str | None = None) -> int:
     vapid = load_or_create_vapid(config.settings.vapid_path)
     key_file = _private_key_file(vapid)
-    payload = json.dumps({"title": title, "body": body, "url": url, "tag": tag or "odie"})
+    from odie import voice_libra
+    shown = voice_libra.hidden(body)  # a reply's voice markup is for Libra's ears, never a notification's text
+    payload = json.dumps({"title": title, "body": shown, "url": url, "tag": tag or "odie"})
     sent = 0
     for sub in store.list_subscriptions():
         info = {"endpoint": sub["endpoint"], "keys": {"p256dh": sub["p256dh"], "auth": sub["auth"]}}

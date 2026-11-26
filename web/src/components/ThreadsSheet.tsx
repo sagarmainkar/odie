@@ -1,4 +1,5 @@
 import { AnimatePresence, motion } from "framer-motion";
+import { hideVoiceMarkup } from "../blocks/voiceMarkup";
 import { useEffect, useRef, useState, type ReactNode, type Ref } from "react";
 import { getJSON, postJSON, todayISO } from "../api";
 import { groupThreads, sameAsTopRow, whenText, type Thread } from "../threads";
@@ -96,7 +97,7 @@ function ThreadsPanel({ threads, current, pickThread, onOpen, actions }: { threa
               <div key={t.id} className={`flex items-center gap-1 rounded-control ${current === t.id ? "bg-well" : ""}`}>
                 <button onClick={() => onOpen(t)} className="flex-1 min-w-0 text-left px-3 py-2.5">
                   <span className="block text-body font-medium truncate">{t.title}</span>
-                  <span className="block text-small text-muted truncate">{t.snippet ?? `${whenText(t, today)} · ${t.messages} messages`}</span>
+                  <span className="block text-small text-muted truncate">{t.snippet ? hideVoiceMarkup(t.snippet) : `${whenText(t, today)} · ${t.messages} messages`}</span>
                 </button>
                 <button onClick={() => void pin(t)} aria-label={t.pinned ? "Unpin" : "Pin"} className={`w-10 h-10 grid place-items-center shrink-0 ${t.pinned ? "text-gold" : "text-dim"}`}>
                   <Star on={t.pinned} />
