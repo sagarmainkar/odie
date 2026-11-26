@@ -68,6 +68,14 @@ def no_real_ollama_voice(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def no_real_libra(monkeypatch):
+    """The voice side never reaches a real Libra server from a test (the owner's Mac runs one on 8794): its default
+    address is a closed port. A test that speaks to Libra brings an httpx.MockTransport."""
+    from odie import voice_libra
+    monkeypatch.setattr(voice_libra, "DEFAULT_URL", "http://127.0.0.1:9")
+
+
+@pytest.fixture(autouse=True)
 def no_model_probe(monkeypatch):
     """Tests never ask the real LM Studio or Ollama for a model's context size (a test that needs one patches it)."""
     async def unknown(sel, transport=None):
