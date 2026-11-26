@@ -2,7 +2,8 @@
 Odie's own: ODIE_HOME, ODIE_DATA_DIR, ODIE_CONFIG_DIR, ODIE_MODEL, ODIE_MEMORY_FILE, ODIE_PREFETCH, ODIE_HOST,
 ODIE_PORT, ODIE_PUBLIC_URL, ODIE_APP_NAME, ODIE_USER_ID, ODIE_TIMEZONE, ODIE_EMBED_IDLE_MINUTES,
 ODIE_LOCALE, ODIE_CURRENCY, ODIE_ADDONS, ODIE_VOICE (off: no local voice worker), ODIE_VOICE_PORT (8771), ODIE_TTS_MODEL
-and ODIE_STT_MODEL (OpenAI's voice models, odie.voice), ODIE_VIDEO_VOICE (the voice videos are narrated in). Others: each
+and ODIE_STT_MODEL (OpenAI's voice models, odie.voice), ODIE_VIDEO_VOICE (the voice videos are narrated in),
+ODIE_CAPTURE (1: keep model calls to train a smaller model on, odie.agent.capture). Others: each
 built-in provider's address, LM_STUDIO_BASE_URL, OLLAMA_BASE_URL, OPENAI_BASE_URL, OPENROUTER_BASE_URL, GEMINI_BASE_URL and
 ANTHROPIC_BASE_URL (odie.models.provider_base_url, read on every request). Add-ons read their own."""
 from __future__ import annotations
@@ -102,6 +103,7 @@ class Settings:
     lm_studio_api_key: str = "lm-studio"
     model_id: str = field(default_factory=lambda: _get("MODEL", "gemma-4-26b-a4b-it-qat"))
     prefetch: bool = field(default_factory=lambda: _get("PREFETCH", "1") not in ("0", "false", "no"))
+    capture: bool = field(default_factory=lambda: _get("CAPTURE", "") == "1")  # keep model calls to train on (odie.agent.capture)
     embed_idle_minutes: int = field(default_factory=lambda: int(_get("EMBED_IDLE_MINUTES", "15")))  # the embedding service unloads its model after this long idle; 0: never
     app_name: str = field(default_factory=lambda: _identity()[0])  # existing chats keep theirs (odie.identity)
     user_id: str = field(default_factory=lambda: _identity()[1])
