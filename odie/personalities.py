@@ -440,6 +440,8 @@ async def delete(store: Store, runner, pid: str) -> dict:
     persona.delete_picture(found.avatar)
     from odie.agent.model import forget_saved_requests
     forget_saved_requests(config.settings.data_dir / "requests")  # last: no turn of its threads can save one now
+    from odie.agent import capture
+    capture.forget_all()  # kept calls carry no thread either: they all go with it
     runner.invalidate_prompt()
     return {"threads": len(its_threads)}
 

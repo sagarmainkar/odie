@@ -17,6 +17,7 @@ from typing import Any
 from google.adk.models.lite_llm import LiteLlm, LiteLLMClient
 
 from odie import config
+from odie.agent import capture
 
 log = logging.getLogger("odie.model")
 
@@ -249,7 +250,13 @@ class SavingClient(LiteLLMClient):
             args.pop("model")  # named here only so with_reply_room knows which model it is
             return await send(model, messages, tools, **args)
 
-        return await with_reply_room(call, {"model": model, **kwargs})
+        response = await with_reply_room(call, {"model": model, **kwargs})
+        if not capture.on():
+            return response
+        if kwargs.get("stream"):
+            return capture.kept_stream(response, model, messages, tools)  # kept when the stream ends
+        capture.keep(model, messages, tools, capture.reply_of(response), getattr(response, "usage", None))
+        return response
 
 
 def _litellm():
@@ -283,7 +290,10 @@ async def complete(selection, messages: list[dict], tools: list[dict] | None = N
     async def call(**request):
         return await _litellm().acompletion(messages=messages, **request)
 
-    return await with_reply_room(call, args)
+    response = await with_reply_room(call, args)
+    if capture.on() and not args.get("stream"):
+        capture.keep(args.get("model", ""), messages, tools, capture.reply_of(response), getattr(response, "usage", None))
+    return response
 
 
 def _client_over(selection, args: dict[str, Any], transport):
