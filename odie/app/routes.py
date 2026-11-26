@@ -1729,6 +1729,7 @@ class VoiceIn(BaseModel):
     reminders_spoken: bool | None = None
     libra_style: str | None = Field(None, max_length=40)  # Libra's tone when a reply names none; "" for none
     libra_url: str | None = Field(None, max_length=300)  # where the Libra server answers
+    libra_speed: str | None = Field(None, max_length=20)  # how quickly Libra talks: normal, brisk or quick
 
 
 class TtsIn(BaseModel):
@@ -1793,7 +1794,8 @@ async def voice_get(request: Request):
     return {"available": openai_ok, "engine": engine, "voice": current, "talk_voice": voice.get_voice(store), "engines": engines,
             "local_voice": machine.local_voice_wanted(),
             "libra": {"url": libra_url, "tone": voice.voice_libra.settings_tone(voice_settings) or "",
-                      "tones": voice.voice_libra.TONES, "answering": libra_ok},
+                      "tones": voice.voice_libra.TONES, "answering": libra_ok,
+                      "speed": voice.voice_libra.settings_speed(voice_settings), "speeds": list(voice.voice_libra.SPEEDS)},
             "reminders_spoken": voice.reminders_spoken(store),
             "voices": voice.VOICES, "models": {"tts": voice.tts_model(), "stt": voice.stt_model(), "realtime": voice.REALTIME_MODEL}}
 
@@ -1812,6 +1814,11 @@ async def voice_put(body: VoiceIn, request: Request):
         if tone and tone not in voice.voice_libra.TONES:
             raise HTTPException(422, f"Libra has no tone called {body.libra_style!r}.")
         voice.set_libra(store, tone=tone)
+    if body.libra_speed is not None:
+        speed = body.libra_speed.strip().lower()
+        if speed not in voice.voice_libra.SPEEDS:
+            raise HTTPException(422, f"Libra has no speed called {body.libra_speed!r}.")
+        voice.set_libra(store, speed=speed)
     engine, v = voice.set_tts(store, body.engine, body.voice)
     await voice.settle_worker(store)  # away from Kokoro: Odie's own voice server stops
     request.app.state.runner.invalidate_prompt()  # to or from Libra: the voice markup rule follows on the next message
@@ -1822,16 +1829,18 @@ async def voice_put(body: VoiceIn, request: Request):
     return {"engine": engine, "voice": v, "reminders_spoken": voice.reminders_spoken(store)}
 
 
-def _preview_path(request: Request, engine: str, voice_id: str) -> Path:
+def _preview_path(request: Request, engine: str, voice_id: str, how: str = "") -> Path:
     """Where a voice's preview is kept: one file per engine, voice, assistant name and user name (a rename makes a new
-    one). The voice id goes in as a slug: Phonon's names have spaces, accents and brackets ("Noémie (phonon:fr)")."""
+    one), and for Libra per tone and speed (`how`, "wry-brisk"). The voice id goes in as a slug: Phonon's names have
+    spaces, accents and brackets ("Noémie (phonon:fr)")."""
     from odie import persona, profile
     name = persona.get(request.app.state.store)["name"]
     user = profile.get(request.app.state.store)["user_name"]
     folder = config.settings.data_dir / "voice"
     folder.mkdir(parents=True, exist_ok=True)
     ext = "mp3" if engine == "openai" else "wav"
-    return folder / f"preview-{_preview_name(engine, voice_id)}-{slug(name)}-{slug(user or 'you')}.{ext}"
+    way = f"-{how}" if how else ""
+    return folder / f"preview-{_preview_name(engine, voice_id)}{way}-{slug(name)}-{slug(user or 'you')}.{ext}"
 
 
 def _preview_name(engine: str, voice_id: str) -> str:
@@ -1843,14 +1852,20 @@ def _preview_name(engine: str, voice_id: str) -> str:
     return f"{engine}-{slug(voice_id)}-{exact}"
 
 
-async def _preview(request: Request, engine: str, voice_id: str) -> Response:
+async def _preview(request: Request, engine: str, voice_id: str, tone: str | None = None,
+                   speed: str | None = None) -> Response:
     from odie import persona, profile, voice
     store = request.app.state.store
     if engine not in voice.ENGINES or engine in voice.disabled() or voice_id not in {v["id"] for v in voice.engine_voices(engine, store)}:
         raise HTTPException(404, "no such voice")
     name = persona.get(store)["name"]
     user = profile.get(store)["user_name"]
-    path = _preview_path(request, engine, voice_id)
+    how = ""
+    if engine == "libra":
+        tone = _libra_preview_tone(tone)
+        speed = _libra_preview_speed(speed, store.get_setting("voice") or {})
+        how = f"{tone}-{speed}"
+    path = _preview_path(request, engine, voice_id, how)
     ext = path.suffix.lstrip(".")
     if not path.exists():
         hi = f"Hi {user}" if user else "Hi"
@@ -1860,7 +1875,7 @@ async def _preview(request: Request, engine: str, voice_id: str) -> Response:
             if engine == "openai":
                 audio = await voice.tts(line, voice_id, key=_voice_guard())
             elif engine == "libra":
-                audio = await voice.libra_tts(store, f"{line} <chuckle>", voice_id, tone="cheerful")
+                audio = await voice.libra_tts(store, _libra_preview_line(hi, name), voice_id, tone=tone, speed=speed)
             else:
                 audio = await voice.local_tts(engine, line, voice_id)
         except voice.VoiceUnavailable as e:
@@ -1868,7 +1883,37 @@ async def _preview(request: Request, engine: str, voice_id: str) -> Response:
         except httpx.HTTPError as e:
             raise HTTPException(502, f"{engine} preview failed: {type(e).__name__}")
         path.write_bytes(audio)
-    return Response(path.read_bytes(), media_type="audio/mpeg" if ext == "mp3" else "audio/wav", headers={"Cache-Control": "public, max-age=86400"})
+    kept_for = "no-cache" if engine == "libra" else "public, max-age=86400"  # Libra's changes with its speed setting
+    return Response(path.read_bytes(), media_type="audio/mpeg" if ext == "mp3" else "audio/wav", headers={"Cache-Control": kept_for})
+
+
+def _libra_preview_tone(asked: str | None) -> str:
+    """The tone a Libra preview is spoken in: the one asked for (Settings plays each tone as it is tapped), else
+    cheerful. "wry" -> "wry"; None -> "cheerful"; "" (the None button) -> "cheerful"; "grumpy" -> 404."""
+    from odie import voice_libra
+    if not asked:
+        return "cheerful"
+    tone = asked.strip().lower()
+    if tone not in voice_libra.TONES:
+        raise HTTPException(404, "no such tone")
+    return tone
+
+
+def _libra_preview_speed(asked: str | None, settings: dict) -> str:
+    """The speed a Libra preview plays at: the one asked for (Settings plays a speed as it is tapped, before it is
+    saved), else the saved one. "quick" -> "quick"; None with "normal" saved -> "normal"; "zoom" -> 404."""
+    from odie import voice_libra
+    if not asked:
+        return voice_libra.settings_speed(settings)
+    speed = asked.strip().lower()
+    if speed not in voice_libra.SPEEDS:
+        raise HTTPException(404, "no such speed")
+    return speed
+
+
+def _libra_preview_line(hi: str, name: str) -> str:
+    """What a Libra preview says: an everyday line, the same in every tone, so the tones can be told apart."""
+    return f"{hi}, it's {name}. <chuckle> Your electricity bill is paid, and I'll keep an eye out for the refund."
 
 
 class PhononCheckIn(BaseModel):
@@ -1912,8 +1957,9 @@ async def voice_preview(voice_id: str, request: Request):
 
 
 @router.get("/voice/preview/{engine}/{voice_id}")
-async def voice_preview_engine(engine: str, voice_id: str, request: Request):
-    return await _preview(request, engine, voice_id)
+async def voice_preview_engine(engine: str, voice_id: str, request: Request, tone: str | None = None,
+                               speed: str | None = None):
+    return await _preview(request, engine, voice_id, tone, speed)
 
 
 @router.post("/tts")

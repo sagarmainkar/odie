@@ -220,14 +220,16 @@ def set_tts(store: Store, engine: str | None = None, voice: str | None = None) -
     return get_tts(store)
 
 
-def set_libra(store: Store, url: str | None = None, tone: str | None = None) -> None:
-    """Keeps Libra's server address and its Settings tone (checked by the route first). An empty address goes back
-    to the default; an empty tone means none: the voice then speaks plainly unless a reply names one."""
+def set_libra(store: Store, url: str | None = None, tone: str | None = None, speed: str | None = None) -> None:
+    """Keeps Libra's server address, its Settings tone and its speed (checked by the route first). An empty address
+    goes back to the default; an empty tone means none: the voice then speaks plainly unless a reply names one."""
     s = dict(store.get_setting("voice") or {})
     if url is not None:
         s["libra_url"] = url
     if tone is not None:
         s["libra_style"] = tone
+    if speed is not None:
+        s["libra_speed"] = speed
     store.set_setting("voice", s)
 
 
@@ -435,19 +437,22 @@ def instead_of_libra() -> tuple[str, str]:
     return engine, default_voice(engine)
 
 
-async def libra_tts(store: Store, text: str, voice: str, tone: str | None = None,
+async def libra_tts(store: Store, text: str, voice: str, tone: str | None = None, speed: str | None = None,
                     transport: httpx.AsyncBaseTransport | None = None) -> bytes:
     """`text` spoken by the user's Libra server (odie.voice_libra) in `voice`, in the tone the text or the caller asks
-    for (tone_to_use), with its sound tags performed. A server that doesn't answer is VoiceUnavailable, saying where
+    for (tone_to_use), with its sound tags performed, at `speed` (else the Settings speed). A server that doesn't answer is VoiceUnavailable, saying where
     Odie looked and how to start it."""
     settings = store.get_setting("voice") or {}
     url = voice_libra.server_url(settings)
     style = voice_libra.tone_to_use(tone, text, settings)
     spoken = voice_libra.for_libra(text)
-    if not spoken:
+    if not voice_libra.has_words(spoken):
         raise VoiceUnavailable("There's nothing to say once the voice markup is taken out.")
+    if speed is None:
+        speed = voice_libra.settings_speed(settings)
     try:
-        return await voice_libra.speak(spoken, voice, style, url, transport=transport)
+        wav = await voice_libra.speak(spoken, voice, style, url, transport=transport)
+        return await voice_libra.quicken(wav, speed)
     except httpx.ConnectError:
         raise VoiceUnavailable(f"The Libra voice server isn't answering at {url}: start it with ./libra start.")
     except httpx.TimeoutException:

@@ -209,3 +209,70 @@ async def test_other_engines_never_hear_the_markup(tmp_path, monkeypatch):
     monkeypatch.setattr(voice, "local_tts", kokoro)
     await voice.speak(s, "<tone:wry>Paid twice? <laugh> No harm.")
     assert heard == ["Paid twice? No harm."]
+
+
+# ── how quickly it talks ──
+
+def _a_second_of_tone() -> bytes:
+    """One second of a 440 Hz tone as a 24 kHz WAV, as Libra answers."""
+    import io
+    import math
+    import struct
+    import wave
+    out = io.BytesIO()
+    with wave.open(out, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(24000)
+        w.writeframes(b"".join(struct.pack("<h", int(8000 * math.sin(2 * math.pi * 440 * i / 24000))) for i in range(24000)))
+    return out.getvalue()
+
+
+def _seconds(wav: bytes) -> float:
+    import io
+    import wave
+    with wave.open(io.BytesIO(wav)) as w:
+        return w.getnframes() / w.getframerate()
+
+
+def test_the_speed_in_settings():
+    assert voice_libra.settings_speed({}) == "brisk"
+    assert voice_libra.settings_speed({"libra_speed": "quick"}) == "quick"
+    assert voice_libra.settings_speed({"libra_speed": "zoom"}) == "brisk"
+
+
+async def test_brisk_is_a_tenth_quicker_and_a_readable_wav():
+    import shutil
+    if shutil.which("ffmpeg") is None:
+        pytest.skip("no ffmpeg here")
+    wav = _a_second_of_tone()
+    quicker = await voice_libra.quicken(wav, "brisk")
+    assert _seconds(quicker) == pytest.approx(1 / 1.1, abs=0.02)  # the header's lengths are right: wave reads it
+    assert await voice_libra.quicken(wav, "normal") == wav
+
+
+async def test_a_wav_ffmpeg_cant_read_is_given_back_as_it_was():
+    assert await voice_libra.quicken(b"RIFFwav", "quick") == b"RIFFwav"
+
+
+async def test_read_aloud_plays_at_the_settings_speed(tmp_path):
+    import shutil
+    if shutil.which("ffmpeg") is None:
+        pytest.skip("no ffmpeg here")
+    s = _store(tmp_path, engine="libra", libra_speed="quick")
+    audio = await voice.libra_tts(s, "Okay.", "nina", transport=libra(body=_a_second_of_tone()))
+    assert _seconds(audio) == pytest.approx(1 / 1.2, abs=0.02)
+
+
+async def test_a_sentence_with_nothing_to_say_never_reaches_libra(tmp_path):
+    s = _store(tmp_path, engine="libra")
+    seen = []
+    with pytest.raises(voice.VoiceUnavailable):
+        await voice.libra_tts(s, "—", "nina", transport=libra(seen))
+    assert seen == []
+    assert voice_libra.has_words("<laugh>")
+
+
+def test_the_model_is_told_to_sound_like_a_friend(tmp_path):
+    rules = " ".join(r.text for r in prompt.RULES if r.id == "libra-voice")
+    assert "not narrating" in rules and "warm, cheerful or excited" in rules

@@ -70,7 +70,9 @@ _r = rule
 LIBRA_RULE = (
     "- Your replies are read aloud in an expressive voice. In a conversational reply you may open with one tone "
     "marker, <tone:NAME>, NAME one of " + ", ".join(voice_libra.TONES) + ", and add at most three sound tags where "
-    "the sound would really happen: " + " ".join(f"<{t}>" for t in voice_libra.CHAT_TAGS) + ". Nobody sees them; "
+    "the sound would really happen: " + " ".join(f"<{t}>" for t in voice_libra.CHAT_TAGS) + ". You are talking "
+    "with a friend, not narrating: in everyday chat pick warm, cheerful or excited (wry for a light joke), and keep "
+    "calm, serious, tender or sad for news that calls for it. Nobody sees them; "
     "they only shape the voice, so never mention or explain them. Use none in tables, lists, visual blocks, code or "
     "replies that are plain information, and never invent other tags."
 )

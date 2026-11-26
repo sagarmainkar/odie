@@ -304,3 +304,23 @@ async def test_talk_on_this_mac_is_offered_where_odies_own_voice_runs(client, mo
     assert "local_talk" in (await c.get("/api/capabilities")).json()["caps"]
     monkeypatch.setenv("ODIE_VOICE", "off")  # an Intel Mac: no Silero or Parakeet to listen with
     assert "local_talk" not in (await c.get("/api/capabilities")).json()["caps"]
+
+
+async def test_libra_previews_each_tone_at_the_speed_tapped(client, monkeypatch):
+    from odie import voice as v
+    c = client[0] if isinstance(client, tuple) else client
+    asked = []
+
+    async def fake_libra(store, text, voice_id, tone=None, speed=None, transport=None):
+        asked.append((voice_id, tone, speed))
+        return b"RIFFwav"
+    monkeypatch.setattr(v, "libra_tts", fake_libra)
+    sofia = v.engine_voices("libra", None)[0]["id"]
+    assert (await c.get(f"/api/voice/preview/libra/{sofia}?tone=wry&speed=quick")).status_code == 200
+    assert (await c.get(f"/api/voice/preview/libra/{sofia}?tone=wry&speed=quick")).status_code == 200  # kept: Libra asked once
+    assert (await c.get(f"/api/voice/preview/libra/{sofia}")).status_code == 200  # cheerful at the saved speed (brisk)
+    assert asked == [(sofia, "wry", "quick"), (sofia, "cheerful", "brisk")]
+    assert (await c.get(f"/api/voice/preview/libra/{sofia}?tone=grumpy")).status_code == 404
+    assert (await c.put("/api/voice", json={"libra_speed": "zoom"})).status_code == 422
+    assert (await c.put("/api/voice", json={"libra_speed": "normal"})).status_code == 200
+    assert (await c.get("/api/voice")).json()["libra"]["speed"] == "normal"
