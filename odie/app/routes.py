@@ -976,6 +976,9 @@ async def capabilities_get(request: Request) -> dict[str, Any]:
         caps.add("dictation")  # live dictation through OpenAI; without it the phone uses its own, or says what's missing
     if voice.dictation_available() and not voice.TALK_HELD_BACK:
         caps.add("talk")       # the Speak button: a live conversation through OpenAI (held back for now)
+    from odie import machine
+    if machine.local_voice_wanted():
+        caps.add("local_talk")  # Talk on this Mac: Silero and Parakeet listen (/api/talk/listen), the chosen voice answers
     from odie import update
     if update.can_update():
         caps.add("update")  # this is the installed copy: the app can check for and start an update
