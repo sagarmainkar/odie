@@ -79,6 +79,7 @@ KOKORO_VOICES = [
 KNOWN_MODELS = [
     voice_url.Model("kokoro", "tts", KOKORO_VOICES, []),
     voice_url.Model("libra-tts", "tts", voice_libra.VOICES, voice_libra.TONES),
+    voice_url.Model("parakeet", "stt"),
 ]
 SERVER_NOTES = {
     "kokoro": "On your voice server. Fast and plain, no expressions.",
@@ -91,6 +92,7 @@ ENGINES = {
 }
 FIXED_ENGINES = frozenset(ENGINES)  # the rest of ENGINES is the voice server's models (learn_server_models)
 _SERVER_MODELS: dict[str, voice_url.Model] = {}
+_HEARING_MODELS: list[str] = []  # the server's hearing models (parakeet, whisper-base, …), in its order
 
 
 def _label(name: str) -> str:
@@ -102,9 +104,13 @@ def learn_server_models(models: list[voice_url.Model]) -> None:
     """Makes the server's speaking models the engines after OpenAI and Phonon, in the server's order. A model named
     like a fixed engine is skipped. [kokoro (tts), parakeet (stt)] -> engines openai, phonon, kokoro."""
     _SERVER_MODELS.clear()
+    _HEARING_MODELS.clear()
     for name in [k for k in ENGINES if k not in FIXED_ENGINES]:
         del ENGINES[name]
     for model in models:
+        if model.kind == "stt":
+            _HEARING_MODELS.append(model.name)
+            continue
         if model.kind != "tts" or model.name in FIXED_ENGINES:
             continue
         _SERVER_MODELS[model.name] = model
@@ -119,6 +125,52 @@ def forget_server_models() -> None:
 
 forget_server_models()
 server_seen = False  # whether the voice server answered the last time Odie asked (learn_server)
+
+
+def hearing_models() -> list[str]:
+    """The voice server's hearing models, in its order: ["parakeet", "whisper-base"]."""
+    return list(_HEARING_MODELS)
+
+
+def hearing(store: Store) -> tuple[str, str] | None:
+    """Where dictation is heard: (the voice server's address, the hearing model), or None when the server has no
+    hearing model. The model chosen in Settings while the server still has it, else Parakeet, else the server's first.
+    Nothing chosen, server has parakeet -> (url, "parakeet"); "whisper-small" chosen and listed -> that; the server
+    lists only whisper-base -> (url, "whisper-base")."""
+    listed = hearing_models()
+    if not listed:
+        return None
+    chosen = str(_voice_settings(store).get("hear_model") or "")
+    if chosen in listed:
+        return server_url(store), chosen
+    if "parakeet" in listed:
+        return server_url(store), "parakeet"
+    return server_url(store), listed[0]
+
+
+def set_hearing(store: Store, model: str) -> None:
+    """Keeps the hearing model chosen in Settings (checked by the route first)."""
+    s = _voice_settings(store)
+    s["hear_model"] = model
+    store.set_setting("voice", s)
+
+
+async def hear(store: Store, audio: bytes, filename: str, mime: str,
+               transport: httpx.AsyncBaseTransport | None = None) -> str:
+    """The words in a recording, heard on the voice server. A server that isn't there, is slow, or can't read it is
+    VoiceUnavailable, saying how to start it or what went wrong (the caller may try OpenAI instead)."""
+    where = hearing(store)
+    if where is None:
+        raise VoiceUnavailable("The voice server has no hearing model.")
+    url, model = where
+    try:
+        return await voice_url.transcribe(url, model, audio, filename, mime, transport=transport)
+    except httpx.ConnectError:
+        raise VoiceUnavailable(f"The voice server isn't answering at {url}: start it with `voiced start`.")
+    except httpx.TimeoutException:
+        raise VoiceUnavailable(f"The voice server at {url} took too long to answer.")
+    except (httpx.HTTPError, ValueError) as e:
+        raise VoiceUnavailable(f"The voice server couldn't hear it: {e}")
 
 
 def is_server_engine(engine: str) -> bool:

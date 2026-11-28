@@ -1984,14 +1984,26 @@ async def tts_route(body: TtsIn, request: Request):
 
 
 @router.post("/stt")
-async def stt_route(file: UploadFile = File(...)):
+async def stt_route(request: Request, file: UploadFile = File(...)):
+    """Dictation: the recording heard on the voice server, else by OpenAI when its key is there. With neither, 503
+    saying how to get one, so the app can say it and the phone's own dictation is still there."""
     from odie import voice
-    key = _voice_guard()
     data = await file.read()
     if not data:
         raise HTTPException(400, "empty recording")
+    filename = file.filename or "speech.webm"
+    mime = file.content_type or "audio/webm"
     try:
-        text = await voice.stt(data, file.filename or "speech.webm", file.content_type or "audio/webm", key=key)
+        return {"text": await voice.hear(request.app.state.store, data, filename, mime)}
+    except voice.VoiceUnavailable as e:
+        problem = str(e)
+    try:
+        key = voice.api_key()
+    except voice.VoiceUnavailable:
+        log.info("dictation: %s; no OpenAI key either", problem)
+        raise HTTPException(503, "To dictate, start your voice server (voiced start) or add an OpenAI key in Settings.")
+    try:
+        text = await voice.stt(data, filename, mime, key=key)
     except httpx.HTTPError as e:
         raise HTTPException(502, f"OpenAI transcription failed: {type(e).__name__}")
     return {"text": text}

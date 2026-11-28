@@ -32,7 +32,16 @@ export function stopSpeaking() {
   window.speechSynthesis?.cancel();
 }
 
-/** Record speech and transcribe it with OpenAI (gpt-4o-mini-transcribe). Returns stop(): call it to finish and transcribe.
+/** What Odie said when it can't dictate (503: no voice server and no OpenAI key), with the keyboard's 🎤 as the way out. */
+async function why(r: Response): Promise<string> {
+  try {
+    const j = await r.json();
+    if (j.detail) return `${j.detail} Or use the 🎤 on your keyboard.`;
+  } catch { /* not JSON: the plain line below */ }
+  return "To dictate, start your voice server or add an OpenAI key in Settings, or use the 🎤 on your keyboard.";
+}
+
+/** Record speech and transcribe it on the voice server (else OpenAI). Returns stop(): call it to finish and transcribe.
  * Falls back to the browser's live dictation when recording isn't possible. */
 export async function listen(onText: (t: string) => void, onState: (s: "recording" | "transcribing" | "idle") => void,
                              onLevel: (l: number) => void = () => {}, onError: (m: string) => void = () => {}): Promise<(() => void) | null> {
@@ -57,7 +66,7 @@ export async function listen(onText: (t: string) => void, onState: (s: "recordin
       const fd = new FormData(); fd.append("file", new Blob(chunks, { type }), `speech.${ext}`);
       const r = await fetch("/api/stt", { method: "POST", body: fd });
       if (r.ok) { const j = await r.json(); if (j.text) onText(j.text); }
-      else onError(r.status === 503 ? "To dictate, add an OpenAI key in Settings, or use the 🎤 on your keyboard." : "Couldn't write that down. Try again.");
+      else onError(r.status === 503 ? await why(r) : "Couldn't write that down. Try again.");
     } catch { onError("Couldn't write that down. Try again."); } finally { onState("idle"); }
   };
   rec.start();

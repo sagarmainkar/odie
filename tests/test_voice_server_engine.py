@@ -124,3 +124,60 @@ def test_the_servers_models_become_engines(store):
 def test_podcast_hosts_on_a_styled_model(store):
     voice.set_tts(store, engine="libra-tts", voice="sofia")
     assert [v["id"] for v in voice.podcast_voices(store)] == ["sofia", "omar"]
+
+
+# ── hearing (dictation) ──
+
+def test_hearing_defaults_to_the_servers_parakeet(store):
+    assert voice.hearing(store) == (voice_url.DEFAULT_URL, "parakeet")
+    voice.learn_server_models([voice_url.Model("whisper-base", "stt"), voice_url.Model("kokoro", "tts")])
+    assert voice.hearing(store) == (voice_url.DEFAULT_URL, "whisper-base")  # parakeet isn't there: the first one
+
+
+def test_a_chosen_hearing_model_is_kept(store):
+    voice.learn_server_models([voice_url.Model("parakeet", "stt"), voice_url.Model("whisper-small", "stt")])
+    voice.set_hearing(store, model="whisper-small")
+    assert voice.hearing(store) == (voice_url.DEFAULT_URL, "whisper-small")
+    assert voice.hearing_models() == ["parakeet", "whisper-small"]
+
+
+async def test_hear_says_how_to_start_the_server(store, monkeypatch):
+    async def down(*args, **kwargs):
+        raise httpx.ConnectError("nobody home")
+    monkeypatch.setattr(voice_url, "transcribe", down)
+    with pytest.raises(voice.VoiceUnavailable, match="voiced start"):
+        await voice.hear(store, b"webm", "speech.webm", "audio/webm")
+
+
+async def test_dictation_goes_to_the_hearing_server(store, monkeypatch):
+    from odie.app.main import create_app
+    from tests.test_api import FakeRunner
+    asked = {}
+
+    async def heard(url, model, audio, filename, mime, transport=None):
+        asked.update(url=url, model=model, audio=audio)
+        return "pay the bill"
+    monkeypatch.setattr(voice_url, "transcribe", heard)
+    monkeypatch.setattr(voice, "load_secret", lambda name: None)  # no OpenAI key needed
+    app = create_app(runner=FakeRunner(), store=store)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c, app.router.lifespan_context(app):
+        r = await c.post("/api/stt", files={"file": ("speech.webm", b"webm-bytes", "audio/webm")})
+    assert r.status_code == 200 and r.json() == {"text": "pay the bill"}
+    assert asked == {"url": voice_url.DEFAULT_URL, "model": "parakeet", "audio": b"webm-bytes"}
+
+
+async def test_dictation_without_server_or_key_says_how(store, monkeypatch):
+    from odie.app.main import create_app
+    from tests.test_api import FakeRunner
+
+    async def down(*args, **kwargs):
+        raise httpx.ConnectError("nobody home")
+    monkeypatch.setattr(voice_url, "transcribe", down)
+    monkeypatch.setattr(voice, "load_secret", lambda name: None)
+    import odie.app.routes as routes
+    monkeypatch.setattr(routes, "load_secret", lambda name, env_file=None: None, raising=False)
+    app = create_app(runner=FakeRunner(), store=store)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c, app.router.lifespan_context(app):
+        r = await c.post("/api/stt", files={"file": ("speech.webm", b"webm-bytes", "audio/webm")})
+    assert r.status_code == 503
+    assert r.json()["detail"] == "To dictate, start your voice server (voiced start) or add an OpenAI key in Settings."
