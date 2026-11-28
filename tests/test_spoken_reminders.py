@@ -2,7 +2,6 @@
 voice (and its text); the memo stays with the message in history, and the model never sees it. Off by default; a
 reminder still goes out as text if speaking fails."""
 import asyncio
-import json
 
 import httpx
 import pytest
@@ -34,10 +33,9 @@ class Posts:
 
 
 def kokoro(seen):
-    def handler(request):
-        seen.append(json.loads(request.content))
-        return httpx.Response(200, content=make_wav(1.0))
-    return httpx.MockTransport(handler)
+    """The voice server, speaking each reminder as a second of sound (tests.test_speak.kokoro)."""
+    from tests.test_speak import kokoro as voice_server
+    return voice_server(seen, 1.0)
 
 
 def down():
@@ -99,9 +97,6 @@ async def test_the_voice_route_has_the_setting(store, monkeypatch):
     from odie.app.main import create_app
     from tests.test_api import FakeRunner
 
-    async def offline(transport=None):
-        return False
-    monkeypatch.setattr(voice, "local_available", offline)
     app = create_app(runner=FakeRunner(), store=store)
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c, app.router.lifespan_context(app):
         assert (await c.get("/api/voice")).json()["reminders_spoken"] is False

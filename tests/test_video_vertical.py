@@ -333,7 +333,7 @@ def lead_seconds(wav: bytes) -> float:
 def voice_saying(pieces: dict[str, bytes]) -> httpx.MockTransport:
     """Odie's local voice, answering each text with the WAV given for it."""
     def handler(request):
-        text = json.loads(request.content)["text"]
+        text = json.loads(request.content)["input"]
         return httpx.Response(200, content=pieces[text])
     return httpx.MockTransport(handler)
 

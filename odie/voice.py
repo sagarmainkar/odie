@@ -17,7 +17,7 @@ import struct
 
 import httpx
 
-from odie import config, machine, voice_libra
+from odie import config, machine, voice_libra, voice_url
 from odie.secrets import load_secret
 from odie.store.db import Store
 
@@ -60,11 +60,9 @@ def transcription_prompt(country: str) -> str:
     return "Indian English." if country == "IN" else ""
 
 
-# ── Read-aloud engines: OpenAI (cloud), Kokoro and Maya1 (Odie's own voice worker, odie.voice_worker) ──
-def local_url() -> str:
-    """Odie's own voice worker (odie.voice_worker), on its own port: never another app's voice service."""
-    from odie.voice_worker import voice_port
-    return f"http://127.0.0.1:{voice_port()}"
+# ── Read-aloud engines: OpenAI (cloud), Phonon (Ollama), and each speaking model on the voice server ──
+# The voice server (odie/voice_url.py, normally voiced on :12000) loads a model when asked and unloads it when idle;
+# Odie only asks it. Every speaking model it lists is an engine here, named as the server names it.
 KOKORO_VOICES = [
     {"id": "af_heart", "label": "Heart", "group": "female", "lang": "a", "note": "American"},
     {"id": "af_bella", "label": "Bella", "group": "female", "lang": "a", "note": "American"},
@@ -77,69 +75,164 @@ KOKORO_VOICES = [
     {"id": "hm_omega", "label": "Omega", "group": "male", "lang": "h", "note": "Indian"},
     {"id": "hm_psi", "label": "Psi", "group": "male", "lang": "h", "note": "Indian"},
 ]
-MAYA_VOICES = [
-    {"id": "in_female", "label": "Indian", "group": "female", "note": "30s, warm",
-     "description": "Realistic female voice in her 30s with an indian accent. Normal pitch, warm timbre, conversational pacing."},
-    {"id": "uk_female", "label": "British", "group": "female", "note": "30s, smooth",
-     "description": "Realistic female voice in her 30s with a british accent. Normal pitch, smooth timbre, conversational pacing."},
-    {"id": "in_male", "label": "Indian", "group": "male", "note": "30s, deep",
-     "description": "Realistic male voice in his 30s with an indian accent. Low pitch, deep timbre, conversational pacing."},
-    {"id": "us_male", "label": "American", "group": "male", "note": "40s, warm",
-     "description": "Realistic male voice in his 40s with an american accent. Normal pitch, warm timbre, conversational pacing."},
+# What Odie knows before the server has been asked (a restart, a server that is down): the two models it ships with.
+KNOWN_MODELS = [
+    voice_url.Model("kokoro", "tts", KOKORO_VOICES, []),
+    voice_url.Model("libra-tts", "tts", voice_libra.VOICES, voice_libra.TONES),
 ]
-MAYA_TAGS = ["laugh", "laugh_harder", "sigh", "chuckle", "gasp", "angry", "excited", "whisper", "cry", "scream", "sing",
-             "snort", "exhale", "gulp", "giggle", "sarcastic", "curious"]
+SERVER_NOTES = {
+    "kokoro": "On your voice server. Fast and plain, no expressions.",
+    "libra-tts": "On your voice server. Expressive: Odie picks the tone and laughs or sighs where it fits.",
+    "orpheus": "On your voice server. Very natural English, a little slower to prepare.",
+}
 ENGINES = {
     "openai": {"label": "OpenAI", "note": "gpt-4o-mini-tts. Natural, quick, text goes to OpenAI.", "local": False},
-    "kokoro": {"label": "Kokoro", "note": "On this computer. Instant, no expressions.", "local": True},
-    "maya1": {"label": "Maya1", "note": "On this computer. Expressive (laughs, sighs), takes about twice the speech length to prepare; long replies are summarised.", "local": True},
     "phonon": {"label": "Phonon (Ollama)", "note": "On this computer through Ollama. Quick, streams, no expressions.", "local": True},
-    "libra": {"label": "Libra", "note": "Your Libra voice server, on this Mac or your home network. Expressive: Odie picks the tone and laughs or sighs where it fits.", "local": True},
 }
-# Maya1 is hidden until its pipeline is rebuilt from the official prompt format (2026-10-01: through mlx-audio's generic
-# loader it read tags out as words or produced noise).
-_HIDDEN = {"maya1"}
-OWN_SERVER = {"kokoro", "maya1"}  # the engines Odie's own voice server speaks (odie.voice_worker); Phonon is Ollama's, Libra the user's
+FIXED_ENGINES = frozenset(ENGINES)  # the rest of ENGINES is the voice server's models (learn_server_models)
+_SERVER_MODELS: dict[str, voice_url.Model] = {}
+
+
+def _label(name: str) -> str:
+    """How a server model is named in Settings: "kokoro" -> "Kokoro"; "libra-tts" -> "Libra"."""
+    return name.removesuffix("-tts").replace("-", " ").capitalize()
+
+
+def learn_server_models(models: list[voice_url.Model]) -> None:
+    """Makes the server's speaking models the engines after OpenAI and Phonon, in the server's order. A model named
+    like a fixed engine is skipped. [kokoro (tts), parakeet (stt)] -> engines openai, phonon, kokoro."""
+    _SERVER_MODELS.clear()
+    for name in [k for k in ENGINES if k not in FIXED_ENGINES]:
+        del ENGINES[name]
+    for model in models:
+        if model.kind != "tts" or model.name in FIXED_ENGINES:
+            continue
+        _SERVER_MODELS[model.name] = model
+        note = SERVER_NOTES.get(model.name, "On your voice server.")
+        ENGINES[model.name] = {"label": _label(model.name), "note": note, "local": True}
+
+
+def forget_server_models() -> None:
+    """Back to what Odie knows before asking the server (KNOWN_MODELS)."""
+    learn_server_models(KNOWN_MODELS)
+
+
+forget_server_models()
+server_seen = False  # whether the voice server answered the last time Odie asked (learn_server)
+
+
+def is_server_engine(engine: str) -> bool:
+    """Whether an engine is a model on the voice server: "kokoro" -> True; "phonon" -> False; "openai" -> False."""
+    return engine in _SERVER_MODELS
+
+
+def server_model(engine: str) -> voice_url.Model | None:
+    return _SERVER_MODELS.get(engine)
+
+
+def has_styles(engine: str) -> bool:
+    """Whether an engine speaks in tones, so it hears the voice markup: "libra-tts" -> True; "kokoro" -> False."""
+    model = _SERVER_MODELS.get(engine)
+    return model is not None and bool(model.styles)
+
+
+def migrated(s: dict) -> dict:
+    """The voice settings in today's shape. Before 28 Nov 2026 Libra was its own engine on its own server (:8794, now
+    retired) and Kokoro and Maya1 ran inside Odie; now they are models on the voice server. A dict already in today's
+    shape comes back unchanged.
+    {"engine": "libra", "libra_voice": "sofia", "libra_style": "wry"} -> engine "libra-tts", "libra-tts_voice" sofia,
+    "server_style" wry; {"engine": "maya1"} -> engine "kokoro"; a libra_url other than :8794 becomes server_url."""
+    moved = dict(s)
+    if moved.get("engine") == "libra":
+        moved["engine"] = "libra-tts"
+    if moved.get("engine") == "maya1":
+        moved["engine"] = "kokoro"
+    if "libra_voice" in moved:
+        moved.setdefault("libra-tts_voice", moved.pop("libra_voice"))
+    if "libra_style" in moved:
+        moved.setdefault("server_style", moved.pop("libra_style"))
+    if "libra_speed" in moved:
+        moved.setdefault("server_speed", moved.pop("libra_speed"))
+    if "libra_url" in moved:
+        old = voice_url.base(str(moved.pop("libra_url") or ""))
+        if old and old != "http://127.0.0.1:8794":
+            moved.setdefault("server_url", old)
+    moved.pop("maya1_voice", None)
+    return moved
+
+
+def _voice_settings(store: Store) -> dict:
+    return migrated(store.get_setting("voice") or {})
+
+
+def server_url(store: Store) -> str:
+    """The voice server's address: the one set in Settings, else voiced's own default (voice_url.DEFAULT_URL)."""
+    chosen = str(_voice_settings(store).get("server_url") or "").strip()
+    if not chosen:
+        return voice_url.DEFAULT_URL
+    return voice_url.base(chosen)
+
+
+async def learn_server(store: Store, transport: httpx.AsyncBaseTransport | None = None) -> bool:
+    """Asks the voice server which models it has and makes them the engines. A server that doesn't answer leaves
+    what Odie knew and returns False. Called at launch and each time Settings → Voice opens."""
+    global server_seen
+    try:
+        listed = await voice_url.models(server_url(store), transport=transport)
+    except (httpx.HTTPError, ValueError):
+        server_seen = False
+        return False
+    server_seen = True
+    learn_server_models(listed)
+    return True
 
 
 def disabled() -> set[str]:
-    """The engines not offered on this machine: Maya1 always (above), and the ones Odie's own voice server speaks when
-    that server isn't meant to run here (ODIE_VOICE=off: an Intel Mac, see odie.machine). Phonon runs in Ollama, so it
-    is offered everywhere. An M2 -> {"maya1"}; an Intel Mac -> {"maya1", "kokoro"}."""
-    if machine.local_voice_wanted():
-        return set(_HIDDEN)
-    return _HIDDEN | OWN_SERVER
+    """The engines not offered on this machine: the voice server's models when no voice server is expected here (an
+    Intel Mac, ODIE_VOICE=off, see odie.machine) and none has answered. Phonon runs in Ollama and OpenAI in the cloud,
+    so they are offered everywhere. An M2 -> set(); an Intel Mac with nothing answering -> {"kokoro", "libra-tts"};
+    an Intel Mac whose Settings point at a voice server on another Mac that answered -> set()."""
+    if machine.local_voice_wanted() or server_seen:
+        return set()
+    return set(_SERVER_MODELS)
 
 
 def default_engine() -> str:
     """The engine when none is chosen, or the chosen one isn't offered here: Phonon when Ollama had it the last time
-    Odie asked (phonon_here), else Kokoro where Odie's own voice runs, else OpenAI (which needs its key; without one,
-    read-aloud says so). Ollama with phonon, on any Mac -> "phonon"; no phonon, an M2 -> "kokoro"; no phonon, an Intel
-    Mac -> "openai"."""
+    Odie asked (phonon_here), else Kokoro on the voice server where one is expected, else OpenAI (which needs its key;
+    without one, read-aloud says so). Ollama with phonon, on any Mac -> "phonon"; no phonon, an M2 -> "kokoro"; no
+    phonon, an Intel Mac -> "openai"."""
     if phonon_here():
         return "phonon"
-    if machine.local_voice_wanted():
+    offered = [name for name in _SERVER_MODELS if name not in disabled()]
+    if "kokoro" in offered:
         return "kokoro"
+    if offered:
+        return offered[0]
     return "openai"
 
 
 def _chosen_engine(s: dict) -> str:
     """The engine the settings name, when it is offered here; else the default. {"engine": "kokoro"} on an M2 ->
-    "kokoro"; the same on an Intel Mac -> "openai"; {} -> the default."""
+    "kokoro"; the same on an Intel Mac with no voice server -> "openai"; {} -> the default."""
     engine = s.get("engine")
     if engine in ENGINES and engine not in disabled():
         return engine
     return default_engine()
-_ENGINE_VOICES = {"openai": VOICES, "kokoro": KOKORO_VOICES, "maya1": MAYA_VOICES, "libra": voice_libra.VOICES}
-_DEFAULT_VOICE = {"openai": DEFAULT_VOICE, "kokoro": "af_heart", "maya1": "in_female", "libra": voice_libra.DEFAULT_VOICE}
+
+
+_DEFAULT_VOICE = {"openai": DEFAULT_VOICE, "kokoro": "af_heart", "libra-tts": voice_libra.DEFAULT_VOICE}
 
 
 def engine_voices(engine: str, store: Store | None = None) -> list[dict]:
-    """An engine's voices. Phonon's are the ones Ollama listed (phonon_voices), kept for the process, then, given the
-    store, the ones the user found with "Another voice" (kept_voices); before Ollama has been asked, the one voice that
-    always works, "default"."""
+    """An engine's voices. OpenAI's are a fixed list; a voice server model's are the ones the server described.
+    Phonon's are the ones Ollama listed (phonon_voices), kept for the process, then, given the store, the ones the user
+    found with "Another voice" (kept_voices); before Ollama has been asked, the one voice that always works, "default"."""
+    if engine == "openai":
+        return VOICES
     if engine != "phonon":
-        return _ENGINE_VOICES.get(engine, [])
+        model = _SERVER_MODELS.get(engine)
+        return list(model.voices) if model is not None else []
     listed = list(_PHONON_VOICES.get(PHONON_MODEL) or [PHONON_DEFAULT])
     if store is None:
         return listed
@@ -149,39 +242,48 @@ def engine_voices(engine: str, store: Store | None = None) -> list[dict]:
 
 def default_voice(engine: str) -> str:
     """The voice an engine speaks in when none of its voices is chosen: Phonon's from what Ollama lists
-    (default_phonon_voice), the others' fixed ones. "kokoro" -> "af_heart"; "phonon" with Zoey listed -> "zoey"."""
+    (default_phonon_voice), Kokoro's Heart, Libra's Nina, OpenAI's Marin, else the first voice the server listed.
+    "kokoro" -> "af_heart"; "phonon" with Zoey listed -> "zoey"; "orpheus" listing tara first -> "tara"."""
     if engine == "phonon":
         return default_phonon_voice(engine_voices("phonon"))
-    return _DEFAULT_VOICE[engine]
+    if engine in _DEFAULT_VOICE:
+        return _DEFAULT_VOICE[engine]
+    voices = engine_voices(engine)
+    if voices:
+        return voices[0]["id"]
+    return ""
 
 
 def voice_is_offered(engine: str, voice_id: str | None, store: Store | None = None) -> bool:
-    """Whether a saved or asked-for voice can be used with this engine. Kokoro's and OpenAI's are a fixed list. Phonon's
+    """Whether a saved or asked-for voice can be used with this engine. OpenAI's are a fixed list, a server model's
+    the ones it listed; a server model that lists none takes any name (the server says no if it's wrong). Phonon's
     are whatever Ollama listed; before Odie has asked Ollama (a restart), a saved Phonon voice is trusted, since Ollama
     is the one to say no (it answers 400, said plainly by phonon_tts). "af_heart" for kokoro -> True; "nova" for
     openai -> False; "easton" for phonon with Ollama's list read and Easton on it -> True; "easton" for phonon before
-    the list is read -> True; "nobody" for phonon with the list read -> False."""
+    the list is read -> True; "nobody" for phonon with the list read -> False; "anyone" for a model listing none -> True."""
     if not voice_id:
         return False
     if engine == "phonon" and PHONON_MODEL not in _PHONON_VOICES:
         return True
-    return voice_id in {x["id"] for x in engine_voices(engine, store)}
+    voices = engine_voices(engine, store)
+    if is_server_engine(engine) and not voices:
+        return True
+    return voice_id in {x["id"] for x in voices}
 
 
 def _local_instead_of_openai() -> str | None:
     """The engine read-aloud uses when OpenAI is chosen but its key is gone: Phonon when Ollama has it, else Kokoro
-    where it runs, else none (read-aloud then says the key is missing). Ollama with phonon -> "phonon"; an M2 without
-    it -> "kokoro"; an Intel Mac without it -> None."""
-    if phonon_here():
-        return "phonon"
-    if "kokoro" not in disabled():
-        return "kokoro"
-    return None
+    on the voice server where one is expected, else none (read-aloud then says the key is missing). Ollama with
+    phonon -> "phonon"; an M2 without it -> "kokoro"; an Intel Mac without it -> None."""
+    fallback = default_engine()
+    if fallback == "openai":
+        return None
+    return fallback
 
 
 def get_tts(store: Store) -> tuple[str, str]:
     """(engine, voice) for read-aloud. The realtime Talk voice is get_voice() (OpenAI only)."""
-    s = store.get_setting("voice") or {}
+    s = _voice_settings(store)
     engine = _chosen_engine(s)
     if engine == "openai" and not load_secret("OPENAI_API_KEY"):
         engine = _local_instead_of_openai() or engine  # OpenAI voices need its key
@@ -210,7 +312,7 @@ def video_tts(store: Store) -> tuple[str, str]:
 
 
 def set_tts(store: Store, engine: str | None = None, voice: str | None = None) -> tuple[str, str]:
-    s = dict(store.get_setting("voice") or {})
+    s = _voice_settings(store)
     if engine in ENGINES and engine not in disabled():
         s["engine"] = engine
     eng = _chosen_engine(s)  # the same default as get_tts
@@ -220,25 +322,23 @@ def set_tts(store: Store, engine: str | None = None, voice: str | None = None) -
     return get_tts(store)
 
 
-def set_libra(store: Store, url: str | None = None, tone: str | None = None, speed: str | None = None) -> None:
-    """Keeps Libra's server address, its Settings tone and its speed (checked by the route first). An empty address
-    goes back to the default; an empty tone means none: the voice then speaks plainly unless a reply names one."""
-    s = dict(store.get_setting("voice") or {})
+def set_server(store: Store, url: str | None = None, style: str | None = None, speed: str | None = None) -> None:
+    """Keeps the voice server's address, the Settings tone and the speed (checked by the route first). An empty
+    address goes back to the default; an empty tone means none: the voice then speaks plainly unless a reply names one."""
+    s = _voice_settings(store)
     if url is not None:
-        s["libra_url"] = url
-    if tone is not None:
-        s["libra_style"] = tone
+        s["server_url"] = url
+    if style is not None:
+        s["server_style"] = style
     if speed is not None:
-        s["libra_speed"] = speed
+        s["server_speed"] = speed
     store.set_setting("voice", s)
 
 
 def worker_wanted(store: Store) -> bool:
-    """Whether read-aloud uses Odie's own voice server (odie.voice_worker), so it should run: the engine read-aloud
-    speaks with is one that server speaks (OWN_SERVER). Kokoro chosen -> True; Phonon chosen -> False; OpenAI with its
-    key -> False."""
-    engine, _ = get_tts(store)
-    return engine in OWN_SERVER
+    """Whether read-aloud needs Odie's own voice worker: never any more, since read-aloud speaks through the voice
+    server. The worker now runs only while Talk listens through it (/api/talk/listen), until Talk moves too."""
+    return False
 
 
 def worker_wanted_at_launch(store: Store) -> bool:
@@ -266,66 +366,10 @@ async def settle_worker(store: Store) -> None:
     await worker.stop()
 
 
-SCRIPT_PROMPT = ("Rewrite the assistant's reply below as a short script for a voice actor to read aloud to the user. Plain speech: "
-                 "no markdown, no lists, no URLs or ids; numbers and amounts the way people say them. Keep the meaning, at most "
-                 "80 words; if the reply is longer, speak a natural summary of it. Where it genuinely fits the mood, add one to three "
-                 "expression tags, chosen only from: {tags}. Tags look like <laugh> and go inline, e.g. 'Good news! <excited> The market is "
-                 "up.' Never more than three, none if the reply is plain information. Output only the script.")
-
-
-async def maya_script(text: str, transport: httpx.AsyncBaseTransport | None = None) -> str:
-    """Local Gemma (LM Studio) turns a reply into a speech script with a few Maya1 expression tags. Stays on this computer."""
-    from odie import config
-    from odie.models import lm_studio_url
-    from odie.sampling import VOICE_SCRIPT_TEMPERATURE
-    base = lm_studio_url()
-    async with httpx.AsyncClient(timeout=90, transport=transport) as c:
-        model = config.settings.model_id
-        try:  # use whatever chat model LM Studio already has loaded, so this never triggers a model load
-            r = await c.get(base.replace("/v1", "/api/v0") + "/models")
-            loaded = [m["id"] for m in r.json().get("data", []) if m.get("state") == "loaded" and m.get("type") in ("llm", "vlm")]
-            if loaded:
-                model = loaded[0]
-        except (httpx.HTTPError, ValueError, KeyError):
-            pass
-        r = await c.post(base + "/chat/completions", json={
-            "model": model, "temperature": VOICE_SCRIPT_TEMPERATURE, "max_tokens": 220, "reasoning_effort": "none",
-            "messages": [{"role": "system", "content": SCRIPT_PROMPT.format(tags=", ".join(f"<{x}>" for x in MAYA_TAGS))},
-                         {"role": "user", "content": text[:4000]}]})
-        r.raise_for_status()
-        return (r.json()["choices"][0]["message"].get("content") or "").strip()
-
-
-async def local_tts(engine: str, text: str, voice: str, transport: httpx.AsyncBaseTransport | None = None) -> bytes:
-    """`text` spoken on this computer as WAV bytes: Phonon through Ollama, or Kokoro and Maya1 through Odie's own voice
-    server (started again if it died)."""
-    if engine == "phonon":
-        return await phonon_tts(text, voice, transport=transport)
-    if engine == "kokoro":
-        v = next((x for x in KOKORO_VOICES if x["id"] == voice), KOKORO_VOICES[0])
-        body = {"engine": "kokoro", "text": text, "voice": v["id"], "lang": v["lang"]}
-    else:
-        v = next((x for x in MAYA_VOICES if x["id"] == voice), MAYA_VOICES[0])
-        body = {"engine": "maya1", "text": f'<description="{v["description"]}"> {text}'}
-    from odie import voice_worker
-    w = voice_worker.current
-    if w is not None and transport is None and not await w.ensure():  # started again if it died
-        raise VoiceUnavailable(w.problem or "Odie's local voice isn't running.")
-    async with httpx.AsyncClient(timeout=300, transport=transport) as c:
-        r = await c.post(f"{local_url()}/tts", json=body)
-        r.raise_for_status()
-        return r.content
-
-
-async def local_available(transport: httpx.AsyncBaseTransport | None = None) -> bool:
-    from odie import voice_worker
-    if voice_worker.current is not None and transport is None:
-        return await voice_worker.current.healthy()  # Odie's own worker, not whatever answers on the port
-    try:
-        async with httpx.AsyncClient(timeout=2, transport=transport) as c:
-            return (await c.get(f"{local_url()}/health")).status_code == 200
-    except httpx.HTTPError:
-        return False
+def local_url() -> str:
+    """Odie's own voice worker (odie.voice_worker), on its own port: used now only for Talk's listening."""
+    from odie.voice_worker import voice_port
+    return f"http://127.0.0.1:{voice_port()}"
 
 
 # ── Hearing: the voice worker's /stt/stream, passed through by /api/talk/listen (odie/app/routes.py) ──
@@ -369,104 +413,98 @@ async def hearing_available(transport: httpx.AsyncBaseTransport | None = None) -
     return answer
 
 
-async def own_server_can_speak() -> bool:
-    """Whether Kokoro can be chosen now: Odie's own voice server answers, or it is set up and would start the first time
-    Kokoro speaks (it runs only while read-aloud uses it, so with Phonon chosen it is stopped). Running -> True; set up
-    but stopped -> True; never set up (no `uv sync` in voice_server) -> False."""
-    from odie import voice_worker
-    worker = voice_worker.current
-    if worker is None:
-        return await local_available()
-    if await worker.healthy():
-        return True
-    return bool(worker.installed)
-
-
 async def speak(store: Store, text: str, engine: str | None = None, voice: str | None = None,
                 tone: str | None = None) -> tuple[bytes, str]:
-    """Read-aloud with the chosen engine. Returns (audio, media type). Libra hears the reply's voice markup (its tone,
-    or `tone` when the caller passes the reply's tone with one sentence of it); every other engine gets it stripped.
-    Maya1 gets a tagged script from local Gemma first."""
+    """Read-aloud with the chosen engine. Returns (audio, media type). A voice server model with styles hears the
+    reply's voice markup (its tone, or `tone` when the caller passes the reply's tone with one sentence of it); every
+    other engine gets it stripped. A voice server that doesn't answer hands over to instead_of_server."""
     eng, v = get_tts(store)
     eng, v = engine or eng, voice or v
-    if eng == "libra":
+    if is_server_engine(eng):
         try:
-            return await libra_tts(store, text, v, tone=tone), "audio/wav"
+            return await server_tts(store, text, eng, v, tone=tone), "audio/wav"
         except VoiceUnavailable as e:
-            eng, v = instead_of_libra()
-            log.warning("%s Reading aloud with %s instead.", e, eng)
+            eng, v = instead_of_server(e)
     text = voice_libra.hidden(text)
     if eng == "openai":
         return await tts(text, v), "audio/mpeg"
-    if eng == "maya1":
-        try:
-            text = await maya_script(text) or text
-        except (httpx.HTTPError, KeyError, ValueError):
-            pass
-    return await local_tts(eng, text, v), "audio/wav"
+    return await phonon_tts(text, v), "audio/wav"
 
 
 async def speak_wav(store: Store, text: str, voice: str | None = None, transport: httpx.AsyncBaseTransport | None = None,
                     engine: str | None = None, style: str = "") -> bytes:
     """`text` as a 16-bit WAV in the chosen engine (a voice memo, a podcast's turn). OpenAI is asked for raw PCM, so
-    both engines' audio joins alike. `engine` with `voice` speaks in that engine instead (a video's own voice,
-    video_tts). `style` steers an OpenAI voice for this text (tts); Kokoro and Phonon have no steering and never see it."""
+    every engine's audio joins alike. `engine` with `voice` speaks in that engine instead (a video's own voice,
+    video_tts). `style` steers an OpenAI voice for this text (tts); the others never see it."""
     from odie.media import pcm_to_wav
     eng, v = get_tts(store)
     if engine and voice:
         eng, v = engine, voice
-    if eng == "libra":
+    if is_server_engine(eng):
         try:
-            return await libra_tts(store, text, voice or v, transport=transport)
+            return await server_tts(store, text, eng, voice or v, transport=transport)
         except VoiceUnavailable as e:
-            eng, v = instead_of_libra()
+            eng, v = instead_of_server(e)
             voice = None
-            log.warning("%s Speaking with %s instead.", e, eng)
     text = voice_libra.hidden(text)
     if eng == "openai":
         return pcm_to_wav(await tts(text, voice or v, transport=transport, fmt="pcm", style=style))
-    if eng == "phonon":
-        return await phonon_tts(text, voice or v, transport=transport)
-    return await local_tts("kokoro", text, voice or (v if eng == "kokoro" else _DEFAULT_VOICE["kokoro"]), transport=transport)
+    return await phonon_tts(text, voice or v, transport=transport)
 
 
-def instead_of_libra() -> tuple[str, str]:
-    """The engine and voice used when Libra is chosen but its server doesn't answer, so speech never goes silent: the
-    default engine with its default voice. Phonon in Ollama -> ("phonon", its default); an M2 without it ->
-    ("kokoro", "af_heart")."""
-    engine = default_engine()
+def instead_of_server(problem: VoiceUnavailable) -> tuple[str, str]:
+    """The engine and voice used when the voice server can't speak, so speech never goes silent: Phonon when Ollama
+    has it, else OpenAI with its key; with neither, the problem is raised as it was. The log says why.
+    Phonon in Ollama -> ("phonon", its default); no Phonon, an OpenAI key -> ("openai", "marin")."""
+    if phonon_here():
+        engine = "phonon"
+    elif load_secret("OPENAI_API_KEY"):
+        engine = "openai"
+    else:
+        raise problem
+    log.warning("%s Speaking with %s instead.", problem, engine)
     return engine, default_voice(engine)
 
 
-async def libra_tts(store: Store, text: str, voice: str, tone: str | None = None, speed: str | None = None,
-                    transport: httpx.AsyncBaseTransport | None = None) -> bytes:
-    """`text` spoken by the user's Libra server (odie.voice_libra) in `voice`, in the tone the text or the caller asks
-    for (tone_to_use), with its sound tags performed, at `speed` (else the Settings speed). A server that doesn't answer is VoiceUnavailable, saying where
-    Odie looked and how to start it."""
-    settings = store.get_setting("voice") or {}
-    url = voice_libra.server_url(settings)
-    style = voice_libra.tone_to_use(tone, text, settings)
-    spoken = voice_libra.for_libra(text)
+async def server_tts(store: Store, text: str, engine: str, voice: str, tone: str | None = None,
+                     speed: str | None = None, transport: httpx.AsyncBaseTransport | None = None) -> bytes:
+    """`text` spoken by the voice server's model `engine` in `voice`, as a WAV. A model with styles (Libra) gets the
+    tone the text or the caller asks for (tone_to_use), its sound tags performed, silent ends trimmed, and is played
+    at `speed` (else the Settings speed); any other model gets plain text. A server that doesn't answer or refuses is
+    VoiceUnavailable, saying where Odie looked and how to start it."""
+    settings = _voice_settings(store)
+    url = server_url(store)
+    styled = has_styles(engine)
+    if styled:
+        spoken = voice_libra.for_libra(text)
+        style = voice_libra.tone_to_use(tone, text, settings)
+        extra = {"trim": True}
+    else:
+        spoken = voice_libra.hidden(text)
+        style = None
+        extra = {}
     if not voice_libra.has_words(spoken):
         raise VoiceUnavailable("There's nothing to say once the voice markup is taken out.")
+    try:
+        wav = await voice_url.speak(url, engine, voice, spoken, style=style, extra=extra, transport=transport)
+    except httpx.ConnectError:
+        raise VoiceUnavailable(f"The voice server isn't answering at {url}: start it with `voiced start`.")
+    except httpx.TimeoutException:
+        raise VoiceUnavailable(f"The voice server at {url} took too long to answer.")
+    except ValueError as e:
+        raise VoiceUnavailable(f"The voice server refused it: {e}")
+    if not styled:
+        return wav
     if speed is None:
         speed = voice_libra.settings_speed(settings)
-    try:
-        wav = await voice_libra.speak(spoken, voice, style, url, transport=transport)
-        return await voice_libra.quicken(wav, speed)
-    except httpx.ConnectError:
-        raise VoiceUnavailable(f"The Libra voice server isn't answering at {url}: start it with ./libra start.")
-    except httpx.TimeoutException:
-        raise VoiceUnavailable(f"The Libra voice server at {url} took too long to answer.")
-    except ValueError as e:
-        raise VoiceUnavailable(f"Libra refused it: {e}")
+    return await voice_libra.quicken(wav, speed)
 
 
-def libra_on(store: Store) -> bool:
-    """Whether read-aloud speaks with Libra, so the chat model is told about the voice markup (the libra_voice
-    capability). Libra chosen -> True; Phonon chosen -> False; nothing chosen -> False (Libra is never the default)."""
+def styles_on(store: Store) -> bool:
+    """Whether read-aloud speaks with a model that has styles, so the chat model is told about the voice markup (the
+    libra_voice capability). Libra chosen -> True; Kokoro chosen -> False; Phonon chosen -> False."""
     engine, _ = get_tts(store)
-    return engine == "libra"
+    return has_styles(engine)
 
 
 def reminders_spoken(store: Store) -> bool:
@@ -896,37 +934,50 @@ def phonon_hosts(voices: list[dict], chosen: str) -> list[dict]:
     return [first, partner("female", "zoey")]
 
 
-def libra_hosts(chosen: str) -> list[dict]:
-    """A podcast's two hosts when Libra speaks, [a woman, a man]: the chosen voice in its own place, Nina or Omar in
-    the other. Sofia chosen -> [Sofia, Omar]; Jon chosen -> [Nina, Jon]; an unknown id -> [Nina, Omar]."""
-    voices = {v["id"]: v for v in voice_libra.VOICES}
-    woman = voices["nina"]
-    man = voices["omar"]
-    picked = voices.get(chosen)
-    if picked is not None and picked["group"] == "female":
+def server_hosts(voices: list[dict], chosen: str) -> list[dict]:
+    """A podcast's two hosts on a voice server model, [a woman, a man]: the chosen voice in its own place, the first
+    of the other gender in the other; with no one of a gender, the first voice listed.
+    Libra, Sofia chosen -> [Sofia, Omar]; Jon chosen -> [Nina, Jon]; an unknown id -> [Nina, Omar]."""
+    if not voices:
+        nobody = {"id": chosen, "label": chosen.capitalize(), "group": ""}
+        return [nobody, nobody]
+    women = [v for v in voices if v.get("group") == "female"]
+    men = [v for v in voices if v.get("group") == "male"]
+    woman = women[0] if women else voices[0]
+    man = men[0] if men else voices[0]
+    picked = next((v for v in voices if v["id"] == chosen), None)
+    if picked is not None and picked.get("group") == "female":
         woman = picked
-    if picked is not None and picked["group"] == "male":
+    if picked is not None and picked.get("group") == "male":
         man = picked
     return [woman, man]
 
 
+def _kokoro_lang(voice: dict) -> str:
+    """Kokoro's accent letter, from its voice id: "bf_emma" -> "b"; "hm_omega" -> "h"."""
+    return voice.get("lang") or voice["id"][:1]
+
+
 def podcast_voices(store: Store) -> list[dict]:
     """A podcast's two hosts, [a woman, a man], from the chosen engine and with the chosen voice's accent; the chosen
-    voice is one of them. Phonon's two come from the voices Ollama lists (phonon_hosts)."""
+    voice is one of them. Phonon's two come from the voices Ollama lists (phonon_hosts); a voice server model other
+    than Kokoro's from the voices it lists (server_hosts)."""
     eng, v = get_tts(store)
     if eng == "phonon":
         return phonon_hosts(engine_voices("phonon", store), v)
-    if eng == "libra":
-        return libra_hosts(v)
-    if eng != "openai":
-        eng, v = "kokoro", v if v in {x["id"] for x in KOKORO_VOICES} else _DEFAULT_VOICE["kokoro"]
+    if eng not in ("openai", "kokoro"):
+        return server_hosts(engine_voices(eng), v)
     voices = {x["id"]: x for x in engine_voices(eng)}
+    if v not in voices:
+        return server_hosts(list(voices.values()), v)
     chosen = voices[v]
-    woman, man = ("marin", "cedar") if eng == "openai" else _PAIRS.get(chosen.get("lang", "a"), _PAIRS["a"])
+    woman, man = ("marin", "cedar") if eng == "openai" else _PAIRS.get(_kokoro_lang(chosen), _PAIRS["a"])
     if chosen["group"] == "female":
         woman = v
     elif chosen["group"] == "male":
         man = v
+    if woman not in voices or man not in voices:
+        return server_hosts(list(voices.values()), v)
     return [voices[woman], voices[man]]
 
 

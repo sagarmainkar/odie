@@ -21,7 +21,7 @@ def detect(servers: Iterable[Any] = (), store: Any = None) -> frozenset[str]:
         if photos.is_on(store):
             caps.add("photos")  # the user's Photos library is read into the index: pictures by who, where, when
         from odie import voice
-        if voice.libra_on(store):
+        if voice.styles_on(store):
             caps.add("libra_voice")  # replies are read by Libra: the model may mark a tone and sounds (odie.voice_libra)
     from odie.browser import find
     if find.browser_binary():

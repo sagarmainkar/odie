@@ -21,8 +21,15 @@ def store(isolated_settings, tmp_path):
 
 
 def kokoro(seen, seconds=0.5):
+    """A voice server speaking every request as a WAV of `seconds`; `seen` gets what each was asked to say, as
+    {"engine": the model, "text", "voice"} (the request itself is the OpenAI audio API's /v1/audio/speech)."""
     def handler(request):
-        seen.append(json.loads(request.content))
+        asked = json.loads(request.content)
+        assert request.url.path == "/v1/audio/speech"
+        call = {"engine": asked.pop("model"), "text": asked.pop("input"), "voice": asked.pop("voice")}
+        asked.pop("response_format", None)
+        call.update(asked)  # anything else it was sent (a style, say) is kept, so a test can see it
+        seen.append(call)
         return httpx.Response(200, content=make_wav(seconds))
     return httpx.MockTransport(handler)
 
@@ -47,7 +54,7 @@ async def test_a_memo(store):
     m = media.get(out["media"]["id"])[1]  # the full description; the model's result is short
     assert m["kind"] == "memo" and m["duration"] == 1.2 and len(m["peaks"]) == 48 and m["title"] == "Morning"
     assert m["transcript"] == "Good morning! Here's your day." and m["voice"] == "Heart"
-    assert seen == [{"engine": "kokoro", "text": "Good morning! Here's your day.", "voice": "af_heart", "lang": "a"}]
+    assert seen == [{"engine": "kokoro", "text": "Good morning! Here's your day.", "voice": "af_heart"}]
     path, saved = media.get(m["id"])
     assert path.read_bytes()[:4] == b"RIFF" and saved["mime"] == "audio/wav" and "under your reply" in out["result"]
     untitled = await _speak(store, kokoro([], 0.5)).func(script="Remember to call the bank about the card.")
@@ -135,7 +142,7 @@ async def test_a_memo_in_another_voice_of_the_chosen_engine(store):
     out = await _speak(store, kokoro(seen, 0.5)).func(script="Attention, explained.", voice_name="michael")
     assert seen[0]["voice"] == "am_michael" and media.get(out["media"]["id"])[1]["voice"] == "Michael"
     await _speak(store, kokoro(seen, 0.5)).func(script="Again.", voice_name="bm_george")
-    assert seen[1]["voice"] == "bm_george" and seen[1]["lang"] == "b"
+    assert seen[1]["voice"] == "bm_george"
     assert voice.get_tts(store) == ("kokoro", "af_heart")
 
 

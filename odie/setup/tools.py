@@ -240,8 +240,8 @@ PHONON_TO_PULL = {"engine": "phonon", "label": "Phonon through Ollama", "note": 
 
 
 async def voice_options(store, transport=None) -> dict:
-    """The read-aloud choices, what is already here first: Phonon when Ollama has it (recommended), Kokoro where Odie's
-    own voice server runs, then Phonon when Ollama is up but hasn't pulled it (with the command), then OpenAI. No Ollama
+    """The read-aloud choices, what is already here first: Phonon when Ollama has it (recommended), Kokoro on the
+    voice server (voiced) where one is expected, then Phonon when Ollama is up but hasn't pulled it (with the command), then OpenAI. No Ollama
     -> no Phonon at all. An M2 with Ollama and phonon -> [phonon, kokoro, openai]; the same without phonon -> [kokoro,
     phonon (pull first), openai]; an Intel Mac without Ollama -> [openai]."""
     from odie import machine, voice
@@ -252,8 +252,8 @@ async def voice_options(store, transport=None) -> dict:
     options = []
     if phonon_pulled:
         options.append(dict(PHONON_READY))
-    if machine.local_voice_wanted():  # Kokoro needs Apple Silicon: an Intel Mac doesn't get Odie's own voice server
-        options.append({"engine": "kokoro", "label": "Kokoro", "note": "Odie's own voice server on this computer"})
+    if machine.local_voice_wanted():  # the voice server's models need Apple Silicon
+        options.append({"engine": "kokoro", "label": "Kokoro", "note": "on your voice server (voiced) on this computer"})
     if ollama_up and not phonon_pulled:
         options.append(dict(PHONON_TO_PULL))
     options.append({"engine": "openai", "label": "OpenAI voice", "note": "natural; the text goes to OpenAI", "needs_key": not has_openai})

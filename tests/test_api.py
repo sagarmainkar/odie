@@ -149,15 +149,14 @@ async def test_voice_routes_without_key(client, monkeypatch):
     assert (models["tts"], models["stt"]) == ("gpt-next-tts", "gpt-transcribe")  # the models in use, from settings
 
 
-async def test_read_aloud_says_why_local_voice_is_off(client, monkeypatch, tmp_path):
-    from odie import voice_worker
-    from odie.voice_worker import VoiceWorker
-    monkeypatch.setattr(voice_worker, "current", VoiceWorker(folder=tmp_path / "voice_server", port=1))  # no environment
+async def test_read_aloud_says_how_to_start_the_voice_server(client):
+    """Nothing answers on the voice server's address and there's no Phonon or OpenAI key to fall back to: read-aloud
+    and the preview say how to start it."""
     c = client[0] if isinstance(client, tuple) else client
-    r = await c.post("/api/tts", json={"text": "hi"})  # Kokoro, the default without a key
-    assert r.status_code == 503 and "uv sync" in r.json()["detail"]
+    r = await c.post("/api/tts", json={"text": "hi"})  # Kokoro on the voice server, the default without a key
+    assert r.status_code == 503 and "voiced start" in r.json()["detail"]
     r = await c.get("/api/voice/preview/kokoro/af_heart")
-    assert r.status_code == 503 and "uv sync" in r.json()["detail"]
+    assert r.status_code == 503 and "voiced start" in r.json()["detail"]
 
 
 def test_speakable_strips_markdown():
@@ -266,7 +265,8 @@ async def test_live_dictation_needs_openai_and_says_so(client, monkeypatch):
 
 
 async def test_the_voice_route_hides_the_local_voice_where_it_cannot_run(client, monkeypatch):
-    # An Intel Mac: ODIE_VOICE=off from the installer. Settings gets no Kokoro, no local check, and local_voice: false.
+    # An Intel Mac: ODIE_VOICE=off from the installer, and no voice server answering. Settings gets none of the voice
+    # server's models, and local_voice: false.
     monkeypatch.setenv("ODIE_VOICE", "off")
     import odie.secrets as sec
     import odie.voice as v
@@ -276,7 +276,7 @@ async def test_the_voice_route_hides_the_local_voice_where_it_cannot_run(client,
     j = (await c.get("/api/voice")).json()
     assert j["local_voice"] is False and j["engine"] == "openai"
     # Phonon runs in Ollama, not Odie's own voice server, so an Intel Mac is offered it too (not available: no Ollama here)
-    assert [e["id"] for e in j["engines"]] == ["openai", "phonon", "libra"]  # Phonon and Libra are other servers, offered on any Mac
+    assert [e["id"] for e in j["engines"]] == ["openai", "phonon"]  # Phonon runs in Ollama, offered on any Mac
     assert next(e for e in j["engines"] if e["id"] == "phonon")["available"] is False
     assert (await c.get("/api/voice/preview/kokoro/af_heart")).status_code == 404  # not an engine here
 
@@ -311,16 +311,16 @@ async def test_libra_previews_each_tone_at_the_speed_tapped(client, monkeypatch)
     c = client[0] if isinstance(client, tuple) else client
     asked = []
 
-    async def fake_libra(store, text, voice_id, tone=None, speed=None, transport=None):
-        asked.append((voice_id, tone, speed))
+    async def fake_server(store, text, engine, voice_id, tone=None, speed=None, transport=None):
+        asked.append((engine, voice_id, tone, speed))
         return b"RIFFwav"
-    monkeypatch.setattr(v, "libra_tts", fake_libra)
-    sofia = v.engine_voices("libra", None)[0]["id"]
-    assert (await c.get(f"/api/voice/preview/libra/{sofia}?tone=wry&speed=quick")).status_code == 200
-    assert (await c.get(f"/api/voice/preview/libra/{sofia}?tone=wry&speed=quick")).status_code == 200  # kept: Libra asked once
-    assert (await c.get(f"/api/voice/preview/libra/{sofia}")).status_code == 200  # cheerful at the saved speed (brisk)
-    assert asked == [(sofia, "wry", "quick"), (sofia, "cheerful", "brisk")]
-    assert (await c.get(f"/api/voice/preview/libra/{sofia}?tone=grumpy")).status_code == 404
-    assert (await c.put("/api/voice", json={"libra_speed": "zoom"})).status_code == 422
-    assert (await c.put("/api/voice", json={"libra_speed": "normal"})).status_code == 200
-    assert (await c.get("/api/voice")).json()["libra"]["speed"] == "normal"
+    monkeypatch.setattr(v, "server_tts", fake_server)
+    sofia = v.engine_voices("libra-tts", None)[0]["id"]
+    assert (await c.get(f"/api/voice/preview/libra-tts/{sofia}?tone=wry&speed=quick")).status_code == 200
+    assert (await c.get(f"/api/voice/preview/libra-tts/{sofia}?tone=wry&speed=quick")).status_code == 200  # kept: asked once
+    assert (await c.get(f"/api/voice/preview/libra-tts/{sofia}")).status_code == 200  # cheerful at the saved speed (brisk)
+    assert asked == [("libra-tts", sofia, "wry", "quick"), ("libra-tts", sofia, "cheerful", "brisk")]
+    assert (await c.get(f"/api/voice/preview/libra-tts/{sofia}?tone=grumpy")).status_code == 404
+    assert (await c.put("/api/voice", json={"server_speed": "zoom"})).status_code == 422
+    assert (await c.put("/api/voice", json={"server_speed": "normal"})).status_code == 200
+    assert (await c.get("/api/voice")).json()["server"]["speed"] == "normal"

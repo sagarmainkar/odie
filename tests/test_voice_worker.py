@@ -163,15 +163,6 @@ async def test_without_its_environment_local_voice_is_off(tmp_path):
     assert w.proc is None and not w.installed and "uv sync" in w.problem and not await w.ensure(1)
 
 
-async def test_speech_says_why_local_voice_is_off(isolated_settings, monkeypatch, tmp_path):
-    from odie import voice_worker
-    monkeypatch.setattr(voice_worker, "current", VoiceWorker(folder=tmp_path / "voice_server", port=free_port()))
-    with pytest.raises(voice.VoiceUnavailable) as e:
-        await voice.local_tts("kokoro", "hello", "af_heart")
-    assert "uv sync" in str(e.value)
-    assert await voice.local_available() is False
-
-
 def test_the_voice_calls_go_to_odies_port(monkeypatch):
     monkeypatch.setenv("ODIE_VOICE_PORT", "8999")
     assert voice.local_url() == "http://127.0.0.1:8999"

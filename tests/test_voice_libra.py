@@ -1,5 +1,5 @@
-"""Libra: the user's own voice server, and the voice markup the chat model writes when Libra reads replies aloud.
-Every call to a Libra server goes through httpx.MockTransport; no test reaches a real one."""
+"""Libra (libra-tts on the voice server), and the voice markup the chat model writes when a model with styles reads
+replies aloud. Every call to the voice server goes through httpx.MockTransport; no test reaches a real one."""
 import json
 
 import httpx
@@ -57,7 +57,7 @@ def test_the_tone_a_reply_asks_for():
 
 
 def test_which_tone_libra_speaks_in():
-    calm = {"libra_style": "calm"}
+    calm = {"server_style": "calm"}
     assert voice_libra.tone_to_use("wry", "<tone:sad>x", calm) == "wry"  # the Mac passes the reply's tone
     assert voice_libra.tone_to_use(None, "<tone:sad>x", calm) == "sad"
     assert voice_libra.tone_to_use(None, "x", calm) == "calm"
@@ -103,28 +103,19 @@ def test_a_notification_never_carries_the_markup(tmp_path, monkeypatch):
 
 # ── settings ──
 
-def test_the_server_address():
-    assert voice_libra.server_url({}) == voice_libra.DEFAULT_URL
-    assert voice_libra.server_url({"libra_url": "http://studio.local:8794/v1/"}) == "http://studio.local:8794"
-    assert voice_libra.url_problem("http://127.0.0.1:8794") is None
-    assert voice_libra.url_problem("http://studio.local:8794/") is None
-    assert "http://" in voice_libra.url_problem("studio.local:8794")
-    assert voice_libra.url_problem("  ") == "Type the Libra server's address first."
-
-
 def test_libra_is_an_engine_but_never_the_default(tmp_path):
     s = _store(tmp_path)
-    assert "libra" in voice.ENGINES and "libra" not in voice.disabled()
-    assert voice.get_tts(s)[0] != "libra"
-    assert voice.set_tts(s, "libra") == ("libra", "nina")
-    assert voice.set_tts(s, "libra", "omar") == ("libra", "omar")
-    assert voice.set_tts(s, "libra", "nobody") == ("libra", "omar")
+    assert "libra-tts" in voice.ENGINES and "libra-tts" not in voice.disabled()
+    assert voice.get_tts(s)[0] != "libra-tts"
+    assert voice.set_tts(s, "libra-tts") == ("libra-tts", "nina")
+    assert voice.set_tts(s, "libra-tts", "omar") == ("libra-tts", "omar")
+    assert voice.set_tts(s, "libra-tts", "nobody") == ("libra-tts", "omar")
 
 
 def test_the_model_is_told_about_the_markup_only_while_libra_reads(tmp_path):
     s = _store(tmp_path)
     assert "libra_voice" not in capabilities.detect((), s)
-    voice.set_tts(s, "libra")
+    voice.set_tts(s, "libra-tts")
     caps = capabilities.detect((), s)
     assert "libra_voice" in caps
     rules = [r.id for r in prompt.placed(prompt.RULES, [], caps)]
@@ -134,35 +125,37 @@ def test_the_model_is_told_about_the_markup_only_while_libra_reads(tmp_path):
 
 
 def test_podcast_hosts_with_libra():
-    assert [v["id"] for v in voice.libra_hosts("sofia")] == ["sofia", "omar"]
-    assert [v["id"] for v in voice.libra_hosts("jon")] == ["nina", "jon"]
-    assert [v["id"] for v in voice.libra_hosts("gone")] == ["nina", "omar"]
+    libra_voices = voice.engine_voices("libra-tts")
+    assert [v["id"] for v in voice.server_hosts(libra_voices, "sofia")] == ["sofia", "omar"]
+    assert [v["id"] for v in voice.server_hosts(libra_voices, "jon")] == ["nina", "jon"]
+    assert [v["id"] for v in voice.server_hosts(libra_voices, "gone")] == ["nina", "omar"]
 
 
 # ── speaking ──
 
 async def test_libra_gets_the_tone_as_style_and_keeps_the_tags(tmp_path):
-    s = _store(tmp_path, engine="libra", libra_voice="bob", libra_url="http://studio.local:8794")
+    s = _store(tmp_path, engine="libra", libra_voice="bob", libra_url="http://studio.local:12000", libra_speed="normal")
     seen = []
-    audio = await voice.libra_tts(s, "<tone:wry>You paid twice? <laugh> No harm.", "bob", transport=libra(seen))
+    audio = await voice.server_tts(s, "<tone:wry>You paid twice? <laugh> No harm.", "libra-tts", "bob", transport=libra(seen))
     assert audio == b"RIFFwav"
-    assert seen == [{"url": "http://studio.local:8794/v1/audio/speech", "input": "You paid twice? <laugh> No harm.",
-                     "voice": "bob", "response_format": "wav", "trim": True, "style": "wry"}]
+    assert seen == [{"url": "http://studio.local:12000/v1/audio/speech", "model": "libra-tts",
+                     "input": "You paid twice? <laugh> No harm.", "voice": "bob", "response_format": "wav",
+                     "trim": True, "style": "wry"}]
 
 
 async def test_a_sentence_sent_alone_carries_its_replys_tone(tmp_path):
     s = _store(tmp_path, engine="libra", libra_style="calm")
     seen = []
-    await voice.libra_tts(s, "Then it rang. <gasp>", "nina", tone="frightened", transport=libra(seen))
+    await voice.server_tts(s, "Then it rang. <gasp>", "libra-tts", "nina", tone="frightened", transport=libra(seen))
     assert seen[0]["style"] == "frightened"
-    await voice.libra_tts(s, "No tone here.", "nina", transport=libra(seen))
+    await voice.server_tts(s, "No tone here.", "libra-tts", "nina", transport=libra(seen))
     assert seen[1]["style"] == "calm"
 
 
 async def test_no_tone_anywhere_sends_no_style(tmp_path):
     s = _store(tmp_path, engine="libra")
     seen = []
-    await voice.libra_tts(s, "Plain.", "nina", transport=libra(seen))
+    await voice.server_tts(s, "Plain.", "libra-tts", "nina", transport=libra(seen))
     assert "style" not in seen[0]
 
 
@@ -171,44 +164,39 @@ async def test_a_server_that_isnt_there_says_how_to_start_it(tmp_path):
 
     def down(request):
         raise httpx.ConnectError("refused")
-    with pytest.raises(voice.VoiceUnavailable, match="./libra start"):
-        await voice.libra_tts(s, "Hi.", "nina", transport=httpx.MockTransport(down))
+    with pytest.raises(voice.VoiceUnavailable, match="voiced start"):
+        await voice.server_tts(s, "Hi.", "libra-tts", "nina", transport=httpx.MockTransport(down))
 
 
 async def test_a_refusal_says_the_servers_words(tmp_path):
     s = _store(tmp_path, engine="libra")
     with pytest.raises(voice.VoiceUnavailable, match="unknown voice 'zoe'"):
-        await voice.libra_tts(s, "Hi.", "zoe", transport=libra(status=400))
+        await voice.server_tts(s, "Hi.", "libra-tts", "zoe", transport=libra(status=400))
 
 
 async def test_read_aloud_falls_back_when_libra_is_off(tmp_path, monkeypatch):
     s = _store(tmp_path, engine="libra")
     heard = []
 
-    async def libra_off(store, text, voice_id, tone=None, transport=None):
-        raise voice.VoiceUnavailable("The Libra voice server isn't answering.")
+    async def libra_off(store, text, engine, voice_id, tone=None, transport=None):
+        raise voice.VoiceUnavailable("The voice server isn't answering.")
 
-    async def kokoro(engine, text, voice_id, transport=None):
-        heard.append((engine, text))
-        return b"wav"
-    monkeypatch.setattr(voice, "libra_tts", libra_off)
-    monkeypatch.setattr(voice, "local_tts", kokoro)
-    monkeypatch.setattr(voice, "default_engine", lambda: "kokoro")
-    audio, media = await voice.speak(s, "<tone:wry>Paid twice? <laugh> No harm.")
-    assert (audio, media) == (b"wav", "audio/wav")
-    assert heard == [("kokoro", "Paid twice? No harm.")]  # another voice never hears the markup
-
-
-async def test_other_engines_never_hear_the_markup(tmp_path, monkeypatch):
-    s = _store(tmp_path, engine="kokoro")
-    heard = []
-
-    async def kokoro(engine, text, voice_id, transport=None):
+    async def phonon(text, voice_id, transport=None):
         heard.append(text)
         return b"wav"
-    monkeypatch.setattr(voice, "local_tts", kokoro)
-    await voice.speak(s, "<tone:wry>Paid twice? <laugh> No harm.")
-    assert heard == ["Paid twice? No harm."]
+    monkeypatch.setattr(voice, "server_tts", libra_off)
+    monkeypatch.setattr(voice, "phonon_tts", phonon)
+    monkeypatch.setattr(voice, "phonon_here", lambda: True)
+    audio, media = await voice.speak(s, "<tone:wry>Paid twice? <laugh> No harm.")
+    assert (audio, media) == (b"wav", "audio/wav")
+    assert heard == ["Paid twice? No harm."]  # another voice never hears the markup
+
+
+async def test_other_engines_never_hear_the_markup(tmp_path):
+    s = _store(tmp_path, engine="kokoro")
+    seen = []
+    await voice.speak_wav(s, "<tone:wry>Paid twice? <laugh> No harm.", transport=libra(seen))
+    assert [x["input"] for x in seen] == ["Paid twice? No harm."] and "style" not in seen[0]
 
 
 # ── how quickly it talks ──
@@ -237,8 +225,8 @@ def _seconds(wav: bytes) -> float:
 
 def test_the_speed_in_settings():
     assert voice_libra.settings_speed({}) == "brisk"
-    assert voice_libra.settings_speed({"libra_speed": "quick"}) == "quick"
-    assert voice_libra.settings_speed({"libra_speed": "zoom"}) == "brisk"
+    assert voice_libra.settings_speed({"server_speed": "quick"}) == "quick"
+    assert voice_libra.settings_speed({"server_speed": "zoom"}) == "brisk"
 
 
 async def test_brisk_is_a_tenth_quicker_and_a_readable_wav():
@@ -260,7 +248,7 @@ async def test_read_aloud_plays_at_the_settings_speed(tmp_path):
     if shutil.which("ffmpeg") is None:
         pytest.skip("no ffmpeg here")
     s = _store(tmp_path, engine="libra", libra_speed="quick")
-    audio = await voice.libra_tts(s, "Okay.", "nina", transport=libra(body=_a_second_of_tone()))
+    audio = await voice.server_tts(s, "Okay.", "libra-tts", "nina", transport=libra(body=_a_second_of_tone()))
     assert _seconds(audio) == pytest.approx(1 / 1.2, abs=0.02)
 
 
@@ -268,7 +256,7 @@ async def test_a_sentence_with_nothing_to_say_never_reaches_libra(tmp_path):
     s = _store(tmp_path, engine="libra")
     seen = []
     with pytest.raises(voice.VoiceUnavailable):
-        await voice.libra_tts(s, "—", "nina", transport=libra(seen))
+        await voice.server_tts(s, "—", "libra-tts", "nina", transport=libra(seen))
     assert seen == []
     assert voice_libra.has_words("<laugh>")
 

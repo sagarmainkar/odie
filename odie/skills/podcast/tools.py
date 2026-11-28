@@ -27,8 +27,7 @@ NO_TOPIC = 'Give the topic: a few words saying what the podcast is about, like "
 def speaking_speed(engine: str) -> int:
     """Decides how fast the podcast is spoken, in minutes of podcast a minute, from the engine chosen in Settings:
     "openai" -> 1 (about real time, over the network); "kokoro" -> 10 (on this computer); "phonon" -> 10 (on this
-    computer, through Ollama); "maya1" -> 10 too, because a podcast with Maya1 chosen is spoken by Kokoro
-    (voice.podcast_voices)."""
+    computer, through Ollama); "libra-tts" -> 10 (the voice server on this computer)."""
     if engine == "openai":
         return CLOUD_SPEED
     return LOCAL_SPEED

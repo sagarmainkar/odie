@@ -68,11 +68,14 @@ def no_real_ollama_voice(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def no_real_libra(monkeypatch):
-    """The voice side never reaches a real Libra server from a test (the owner's Mac runs one on 8794): its default
-    address is a closed port. A test that speaks to Libra brings an httpx.MockTransport."""
-    from odie import voice_libra
-    monkeypatch.setattr(voice_libra, "DEFAULT_URL", "http://127.0.0.1:9")
+def no_real_voice_server(monkeypatch):
+    """The voice side never reaches a real voice server from a test (the owner's Mac runs voiced on 12000): its
+    default address is a closed port, and the models Odie knows start as the ones it ships with. A test that speaks
+    to the server brings an httpx.MockTransport."""
+    from odie import voice, voice_url
+    monkeypatch.setattr(voice_url, "DEFAULT_URL", "http://127.0.0.1:9")
+    monkeypatch.setattr(voice, "server_seen", False)
+    voice.forget_server_models()
 
 
 @pytest.fixture(autouse=True)
