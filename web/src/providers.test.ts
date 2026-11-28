@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { addressHint, creativityLabel, providerSub, visibleModels } from "./providers";
+import { addressEditable, addressHint, answerLine, creativityLabel, hostAndPort, movedAddress, providerSub, shouldTestBeforeSave,
+  visibleModels, type ProviderInfo } from "./providers";
 
 const ms = (ids: string[]) => ids.map((id) => ({ id, local: false }));
 
@@ -30,10 +31,47 @@ describe("providerSub", () => {
 });
 
 describe("addressHint", () => {
-  it("names the .env line for a built-in provider and Settings for a custom one", () => {
-    expect(addressHint({ base_url: "http://localhost:11434/v1", base_url_env: "OLLAMA_BASE_URL" })).toBe("another address: see the setup guide");
-    expect(addressHint({ base_url: "https://api.example/v1", base_url_env: null })).toBe("change it in Settings → Providers");
+  it("sends every provider's address to Settings", () => {
+    expect(addressHint({ base_url: "http://localhost:11434/v1" })).toBe("change it in Settings → Providers");
+    expect(addressHint({ base_url: "https://api.example/v1" })).toBe("change it in Settings → Providers");
     expect(addressHint({})).toBeNull();
+  });
+});
+
+const lmStudio: ProviderInfo = { id: "lmstudio", name: "LM Studio", kind: "local", connected: true,
+  base_url: "http://localhost:1234/v1", default_url: "http://localhost:1234/v1", address_from_env: false };
+
+describe("a provider's address", () => {
+  it("names a moved local provider by its computer and port", () => {
+    expect(providerSub({ ...lmStudio, base_url: "http://localhost:1235/v1" })).toBe("Running at localhost:1235");
+    expect(providerSub({ ...lmStudio, base_url: "http://studio.local:1234/v1", connected: false })).toBe("Not answering at studio.local:1234");
+    expect(providerSub(lmStudio)).toBe("Running on this computer");
+    expect(hostAndPort("not an address")).toBe("not an address");
+  });
+  it("offers Reset only when a built-in one was moved", () => {
+    expect(movedAddress(lmStudio)).toBe(false);
+    expect(movedAddress({ ...lmStudio, base_url: "http://localhost:1235/v1" })).toBe(true);
+    expect(movedAddress({ id: "mine", name: "Mine", kind: "custom", connected: true, base_url: "http://a.local/v1" })).toBe(false);
+  });
+  it("can't be edited when Odie's environment sets it", () => {
+    expect(addressEditable(lmStudio)).toBe(true);
+    expect(addressEditable({ ...lmStudio, address_from_env: true })).toBe(false);
+    expect(addressEditable({ id: "mine", name: "Mine", kind: "custom", connected: true })).toBe(true);
+  });
+  it("says whether it answers", () => {
+    expect(answerLine(null)).toBe("");
+    expect(answerLine({ ok: true, models: 12, problem: null })).toBe("Answers · 12 models");
+    expect(answerLine({ ok: true, models: 1, problem: null })).toBe("Answers · 1 model");
+    expect(answerLine({ ok: true, models: 0, problem: null })).toBe("Answers · no chat models loaded");
+    expect(answerLine({ ok: false, models: null, problem: "Nothing answers at that address." })).toBe("Nothing answers at that address.");
+  });
+  it("tests a changed address once before saving, then saves anyway", () => {
+    const saved = "http://localhost:1234/v1";
+    expect(shouldTestBeforeSave(saved, saved, null)).toBe(false);
+    expect(shouldTestBeforeSave("http://localhost:1234/v1/", saved, null)).toBe(false);
+    expect(shouldTestBeforeSave("http://localhost:1235/v1", saved, null)).toBe(true);
+    expect(shouldTestBeforeSave("http://localhost:1235/v1", saved, "http://localhost:1235/v1")).toBe(false);
+    expect(shouldTestBeforeSave("http://localhost:1236/v1", saved, "http://localhost:1235/v1")).toBe(true);
   });
 });
 

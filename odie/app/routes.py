@@ -18,8 +18,10 @@ from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
 from odie import approvals_mode, config, devices, persona, qr
-from odie.models import (PRESET_BY_ID, PRESETS, Provider, all_providers, auth_headers, brain_chosen, custom_key_name,
-                         list_models, preset_base_url, refresh_fallback, resolve_selection, slug)
+from odie.models import (BASE_URL_ENV, PRESET_BY_ID, PRESETS, Provider, address_problem, address_set_in_environment,
+                         all_providers, auth_headers, brain_chosen, check_address, custom_key_name, custom_providers,
+                         default_base_url, list_models, lm_studio_url, local_providers, preset_base_url,
+                         refresh_fallback, reset_address, resolve_selection, save_address, slug, with_claude_v1)
 from odie.morning.round import add_brief_to_hello, hello_due, hello_for, morning_day, morning_round, round_running
 from odie.photos.library import PHOTO_UUID
 from odie.secrets import remove_secret, save_secret
@@ -62,7 +64,7 @@ async def _lm_studio_ok() -> bool:
     s = config.settings
     try:
         async with httpx.AsyncClient(timeout=2) as c:
-            r = await c.get(s.lm_studio_base_url + "/models")
+            r = await c.get(lm_studio_url() + "/models")
             return r.status_code == 200 and any(m.get("id") == s.model_id for m in r.json().get("data", []))
     except Exception:  # noqa: BLE001
         return False
@@ -3425,6 +3427,9 @@ async def providers_add(body: ProviderIn, request: Request):
     pid = slug(body.name)
     if pid in PRESET_BY_ID or pid in ("lmstudio", "ollama"):
         raise HTTPException(422, "That name is taken by a built-in provider.")
+    problem = address_problem(body.base_url)
+    if problem:
+        raise HTTPException(422, problem)
     legacy = next((c.get("api_key") for c in customs if c["id"] == pid and c.get("api_key")), None)
     key = body.api_key or legacy  # an older entry kept its key inline: move it to .env rather than lose it
     if key:
@@ -3432,8 +3437,38 @@ async def providers_add(body: ProviderIn, request: Request):
             save_secret(custom_key_name(pid), key)
         except ValueError as e:
             raise HTTPException(422, str(e))
-    customs = [c for c in customs if c["id"] != pid] + [{"id": pid, "name": body.name, "base_url": body.base_url.rstrip("/")}]
+    customs = [c for c in customs if c["id"] != pid] + [{"id": pid, "name": body.name, "base_url": body.base_url.strip().rstrip("/")}]
     store.set_setting("providers.custom", customs)
+    _models_changed(request)
+    return {"ok": True, "id": pid}
+
+
+@router.put("/models/providers/{pid}")
+async def providers_edit(pid: str, body: ProviderIn, request: Request):
+    """A custom provider's name, address and key, changed in Settings → Providers. Its id stays, so a brain that uses
+    it keeps working. No key in the body keeps the one it has; a new one replaces it in ~/.odie/.env."""
+    store = request.app.state.store
+    customs = store.get_setting("providers.custom", []) or []
+    entry = next((c for c in customs if c["id"] == pid), None)
+    if entry is None:
+        raise HTTPException(404, "unknown provider")
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(422, "Give it a name.")
+    problem = address_problem(body.base_url)
+    if problem:
+        raise HTTPException(422, problem)
+    changed = {"id": pid, "name": name, "base_url": body.base_url.strip().rstrip("/")}
+    new_key = (body.api_key or "").strip()
+    if new_key:
+        try:
+            save_secret(custom_key_name(pid), new_key)
+        except ValueError as e:
+            raise HTTPException(422, str(e))
+    elif entry.get("api_key"):
+        changed["api_key"] = entry["api_key"]  # an older entry kept its key inline: keep it until a new one is pasted
+    store.set_setting("providers.custom", [changed if c["id"] == pid else c for c in customs])
+    store.audit("user", "provider_changed", result_summary=f"{name}: {changed['base_url']}")
     _models_changed(request)
     return {"ok": True, "id": pid}
 
@@ -3627,13 +3662,102 @@ async def providers_get(request: Request):
     from odie import models as models_mod  # through the module, so tests' stand-in for the local servers applies
     have = {p.id for p in all_providers(store)}
     answering = {row["id"] for row in await models_mod.ask_local_providers() if row["error"] is None}  # running now
-    rows = [{"id": "lmstudio", "name": "LM Studio", "kind": "local", "connected": "lmstudio" in answering},
-            {"id": "ollama", "name": "Ollama", "kind": "local", "connected": "ollama" in answering}]
-    rows += [{"id": p.id, "name": p.name, "kind": "preset", "connected": p.id in have,
-              "from_env": bool(os.environ.get(p.env))} for p in PRESETS]
-    rows += [{"id": c["id"], "name": c.get("name") or c["id"], "kind": "custom", "connected": True, "base_url": c["base_url"]}
-             for c in store.get_setting("providers.custom", []) or []]
+    rows = []
+    for p in local_providers():
+        rows.append({"id": p.id, "name": p.name, "kind": "local", "connected": p.id in answering,
+                     **_address_fields(p.id, p.base_url)})
+    for preset in PRESETS:
+        rows.append({"id": preset.id, "name": preset.name, "kind": "preset", "connected": preset.id in have,
+                     "from_env": bool(os.environ.get(preset.env)), **_address_fields(preset.id, preset_base_url(preset))})
+    for p in custom_providers(store):
+        rows.append({"id": p.id, "name": p.name, "kind": "custom", "connected": True, "base_url": p.base_url,
+                     "has_key": bool(p.api_key)})
     return {"providers": rows}
+
+
+def _address_fields(pid: str, base_url: str) -> dict:
+    """What Settings shows about a built-in provider's address: where it is now, its own default, and whether the
+    service's environment fixes it (then it can't be changed here)."""
+    return {"base_url": base_url, "default_url": with_claude_v1(pid, default_base_url(pid)),
+            "address_from_env": address_set_in_environment(pid)}
+
+
+class AddressIn(BaseModel):
+    base_url: str = Field(max_length=500)
+
+
+class AddressCheckIn(BaseModel):
+    base_url: str | None = Field(None, max_length=500)  # none: the provider's address now
+    api_key: str | None = None                          # a key just typed, not saved yet
+
+
+def _provider_to_check(pid: str, body: AddressCheckIn, store) -> Provider:
+    """The provider to ask, at the address being tried and with the key it would use. `pid` "new" is a custom
+    provider not added yet (its address and key come in the body).
+      ("lmstudio", base_url "http://localhost:1235/v1") -> LM Studio at :1235, with its usual key
+      ("openai", no base_url)                           -> OpenAI where it is now, with the saved key (or none yet)
+      ("new", base_url, api_key)                        -> exactly what was typed"""
+    if pid == "new":
+        if not body.base_url:
+            raise HTTPException(422, "Type an address first.")
+        return Provider("new", "New", body.base_url.strip().rstrip("/"), body.api_key or None, False)
+    from odie.secrets import load_secret
+    known = {p.id: p for p in local_providers() + custom_providers(store)}
+    provider = known.get(pid)
+    preset = PRESET_BY_ID.get(pid)
+    if provider is None and preset is not None:
+        provider = Provider(preset.id, preset.name, preset_base_url(preset), load_secret(preset.env), False)
+    if provider is None:
+        raise HTTPException(404, "unknown provider")
+    url = provider.base_url
+    if body.base_url:
+        url = with_claude_v1(pid, body.base_url.strip().rstrip("/"))
+    key = provider.api_key
+    if body.api_key:
+        key = body.api_key
+    return Provider(provider.id, provider.name, url, key, provider.local)
+
+
+@router.post("/providers/{pid}/check")
+async def provider_check(pid: str, body: AddressCheckIn, request: Request):
+    """Does this provider answer, at its address or at one being typed (the Test button)? Nothing is saved."""
+    if body.base_url:
+        problem = address_problem(body.base_url)
+        if problem:
+            return {"ok": False, "models": None, "problem": problem}
+    provider = _provider_to_check(pid, body, request.app.state.store)
+    return await check_address(provider)
+
+
+@router.put("/providers/{pid}/address")
+async def provider_address_put(pid: str, body: AddressIn, request: Request):
+    """Moves a built-in provider (LM Studio, Ollama, a cloud preset) to another address: written to ~/.odie/.env as
+    its <ID>_BASE_URL line, used from the next request. An address the service's environment sets can't be changed
+    here (it would win over the file anyway)."""
+    if pid not in BASE_URL_ENV:
+        raise HTTPException(404, "unknown provider")
+    if address_set_in_environment(pid):
+        raise HTTPException(409, f"{BASE_URL_ENV[pid]} is set in Odie's environment, so it can't be changed here.")
+    problem = address_problem(body.base_url)
+    if problem:
+        raise HTTPException(422, problem)
+    save_address(pid, body.base_url)
+    request.app.state.store.audit("user", "provider_address_set", result_summary=f"{pid}: {body.base_url.strip()}")
+    _models_changed(request)
+    return {"ok": True}
+
+
+@router.delete("/providers/{pid}/address")
+async def provider_address_reset(pid: str, request: Request):
+    """A built-in provider back to its own address (Reset to default)."""
+    if pid not in BASE_URL_ENV:
+        raise HTTPException(404, "unknown provider")
+    if address_set_in_environment(pid):
+        raise HTTPException(409, f"{BASE_URL_ENV[pid]} is set in Odie's environment, so it can't be changed here.")
+    reset_address(pid)
+    request.app.state.store.audit("user", "provider_address_reset", result_summary=pid)
+    _models_changed(request)
+    return {"ok": True}
 
 
 @router.put("/providers/{pid}/key")

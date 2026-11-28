@@ -160,10 +160,11 @@ async def embedding_options(store, transport=None) -> dict:
     (the heaviest: a 1.5 GB download) when its environment is here. A server somewhere else is the setup screen's own
     choice (odie.setup.panels), not an option here."""
     from odie import embed_worker, machine
+    from odie.models import lm_studio_url
     options = []
     async with httpx.AsyncClient(timeout=4, transport=transport) as c:
         try:
-            r = await c.get(config.settings.lm_studio_base_url.rstrip("/") + "/models")
+            r = await c.get(lm_studio_url() + "/models")
             options += [{"provider": "lmstudio", "model": m["id"], "local": True, "note": "on this computer (LM Studio)"}
                         for m in r.json().get("data", []) if "embed" in m.get("id", "").lower()]
         except (httpx.HTTPError, ValueError, AttributeError):
