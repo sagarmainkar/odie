@@ -173,7 +173,7 @@ async def test_capabilities_route(bare, tmp_path):
         async with app.router.lifespan_context(app):
             r = await client.get("/api/capabilities")
     body = r.json()
-    assert body["caps"] == ["calendar", "mail"]
+    assert [c for c in body["caps"] if c != "local_talk"] == ["calendar", "mail"]  # Talk here depends on the Mac, not on add-ons
     assert body["addons"] == [{"name": "broken", "status": "failed", "reason": body["addons"][0]["reason"]},
                               {"name": "mailer", "status": "ok", "reason": ""}]
     assert "missing dependency" in body["addons"][0]["reason"]
