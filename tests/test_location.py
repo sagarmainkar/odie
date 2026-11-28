@@ -214,14 +214,18 @@ async def test_a_devices_own_clock_stamps_the_fix(isolated_settings, tmp_path, m
     import httpx
     s = Store(tmp_path / "a.db"); s.init_schema()
     app = create_app(runner=FakeRunner(), store=s)
+    # Last night, 23:30 in Tokyo: recent, so the 30-day trim (KEEP_DAYS) never drops it, whatever day the tests run.
+    tokyo = timezone(timedelta(hours=9))
+    yesterday = datetime.now(tokyo) - timedelta(days=1)
+    taken = yesterday.replace(hour=23, minute=30, second=0, microsecond=0).isoformat()
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
         async with app.router.lifespan_context(app):
-            r = await c.post("/api/location", json={"lat": 35.68, "lon": 139.77, "place": "Harbour Town", "at": "2026-10-25T23:30:00+09:00"})
-            assert r.status_code == 200 and r.json()["seen"] == "2026-10-25T23:30:00+09:00"
+            r = await c.post("/api/location", json={"lat": 35.68, "lon": 139.77, "place": "Harbour Town", "at": taken})
+            assert r.status_code == 200 and r.json()["seen"] == taken
             r = await c.post("/api/location", json={"lat": 35.68, "lon": 139.77, "place": "Harbour Town", "at": "not a time"})
             assert r.status_code == 200 and r.json()["seen"].endswith("+05:30")   # the server's clock, Asia/Kolkata in tests
     fixes = location.get(s)["fixes"]
-    assert fixes[0]["at"] == "2026-10-25T23:30:00+09:00" and location.is_night(location._at(fixes[0]))
+    assert fixes[0]["at"] == taken and location.is_night(location._at(fixes[0]))
 
 
 async def test_lookups_keep_a_second_apart(isolated_settings, tmp_path, monkeypatch):
