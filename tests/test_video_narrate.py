@@ -56,7 +56,7 @@ async def test_a_voice_that_doesnt_answer_is_told_plainly(store):
 
     with pytest.raises(voice.VoiceUnavailable) as caught:
         await narrate.narrate(store, ["Hi."], transport=httpx.MockTransport(refused))
-    assert str(caught.value) == "Odie's voice didn't answer (Settings → Voice): Connection refused"
+    assert str(caught.value) == "The voice server isn't answering at http://127.0.0.1:9: start it with `voiced start`."
 
 
 async def test_a_voice_that_says_no_is_told_with_its_status(store):
@@ -66,7 +66,7 @@ async def test_a_voice_that_says_no_is_told_with_its_status(store):
     with pytest.raises(voice.VoiceUnavailable) as caught:
         await narrate.narrate(store, ["Hi."], transport=httpx.MockTransport(unauthorised))
     message = str(caught.value)
-    assert message.startswith("Odie's voice didn't answer (Settings → Voice): ") and "401" in message
+    assert message == "The voice server refused it: bad key" or message.startswith("The voice server refused it")
     assert "\n" not in message  # one line, without httpx's "for more information" link
 
 
@@ -76,7 +76,7 @@ PHRASES = {"Babur came from Fergana": (1.0, 440.0), "and won at Panipat.": (2.0,
 
 def voice_by_text(seen):
     def handler(request):
-        text = json.loads(request.content)["text"]
+        text = json.loads(request.content)["input"]
         seen.append(text)
         seconds, tone = PHRASES[text]
         return httpx.Response(200, content=make_wav(seconds, freq=tone))

@@ -55,7 +55,7 @@ def ollama(voices=None, tags=("phonon:latest",), speech=None, seen=None):
 def test_phonon_is_an_engine_that_is_never_hidden():
     assert voice.ENGINES["phonon"] == {"label": "Phonon (Ollama)", "note": "On this computer through Ollama. Quick, streams, no expressions.",
                                        "local": True}
-    assert "phonon" not in voice._HIDDEN
+    assert "phonon" not in voice.disabled()
 
 
 def test_ollamas_address_is_the_chat_sides(monkeypatch):
@@ -242,87 +242,6 @@ class FakeWorker:
         return False
 
 
-def test_the_worker_is_wanted_only_for_its_own_engines(isolated_settings, tmp_path, monkeypatch):
-    monkeypatch.setenv("ODIE_VOICE", "on")
-    s = _store(tmp_path)
-    s.set_setting("voice", {"engine": "kokoro"})
-    assert voice.worker_wanted(s) is True
-    s.set_setting("voice", {"engine": "phonon"})
-    assert voice.worker_wanted(s) is False
-    monkeypatch.setattr(voice, "load_secret", lambda name: "sk-test")
-    s.set_setting("voice", {"engine": "openai"})
-    assert voice.worker_wanted(s) is False
-
-
-async def test_at_launch_the_worker_starts_only_for_kokoro(isolated_settings, tmp_path, monkeypatch):
-    from odie import voice_worker
-    from odie.app import main
-    monkeypatch.setenv("ODIE_VOICE", "on")
-    monkeypatch.setattr(voice_worker, "VoiceWorker", FakeWorker)
-    s = _store(tmp_path)
-    s.set_setting("voice", {"engine": "phonon"})
-    await main._launch_voice_worker(s, tmp_path)
-    assert isinstance(voice_worker.current, FakeWorker) and voice_worker.current.calls == []  # made, not started
-    s.set_setting("voice", {"engine": "kokoro"})
-    await main._launch_voice_worker(s, tmp_path)
-    assert voice_worker.current.calls == ["start"]
-    monkeypatch.setattr(voice_worker, "current", None)
-
-
-async def test_choosing_kokoro_later_starts_it_and_leaving_kokoro_stops_it(isolated_settings, tmp_path, monkeypatch):
-    from odie import voice_worker
-    monkeypatch.setenv("ODIE_VOICE", "on")
-    worker = FakeWorker()
-    monkeypatch.setattr(voice_worker, "current", worker)
-    s = _store(tmp_path)
-    voice.set_tts(s, "phonon")
-    voice.set_tts(s, "kokoro")
-    with pytest.raises(voice.VoiceUnavailable):
-        await voice.speak(s, "Hello.")  # the kokoro path asks the worker to be up first (here: it says why it can't)
-    assert worker.calls == ["ensure"]
-    voice.set_tts(s, "phonon")
-    await voice.settle_worker(s)
-    assert worker.calls == ["ensure", "stop"]  # away from Kokoro: the server goes
-    voice.set_tts(s, "kokoro")
-    await voice.settle_worker(s)
-    assert worker.calls == ["ensure", "stop"]  # back on Kokoro: nothing now; the next speech starts it on demand
-
-
-async def test_the_settings_route_stops_the_worker_when_kokoro_is_left(isolated_settings, tmp_path, monkeypatch):
-    from odie import voice_worker
-    from odie.app.main import create_app
-    from tests.test_api import FakeRunner
-    monkeypatch.setenv("ODIE_VOICE", "on")
-    worker = FakeWorker()
-    s = _store(tmp_path)
-    app = create_app(runner=FakeRunner(), store=s)
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c, app.router.lifespan_context(app):
-        monkeypatch.setattr(voice_worker, "current", worker)
-        await c.put("/api/voice", json={"engine": "kokoro"})
-        assert worker.calls == []
-        await c.put("/api/voice", json={"engine": "phonon"})
-        assert worker.calls == ["stop"]
-
-
-async def test_kokoro_stays_choosable_while_its_server_is_stopped(isolated_settings, tmp_path, monkeypatch):
-    """With Phonon chosen, Odie's own voice server isn't running; Settings must still let Kokoro be chosen (it starts on
-    demand). Only a server that isn't set up at all makes Kokoro unavailable."""
-    from odie import voice_worker
-    from odie.app.main import create_app
-    from tests.test_api import FakeRunner
-    monkeypatch.setenv("ODIE_VOICE", "on")
-    s = _store(tmp_path)
-    app = create_app(runner=FakeRunner(), store=s)
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c, app.router.lifespan_context(app):
-        monkeypatch.setattr(voice_worker, "current", FakeWorker())  # set up, not running
-        kokoro = next(e for e in (await c.get("/api/voice")).json()["engines"] if e["id"] == "kokoro")
-        assert kokoro["available"] is True
-        monkeypatch.setattr(voice_worker, "current", FakeWorker(installed=False))  # never `uv sync`ed
-        kokoro = next(e for e in (await c.get("/api/voice")).json()["engines"] if e["id"] == "kokoro")
-        assert kokoro["available"] is False
-# --- Item 3: setup, the setup panel, podcasts and narration ---
-
-
 def no_ollama():
     def down(request):
         raise httpx.ConnectError("refused")
@@ -338,7 +257,7 @@ async def test_setup_offers_what_is_already_here_first(isolated_settings, tmp_pa
     assert [o["engine"] for o in ready] == ["phonon", "kokoro", "openai"]
     assert ready[0] == {"engine": "phonon", "label": "Phonon through Ollama", "note": "free, private, quick; runs in Ollama on this computer",
                         "recommended": True}
-    assert ready[1]["note"] == "Odie's own voice server on this computer" and ready[2]["needs_key"] is True
+    assert ready[1]["note"] == "on your voice server (voiced) on this computer" and ready[2]["needs_key"] is True
     not_pulled = (await tools.run("voice_options", {}, s, transport=ollama(tags=("gemma4:e4b",))))["result"]["options"]
     assert [o["engine"] for o in not_pulled] == ["kokoro", "phonon", "openai"]  # what's here first, then what needs a step
     phonon = next(o for o in not_pulled if o["engine"] == "phonon")
@@ -627,33 +546,8 @@ def test_a_missing_model_names_the_model_to_pull():
     assert voice.phonon_problem(404, plain, "zoey", "phonon") == voice.PULL_PHONON
 
 
-async def test_at_launch_nothing_chosen_waits_for_ollama_before_starting_kokoro(isolated_settings, tmp_path, monkeypatch):
-    from odie import voice_worker
-    from odie.app import main
-    monkeypatch.setenv("ODIE_VOICE", "on")
-    monkeypatch.setattr(voice_worker, "VoiceWorker", FakeWorker)
+def test_read_aloud_never_wants_odies_own_worker(tmp_path):
+    """Kokoro speaks through the voice server now: Odie's own worker runs only while Talk listens through it."""
     s = _store(tmp_path)
-    voice.forget_phonon()
-    await main._launch_voice_worker(s, tmp_path)
-    assert voice_worker.current.calls == []  # nothing chosen: not started before Ollama has been asked
-
-    async def has_phonon(transport=None):
-        voice._PHONON_SEEN["here"] = True
-        return True
-
-    async def no_phonon(transport=None):
-        voice._PHONON_SEEN["here"] = False
-        return False
-
-    async def no_voices(transport=None):
-        return []
-    monkeypatch.setattr(voice, "phonon_voices", no_voices)
-    monkeypatch.setattr(voice, "phonon_available", has_phonon)
-    await main._learn_phonon(s)
-    assert "start" not in voice_worker.current.calls  # Phonon is the default: Kokoro's server never starts
-    voice_worker.current.calls.clear()
-    monkeypatch.setattr(voice, "phonon_available", no_phonon)
-    await main._learn_phonon(s)
-    assert voice_worker.current.calls == ["start"]  # no Phonon: Kokoro is the default, so it starts now
-    voice.forget_phonon()
-    monkeypatch.setattr(voice_worker, "current", None)
+    voice.set_tts(s, "kokoro")
+    assert voice.worker_wanted(s) is False and voice.worker_wanted_at_launch(s) is False

@@ -1,5 +1,5 @@
-"""Libra: the user's own voice server (Libra-TTS, an OpenAI-style /v1/audio/speech on this Mac or another on the home
-network), and the voice markup the chat model writes when Libra is the voice.
+"""The voice markup the chat model writes when the voice has styles (Libra-TTS on the voice server, odie/voice_url.py),
+and Libra's known voices, tones and tags.
 
 The markup: a reply may open with one tone marker, <tone:wry>, and carry a few sound tags where they happen, <laugh>,
 <sigh>. Nobody sees them: every screen hides them (web drawnText, the Mac's reply parts, pushes, the terminal).
@@ -12,9 +12,6 @@ import re
 import tempfile
 from pathlib import Path
 
-import httpx
-
-DEFAULT_URL = "http://127.0.0.1:8794"
 DEFAULT_VOICE = "nina"
 VOICES = [
     {"id": "nina", "label": "Nina", "group": "female"},
@@ -131,34 +128,11 @@ def keeping_markers(clean, text: str) -> str:
     return tidy(cleaned)
 
 
-# ── Settings: where the server is, and the tone used when a reply names none ──
-
-def url_problem(url: str) -> str | None:
-    """Whether a typed server address can be used: None when it can, else what's wrong.
-    "http://127.0.0.1:8794" -> None; "http://studio.local:8794/" -> None; "studio.local:8794" -> "Start the address
-    with http:// …"; "" -> "Type the Libra server's address first."."""
-    typed = url.strip()
-    if not typed:
-        return "Type the Libra server's address first."
-    if not re.match(r"^https?://[A-Za-z0-9.\-\[\]:]+(:\d+)?/?$", typed):
-        return "Start the address with http:// and give only the host and port, for example http://127.0.0.1:8794"
-    return None
-
-
-def server_url(settings: dict) -> str:
-    """The Libra server's address from the voice settings, without a trailing slash or /v1.
-    {} -> "http://127.0.0.1:8794"; {"libra_url": "http://studio.local:8794/v1/"} -> "http://studio.local:8794"."""
-    chosen = str(settings.get("libra_url") or "").strip()
-    if not chosen:
-        return DEFAULT_URL
-    chosen = chosen.rstrip("/")
-    return chosen.removesuffix("/v1")
-
-
+# ── Settings: the tone used when a reply names none ──
 def settings_tone(settings: dict) -> str | None:
-    """The tone chosen in Settings, used when a reply names none: {"libra_style": "calm"} -> "calm"; {} -> None;
-    {"libra_style": "grumpy"} -> None (not a Libra tone)."""
-    chosen = str(settings.get("libra_style") or "").strip().lower()
+    """The tone chosen in Settings, used when a reply names none: {"server_style": "calm"} -> "calm"; {} -> None;
+    {"server_style": "grumpy"} -> None (not a Libra tone)."""
+    chosen = str(settings.get("server_style") or "").strip().lower()
     if chosen in TONES:
         return chosen
     return None
@@ -185,9 +159,9 @@ DEFAULT_SPEED = "brisk"
 
 
 def settings_speed(settings: dict) -> str:
-    """The speed chosen in Settings → Voice → Libra: {"libra_speed": "quick"} -> "quick"; {} -> "brisk" (the
-    default, a tenth quicker); {"libra_speed": "zoom"} -> "brisk"."""
-    chosen = str(settings.get("libra_speed") or "").strip().lower()
+    """The speed chosen in Settings → Voice: {"server_speed": "quick"} -> "quick"; {} -> "brisk" (the
+    default, a tenth quicker); {"server_speed": "zoom"} -> "brisk"."""
+    chosen = str(settings.get("server_speed") or "").strip().lower()
     if chosen in SPEEDS:
         return chosen
     return DEFAULT_SPEED
@@ -218,35 +192,3 @@ def has_words(spoken: str) -> bool:
     """Whether a piece of text has anything to say: a letter or digit, or a sound tag. A lone "—" or "…" (a sentence
     split leaves those) is nothing, and isn't sent to Libra. "Okay." -> True; "<laugh>" -> True; "—" -> False."""
     return re.search(r"\w", spoken) is not None
-
-async def available(url: str, transport: httpx.AsyncBaseTransport | None = None) -> bool:
-    """Whether a Libra server answers at `url` (its /health, one quick GET)."""
-    try:
-        async with httpx.AsyncClient(timeout=2, transport=transport) as client:
-            reply = await client.get(f"{url}/health")
-    except httpx.HTTPError:
-        return False
-    return reply.status_code == 200
-
-
-async def speak(text: str, voice: str, tone: str | None, url: str,
-                transport: httpx.AsyncBaseTransport | None = None) -> bytes:
-    """`text` (sound tags allowed) spoken by Libra as a 24 kHz WAV, with its silent ends trimmed so sentences join
-    without gaps. A refused request (a 400) raises ValueError with the server's own words."""
-    body = {"input": text, "voice": voice, "response_format": "wav", "trim": True}
-    if tone is not None:
-        body["style"] = tone
-    async with httpx.AsyncClient(timeout=300, transport=transport) as client:
-        reply = await client.post(f"{url}/v1/audio/speech", json=body)
-    if reply.status_code == 400:
-        raise ValueError(refusal(reply))
-    reply.raise_for_status()
-    return reply.content
-
-
-def refusal(reply: httpx.Response) -> str:
-    """The message in a Libra 400 (OpenAI's error shape), else the plain body."""
-    try:
-        return str(reply.json()["error"]["message"])
-    except (ValueError, KeyError, TypeError):
-        return reply.text[:200]

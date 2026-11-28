@@ -65,31 +65,11 @@ def test_engine_settings_keep_a_voice_per_engine(tmp_path, monkeypatch):
     assert voice.get_tts(s) == ("kokoro", "af_heart")  # Kokoro is the default; OpenAI only with a key
     assert voice.set_tts(s, "kokoro") == ("kokoro", "af_heart")
     assert voice.set_tts(s, voice="hf_alpha") == ("kokoro", "hf_alpha")
-    assert voice.set_tts(s, "maya1", "uk_female") == ("kokoro", "hf_alpha")   # Maya1 is hidden: ignored
+    assert voice.set_tts(s, "maya1", "uk_female") == ("kokoro", "hf_alpha")   # Maya1 is gone: ignored
     assert voice.set_tts(s, voice="not-a-voice") == ("kokoro", "hf_alpha")
     assert voice.set_tts(s, "openai") == ("openai", "marin")
     assert voice.set_tts(s, "kokoro") == ("kokoro", "hf_alpha")      # remembered per engine
     assert voice.get_voice(s) == "marin"                               # Talk voice untouched
-
-
-async def test_maya_gets_a_tagged_script_then_local_tts(tmp_path, monkeypatch):
-    s = _store(tmp_path)
-    voice.set_tts(s, "maya1", "in_female")
-    sent = {}
-
-    def handler(req: httpx.Request):
-        if req.url.path.endswith("/models"):
-            return httpx.Response(200, json={"data": [{"id": "google/gemma-4-12b-qat", "state": "loaded", "type": "llm"}]})
-        if req.url.path.endswith("/chat/completions"):
-            sent["model"] = json.loads(req.content)["model"]
-            return httpx.Response(200, json={"choices": [{"message": {"content": "Good news! <excited> Markets are up."}}]})
-        sent["tts"] = json.loads(req.content)
-        return httpx.Response(200, content=b"RIFFwav")
-    t = httpx.MockTransport(handler)
-    script = await voice.maya_script("NIFTY rose 1%.", transport=t)
-    assert "<excited>" in script and sent["model"] == "google/gemma-4-12b-qat"
-    audio = await voice.local_tts("maya1", script, "in_female", transport=t)
-    assert audio == b"RIFFwav" and sent["tts"]["text"].startswith('<description="Realistic female voice') and "<excited>" in sent["tts"]["text"]
 
 
 async def test_a_dictation_session_only_transcribes(tmp_path):
@@ -133,13 +113,14 @@ def test_voices_are_listed_by_who_they_sound_like():
 
 
 def test_without_a_local_voice_kokoro_is_hidden_and_openai_is_the_default(tmp_path, monkeypatch):
-    # An Intel Mac (the installer sets ODIE_VOICE=off, 20 Oct 2026): Kokoro is offered nowhere, OpenAI is the engine.
+    # An Intel Mac (the installer sets ODIE_VOICE=off, 20 Oct 2026) with no voice server answering: the voice server's
+    # models are offered nowhere, OpenAI is the engine.
     monkeypatch.setenv("ODIE_VOICE", "off")
     monkeypatch.setattr(voice, "load_secret", lambda name: None)  # even without an OpenAI key: nothing falls back to Kokoro
     s = _store(tmp_path)
-    assert voice.disabled() == {"maya1", "kokoro"} and voice.default_engine() == "openai"
+    assert voice.disabled() == {"kokoro", "libra-tts"} and voice.default_engine() == "openai"
     assert voice.get_tts(s) == ("openai", "marin")
-    assert voice.set_tts(s, "kokoro") == ("openai", "marin")  # not offered here: ignored, like Maya1
+    assert voice.set_tts(s, "kokoro") == ("openai", "marin")  # no voice server here: ignored
     assert voice.set_tts(s, voice="cedar") == ("openai", "cedar")
     assert [v["id"] for v in voice.podcast_voices(s)] == ["marin", "cedar"]
 
@@ -147,5 +128,5 @@ def test_without_a_local_voice_kokoro_is_hidden_and_openai_is_the_default(tmp_pa
 def test_with_a_local_voice_kokoro_stays_the_default(tmp_path, monkeypatch):
     monkeypatch.setenv("ODIE_VOICE", "on")
     monkeypatch.setattr(voice, "load_secret", lambda name: None)
-    assert voice.disabled() == {"maya1"} and voice.default_engine() == "kokoro"
+    assert voice.disabled() == set() and voice.default_engine() == "kokoro"
     assert voice.get_tts(_store(tmp_path)) == ("kokoro", "af_heart")

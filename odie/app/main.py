@@ -107,19 +107,17 @@ async def _start_voice_worker() -> None:
 
 
 async def _learn_phonon(store: Store) -> None:
-    """Asks Ollama once at launch whether it has Phonon and which voices, so read-aloud's default engine knows before
-    Settings is first opened. With no engine chosen, the default is known only now: no Phonon -> Kokoro is the default,
-    so Odie's own voice server starts here (launch left it alone); Phonon -> it never starts. A missing or slow Ollama
-    is fine: Odie asks again when Settings opens."""
-    from odie import voice, voice_worker
+    """Asks Ollama once at launch whether it has Phonon and which voices, and the voice server which models it has, so
+    read-aloud's default engine knows before Settings is first opened. A missing or slow Ollama or voice server is
+    fine: Odie asks again when Settings opens."""
+    from odie import voice
     try:
         if await voice.phonon_available():
             await voice.phonon_voices()
+        await voice.learn_server_soon(store)  # the voice server's models, asked again until it is up (login order)
         await voice.settle_worker(store)
-        if voice_worker.current is not None and voice.worker_wanted(store):
-            await _start_voice_worker()
     except Exception:  # noqa: BLE001 (voice never decides whether Odie starts)
-        logging.getLogger("odie").info("couldn't ask Ollama about Phonon", exc_info=True)
+        logging.getLogger("odie").info("couldn't ask Ollama or the voice server about voices", exc_info=True)
 
 
 class DeviceGate:
@@ -629,6 +627,9 @@ def create_app(runner=None, store: Store | None = None) -> FastAPI:
         fallback_task = getattr(app.state, "fallback_task", None)
         if fallback_task is not None:
             fallback_task.cancel()
+        voice_task = getattr(app.state, "phonon_task", None)
+        if voice_task is not None:
+            voice_task.cancel()  # may still be asking a voice server that never came up
         await app.state.live.close()
         from odie.browser import close_shared
         await close_shared()

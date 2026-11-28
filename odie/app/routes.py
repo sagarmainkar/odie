@@ -1729,9 +1729,10 @@ class VoiceIn(BaseModel):
     voice: str | None = None
     engine: str | None = None
     reminders_spoken: bool | None = None
-    libra_style: str | None = Field(None, max_length=40)  # Libra's tone when a reply names none; "" for none
-    libra_url: str | None = Field(None, max_length=300)  # where the Libra server answers
-    libra_speed: str | None = Field(None, max_length=20)  # how quickly Libra talks: normal, brisk or quick
+    server_style: str | None = Field(None, max_length=40)  # the tone when a reply names none (a model with styles); "" for none
+    server_url: str | None = Field(None, max_length=300)  # where the voice server (voiced) answers
+    server_speed: str | None = Field(None, max_length=20)  # how quickly a model with styles talks: normal, brisk or quick
+    hear_model: str | None = Field(None, max_length=80)  # which of the voice server's models hears dictation
 
 
 class TtsIn(BaseModel):
@@ -1773,31 +1774,32 @@ async def voice_get(request: Request):
     phonon_ok = await voice.phonon_available()  # Ollama has a phonon model: one quick /api/tags per Settings open
     if phonon_ok:
         await voice.phonon_voices()  # Ollama's list, asked once per process
+    server_ok = await voice.learn_server(store)  # the voice server's models: one quick /v1/models per Settings open
     engine, current = voice.get_tts(store)
     openai_ok = bool(load_secret("OPENAI_API_KEY"))
-    local_ok = await voice.own_server_can_speak() if machine.local_voice_wanted() else False  # not asked for where it can't run
     hidden = voice.disabled()
-    voice_settings = store.get_setting("voice") or {}
-    libra_url = voice.voice_libra.server_url(voice_settings)
-    libra_ok = await voice.voice_libra.available(libra_url)  # one quick /health per Settings open
+    voice_settings = voice.migrated(store.get_setting("voice") or {})
+    hearing = voice.hearing(store)
 
-    def ready(engine_id: str, local: bool) -> bool:
-        """Whether an engine can speak now: Phonon when Ollama has it, Libra when its server answers, Odie's own
-        server when it can, OpenAI with its key. phonon, Ollama has it -> True; libra, nothing on its address ->
-        False; kokoro, voice server not set up -> False; openai, no key -> False."""
+    def ready(engine_id: str) -> bool:
+        """Whether an engine can speak now: Phonon when Ollama has it, a voice server model when the server answers,
+        OpenAI with its key. phonon, Ollama has it -> True; kokoro, nothing on the server's address -> False;
+        openai, no key -> False."""
         if engine_id == "phonon":
             return phonon_ok
-        if engine_id == "libra":
-            return libra_ok
-        return local_ok if local else openai_ok
-    engines = [{"id": k, **v, "available": ready(k, v["local"]), "voices": voice.engine_voices(k, store)}
+        if voice.is_server_engine(engine_id):
+            return server_ok
+        return openai_ok
+    engines = [{"id": k, **v, "available": ready(k), "voices": voice.engine_voices(k, store),
+                "styles": voice.has_styles(k), "server": voice.is_server_engine(k)}
                for k, v in voice.ENGINES.items() if k not in hidden and (v["local"] or openai_ok)]  # OpenAI only with its key
-    # local_voice: whether Odie's own voice is meant to run on this Mac at all (False on an Intel Mac: Settings says why)
+    # local_voice: whether a voice server is expected on this Mac (False on an Intel Mac: Settings says why)
     return {"available": openai_ok, "engine": engine, "voice": current, "talk_voice": voice.get_voice(store), "engines": engines,
             "local_voice": machine.local_voice_wanted(),
-            "libra": {"url": libra_url, "tone": voice.voice_libra.settings_tone(voice_settings) or "",
-                      "tones": voice.voice_libra.TONES, "answering": libra_ok,
-                      "speed": voice.voice_libra.settings_speed(voice_settings), "speeds": list(voice.voice_libra.SPEEDS)},
+            "server": {"url": voice.server_url(store), "answering": server_ok,
+                       "tone": voice.voice_libra.settings_tone(voice_settings) or "", "tones": voice.voice_libra.TONES,
+                       "speed": voice.voice_libra.settings_speed(voice_settings), "speeds": list(voice.voice_libra.SPEEDS),
+                       "hear_model": hearing[1] if hearing else "", "hear_models": voice.hearing_models()},
             "reminders_spoken": voice.reminders_spoken(store),
             "voices": voice.VOICES, "models": {"tts": voice.tts_model(), "stt": voice.stt_model(), "realtime": voice.REALTIME_MODEL}}
 
@@ -1806,24 +1808,29 @@ async def voice_get(request: Request):
 async def voice_put(body: VoiceIn, request: Request):
     from odie import voice
     store = request.app.state.store
-    if body.libra_url is not None:
-        problem = voice.voice_libra.url_problem(body.libra_url)
+    if body.server_url is not None:
+        problem = voice.voice_url.url_problem(body.server_url)
         if problem is not None:
             raise HTTPException(422, problem)
-        voice.set_libra(store, url=body.libra_url.strip())
-    if body.libra_style is not None:
-        tone = body.libra_style.strip().lower()
+        voice.set_server(store, url=voice.voice_url.base(body.server_url))
+        await voice.learn_server(store)  # the new server's models become the engines
+    if body.server_style is not None:
+        tone = body.server_style.strip().lower()
         if tone and tone not in voice.voice_libra.TONES:
-            raise HTTPException(422, f"Libra has no tone called {body.libra_style!r}.")
-        voice.set_libra(store, tone=tone)
-    if body.libra_speed is not None:
-        speed = body.libra_speed.strip().lower()
+            raise HTTPException(422, f"There's no tone called {body.server_style!r}.")
+        voice.set_server(store, style=tone)
+    if body.server_speed is not None:
+        speed = body.server_speed.strip().lower()
         if speed not in voice.voice_libra.SPEEDS:
-            raise HTTPException(422, f"Libra has no speed called {body.libra_speed!r}.")
-        voice.set_libra(store, speed=speed)
+            raise HTTPException(422, f"There's no speed called {body.server_speed!r}.")
+        voice.set_server(store, speed=speed)
+    if body.hear_model is not None:
+        model = body.hear_model.strip()
+        if model not in voice.hearing_models():
+            raise HTTPException(422, f"The voice server has no hearing model called {body.hear_model!r}.")
+        voice.set_hearing(store, model)
     engine, v = voice.set_tts(store, body.engine, body.voice)
-    await voice.settle_worker(store)  # away from Kokoro: Odie's own voice server stops
-    request.app.state.runner.invalidate_prompt()  # to or from Libra: the voice markup rule follows on the next message
+    request.app.state.runner.invalidate_prompt()  # to or from a model with styles: the voice markup rule follows
     if engine == "openai" and body.voice:
         voice.set_voice(store, body.voice)  # an OpenAI voice is also Talk's voice
     if body.reminders_spoken is not None:
@@ -1833,7 +1840,7 @@ async def voice_put(body: VoiceIn, request: Request):
 
 def _preview_path(request: Request, engine: str, voice_id: str, how: str = "") -> Path:
     """Where a voice's preview is kept: one file per engine, voice, assistant name and user name (a rename makes a new
-    one), and for Libra per tone and speed (`how`, "wry-brisk"). The voice id goes in as a slug: Phonon's names have
+    one), and for a model with styles per tone and speed (`how`, "wry-brisk"). The voice id goes in as a slug: Phonon's names have
     spaces, accents and brackets ("Noémie (phonon:fr)")."""
     from odie import persona, profile
     name = persona.get(request.app.state.store)["name"]
@@ -1863,29 +1870,31 @@ async def _preview(request: Request, engine: str, voice_id: str, tone: str | Non
     name = persona.get(store)["name"]
     user = profile.get(store)["user_name"]
     how = ""
-    if engine == "libra":
+    styled = voice.has_styles(engine)
+    if styled:
         tone = _libra_preview_tone(tone)
-        speed = _libra_preview_speed(speed, store.get_setting("voice") or {})
+        speed = _libra_preview_speed(speed, voice.migrated(store.get_setting("voice") or {}))
         how = f"{tone}-{speed}"
     path = _preview_path(request, engine, voice_id, how)
     ext = path.suffix.lstrip(".")
     if not path.exists():
         hi = f"Hi {user}" if user else "Hi"
-        line = (f"{hi}! <laugh> I'm {name}. This is how I sound when I read to you." if engine == "maya1"
-                else f"{hi}, I'm {name}. This is how I'll sound when I read to you.")
+        line = f"{hi}, I'm {name}. This is how I'll sound when I read to you."
         try:
             if engine == "openai":
                 audio = await voice.tts(line, voice_id, key=_voice_guard())
-            elif engine == "libra":
-                audio = await voice.libra_tts(store, _libra_preview_line(hi, name), voice_id, tone=tone, speed=speed)
+            elif styled:
+                audio = await voice.server_tts(store, _libra_preview_line(hi, name), engine, voice_id, tone=tone, speed=speed)
+            elif voice.is_server_engine(engine):
+                audio = await voice.server_tts(store, line, engine, voice_id)
             else:
-                audio = await voice.local_tts(engine, line, voice_id)
+                audio = await voice.phonon_tts(line, voice_id)
         except voice.VoiceUnavailable as e:
             raise HTTPException(503, str(e))
         except httpx.HTTPError as e:
             raise HTTPException(502, f"{engine} preview failed: {type(e).__name__}")
         path.write_bytes(audio)
-    kept_for = "no-cache" if engine == "libra" else "public, max-age=86400"  # Libra's changes with its speed setting
+    kept_for = "no-cache" if styled else "public, max-age=86400"  # a styled model's changes with its speed setting
     return Response(path.read_bytes(), media_type="audio/mpeg" if ext == "mp3" else "audio/wav", headers={"Cache-Control": kept_for})
 
 
@@ -1983,14 +1992,26 @@ async def tts_route(body: TtsIn, request: Request):
 
 
 @router.post("/stt")
-async def stt_route(file: UploadFile = File(...)):
+async def stt_route(request: Request, file: UploadFile = File(...)):
+    """Dictation: the recording heard on the voice server, else by OpenAI when its key is there. With neither, 503
+    saying how to get one, so the app can say it and the phone's own dictation is still there."""
     from odie import voice
-    key = _voice_guard()
     data = await file.read()
     if not data:
         raise HTTPException(400, "empty recording")
+    filename = file.filename or "speech.webm"
+    mime = file.content_type or "audio/webm"
     try:
-        text = await voice.stt(data, file.filename or "speech.webm", file.content_type or "audio/webm", key=key)
+        return {"text": await voice.hear(request.app.state.store, data, filename, mime)}
+    except voice.VoiceUnavailable as e:
+        problem = str(e)
+    try:
+        key = voice.api_key()
+    except voice.VoiceUnavailable:
+        log.info("dictation: %s; no OpenAI key either", problem)
+        raise HTTPException(503, "To dictate, start your voice server (voiced start) or add an OpenAI key in Settings.")
+    try:
+        text = await voice.stt(data, filename, mime, key=key)
     except httpx.HTTPError as e:
         raise HTTPException(502, f"OpenAI transcription failed: {type(e).__name__}")
     return {"text": text}

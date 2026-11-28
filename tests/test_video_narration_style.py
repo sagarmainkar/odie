@@ -70,7 +70,7 @@ async def test_kokoro_never_sees_a_style(store):
     await narrate.narrate(store, ["One.", "Two | three."], transport=kokoro(plain, 0.5))
     await narrate.narrate(store, ["One.", "Two | three."], transport=kokoro(styled, 0.5), style=SCIENCE)
     assert styled == plain  # the same requests, word for word
-    assert all(set(call) == {"engine", "text", "voice", "lang"} for call in styled)  # no instructions of any kind
+    assert all(set(call) == {"engine", "text", "voice"} for call in styled)  # no instructions of any kind
 
 
 @pytest.fixture

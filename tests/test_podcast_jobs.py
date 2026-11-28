@@ -13,7 +13,6 @@ from odie.agent.tools.files import workspace
 from odie.making import jobs, podcast
 from odie.making import podcast_writer as writer
 from odie.store.db import Store
-from tests.test_media import make_wav
 
 SCRIPT = "\n".join(f"Host {'B' if n % 2 else 'A'}: {' '.join(['tides'] * 27)} end." for n in range(10))  # 280 words
 
@@ -53,11 +52,10 @@ def world(isolated_settings, tmp_path, monkeypatch):
 
 
 def kokoro(seen, seconds=0.5):
-    """Odie's local voice, answering every turn with `seconds` of sound and recording what it was asked."""
-    def handler(request):
-        seen.append(json.loads(request.content))
-        return httpx.Response(200, content=make_wav(seconds))
-    return httpx.MockTransport(handler)
+    """The voice server, answering every turn with `seconds` of sound and recording what it was asked
+    (tests.test_speak.kokoro)."""
+    from tests.test_speak import kokoro as voice_server
+    return voice_server(seen, seconds)
 
 
 def down():
@@ -114,7 +112,7 @@ async def test_a_voice_that_doesnt_answer_is_said_in_one_line(world):
     _chat, _pushes, store = world
     with pytest.raises(voice.VoiceUnavailable) as e:
         await podcast.speak_podcast(store, [("Host A", "Hello."), ("Host B", "Hi.")], "Tides", transport=down())
-    assert str(e.value) == "Odie's voice didn't answer (Settings → Voice): Connection refused"
+    assert str(e.value) == "The voice server isn't answering at http://127.0.0.1:9: start it with `voiced start`."
 
 
 # Through the queue.
@@ -142,8 +140,8 @@ async def test_a_voice_that_cant_speak_is_said_in_the_chat(world):
     job = topic_job()
     await jobs.run(job, browser=object(), transport=down(), turn=submits)
     [(text, _session_id, posted)] = chat.posts
-    assert text == ("The podcast about Tides, explained didn't finish: Odie's voice didn't answer (Settings → Voice): "
-                    "Connection refused.")
+    assert text == ("The podcast about Tides, explained didn't finish: The voice server isn't answering at "
+                    "http://127.0.0.1:9: start it with `voiced start`.")
     assert posted is None
     assert json.loads((job.folder / "job.json").read_text())["status"] == "failed"
 
