@@ -634,12 +634,15 @@ def forget_personality(store, pid: str) -> None:
 
 
 def line(loop: dict, evidence: list[dict]) -> str:
-    """One loop as the model reads it among the open ones: id, title, kind, owner, state, due, refs and the last
-    evidence. "#3 app #49 Threads newest first · pull request · owner odie · waiting · refs example/app#49 · last:
-    New commits pushed"."""
+    """One loop as the model reads it among the open ones: id, title, kind, owner, state, due, what Odie knows of it,
+    refs and the last evidence. "#3 app #49 Threads newest first · pull request · owner odie · waiting · refs
+    example/app#49 · last: New commits pushed"; a bill whose mail offered a discount -> "… · known: ₹4,240 due 10-Dec;
+    ₹4,200 if paid by 30-Nov · …", so a ₹4,200 receipt can be matched to it (22 Nov: without it, it wasn't)."""
     bits = [f"#{loop['id']} {loop['title']}", loop["kind"] or "?", f"owner {loop['owner']}", loop["state"]]
     if loop.get("due_at"):
         bits.append(f"due {loop['due_at'][:16]}")
+    if loop.get("result"):
+        bits.append("known: " + loop["result"][:160])
     if loop["refs"]:
         bits.append("refs " + ", ".join(loop["refs"][:4]))
     if evidence:

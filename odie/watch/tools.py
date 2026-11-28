@@ -182,7 +182,8 @@ def watch_tools(check: Check) -> list[FunctionTool]:
     async def bills_and_orders() -> dict:
         """The open reminders that are bills or orders (id, title, due) and the next 45 days' calendar events that are
         (id, title, start): what a payment confirmation or an order update is matched to. A payment closes a bill
-        only when the biller and the amount both match."""
+        of the same biller when the amount matches or is one the bill offered (an early-payment price), or the
+        consumer or account number matches."""
         store = check.fetcher.store
         reminders = bills.open_bills_and_orders(store, check.fetcher.owner)
         ahead = await check.fetcher.events_ahead(BILLS_DAYS)

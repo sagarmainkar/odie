@@ -453,3 +453,93 @@ async def test_recent_mail_asks_apple_mail_for_a_day_and_the_most(store, monkeyp
     await fetch.Fetcher(store, NOW).recent_mail(hours=12, most=7)
     [(tool, args)] = asked
     assert tool == "mac_mail_new" and args == {"since": (NOW - timedelta(hours=12)).isoformat(timespec="seconds"), "limit": 7}
+
+
+class FakeGmail:
+    """A Gmail-style search that answers like the real one: newest first, at most max_results, honouring the query's
+    after: and before: (Unix seconds). Every query it was asked is kept."""
+
+    def __init__(self, mails: list[dict]):
+        self.mails = mails
+        self.queries: list[str] = []
+
+    async def call(self, src, tool, args):
+        from types import SimpleNamespace
+        query = args["query"]
+        self.queries.append(query)
+        after = int(query.split("after:")[1].split()[0])
+        before = None
+        if "before:" in query:
+            before = int(query.split("before:")[1].split()[0])
+        hits = []
+        for m in self.mails:
+            at = int(datetime.fromisoformat(m["date"]).timestamp())
+            if at > after and (before is None or at < before):
+                hits.append(m)
+        hits.sort(key=lambda m: m["date"], reverse=True)
+        page = hits[:args.get("max_results", 10)]
+        return SimpleNamespace(is_error=False, text=json.dumps({"messages": page}))
+
+
+def backlog(count: int, start: datetime) -> list[dict]:
+    """`count` mails a minute apart from `start`, the oldest a payment receipt and the rest newsletters."""
+    out = []
+    for n in range(count):
+        subject = f"Newsletter {n}"
+        if n == 0:
+            subject = "Online Payment Receipt for your electricity bill"
+        at = (start + timedelta(minutes=n)).isoformat()
+        out.append({"id": f"g{n}", "from": "news@example.com", "subject": subject, "date": at, "snippet": "hi"})
+    return out
+
+
+def gmail_source(store):
+    src = sources.Source("mail", "gmail", "Gmail", "plain", "gmail_search", {"max_results": 25}, query_param="query")
+    store.set_setting(sources.KEY, {"sources": [src.as_dict()]})
+
+
+async def test_a_backlog_after_an_outage_is_read_back_whole_and_bills_come_first(store, monkeypatch):
+    # 40 mails came while Gmail was out; the oldest is the payment receipt. The search pages 25 at a time.
+    gmail_source(store)
+    last_good = NOW - timedelta(hours=48)
+    store.set_setting(fetch.STATE, {"seen": [], "sources": {"mail:gmail": {"ok": True, "last_ok": last_good.isoformat()}}})
+    fake = FakeGmail(backlog(40, last_good + timedelta(hours=1)))
+    monkeypatch.setattr(fetch.Fetcher, "_call", lambda self, src, tool, args, timeout=None: fake.call(src, tool, args))
+
+    first = fetch.Fetcher(store, NOW)
+    judged = await first.new_mail()
+    assert len(fake.queries) == 2 and "before:" in fake.queries[1]  # a full page: it read further back
+    assert len(judged) == 25 and "g0" in [m.id for m in judged]  # the receipt is judged now, not dropped
+    assert len(first._left) == 15
+    first.commit()
+    state = store.get_setting(fetch.STATE)
+    assert state["sources"]["mail:gmail"]["last_ok"] == last_good.isoformat()  # held: mail still waits
+    assert set(state["seen"]) == {m.id for m in judged}  # the left ones stay unseen
+
+    second = fetch.Fetcher(store, NOW + timedelta(minutes=30))
+    rest = await second.new_mail()
+    assert {m.id for m in rest} == {f"g{n}" for n in range(1, 40)} - {m.id for m in judged}
+    second.commit()
+    assert store.get_setting(fetch.STATE)["sources"]["mail:gmail"]["last_ok"] == second.now.isoformat()
+
+
+async def test_a_quiet_half_hour_is_one_read(store, monkeypatch):
+    gmail_source(store)
+    fake = FakeGmail(backlog(3, NOW - timedelta(minutes=20)))
+    monkeypatch.setattr(fetch.Fetcher, "_call", lambda self, src, tool, args, timeout=None: fake.call(src, tool, args))
+    f = fetch.Fetcher(store, NOW)
+    assert len(await f.new_mail()) == 3 and len(fake.queries) == 1 and not f._left
+
+
+def test_first_to_judge_puts_bills_first_then_the_newest():
+    mails = fetch.parse_mail(json.dumps({"messages": backlog(30, NOW)}), "mail:gmail")
+    now, later = fetch.first_to_judge(mails, 25)
+    assert now[-1].id == "g0" and [m.id for m in now[:24]] == [f"g{n}" for n in range(29, 5, -1)]
+    assert [m.id for m in later] == ["g5", "g4", "g3", "g2", "g1"]
+
+
+def test_older_than_is_a_second_past_the_oldest():
+    page = fetch.parse_mail(json.dumps({"messages": backlog(2, NOW)}), "mail:gmail")
+    assert fetch.older_than(page) == int(NOW.timestamp()) + 1
+    undated = fetch.parse_mail(json.dumps({"messages": [{"id": "x", "subject": "s", "date": "sometime"}]}), "m")
+    assert fetch.older_than(undated) is None

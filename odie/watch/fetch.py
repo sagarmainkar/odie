@@ -20,7 +20,10 @@ from odie.watch.sources import Source, saved
 log = logging.getLogger("odie.watch")
 STATE = "watch.state"
 MAX_RETRIES = 2  # a check whose model turn failed leaves its mail for the next check, this many times per mail
-MAX_MAIL = 25
+MAX_MAIL = 25  # the most new mails one check hands the model; the rest wait for the next check (left_for_later)
+PAGES_BACK = 20  # a source's pages one check may read back after a gap (an outage, a busy hour): 20 x 25 = 500 mails
+PAGE_SIZE = 10  # what a Gmail-style search returns when the source doesn't fix max_results
+MAC_MOST = 100  # the most Apple Mail gives in one read (odie.mac.mail caps it there)
 SNIPPET = 300
 BODY = 6000
 SAFE_NAME = re.compile(r"^[^/\\\x00]{1,200}$")
@@ -193,6 +196,28 @@ def when_of(at: str) -> datetime:
 def newest_first(mails: list[Mail]) -> list[Mail]:
     """The mail newest first by when it came (when_of), not by its date's text, which put Wednesday before Tuesday."""
     return sorted(mails, key=lambda m: when_of(m.at), reverse=True)
+
+
+def older_than(page: list[Mail]) -> int | None:
+    """Where the next read back starts: a second past the page's oldest mail (Gmail's `before:` leaves that second
+    out, and another mail may share it), as a Unix time. A page whose oldest came at 10:00:07 -> 10:00:08; a page
+    with no date that can be read -> None."""
+    oldest = min(when_of(m.at) for m in page)
+    if oldest == datetime.min.replace(tzinfo=UTC):
+        return None
+    return int(oldest.timestamp()) + 1
+
+
+def first_to_judge(mails: list[Mail], most: int) -> tuple[list[Mail], list[Mail]]:
+    """The mail one check judges now and the mail left for the next: bills, payments and orders first (their subject
+    says so, bills.looks_like_bill_or_order), then the newest; at most `most` now, each list newest first.
+    30 new mails, a payment receipt the oldest of them, most 25 -> the receipt and the 24 newest now, 5 left;
+    8 new mails -> all 8 now, none left."""
+    # sorted() is stable: bills come first and each group stays newest first
+    by_kind = sorted(newest_first(mails), key=lambda m: not bills.looks_like_bill_or_order(m.subject))
+    now = newest_first(by_kind[:most])
+    later = newest_first(by_kind[most:])
+    return now, later
 
 
 def fold_mail(mails: list[Mail]) -> list[Mail]:
@@ -440,6 +465,7 @@ class Fetcher:
         self.statuses: dict[str, dict] = {}
         self.first: set[str] = set()
         self._mail: dict[str, Mail] = {}  # this check's new mail: marked seen at commit
+        self._left: set[str] = set()  # new mail past MAX_MAIL, left unseen for the next check (new_mail)
         self._found: dict[str, Mail] = {}  # older mail a search turned up: openable, never marked seen
         self._events: list[Event] = []
         self._servers = None
@@ -490,34 +516,77 @@ class Fetcher:
             return a_day_back
 
     async def new_mail(self) -> list[Mail]:
+        """The mail that came since each source's last good read and this watch hasn't seen, the ones to judge now:
+        at most MAX_MAIL, bills and payments first (first_to_judge). The rest are left unseen for the next check, and
+        the mail sources' last good read stays put until they are all judged (commit), so a gap never loses mail.
+        23 Nov: Gmail was out for two days, 120 mails waited, the check took the newest 25 and called itself caught
+        up; the electricity payment receipt among the older ones was never read."""
         seen = set(self.state.get("seen") or [])
         got: list[Mail] = []
         for src in (s for s in saved(self.store, self.owner) if s.kind == "mail"):
             since_dt = self._since(src)
-            args = dict(src.fixed)
-            query = f"after:{int(since_dt.timestamp())}"
-            if src.style == "native":
-                args = {"since": since_dt.isoformat(timespec="seconds"), "limit": MAX_MAIL}
-            elif src.style == "zapier":
-                args["params"] = {**(args.get("params") or {}), src.query_param: query}
-            elif src.query_param:
-                args[src.query_param] = query
             try:
-                res = await self._call(src, src.tool, args)
-                if res.is_error:
-                    raise CallError(res.text[:200] or "the app said no")
-                mails = parse_mail(res.text, src.id)
+                mails = await self._read_back(src, since_dt)
                 self._ok(src, True)
             except CallError as e:
                 self._ok(src, False, str(e))
                 continue
             got += [m for m in mails if m.id not in seen]
         got = fold_mail(got)  # Gmail's and Apple Mail's copies of one message: one row, both badges
-        for m in got:
+        now, later = first_to_judge(got, MAX_MAIL)
+        for m in now:
             self._mail[m.id] = m
-        got = newest_first(got)
-        log.info("watch: %d new mails", len(got))
-        return got[:MAX_MAIL]
+        self._left = {m.id for m in later}
+        if later:
+            log.info("watch: %d new mails, %d left for the next check", len(now), len(later))
+        else:
+            log.info("watch: %d new mails", len(now))
+        return now
+
+    async def _read_back(self, src: Source, since_dt: datetime) -> list[Mail]:
+        """Every mail one source has since `since_dt`, reading further back while its pages come back full: a
+        Gmail-style search answers newest first, one page at a time, so a full page asks again for the mail before its
+        oldest (`before:`), up to PAGES_BACK pages. 30 mails since the last read, pages of 25 -> two reads, all 30;
+        8 mails -> one read. Apple Mail is read once, up to MAC_MOST. A read that fails raises CallError."""
+        if src.style == "native":
+            args = {"since": since_dt.isoformat(timespec="seconds"), "limit": MAC_MOST}
+            return await self._read_page(src, args)
+        page_size = int(src.fixed.get("max_results") or PAGE_SIZE)
+        after = f"after:{int(since_dt.timestamp())}"
+        got: dict[str, Mail] = {}
+        before: int | None = None
+        for _ in range(PAGES_BACK):
+            query = after
+            if before is not None:
+                query = f"{after} before:{before}"
+            page = await self._read_page(src, self._query_args(src, query))
+            fresh = [m for m in page if m.id not in got]
+            for m in fresh:
+                got[m.id] = m
+            if len(page) < page_size or not fresh:
+                return list(got.values())  # the last page: everything since the last read is in
+            next_before = older_than(page)
+            if next_before is None or (before is not None and next_before >= before):
+                return list(got.values())  # the page's dates can't take the read further back
+            before = next_before
+        log.info("watch: %s has more than %d pages of new mail; the oldest wait for a later check", src.id, PAGES_BACK)
+        return list(got.values())
+
+    def _query_args(self, src: Source, query: str) -> dict:
+        """The arguments of one search through a Gmail-style source: its fixed ones and the query in its own place."""
+        args = dict(src.fixed)
+        if src.style == "zapier":
+            args["params"] = {**(args.get("params") or {}), src.query_param: query}
+        elif src.query_param:
+            args[src.query_param] = query
+        return args
+
+    async def _read_page(self, src: Source, args: dict) -> list[Mail]:
+        """One read of a mail source, parsed; the app saying no raises CallError."""
+        res = await self._call(src, src.tool, args)
+        if res.is_error:
+            raise CallError(res.text[:200] or "the app said no")
+        return parse_mail(res.text, src.id)
 
     async def _mail_since(self, since_dt: datetime, limit: int, query_tail: str, what: str) -> list[Mail]:
         """The mail from every mail source since `since_dt`, as each app reads it (Gmail style: `after:<ts>` plus
@@ -842,7 +911,8 @@ class Fetcher:
         the next check reads the same mail again; a mail left this way MAX_RETRIES times is marked seen after all,
         so a model that keeps failing doesn't read the same bill forever.
           turn ok, mail m1 -> seen [m1], last_ok now;  turn failed, m1 (1st time) -> seen [], last_ok as before;
-          turn failed again, m1 (3rd time) -> seen [m1]"""
+          turn failed again, m1 (3rd time) -> seen [m1];
+          40 new mails, 25 judged -> those 25 seen, 15 left unseen, last_ok as before (the next check reads them)"""
         seen_before = self.state.get("seen") or []
         retries = {k: int(v) for k, v in (self.state.get("retries") or {}).items()}
         kept: list[str] = []  # this check's mail left for the next check
@@ -873,8 +943,8 @@ class Fetcher:
             prev = srcs.get(sid) or {}
             if st["ok"]:
                 fails = 0
-                # mail kept for the next check must come back from the source: its last good read stays put
-                holds_mail = bool(kept) and st.get("kind") == "mail"
+                # mail kept or left for the next check must come back from the source: its last good read stays put
+                holds_mail = bool(kept or self._left) and st.get("kind") == "mail"
                 last_ok = prev.get("last_ok") if holds_mail else st["at"]
             else:
                 fails = int(prev.get("fails", 0)) + 1

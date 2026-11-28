@@ -26,6 +26,8 @@ from pathlib import Path
 
 from odie.agent.callbacks import wrap_untrusted
 from odie.loops import budget, findings, github, ledger, playbooks
+from odie.watch import bills
+from odie.watch.fetch import address_of
 
 log = logging.getLogger("odie.loops")
 SKILL = Path(__file__).parent / "skill" / "SKILL.md"  # the consolidate skill: the owner reads and edits it
@@ -478,13 +480,107 @@ def finished_twin(store, pid: str, now: datetime, found: dict) -> dict | None:
     return None
 
 
+def numbers_in(text: str) -> tuple[set[str], set[str]]:
+    """The amounts (₹, Rs or INR before them; commas and paise dropped) and the long numbers (6+ digits: consumer and
+    account numbers) in a text. "Pay bill ₹4,240; ₹4,200 if early, consumer 170203832411" ->
+    ({"4240", "4200"}, {"170203832411"}); "Lunch" -> (set(), set())."""
+    amounts = set()
+    for match in bills.AMOUNT.finditer(text or ""):
+        number = re.search(r"\d[\d,]*", match.group(0))  # after the mark: "Rs.4240" -> "4240", not ".4240"
+        digits = ""
+        if number:
+            digits = number.group(0).replace(",", "")
+        if digits:
+            amounts.add(digits)
+    long_numbers = set(re.findall(r"\d{6,}", (text or "").replace(",", "")))
+    return amounts, long_numbers
+
+
+def payment_fits(found: dict, loop: dict) -> bool:
+    """Whether a payment may close this loop, checked by code because the model guesses: when the loop is a bill and
+    the finding names an amount or a consumer number, one of them must be written in the bill (its title, what Odie
+    knows of it, its mail's subject or gist). Anything else (not a bill, a finding with no numbers) is the model's call.
+      ₹4,200 receipt, bill "₹4,240 due 10-Dec; ₹4,200 if paid by 30-Nov" -> True (the early-payment price)
+      receipt for consumer 170203832411, bill mail subject naming 170203832411 -> True
+      ₹3,150 receipt for consumer 170299990000, that same bill -> False: it adds to the bill, never closes it
+      "you replied 20 Nov" closing a reply owed -> True (not a bill)"""
+    if (loop.get("kind") or "").lower() != "bill":
+        return True
+    paid_amounts, paid_numbers = numbers_in(paid_text_of(found))
+    if not paid_amounts and not paid_numbers:
+        return True
+    return numbers_match(found, loop)
+
+
+def paid_text_of(found: dict) -> str:
+    """Where a payment finding names its amount and consumer number: its title, done, why and its mail's subject."""
+    card = found.get("card") or {}
+    return " ".join([found.get("title") or "", found.get("done") or "", found.get("why") or "",
+                     str(card.get("subject") or "")])
+
+
+def numbers_match(found: dict, loop: dict) -> bool:
+    """Whether a payment and a bill share an amount or a long number (a consumer or account number), the bill's
+    title, what Odie knows of it, and its mail's subject and gist read together. ₹4,200 paid, bill "₹4,240 due;
+    ₹4,200 if paid early" -> True; consumer 170203832411 on both -> True; ₹3,150 for another consumer -> False."""
+    paid_amounts, paid_numbers = numbers_in(paid_text_of(found))
+    card = loop.get("card") or {}
+    bill_text = " ".join([loop.get("title") or "", loop.get("result") or "", str(card.get("subject") or ""),
+                          str(card.get("gist") or "")])
+    bill_amounts, bill_numbers = numbers_in(bill_text)
+    amount = card.get("amount") or {}
+    if isinstance(amount, dict) and amount.get("value") is not None:
+        bill_amounts.add(str(int(float(amount["value"]))))
+    return bool(paid_amounts & bill_amounts) or bool(paid_numbers & bill_numbers)
+
+
+def biller_of(card: dict) -> str:
+    """The sender's domain on a card, the part that names the biller: "msedcl_ebill@mahadiscom.in" and
+    "msedcl_helpdesk@mahadiscom.in" -> "mahadiscom.in"; "alerts@hdfcbank.co.in" -> "hdfcbank.co.in"; none -> ""."""
+    sender = str(card.get("sender") or card.get("from") or "").lower()
+    address = address_of(sender).lower()
+    if "@" not in address:
+        return ""
+    labels = address.split("@", 1)[1].strip(">").split(".")
+    keep = 2
+    if len(labels) >= 3 and labels[-2] in ("co", "com", "org", "net", "gov", "ac"):
+        keep = 3
+    return ".".join(labels[-keep:])
+
+
+def paid_bill(store, pid: str, found: dict) -> dict | None:
+    """The open bill a payment finding settles, found by code because the model may call the receipt new: the one
+    open bill from the same biller (biller_of) that shares its amount or consumer number (numbers_match). None when
+    the finding isn't a payment, or no bill or more than one fits.
+      MSEDCL receipt ₹4,200, consumer 170203832411; open bill #144 from mahadiscom.in naming ₹4,200 -> #144
+      the same receipt with two open MSEDCL bills both naming it -> None (the model decides)
+      a "reply owed" finding -> None"""
+    if not found.get("done") or (found.get("kind") or "").lower() != "bill" or found.get("weak"):
+        return None
+    biller = biller_of(found.get("card") or {})
+    if not biller:
+        return None
+    fits = []
+    for loop in ledger.open_loops(store, pid):
+        if (loop["kind"] or "").lower() != "bill" or loop["playbook"]:
+            continue
+        if biller_of(loop["card"]) == biller and numbers_match(found, loop):
+            fits.append(loop)
+    if len(fits) == 1:
+        return fits[0]
+    return None
+
+
 def verdict_for(store, pid: str, now: datetime, found: dict, answer: dict | None,
                 hint: dict) -> tuple[str, dict | None, dict]:
     """What code does with one finding, from the model's answer and the shortcut's hint, with the rails (this
     module's notes). Returns (what, the loop it is about or None, the answer to use):
       "nothing" -> ("skip", None); for GitHub's mail about a PR an open loop holds -> ("add", that loop): news only
       "same as his own task" -> ("skip", None)
-      "same"/"closes" an open loop it may reach -> ("add" / "close", that loop)
+      a payment that code ties to one open bill of the same biller (paid_bill) -> ("close", that bill), whatever
+          the answer
+      "same"/"closes" an open loop it may reach -> ("add" / "close", that loop); a payment whose amount and
+          consumer number the bill never names -> ("add", that bill) (payment_fits)
       "same"/"closes" a closed loop still remembered -> ("quiet", that loop)
       "new" while the hint names a closed loop -> ("new", that loop) only when "after" names that very loop and the
           finding brings something that loop doesn't know (brings_news), else ("quiet", that loop): a sloppy "new"
@@ -496,6 +592,9 @@ def verdict_for(store, pid: str, now: datetime, found: dict, answer: dict | None
       no answer (or a loop it can't reach) -> by the hint: open -> add (close, when the finding says it's done);
           closed -> quiet; several -> new; else ("new", None)"""
     answer = answer or {}
+    settled = paid_bill(store, pid, found)
+    if settled is not None:  # code's own match: a receipt closes its bill whatever the model called it
+        return "close", settled, {"why": answer.get("why") or found["done"]}
     verdict = answer.get("is", "")
     if verdict == "nothing":
         held = ledger.get(store, hint["open"]) if "open" in hint else None
@@ -513,7 +612,7 @@ def verdict_for(store, pid: str, now: datetime, found: dict, answer: dict | None
         if loop is not None and loop["state"] not in ledger.OPEN:
             return "quiet", loop, answer
         if loop is not None:
-            if verdict == "closes" and not found.get("weak"):
+            if verdict == "closes" and not found.get("weak") and payment_fits(found, loop):
                 return "close", loop, answer
             return "add", loop, answer  # a weak finding never closes a loop: it only adds its words
     if verdict == "new":
