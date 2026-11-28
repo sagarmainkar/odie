@@ -95,7 +95,7 @@ function VoiceBody({ v, playing, play, kept, forget, save }: BodyProps) {
           {v.engines.map((e) => (
             <button key={e.id} role="radio" aria-checked={e.id === v.engine} disabled={!e.available} onClick={() => save({ engine: e.id })}
               className={`relative flex-1 h-11 rounded-inner text-ui font-medium disabled:opacity-40 ${e.id === v.engine ? "text-ink" : "text-muted"}`}>
-              {e.id === v.engine && <motion.span layoutId="engine-seg" transition={{ duration: 0.2 }} className="absolute inset-0 rounded-inner bg-surface" style={{ boxShadow: "var(--t-shadow-card)" }} />}
+              {e.id === v.engine && <motion.span layoutId="engine-seg" transition={{ duration: 0.2 }} className="seg-pill absolute inset-0 rounded-inner bg-surface" style={{ boxShadow: "var(--t-shadow-card)" }} />}
               <span className="relative">{e.label}</span>
             </button>
           ))}
