@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { LIBRA_DOWN_TEXT, NO_VOICE_TEXT, PULL_PHONON_TEXT, engineLine, libraToneLabel, showLibra, voiceGroups, voiceRow, voiceSection, type VoiceInfo } from "./voiceSettings";
+import { NO_VOICE_TEXT, PULL_PHONON_TEXT, SERVER_DOWN_TEXT, engineLine, libraToneLabel, serverParts, voiceGroups, voiceRow, voiceSection, type VoiceInfo } from "./voiceSettings";
 
 const local = { id: "kokoro", label: "Odie's voice", note: "", local: true, available: true, voices: [] };
 const cloud = { id: "openai", label: "Cloud", note: "", local: false, available: true, voices: [] };
@@ -8,7 +8,7 @@ const base: VoiceInfo = { engine: "", voice: "", engines: [], models: { tts: "",
 describe("the voice section", () => {
   it("shows a plain line, and no picker, when there is no engine at all", () => {
     expect(voiceSection(base)).toEqual({ picker: false, note: NO_VOICE_TEXT });
-    expect(NO_VOICE_TEXT).toBe("No voice yet: turn on Odie's own voice at install (ODIE_VOICE) or add an OpenAI key in Settings → Providers.");
+    expect(NO_VOICE_TEXT).toBe("No voice yet: start your voice server (voiced) or add an OpenAI key in Settings → Providers.");
   });
 
   it("shows the picker when an engine exists, picking the chosen one or the first", () => {
@@ -43,7 +43,7 @@ describe("the voice picker's groups and engine line", () => {
     expect(engineLine(phonon)).toEqual({ pill: null, text: PULL_PHONON_TEXT });
     expect(PULL_PHONON_TEXT).toContain("run `ollama pull phonon`");
     expect(engineLine({ ...phonon, available: true })).toEqual({ pill: "on this computer", text: "Quick." });
-    expect(engineLine({ ...local, available: false }).text).toBe("The local voice service isn't running: odie restart starts it.");
+    expect(engineLine({ ...local, available: false }).text).toBe(SERVER_DOWN_TEXT);
     expect(engineLine({ ...cloud, note: "Cloud voices." })).toEqual({ pill: "leaves this computer", text: "Cloud voices." });
   });
 });
@@ -75,15 +75,23 @@ describe("Settings' Voice row", () => {
   });
 });
 
-describe("Libra in Settings → Voice", () => {
-  const libra = { url: "http://127.0.0.1:8794", tone: "", tones: ["warm", "wry"], answering: true };
+describe("the voice server in Settings → Voice", () => {
+  const server = { url: "http://127.0.0.1:12000", tone: "", tones: ["warm", "wry"], answering: true, speed: "brisk",
+                   speeds: ["normal", "brisk"], hear_model: "parakeet", hear_models: ["parakeet", "whisper-base"] };
   const base = { engine: "phonon", voice: "zoey", engines: [], models: { tts: "", realtime: "" } };
+  const kokoro = { id: "kokoro", label: "Kokoro", note: "", local: true, available: true, voices: [], server: true, styles: false };
+  const libra = { ...kokoro, id: "libra-tts", label: "Libra", styles: true };
+  const phonon = { id: "phonon", label: "Phonon", note: "", local: true, available: true, voices: [] };
 
-  it("shows Libra's part while it's the engine, or while it isn't answering", () => {
-    expect(showLibra({ ...base, libra }, "libra")).toBe(true);
-    expect(showLibra({ ...base, libra: { ...libra, answering: false } }, "phonon")).toBe(true);
-    expect(showLibra({ ...base, libra }, "phonon")).toBe(false);
-    expect(showLibra(base, "libra")).toBe(false);
+  it("shows the tone and speed only for a model with styles", () => {
+    expect(serverParts({ ...base, server }, libra)).toEqual({ address: true, tone: true, hearing: true });
+    expect(serverParts({ ...base, server }, kokoro)).toEqual({ address: true, tone: false, hearing: true });
+  });
+
+  it("shows the address with another engine only while the server isn't answering", () => {
+    expect(serverParts({ ...base, server }, phonon)).toEqual({ address: false, tone: false, hearing: true });
+    expect(serverParts({ ...base, server: { ...server, answering: false } }, phonon)).toEqual({ address: true, tone: false, hearing: false });
+    expect(serverParts(base, kokoro)).toEqual({ address: false, tone: false, hearing: false });  // an older Odie: nothing
   });
 
   it("names tones on their buttons", () => {
@@ -91,8 +99,8 @@ describe("Libra in Settings → Voice", () => {
     expect(libraToneLabel("wry")).toBe("Wry");
   });
 
-  it("says how to start Libra when it can't speak", () => {
-    const off = { id: "libra", label: "Libra", note: "", local: true, available: false, voices: [] };
-    expect(engineLine(off).text).toBe(LIBRA_DOWN_TEXT);
+  it("says how to start the voice server when one of its models can't speak", () => {
+    expect(engineLine({ ...kokoro, available: false }).text).toBe(SERVER_DOWN_TEXT);
+    expect(SERVER_DOWN_TEXT).toBe("The voice server isn't answering: start it with voiced start, or fix its address below.");
   });
 });

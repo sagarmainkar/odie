@@ -174,10 +174,36 @@ async def test_dictation_without_server_or_key_says_how(store, monkeypatch):
         raise httpx.ConnectError("nobody home")
     monkeypatch.setattr(voice_url, "transcribe", down)
     monkeypatch.setattr(voice, "load_secret", lambda name: None)
-    import odie.app.routes as routes
-    monkeypatch.setattr(routes, "load_secret", lambda name, env_file=None: None, raising=False)
     app = create_app(runner=FakeRunner(), store=store)
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c, app.router.lifespan_context(app):
         r = await c.post("/api/stt", files={"file": ("speech.webm", b"webm-bytes", "audio/webm")})
     assert r.status_code == 503
     assert r.json()["detail"] == "To dictate, start your voice server (voiced start) or add an OpenAI key in Settings."
+
+
+# ── Settings → Voice ──
+
+async def test_voice_settings_list_the_servers_models(store, monkeypatch):
+    from odie.app.main import create_app
+    from tests.test_api import FakeRunner
+
+    async def listed(url, transport=None):
+        return [voice_url.Model("kokoro", "tts", [{"id": "af_heart", "label": "Af_heart", "group": "female", "note": ""}]),
+                voice_url.Model("libra-tts", "tts", [{"id": "nina", "label": "Nina", "group": "female", "note": ""}],
+                                ["warm", "wry"]),
+                voice_url.Model("parakeet", "stt"), voice_url.Model("whisper-base", "stt")]
+    monkeypatch.setattr(voice_url, "models", listed)
+    app = create_app(runner=FakeRunner(), store=store)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c, app.router.lifespan_context(app):
+        j = (await c.get("/api/voice")).json()
+        engines = {e["id"]: e for e in j["engines"]}
+        assert engines["kokoro"]["server"] is True and engines["kokoro"]["styles"] is False
+        assert engines["libra-tts"]["styles"] is True and engines["libra-tts"]["available"] is True
+        assert j["server"]["answering"] is True and j["server"]["hear_models"] == ["parakeet", "whisper-base"]
+        assert j["server"]["hear_model"] == "parakeet"
+        assert (await c.put("/api/voice", json={"hear_model": "whisper-base"})).status_code == 200
+        assert (await c.get("/api/voice")).json()["server"]["hear_model"] == "whisper-base"
+        refused = await c.put("/api/voice", json={"hear_model": "nobody"})
+        assert refused.status_code == 422 and "no hearing model called 'nobody'" in refused.json()["detail"]
+        bad = await c.put("/api/voice", json={"server_url": "studio.local:12000"})
+        assert bad.status_code == 422 and "http://" in bad.json()["detail"]

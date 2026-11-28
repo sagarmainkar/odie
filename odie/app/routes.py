@@ -1732,6 +1732,7 @@ class VoiceIn(BaseModel):
     server_style: str | None = Field(None, max_length=40)  # the tone when a reply names none (a model with styles); "" for none
     server_url: str | None = Field(None, max_length=300)  # where the voice server (voiced) answers
     server_speed: str | None = Field(None, max_length=20)  # how quickly a model with styles talks: normal, brisk or quick
+    hear_model: str | None = Field(None, max_length=80)  # which of the voice server's models hears dictation
 
 
 class TtsIn(BaseModel):
@@ -1778,6 +1779,7 @@ async def voice_get(request: Request):
     openai_ok = bool(load_secret("OPENAI_API_KEY"))
     hidden = voice.disabled()
     voice_settings = voice.migrated(store.get_setting("voice") or {})
+    hearing = voice.hearing(store)
 
     def ready(engine_id: str) -> bool:
         """Whether an engine can speak now: Phonon when Ollama has it, a voice server model when the server answers,
@@ -1796,7 +1798,8 @@ async def voice_get(request: Request):
             "local_voice": machine.local_voice_wanted(),
             "server": {"url": voice.server_url(store), "answering": server_ok,
                        "tone": voice.voice_libra.settings_tone(voice_settings) or "", "tones": voice.voice_libra.TONES,
-                       "speed": voice.voice_libra.settings_speed(voice_settings), "speeds": list(voice.voice_libra.SPEEDS)},
+                       "speed": voice.voice_libra.settings_speed(voice_settings), "speeds": list(voice.voice_libra.SPEEDS),
+                       "hear_model": hearing[1] if hearing else "", "hear_models": voice.hearing_models()},
             "reminders_spoken": voice.reminders_spoken(store),
             "voices": voice.VOICES, "models": {"tts": voice.tts_model(), "stt": voice.stt_model(), "realtime": voice.REALTIME_MODEL}}
 
@@ -1821,6 +1824,11 @@ async def voice_put(body: VoiceIn, request: Request):
         if speed not in voice.voice_libra.SPEEDS:
             raise HTTPException(422, f"There's no speed called {body.server_speed!r}.")
         voice.set_server(store, speed=speed)
+    if body.hear_model is not None:
+        model = body.hear_model.strip()
+        if model not in voice.hearing_models():
+            raise HTTPException(422, f"The voice server has no hearing model called {body.hear_model!r}.")
+        voice.set_hearing(store, model)
     engine, v = voice.set_tts(store, body.engine, body.voice)
     request.app.state.runner.invalidate_prompt()  # to or from a model with styles: the voice markup rule follows
     if engine == "openai" and body.voice:
