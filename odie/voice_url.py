@@ -115,17 +115,29 @@ async def speak(url: str, model: str, voice: str, text: str, style: str | None =
     return reply.content
 
 
+WAV_HEADER = 44  # bytes: a WAV this size or smaller holds no sound
+
+
 async def to_wav16k(audio: bytes) -> bytes:
     """Any recording (a phone's mp4/aac, a browser's webm/opus) as 16 kHz mono 16-bit WAV, the one format every
-    hearing model decodes. ffmpeg writes to a file because a WAV piped out has no lengths in its header."""
+    hearing model decodes. The recording goes to ffmpeg as a file, not a pipe: an m4a keeps its index at the end, and
+    piped in, anything past a few seconds came out empty. The WAV is written to a file too, because a WAV piped out has
+    no lengths in its header. No sound out, or no ffmpeg, is a ValueError saying so."""
     with tempfile.TemporaryDirectory() as folder:
+        recording = Path(folder) / "recording"
+        recording.write_bytes(audio)
         out = Path(folder) / "heard.wav"
-        process = await asyncio.create_subprocess_exec(
-            "ffmpeg", "-loglevel", "error", "-i", "pipe:0", "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le", str(out),
-            stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE)
-        _, problem = await process.communicate(audio)
+        try:
+            process = await asyncio.create_subprocess_exec(
+                "ffmpeg", "-loglevel", "error", "-i", str(recording), "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le",
+                str(out), stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE)
+        except FileNotFoundError:
+            raise ValueError("Odie needs ffmpeg to read recordings: brew install ffmpeg")
+        _, problem = await process.communicate()
         if process.returncode != 0:
             raise ValueError(f"Couldn't read that recording: {problem.decode(errors='replace')[:200]}")
+        if not out.exists() or out.stat().st_size <= WAV_HEADER:
+            raise ValueError("That recording had no sound in it.")
         return out.read_bytes()
 
 

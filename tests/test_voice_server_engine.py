@@ -207,3 +207,65 @@ async def test_voice_settings_list_the_servers_models(store, monkeypatch):
         assert refused.status_code == 422 and "no hearing model called 'nobody'" in refused.json()["detail"]
         bad = await c.put("/api/voice", json={"server_url": "studio.local:12000"})
         assert bad.status_code == 422 and "http://" in bad.json()["detail"]
+
+
+# ── review of 28 Nov ──
+
+async def test_a_server_error_falls_back_too(store, monkeypatch):
+    voice.set_tts(store, engine="kokoro", voice="af_heart")
+    monkeypatch.setattr(voice, "phonon_here", lambda: True)
+
+    async def phonon(text, voice_id, transport=None):
+        return make_wav(0.5)
+    monkeypatch.setattr(voice, "phonon_tts", phonon)
+    failing = httpx.MockTransport(lambda r: httpx.Response(500, text="model failed to load"))
+    assert (await voice.speak_wav(store, "Hello.", transport=failing)).startswith(b"RIFF")
+
+
+async def test_the_fallback_speaks_in_the_chosen_phonon_voice(store, monkeypatch):
+    store.set_setting("voice", {"engine": "kokoro", "kokoro_voice": "af_heart", "phonon_voice": "Harper"})
+    monkeypatch.setattr(voice, "phonon_here", lambda: True)
+    spoken = []
+
+    async def phonon(text, voice_id, transport=None):
+        spoken.append(voice_id)
+        return make_wav(0.5)
+    monkeypatch.setattr(voice, "phonon_tts", phonon)
+
+    def refuse(request):
+        raise httpx.ConnectError("nobody home")
+    await voice.speak_wav(store, "Hello.", transport=httpx.MockTransport(refuse))
+    assert spoken == ["Harper"]
+
+
+async def test_a_voice_asked_for_by_name_never_falls_back(store, monkeypatch):
+    """A podcast host or a video's pinned voice: another engine would put both hosts in one voice, so it says why."""
+    voice.set_tts(store, engine="kokoro", voice="af_heart")
+    monkeypatch.setattr(voice, "phonon_here", lambda: True)
+
+    def refuse(request):
+        raise httpx.ConnectError("nobody home")
+    with pytest.raises(voice.VoiceUnavailable, match="voiced start"):
+        await voice.speak_wav(store, "Hello.", voice="am_michael", transport=httpx.MockTransport(refuse))
+
+
+def test_known_voices_keep_their_names_after_asking_the_server():
+    voice.learn_server_models([voice_url.Model("kokoro", "tts", [
+        {"id": "af_heart", "label": "Af_heart", "group": "female", "note": "American"},
+        {"id": "af_new", "label": "Af_new", "group": "female", "note": "American"}])])
+    labels = [v["label"] for v in voice.engine_voices("kokoro")]
+    assert labels == ["Heart", "Af_new"]
+
+
+async def test_odie_keeps_asking_until_the_server_answers(store, monkeypatch):
+    """At login Odie can start before voiced: it asks again until the server answers, so a chosen Orpheus isn't
+    swapped for Kokoro until Settings happens to be opened."""
+    answers = iter([False, False, True])
+    asked = []
+
+    async def learn(s, transport=None):
+        asked.append(1)
+        return next(answers)
+    monkeypatch.setattr(voice, "learn_server", learn)
+    assert await voice.learn_server_soon(store, tries=5, pause=0) is True
+    assert len(asked) == 3

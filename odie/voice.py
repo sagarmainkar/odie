@@ -14,6 +14,7 @@ import json
 import logging
 import re
 import struct
+import sys
 
 import httpx
 
@@ -113,9 +114,21 @@ def learn_server_models(models: list[voice_url.Model]) -> None:
             continue
         if model.kind != "tts" or model.name in FIXED_ENGINES:
             continue
-        _SERVER_MODELS[model.name] = model
+        _SERVER_MODELS[model.name] = _with_known_names(model)
         note = SERVER_NOTES.get(model.name, "On your voice server.")
         ENGINES[model.name] = {"label": _label(model.name), "note": note, "local": True}
+
+
+def _with_known_names(model: voice_url.Model) -> voice_url.Model:
+    """The model with the voices Odie already knows described as Odie knows them (Kokoro's af_heart is "Heart",
+    American), so names in Settings, podcasts and a pinned video voice stay the same once the server is asked; a voice
+    Odie doesn't know keeps the server's description. kokoro listing af_heart and af_new -> Heart, Af_new."""
+    known = next((m for m in KNOWN_MODELS if m.name == model.name), None)
+    if known is None:
+        return model
+    by_id = {v["id"]: v for v in known.voices}
+    voices = [by_id.get(v["id"], v) for v in model.voices]
+    return voice_url.Model(model.name, model.kind, voices, model.styles)
 
 
 def forget_server_models() -> None:
@@ -125,6 +138,18 @@ def forget_server_models() -> None:
 
 forget_server_models()
 server_seen = False  # whether the voice server answered the last time Odie asked (learn_server)
+
+
+async def learn_server_soon(store: Store, tries: int = 20, pause: float = 30.0) -> bool:
+    """Asks the voice server for its models until it answers, `tries` times `pause` seconds apart (ten minutes by
+    default): at login Odie can be up before voiced, and until it has asked, a chosen model it doesn't know (Orpheus,
+    whisper-small) would be swapped for the default. Down twice, then up -> True after the third ask; never up -> False."""
+    for attempt in range(tries):
+        if await learn_server(store):
+            return True
+        if attempt < tries - 1:
+            await asyncio.sleep(pause)
+    return False
 
 
 def hearing_models() -> list[str]:
@@ -476,7 +501,7 @@ async def speak(store: Store, text: str, engine: str | None = None, voice: str |
         try:
             return await server_tts(store, text, eng, v, tone=tone), "audio/wav"
         except VoiceUnavailable as e:
-            eng, v = instead_of_server(e)
+            eng, v = instead_of_server(store, e)
     text = voice_libra.hidden(text)
     if eng == "openai":
         return await tts(text, v), "audio/mpeg"
@@ -495,19 +520,21 @@ async def speak_wav(store: Store, text: str, voice: str | None = None, transport
     if is_server_engine(eng):
         try:
             return await server_tts(store, text, eng, voice or v, transport=transport)
-        except VoiceUnavailable as e:
-            eng, v = instead_of_server(e)
-            voice = None
+        except VoiceUnavailable:
+            if voice:
+                raise  # a voice asked for by name (a podcast host, a video's voice): another engine can't be it
+            eng, v = instead_of_server(store, sys.exc_info()[1])
     text = voice_libra.hidden(text)
     if eng == "openai":
         return pcm_to_wav(await tts(text, voice or v, transport=transport, fmt="pcm", style=style))
     return await phonon_tts(text, voice or v, transport=transport)
 
 
-def instead_of_server(problem: VoiceUnavailable) -> tuple[str, str]:
+def instead_of_server(store: Store, problem: VoiceUnavailable) -> tuple[str, str]:
     """The engine and voice used when the voice server can't speak, so speech never goes silent: Phonon when Ollama
-    has it, else OpenAI with its key; with neither, the problem is raised as it was. The log says why.
-    Phonon in Ollama -> ("phonon", its default); no Phonon, an OpenAI key -> ("openai", "marin")."""
+    has it, else OpenAI with its key, each in the voice chosen for it in Settings (else its default); with neither,
+    the problem is raised as it was. The log says why.
+    Phonon in Ollama, Harper chosen for it -> ("phonon", "Harper"); no Phonon, an OpenAI key -> ("openai", "marin")."""
     if phonon_here():
         engine = "phonon"
     elif load_secret("OPENAI_API_KEY"):
@@ -515,6 +542,10 @@ def instead_of_server(problem: VoiceUnavailable) -> tuple[str, str]:
     else:
         raise problem
     log.warning("%s Speaking with %s instead.", problem, engine)
+    s = _voice_settings(store)
+    chosen = s.get("voice") if engine == "openai" else s.get(f"{engine}_voice")
+    if voice_is_offered(engine, chosen, store):
+        return engine, chosen
     return engine, default_voice(engine)
 
 
@@ -545,6 +576,8 @@ async def server_tts(store: Store, text: str, engine: str, voice: str, tone: str
         raise VoiceUnavailable(f"The voice server at {url} took too long to answer.")
     except ValueError as e:
         raise VoiceUnavailable(f"The voice server refused it: {e}")
+    except httpx.HTTPError as e:  # up but failing: a 5xx (a model that won't load), a dropped connection
+        raise VoiceUnavailable(f"The voice server at {url} couldn't speak it: {type(e).__name__}")
     if not styled:
         return wav
     if speed is None:

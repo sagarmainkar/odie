@@ -116,3 +116,27 @@ def test_transcribe_converts_to_wav(tmp_path):
     assert text == "pay the bill" and seen["path"] == "/v1/audio/transcriptions"
     assert b"RIFF" in seen["body"] and b"WAVE" in seen["body"] and b'name="model"' in seen["body"]
     assert b"parakeet" in seen["body"]
+
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="needs ffmpeg")
+def test_a_long_m4a_with_its_index_at_the_end_is_converted(tmp_path):
+    """An iPhone-style m4a (AAC, the moov index after the audio) longer than a few seconds: piped into ffmpeg it came
+    out as a header-only WAV (review of 28 Nov). Twelve seconds must come out as twelve seconds of WAV."""
+    m4a = tmp_path / "speech.m4a"
+    subprocess.run(["ffmpeg", "-loglevel", "error", "-f", "lavfi", "-i", "sine=frequency=440:duration=12",
+                    "-c:a", "aac", str(m4a)], check=True)
+    wav = asyncio.run(voice_url.to_wav16k(m4a.read_bytes()))
+    assert len(wav) > 16000 * 2 * 11  # 16 kHz, 16-bit mono: over 11 seconds of samples
+
+
+def test_a_recording_that_gives_no_sound_is_refused():
+    with pytest.raises(ValueError):
+        asyncio.run(voice_url.to_wav16k(b"not audio at all"))
+
+
+def test_no_ffmpeg_is_a_value_error(monkeypatch):
+    async def missing(*args, **kwargs):
+        raise FileNotFoundError("ffmpeg")
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", missing)
+    with pytest.raises(ValueError, match="ffmpeg"):
+        asyncio.run(voice_url.to_wav16k(b"x"))

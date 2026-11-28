@@ -114,7 +114,7 @@ async def _learn_phonon(store: Store) -> None:
     try:
         if await voice.phonon_available():
             await voice.phonon_voices()
-        await voice.learn_server(store)  # the voice server's models, so the default engine knows what it has
+        await voice.learn_server_soon(store)  # the voice server's models, asked again until it is up (login order)
         await voice.settle_worker(store)
     except Exception:  # noqa: BLE001 (voice never decides whether Odie starts)
         logging.getLogger("odie").info("couldn't ask Ollama or the voice server about voices", exc_info=True)
@@ -627,6 +627,9 @@ def create_app(runner=None, store: Store | None = None) -> FastAPI:
         fallback_task = getattr(app.state, "fallback_task", None)
         if fallback_task is not None:
             fallback_task.cancel()
+        voice_task = getattr(app.state, "phonon_task", None)
+        if voice_task is not None:
+            voice_task.cancel()  # may still be asking a voice server that never came up
         await app.state.live.close()
         from odie.browser import close_shared
         await close_shared()
