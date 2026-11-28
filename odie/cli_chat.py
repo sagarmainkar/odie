@@ -28,6 +28,8 @@ from collections.abc import Iterator
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, TextIO
 
+from odie import voice_libra
+
 if TYPE_CHECKING:
     from odie.cli import Install
 
@@ -174,6 +176,7 @@ class Turn:
         self.taps: list[str] = []
         self.errors: list[str] = []
         self.streamed = ""  # words printed from tokens since the last whole text
+        self.hider = voice_libra.StreamHider()  # keeps Libra's voice markup out of the streamed words
 
     def needs_tap(self) -> bool:
         """Whether the turn stopped at a card waiting for the person: any approval event came.
@@ -187,12 +190,13 @@ def show_event(e: dict, turn: Turn, out: TextIO, err: TextIO) -> None:
     if e.get("session_id"):
         turn.thread = e["session_id"]
     if kind == "token":
-        out.write(e.get("text", ""))
+        out.write(turn.hider.feed(e.get("text", "")))
         out.flush()
         turn.streamed += e.get("text", "")
     elif kind == "text":
         if not turn.streamed:  # the model didn't stream this part: print it whole
-            out.write(e.get("text", ""))
+            out.write(voice_libra.hidden(e.get("text", "")))
+        out.write(turn.hider.flush())
         out.write("\n")
         out.flush()
         turn.streamed = ""
@@ -216,7 +220,7 @@ def note_event(e: dict, turn: Turn) -> None:
     elif kind == "error":
         turn.errors.append(e.get("message", ""))
     elif kind == "done":
-        turn.text = e.get("text", "")
+        turn.text = voice_libra.hidden(e.get("text", ""))  # the voice markup is for Libra, not for another agent
 
 
 def cmd_chat(api: Api, text: str, thread: str | None, new: bool, mode: str, out: TextIO, err: TextIO) -> int:
@@ -316,7 +320,7 @@ def cmd_show(api: Api, thread: str, limit: int | None, as_json: bool, out: TextI
         steps = item.get("steps") or []
         out.writelines(f"  · {step.get('name', '')}\n" for step in steps)
         if item.get("text"):
-            out.write(item["text"].rstrip() + "\n")
+            out.write(voice_libra.hidden(item["text"]).rstrip() + "\n")
         out.write("\n")
     return 0
 

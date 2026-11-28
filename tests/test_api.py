@@ -25,6 +25,10 @@ class FakeRunner:
     async def close(self):
         pass
 
+    def invalidate_prompt(self, session_id=None):
+        """A voice change rebuilds the prompt (the Libra rule): nothing to rebuild here."""
+        self.prompts_dropped = getattr(self, "prompts_dropped", 0) + 1
+
     plugins = {"skills": [], "servers": []}
 
     async def load_plugins(self):
@@ -133,7 +137,7 @@ async def test_voice_routes_without_key(client, monkeypatch):
     c = client[0] if isinstance(client, tuple) else client
     j = (await c.get("/api/voice")).json()
     assert j["available"] is False and j["engine"] == "kokoro" and j["voice"] == "af_heart" and len(j["voices"]) == 10
-    async def fake_speak(store, text):
+    async def fake_speak(store, text, tone=None):
         return b"wav", "audio/wav"
     monkeypatch.setattr(v, "speak", fake_speak)  # no key: read-aloud is Kokoro (never the real local service in tests)
     assert (await c.post("/api/tts", json={"text": "hi"})).status_code == 200
@@ -272,7 +276,7 @@ async def test_the_voice_route_hides_the_local_voice_where_it_cannot_run(client,
     j = (await c.get("/api/voice")).json()
     assert j["local_voice"] is False and j["engine"] == "openai"
     # Phonon runs in Ollama, not Odie's own voice server, so an Intel Mac is offered it too (not available: no Ollama here)
-    assert [e["id"] for e in j["engines"]] == ["openai", "phonon"]
+    assert [e["id"] for e in j["engines"]] == ["openai", "phonon", "libra"]  # Phonon and Libra are other servers, offered on any Mac
     assert next(e for e in j["engines"] if e["id"] == "phonon")["available"] is False
     assert (await c.get("/api/voice/preview/kokoro/af_heart")).status_code == 404  # not an engine here
 
@@ -292,3 +296,23 @@ async def test_approvals_mode_route_refuses_an_unknown_value(client):
     r = await client.put("/api/approvals/mode", json={"mode": "yolo"})
     assert r.status_code == 400
     assert (await client.get("/api/approvals/mode")).json() == {"mode": "smart"}
+
+
+async def test_libra_previews_each_tone_at_the_speed_tapped(client, monkeypatch):
+    from odie import voice as v
+    c = client[0] if isinstance(client, tuple) else client
+    asked = []
+
+    async def fake_libra(store, text, voice_id, tone=None, speed=None, transport=None):
+        asked.append((voice_id, tone, speed))
+        return b"RIFFwav"
+    monkeypatch.setattr(v, "libra_tts", fake_libra)
+    sofia = v.engine_voices("libra", None)[0]["id"]
+    assert (await c.get(f"/api/voice/preview/libra/{sofia}?tone=wry&speed=quick")).status_code == 200
+    assert (await c.get(f"/api/voice/preview/libra/{sofia}?tone=wry&speed=quick")).status_code == 200  # kept: Libra asked once
+    assert (await c.get(f"/api/voice/preview/libra/{sofia}")).status_code == 200  # cheerful at the saved speed (brisk)
+    assert asked == [(sofia, "wry", "quick"), (sofia, "cheerful", "brisk")]
+    assert (await c.get(f"/api/voice/preview/libra/{sofia}?tone=grumpy")).status_code == 404
+    assert (await c.put("/api/voice", json={"libra_speed": "zoom"})).status_code == 422
+    assert (await c.put("/api/voice", json={"libra_speed": "normal"})).status_code == 200
+    assert (await c.get("/api/voice")).json()["libra"]["speed"] == "normal"

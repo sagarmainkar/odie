@@ -1,5 +1,7 @@
 /** Copy text to the clipboard. The Clipboard API exists only on a secure page (https or localhost) and can refuse;
  * then a hidden text box and the older copy command, which work on any page. False when neither did. */
+import { hideVoiceMarkup } from "./blocks/voiceMarkup";
+
 type Clip = { writeText: (text: string) => Promise<void> } | undefined;
 
 function selectAndCopy(text: string): boolean {
@@ -16,7 +18,8 @@ function selectAndCopy(text: string): boolean {
   finally { box.remove(); }
 }
 
-export async function copyText(text: string, deps: { clipboard?: Clip; fallback?: (text: string) => boolean } = {}): Promise<boolean> {
+export async function copyText(given: string, deps: { clipboard?: Clip; fallback?: (text: string) => boolean } = {}): Promise<boolean> {
+  const text = hideVoiceMarkup(given);  // a reply read by Libra carries voice markup nobody should paste
   const clipboard = "clipboard" in deps ? deps.clipboard : (typeof navigator !== "undefined" ? navigator.clipboard : undefined);
   const fallback = deps.fallback ?? selectAndCopy;
   if (clipboard) {

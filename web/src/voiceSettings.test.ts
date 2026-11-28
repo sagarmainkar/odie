@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { NO_VOICE_TEXT, PULL_PHONON_TEXT, engineLine, voiceGroups, voiceRow, voiceSection, type VoiceInfo } from "./voiceSettings";
+import { LIBRA_DOWN_TEXT, NO_VOICE_TEXT, PULL_PHONON_TEXT, engineLine, libraToneLabel, showLibra, voiceGroups, voiceRow, voiceSection, type VoiceInfo } from "./voiceSettings";
 
 const local = { id: "kokoro", label: "Odie's voice", note: "", local: true, available: true, voices: [] };
 const cloud = { id: "openai", label: "Cloud", note: "", local: false, available: true, voices: [] };
@@ -72,5 +72,27 @@ describe("Settings' Voice row", () => {
 
   it("says the browser reads replies when there is no engine at all", () => {
     expect(voiceRow(base)).toEqual({ sub: "No voice yet: the browser's own voice reads replies", state: "warn" });
+  });
+});
+
+describe("Libra in Settings → Voice", () => {
+  const libra = { url: "http://127.0.0.1:8794", tone: "", tones: ["warm", "wry"], answering: true };
+  const base = { engine: "phonon", voice: "zoey", engines: [], models: { tts: "", realtime: "" } };
+
+  it("shows Libra's part while it's the engine, or while it isn't answering", () => {
+    expect(showLibra({ ...base, libra }, "libra")).toBe(true);
+    expect(showLibra({ ...base, libra: { ...libra, answering: false } }, "phonon")).toBe(true);
+    expect(showLibra({ ...base, libra }, "phonon")).toBe(false);
+    expect(showLibra(base, "libra")).toBe(false);
+  });
+
+  it("names tones on their buttons", () => {
+    expect(libraToneLabel("")).toBe("None");
+    expect(libraToneLabel("wry")).toBe("Wry");
+  });
+
+  it("says how to start Libra when it can't speak", () => {
+    const off = { id: "libra", label: "Libra", note: "", local: true, available: false, voices: [] };
+    expect(engineLine(off).text).toBe(LIBRA_DOWN_TEXT);
   });
 });

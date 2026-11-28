@@ -17,7 +17,7 @@ import struct
 
 import httpx
 
-from odie import config, machine
+from odie import config, machine, voice_libra
 from odie.secrets import load_secret
 from odie.store.db import Store
 
@@ -94,11 +94,12 @@ ENGINES = {
     "kokoro": {"label": "Kokoro", "note": "On this computer. Instant, no expressions.", "local": True},
     "maya1": {"label": "Maya1", "note": "On this computer. Expressive (laughs, sighs), takes about twice the speech length to prepare; long replies are summarised.", "local": True},
     "phonon": {"label": "Phonon (Ollama)", "note": "On this computer through Ollama. Quick, streams, no expressions.", "local": True},
+    "libra": {"label": "Libra", "note": "Your Libra voice server, on this Mac or your home network. Expressive: Odie picks the tone and laughs or sighs where it fits.", "local": True},
 }
 # Maya1 is hidden until its pipeline is rebuilt from the official prompt format (2026-10-01: through mlx-audio's generic
 # loader it read tags out as words or produced noise).
 _HIDDEN = {"maya1"}
-OWN_SERVER = {"kokoro", "maya1"}  # the engines Odie's own voice server speaks (odie.voice_worker); Phonon is Ollama's
+OWN_SERVER = {"kokoro", "maya1"}  # the engines Odie's own voice server speaks (odie.voice_worker); Phonon is Ollama's, Libra the user's
 
 
 def disabled() -> set[str]:
@@ -129,8 +130,8 @@ def _chosen_engine(s: dict) -> str:
     if engine in ENGINES and engine not in disabled():
         return engine
     return default_engine()
-_ENGINE_VOICES = {"openai": VOICES, "kokoro": KOKORO_VOICES, "maya1": MAYA_VOICES}
-_DEFAULT_VOICE = {"openai": DEFAULT_VOICE, "kokoro": "af_heart", "maya1": "in_female"}
+_ENGINE_VOICES = {"openai": VOICES, "kokoro": KOKORO_VOICES, "maya1": MAYA_VOICES, "libra": voice_libra.VOICES}
+_DEFAULT_VOICE = {"openai": DEFAULT_VOICE, "kokoro": "af_heart", "maya1": "in_female", "libra": voice_libra.DEFAULT_VOICE}
 
 
 def engine_voices(engine: str, store: Store | None = None) -> list[dict]:
@@ -217,6 +218,19 @@ def set_tts(store: Store, engine: str | None = None, voice: str | None = None) -
         s["voice" if eng == "openai" else f"{eng}_voice"] = voice
     store.set_setting("voice", s)
     return get_tts(store)
+
+
+def set_libra(store: Store, url: str | None = None, tone: str | None = None, speed: str | None = None) -> None:
+    """Keeps Libra's server address, its Settings tone and its speed (checked by the route first). An empty address
+    goes back to the default; an empty tone means none: the voice then speaks plainly unless a reply names one."""
+    s = dict(store.get_setting("voice") or {})
+    if url is not None:
+        s["libra_url"] = url
+    if tone is not None:
+        s["libra_style"] = tone
+    if speed is not None:
+        s["libra_speed"] = speed
+    store.set_setting("voice", s)
 
 
 def worker_wanted(store: Store) -> bool:
@@ -368,10 +382,20 @@ async def own_server_can_speak() -> bool:
     return bool(worker.installed)
 
 
-async def speak(store: Store, text: str, engine: str | None = None, voice: str | None = None) -> tuple[bytes, str]:
-    """Read-aloud with the chosen engine. Returns (audio, media type). Maya1 gets a tagged script from local Gemma first."""
+async def speak(store: Store, text: str, engine: str | None = None, voice: str | None = None,
+                tone: str | None = None) -> tuple[bytes, str]:
+    """Read-aloud with the chosen engine. Returns (audio, media type). Libra hears the reply's voice markup (its tone,
+    or `tone` when the caller passes the reply's tone with one sentence of it); every other engine gets it stripped.
+    Maya1 gets a tagged script from local Gemma first."""
     eng, v = get_tts(store)
     eng, v = engine or eng, voice or v
+    if eng == "libra":
+        try:
+            return await libra_tts(store, text, v, tone=tone), "audio/wav"
+        except VoiceUnavailable as e:
+            eng, v = instead_of_libra()
+            log.warning("%s Reading aloud with %s instead.", e, eng)
+    text = voice_libra.hidden(text)
     if eng == "openai":
         return await tts(text, v), "audio/mpeg"
     if eng == "maya1":
@@ -391,11 +415,58 @@ async def speak_wav(store: Store, text: str, voice: str | None = None, transport
     eng, v = get_tts(store)
     if engine and voice:
         eng, v = engine, voice
+    if eng == "libra":
+        try:
+            return await libra_tts(store, text, voice or v, transport=transport)
+        except VoiceUnavailable as e:
+            eng, v = instead_of_libra()
+            voice = None
+            log.warning("%s Speaking with %s instead.", e, eng)
+    text = voice_libra.hidden(text)
     if eng == "openai":
         return pcm_to_wav(await tts(text, voice or v, transport=transport, fmt="pcm", style=style))
     if eng == "phonon":
         return await phonon_tts(text, voice or v, transport=transport)
     return await local_tts("kokoro", text, voice or (v if eng == "kokoro" else _DEFAULT_VOICE["kokoro"]), transport=transport)
+
+
+def instead_of_libra() -> tuple[str, str]:
+    """The engine and voice used when Libra is chosen but its server doesn't answer, so speech never goes silent: the
+    default engine with its default voice. Phonon in Ollama -> ("phonon", its default); an M2 without it ->
+    ("kokoro", "af_heart")."""
+    engine = default_engine()
+    return engine, default_voice(engine)
+
+
+async def libra_tts(store: Store, text: str, voice: str, tone: str | None = None, speed: str | None = None,
+                    transport: httpx.AsyncBaseTransport | None = None) -> bytes:
+    """`text` spoken by the user's Libra server (odie.voice_libra) in `voice`, in the tone the text or the caller asks
+    for (tone_to_use), with its sound tags performed, at `speed` (else the Settings speed). A server that doesn't answer is VoiceUnavailable, saying where
+    Odie looked and how to start it."""
+    settings = store.get_setting("voice") or {}
+    url = voice_libra.server_url(settings)
+    style = voice_libra.tone_to_use(tone, text, settings)
+    spoken = voice_libra.for_libra(text)
+    if not voice_libra.has_words(spoken):
+        raise VoiceUnavailable("There's nothing to say once the voice markup is taken out.")
+    if speed is None:
+        speed = voice_libra.settings_speed(settings)
+    try:
+        wav = await voice_libra.speak(spoken, voice, style, url, transport=transport)
+        return await voice_libra.quicken(wav, speed)
+    except httpx.ConnectError:
+        raise VoiceUnavailable(f"The Libra voice server isn't answering at {url}: start it with ./libra start.")
+    except httpx.TimeoutException:
+        raise VoiceUnavailable(f"The Libra voice server at {url} took too long to answer.")
+    except ValueError as e:
+        raise VoiceUnavailable(f"Libra refused it: {e}")
+
+
+def libra_on(store: Store) -> bool:
+    """Whether read-aloud speaks with Libra, so the chat model is told about the voice markup (the libra_voice
+    capability). Libra chosen -> True; Phonon chosen -> False; nothing chosen -> False (Libra is never the default)."""
+    engine, _ = get_tts(store)
+    return engine == "libra"
 
 
 def reminders_spoken(store: Store) -> bool:
@@ -825,12 +896,28 @@ def phonon_hosts(voices: list[dict], chosen: str) -> list[dict]:
     return [first, partner("female", "zoey")]
 
 
+def libra_hosts(chosen: str) -> list[dict]:
+    """A podcast's two hosts when Libra speaks, [a woman, a man]: the chosen voice in its own place, Nina or Omar in
+    the other. Sofia chosen -> [Sofia, Omar]; Jon chosen -> [Nina, Jon]; an unknown id -> [Nina, Omar]."""
+    voices = {v["id"]: v for v in voice_libra.VOICES}
+    woman = voices["nina"]
+    man = voices["omar"]
+    picked = voices.get(chosen)
+    if picked is not None and picked["group"] == "female":
+        woman = picked
+    if picked is not None and picked["group"] == "male":
+        man = picked
+    return [woman, man]
+
+
 def podcast_voices(store: Store) -> list[dict]:
     """A podcast's two hosts, [a woman, a man], from the chosen engine and with the chosen voice's accent; the chosen
     voice is one of them. Phonon's two come from the voices Ollama lists (phonon_hosts)."""
     eng, v = get_tts(store)
     if eng == "phonon":
         return phonon_hosts(engine_voices("phonon", store), v)
+    if eng == "libra":
+        return libra_hosts(v)
     if eng != "openai":
         eng, v = "kokoro", v if v in {x["id"] for x in KOKORO_VOICES} else _DEFAULT_VOICE["kokoro"]
     voices = {x["id"]: x for x in engine_voices(eng)}
